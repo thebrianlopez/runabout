@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/blo-grindr/runabouts/internal/perfgate"
-	"github.com/blo-grindr/runabouts/internal/telemetry"
-	"github.com/blo-grindr/runabouts/internal/version"
+	"github.com/blo-grindr/runabout/internal/perfgate"
+	"github.com/blo-grindr/runabout/internal/telemetry"
+	"github.com/blo-grindr/runabout/internal/version"
 	"github.com/spf13/cobra"
 )
 
