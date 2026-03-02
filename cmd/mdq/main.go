@@ -1,0 +1,149 @@
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/blo-grindr/runabouts/internal/mdq"
+	"github.com/blo-grindr/runabouts/internal/telemetry"
+	"github.com/blo-grindr/runabouts/internal/version"
+	"github.com/spf13/cobra"
+)
+
+func main() {
+	rootCmd := &cobra.Command{
+		Use:     "mdq",
+		Short:   "Markdown query tool with structured selectors",
+		Version: fmt.Sprintf("%s (commit: %s, built: %s)", version.Version, version.Commit, version.Date),
+	}
+
+	rootCmd.AddCommand(queryCmd())
+	rootCmd.AddCommand(tableCmd())
+	rootCmd.AddCommand(extractCmd())
+	rootCmd.AddCommand(listCmd())
+
+	t := telemetry.Instrument(rootCmd, "mdq")
+	err := rootCmd.Execute()
+	t.Emit(err)
+	if err != nil {
+		os.Exit(1)
+	}
+}
+
+func queryCmd() *cobra.Command {
+	var field, table, format string
+
+	cmd := &cobra.Command{
+		Use:   "query <glob>",
+		Short: "Query fields across markdown files",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := mdq.Query{Field: field, Table: table}
+			results, err := mdq.Execute(args[0], q)
+			if err != nil {
+				return err
+			}
+			fmt.Print(mdq.Format(results, format))
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&field, "field", "", "field name to query")
+	cmd.Flags().StringVar(&table, "table", "", "table section to search within")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, table")
+	_ = cmd.MarkFlagRequired("field")
+
+	return cmd
+}
+
+func tableCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "table <file> <section>",
+		Short: "Extract a table from a markdown section",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			f, err := os.Open(args[0])
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+
+			doc, err := mdq.Parse(f)
+			if err != nil {
+				return err
+			}
+
+			sec := mdq.FindSection(doc, args[1])
+			if sec == nil {
+				return fmt.Errorf("section %q not found", args[1])
+			}
+
+			if len(sec.Tables) == 0 {
+				return fmt.Errorf("no tables found in section %q", args[1])
+			}
+
+			for _, t := range sec.Tables {
+				fmt.Print(mdq.FormatTable(t))
+			}
+			return nil
+		},
+	}
+}
+
+func extractCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "extract <file> <section>",
+		Short: "Extract section content from a markdown file",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			f, err := os.Open(args[0])
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+
+			doc, err := mdq.Parse(f)
+			if err != nil {
+				return err
+			}
+
+			sec := mdq.FindSection(doc, args[1])
+			if sec == nil {
+				return fmt.Errorf("section %q not found", args[1])
+			}
+
+			fmt.Println(mdq.FormatSection(sec))
+			return nil
+		},
+	}
+}
+
+func listCmd() *cobra.Command {
+	var headings bool
+	var level int
+	var format string
+
+	cmd := &cobra.Command{
+		Use:   "list <glob>",
+		Short: "List headings across markdown files",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := mdq.Query{Level: level}
+			if headings {
+				q.Heading = "*"
+			}
+			results, err := mdq.Execute(args[0], q)
+			if err != nil {
+				return err
+			}
+			fmt.Print(mdq.Format(results, format))
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&headings, "headings", false, "list headings only")
+	cmd.Flags().IntVar(&level, "level", 0, "filter by heading level")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, table")
+
+	return cmd
+}

@@ -1,0 +1,10 @@
+bin/
+*.exe
+*.test
+*.out
+.DS_Store
+
+docs/
+docs
+dev-docs/
+dev-docs
