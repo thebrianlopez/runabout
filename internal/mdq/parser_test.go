@@ -213,3 +213,48 @@ func TestParseEmptyInput(t *testing.T) {
 		t.Errorf("got %d sections, want 0", len(doc.Sections))
 	}
 }
+
+func TestParseIgnoresHeadingsInBacktickCodeBlock(t *testing.T) {
+	input := "## Section\n\n```go\n# This is a comment, not a heading\nfunc main() {}\n```\n\n## After\n"
+	doc, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Sections) != 2 {
+		t.Fatalf("got %d sections, want 2 (Section, After)", len(doc.Sections))
+	}
+	if doc.Sections[0].Title != "Section" {
+		t.Errorf("sections[0].Title = %q, want Section", doc.Sections[0].Title)
+	}
+	if doc.Sections[1].Title != "After" {
+		t.Errorf("sections[1].Title = %q, want After", doc.Sections[1].Title)
+	}
+}
+
+func TestParseIgnoresHeadingsInTildeCodeBlock(t *testing.T) {
+	input := "## Methods\n\n~~~bash\n# export PATH\nexport PATH=$HOME/bin:$PATH\n~~~\n"
+	doc, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Sections) != 1 {
+		t.Fatalf("got %d sections, want 1", len(doc.Sections))
+	}
+	if doc.Sections[0].Title != "Methods" {
+		t.Errorf("sections[0].Title = %q, want Methods", doc.Sections[0].Title)
+	}
+}
+
+func TestParseTitleNotStolenByCodeBlock(t *testing.T) {
+	input := "# Real Title\n\n```python\n# not a title\n```\n"
+	doc, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Title != "Real Title" {
+		t.Errorf("Title = %q, want Real Title", doc.Title)
+	}
+	if len(doc.Sections) != 1 {
+		t.Fatalf("got %d sections, want 1", len(doc.Sections))
+	}
+}

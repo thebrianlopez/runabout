@@ -18,6 +18,8 @@ Requires Go 1.24+.
 
 Query structured data out of markdown files matching a glob.
 
+Heading extraction correctly ignores `#` comments inside fenced code blocks (` ``` ` and `~~~`).
+
 ```bash
 # Extract a field value across all epics
 mdq query "docs/epics/*.md" --field Status
