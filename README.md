@@ -9,7 +9,7 @@ Go devtools monorepo — three CLI tools for shell optimization workflows.
 ## Install
 
 ```bash
-make install   # builds all three binaries → /opt/homebrew/bin/
+make install   # go install → ~/go/bin
 ```
 
 Requires Go 1.24+.
@@ -79,7 +79,7 @@ shellprof profile nowdate --format flame
 
 ```bash
 make build    # builds bin/mdq bin/perfgate bin/shellprof
-make install  # copies to /opt/homebrew/bin/
+make install  # go install → ~/go/bin
 make clean    # removes bin/
 go test ./... # run all tests
 ```
