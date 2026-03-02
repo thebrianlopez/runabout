@@ -51,6 +51,7 @@ func Parse(r io.Reader) (*Document, error) {
 	var tableHeaders []string // non-nil when inside a table
 	var tableRows []TableRow
 	var sawSeparator bool
+	var inCodeBlock bool
 
 	flushTable := func() {
 		if currentIdx >= 0 && tableHeaders != nil && sawSeparator {
@@ -66,6 +67,28 @@ func Parse(r io.Reader) (*Document, error) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		// Track fenced code block state (``` or ~~~).
+		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+			inCodeBlock = !inCodeBlock
+			if inCodeBlock {
+				flushTable()
+			}
+		}
+
+		// Skip structural parsing inside fenced code blocks.
+		if inCodeBlock {
+			if currentIdx >= 0 {
+				if flat[currentIdx].sec.Content == "" {
+					if strings.TrimSpace(line) != "" {
+						flat[currentIdx].sec.Content = line
+					}
+				} else {
+					flat[currentIdx].sec.Content += "\n" + line
+				}
+			}
+			continue
+		}
 
 		// Check for heading.
 		if m := headingRe.FindStringSubmatch(line); m != nil {
