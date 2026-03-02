@@ -1,12 +1,12 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS := -ldflags "-X github.com/blo-grindr/runabouts/internal/version.Version=$(VERSION) \
-	-X github.com/blo-grindr/runabouts/internal/version.Commit=$(COMMIT) \
-	-X github.com/blo-grindr/runabouts/internal/version.Date=$(DATE)"
+LDFLAGS := -ldflags "-X github.com/blo-grindr/runabout/internal/version.Version=$(VERSION) \
+	-X github.com/blo-grindr/runabout/internal/version.Commit=$(COMMIT) \
+	-X github.com/blo-grindr/runabout/internal/version.Date=$(DATE)"
 
 BINARIES := shellprof mdq perfgate
-INSTALL_DIR := /opt/homebrew/bin
+INSTALL_DIR := $(shell go env GOPATH)/bin
 
 .PHONY: build install clean
 
@@ -17,10 +17,10 @@ build:
 	done
 	@echo "All binaries built in bin/"
 
-install: build
+install:
 	@for bin in $(BINARIES); do \
 		echo "Installing $$bin → $(INSTALL_DIR)/$$bin"; \
-		cp bin/$$bin $(INSTALL_DIR)/$$bin; \
+		go install $(LDFLAGS) ./cmd/$$bin; \
 	done
 	@echo "Installed to $(INSTALL_DIR)"
 

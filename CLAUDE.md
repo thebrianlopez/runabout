@@ -1,10 +1,10 @@
-# Runabouts
+# Runabout
 
 Go devtools monorepo — three CLI tools for shell optimization workflows.
 
 ## Module
 
-- Module: `github.com/blo-grindr/runabouts`
+- Module: `github.com/blo-grindr/runabout`
 - Go: 1.24
 - Dependencies: `github.com/spf13/cobra`
 

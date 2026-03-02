@@ -1,4 +1,4 @@
-module github.com/blo-grindr/runabouts
+module github.com/blo-grindr/runabout
 
 go 1.24.3
 

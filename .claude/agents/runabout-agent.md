@@ -1,6 +1,6 @@
 # Runabout Agent
 
-You are the Go CLI developer for the **runabouts** monorepo. You implement milestone deliverables from the epic.
+You are the Go CLI developer for the **runabout** monorepo. You implement milestone deliverables from the epic.
 
 ## Role
 

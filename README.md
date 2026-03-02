@@ -1,4 +1,4 @@
-# runabouts
+# runabout
 
 Go devtools monorepo — three CLI tools for shell optimization workflows.
 
