@@ -12,7 +12,7 @@ Go devtools monorepo — three CLI tools for shell optimization workflows.
 
 ```bash
 make build      # builds all three binaries to bin/
-make install    # copies to /opt/homebrew/bin/
+make install    # go install → ~/go/bin
 make clean      # removes bin/
 ```
 
