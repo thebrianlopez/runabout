@@ -6,6 +6,15 @@ Go devtools monorepo — three CLI tools for shell optimization workflows.
 - **perfgate** — statistical before/after performance gating
 - **shellprof** — fish shell function profiler with call graphs
 
+## Status
+
+EPIC-001 complete (M1–M4). All three binaries build, install to `~/go/bin`, and pass tests. mdq parser fixed to ignore headings in fenced code blocks. EPIC-002 (MCP integration) deferred — CLI adoption first.
+
+- Recent: package rename `runabouts` → `runabout`, install path fix, mdq parser fix
+- Branch: `main`, clean
+
+**Last Updated:** 2026-03-06
+
 ## Install
 
 ```bash
