@@ -30,10 +30,13 @@ Use `t.TempDir()` for file isolation in tests. No test fixtures checked in.
 cmd/mdq/          # mdq CLI entry point (4 subcommands: query, table, extract, list)
 cmd/perfgate/     # perfgate CLI entry point (3 subcommands: run, compare, gate)
 cmd/shellprof/    # shellprof CLI entry point (3 subcommands: profile, trace, list)
+cmd/protonexport/ # protonexport CLI (separate module — Proton deps isolated from root)
+  go-proton-api/  # vendored go-proton-api with auth fixes (local replace)
 internal/mdq/     # markdown parsing, querying, output formatting
 internal/perfgate/ # benchmark runner, statistics, gating logic
 internal/shellprof/ # fish instrumentation, profiling, call graph
 internal/version/ # shared version info (injected via ldflags)
+go.work           # Go workspace: root module + cmd/protonexport
 ```
 
 ## Patterns
