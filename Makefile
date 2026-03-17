@@ -6,6 +6,8 @@ LDFLAGS := -ldflags "-X github.com/blo-grindr/runabout/internal/version.Version=
 	-X github.com/blo-grindr/runabout/internal/version.Date=$(DATE)"
 
 BINARIES := shellprof mdq perfgate
+PROTON_BINARIES := protonexport
+PROTON_LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
 INSTALL_DIR := $(shell go env GOPATH)/bin
 
 .PHONY: build install clean
@@ -15,12 +17,20 @@ build:
 		echo "Building $$bin..."; \
 		go build $(LDFLAGS) -o bin/$$bin ./cmd/$$bin; \
 	done
+	@for bin in $(PROTON_BINARIES); do \
+		echo "Building $$bin (separate module)..."; \
+		cd cmd/$$bin && go build $(PROTON_LDFLAGS) -o ../../bin/$$bin . && cd ../..; \
+	done
 	@echo "All binaries built in bin/"
 
 install:
 	@for bin in $(BINARIES); do \
 		echo "Installing $$bin → $(INSTALL_DIR)/$$bin"; \
 		go install $(LDFLAGS) ./cmd/$$bin; \
+	done
+	@for bin in $(PROTON_BINARIES); do \
+		echo "Installing $$bin → $(INSTALL_DIR)/$$bin"; \
+		cd cmd/$$bin && go install $(PROTON_LDFLAGS) . && cd ../..; \
 	done
 	@echo "Installed to $(INSTALL_DIR)"
 
