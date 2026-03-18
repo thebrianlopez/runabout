@@ -22,7 +22,10 @@ func main() {
 
 	rootCmd.AddCommand(exportCmd())
 
-	if err := rootCmd.Execute(); err != nil {
+	t := instrument(rootCmd, "protonexport")
+	err := rootCmd.Execute()
+	t.emit(err)
+	if err != nil {
 		os.Exit(1)
 	}
 }

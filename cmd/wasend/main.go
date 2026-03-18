@@ -3,25 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
-	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
-	"go.mau.fi/whatsmeow/store/sqlstore"
-	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 var (
@@ -51,36 +43,12 @@ func main() {
 	rootCmd.AddCommand(sendCmd())
 	rootCmd.AddCommand(logoutCmd())
 
-	if err := rootCmd.Execute(); err != nil {
+	t := instrument(rootCmd, "wasend")
+	err := rootCmd.Execute()
+	t.emit(err)
+	if err != nil {
 		os.Exit(1)
 	}
-}
-
-// newClient creates a whatsmeow client with the configured database path.
-func newClient() (*whatsmeow.Client, *sqlstore.Container, error) {
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
-		return nil, nil, fmt.Errorf("create db directory: %w", err)
-	}
-
-	var logger waLog.Logger
-	if debug {
-		logger = waLog.Stdout("wasend", "DEBUG", true)
-	} else {
-		logger = waLog.Noop
-	}
-
-	container, err := sqlstore.New(context.Background(), "sqlite3", "file:"+dbPath+"?_foreign_keys=on", logger)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open database: %w", err)
-	}
-
-	deviceStore, err := container.GetFirstDevice(context.Background())
-	if err != nil {
-		container.Close()
-		return nil, nil, fmt.Errorf("get device: %w", err)
-	}
-
-	return whatsmeow.NewClient(deviceStore, logger), container, nil
 }
 
 func loginCmd() *cobra.Command {
@@ -176,26 +144,17 @@ Examples:
   echo "Hello" | wasend send -t 15551234567 --stdin
   wasend send -t 15551234567 --stdin < message.txt`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var text string
-			if stdin {
-				data, err := io.ReadAll(os.Stdin)
-				if err != nil {
-					return fmt.Errorf("read stdin: %w", err)
-				}
-				text = strings.TrimSpace(string(data))
-			} else if len(args) > 0 {
-				text = strings.Join(args, " ")
-			} else {
-				return fmt.Errorf("provide a message as arguments or use --stdin")
+			text, err := resolveMessage(stdin, args, os.Stdin)
+			if err != nil {
+				return err
 			}
-
 			if text == "" {
 				return fmt.Errorf("message cannot be empty")
 			}
 
-			jid, err := types.ParseJID(to + "@s.whatsapp.net")
+			jid, err := parseRecipient(to)
 			if err != nil {
-				return fmt.Errorf("invalid phone number %q: %w", to, err)
+				return err
 			}
 
 			client, container, err := newClient()

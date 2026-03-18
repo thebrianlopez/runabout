@@ -1,6 +1,6 @@
 module github.com/blo-grindr/runabout/cmd/protonexport
 
-go 1.24.3
+go 1.25.0
 
 require (
 	github.com/ProtonMail/gluon v0.17.1-0.20260225115619-c0f05c033a4a
