@@ -1,0 +1,46 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ["1.25"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Test root module
+        run: go test -race -coverprofile=coverage-root.out ./...
+
+      - name: Test wasend module
+        run: |
+          cd cmd/wasend
+          go test -race -coverprofile=coverage-wasend.out ./...
+
+      - name: Test protonexport module
+        run: |
+          cd cmd/protonexport
+          go test -race -coverprofile=coverage-protonexport.out ./...
+
+      - name: Build all
+        run: make build
+
+      - name: Upload coverage
+        if: matrix.go-version == '1.25'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage-root.out
+            cmd/wasend/coverage-wasend.out
+            cmd/protonexport/coverage-protonexport.out

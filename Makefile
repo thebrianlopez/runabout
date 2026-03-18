@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := wasend
+SEPARATE := protonexport wasend
 
 ALL := $(CORE) $(SEPARATE)
 
@@ -41,6 +41,14 @@ $(addprefix install-,$(CORE)):
 	@go install $(LDFLAGS) ./cmd/$(subst install-,,$@)
 
 # --- Separate-module tools ---
+
+protonexport:
+	@echo "Building protonexport..."
+	@cd cmd/protonexport && go build $(LDFLAGS) -o ../../bin/protonexport .
+
+install-protonexport:
+	@echo "Installing protonexport → $(INSTALL_DIR)/protonexport"
+	@cd cmd/protonexport && go install $(LDFLAGS) .
 
 wasend:
 	@echo "Building wasend..."

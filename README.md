@@ -1,19 +1,22 @@
 # runabout
 
-Go devtools monorepo — three CLI tools for shell optimization workflows.
+Go devtools monorepo — five CLI tools for shell optimization and personal workflows.
 
 - **mdq** — query fields and tables across markdown files
 - **perfgate** — statistical before/after performance gating
 - **shellprof** — fish shell function profiler with call graphs
+- **wasend** — send WhatsApp messages from the command line
+- **protonexport** — export ProtonMail conversations to markdown
 
 ## Status
 
-EPIC-001 complete (M1–M4). All three binaries build, install to `~/go/bin`, and pass tests. mdq parser fixed to ignore headings in fenced code blocks. EPIC-002 (MCP integration) deferred — CLI adoption first.
+All 5 tools build and pass tests on Go 1.25. Monorepo standardization complete: unified telemetry, version helper, code extraction, and restored protonexport with vendored go-proton-api.
 
-- Recent: package rename `runabouts` → `runabout`, install path fix, mdq parser fix
-- Branch: `main`, clean
+- Standardized all modules on Go 1.25.0
+- Added telemetry to wasend and protonexport (copied pattern from `internal/telemetry`)
+- Extracted wasend logic into `message.go`, `client.go`; added protonexport helper tests
 
-**Last Updated:** 2026-03-06
+**Last Updated:** 2026-03-18
 
 ## Install
 
@@ -21,7 +24,7 @@ EPIC-001 complete (M1–M4). All three binaries build, install to `~/go/bin`, an
 make install   # go install → ~/go/bin
 ```
 
-Requires Go 1.24+.
+Requires Go 1.25+.
 
 ## mdq
 
@@ -86,13 +89,46 @@ shellprof trace nowdate
 shellprof profile nowdate --format flame
 ```
 
+## wasend
+
+Send WhatsApp messages from the command line via whatsmeow.
+
+```bash
+# Authenticate (scan QR code)
+wasend login
+
+# Send a message
+wasend send -t 15551234567 "Hello from CLI"
+
+# Pipe message from stdin
+echo "Hello" | wasend send -t 15551234567 --stdin
+
+# Remove session
+wasend logout
+```
+
+## protonexport
+
+Export ProtonMail conversations to markdown files with YAML front-matter.
+
+```bash
+# Export emails matching a contact
+protonexport export -u user@proton.me -p password -c contact@example.com
+
+# Specify output directory and worker count
+protonexport export -u user@proton.me -p password -c contact@example.com -o ./export -w 20
+```
+
+Credentials can also be set via `PROTON_USERNAME`, `PROTON_PASSWORD`, `PROTON_SENDER` environment variables.
+
 ## Build
 
 ```bash
-make build    # builds bin/mdq bin/perfgate bin/shellprof
+make build    # builds all 5 binaries to bin/
 make install  # go install → ~/go/bin
+make core     # builds mdq, perfgate, shellprof only
 make clean    # removes bin/
-go test ./... # run all tests
+go test ./... # run root module tests
 ```
 
 Version, commit, and build date are injected at build time via ldflags.
@@ -100,11 +136,14 @@ Version, commit, and build date are injected at build time via ldflags.
 ## Layout
 
 ```
-cmd/mdq/           # mdq entry point
-cmd/perfgate/      # perfgate entry point
-cmd/shellprof/     # shellprof entry point
-internal/mdq/      # markdown parser, query engine, output formatting
-internal/perfgate/ # benchmark runner, statistics, gating logic
-internal/shellprof/# fish instrumentation, profiling, call graph
-internal/version/  # shared version info
+cmd/mdq/              # mdq entry point
+cmd/perfgate/         # perfgate entry point
+cmd/shellprof/        # shellprof entry point
+cmd/wasend/           # wasend entry point (separate module)
+cmd/protonexport/     # protonexport entry point (separate module)
+internal/mdq/         # markdown parser, query engine, output formatting
+internal/perfgate/    # benchmark runner, statistics, gating logic
+internal/shellprof/   # fish instrumentation, profiling, call graph
+internal/telemetry/   # CLI telemetry via emit_jsonl
+internal/version/     # shared version formatting
 ```
