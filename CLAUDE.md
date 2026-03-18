@@ -80,6 +80,29 @@ go.work               # Go workspace: root + cmd/protonexport + cmd/wasend
 - All core tools call `telemetry.Instrument`/`Emit` around `rootCmd.Execute()`
 - Satellite tools use local `instrument`/`emit` (same pattern, unexported)
 
+## Auto-Dispatch (Epic Coordination)
+
+**On every session start and first prompt**, check for pending dispatch signals:
+
+```bash
+ls .claude-dispatch/*.json 2>/dev/null
+```
+
+If dispatch files exist, for each one:
+
+1. Read the trigger: `cat .claude-dispatch/<epic>.json`
+2. Read the full epic: `md-tree extract <epic_path> "Milestones"`
+3. Identify your assigned milestones from the trigger's `milestones` field
+4. Claim your first milestone by updating its status to `**In Progress**` in the epic
+5. Execute the milestone deliverables completely
+6. Mark the milestone `**Complete (YYYY-MM-DD)**` in the epic
+7. Move to the next assigned milestone
+8. When all your milestones are complete, delete the trigger: `rm .claude-dispatch/<epic>.json`
+9. If all agents' milestones are complete, update epic `status: Complete`
+
+**Never execute milestones assigned to a different agent.**
+**Always read the epic file fresh before each milestone — another agent may have updated it.**
+
 ## Epic
 
 Full epic and milestone details: `~/.claude/docs/epics/DEVTOOLS_20260301T153830Z_Runabouts_EPIC-001_go_devtools_monorepo.md`
