@@ -1,38 +1,51 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS := -ldflags "-X github.com/blo-grindr/runabout/internal/version.Version=$(VERSION) \
-	-X github.com/blo-grindr/runabout/internal/version.Commit=$(COMMIT) \
-	-X github.com/blo-grindr/runabout/internal/version.Date=$(DATE)"
-
-BINARIES := shellprof mdq perfgate
-PROTON_BINARIES := protonexport
-PROTON_LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
+LDFLAGS  = -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
 INSTALL_DIR := $(shell go env GOPATH)/bin
 
-.PHONY: build install clean
+# Core tools (root module)
+CORE := mdq perfgate shellprof
 
-build:
-	@for bin in $(BINARIES); do \
-		echo "Building $$bin..."; \
-		go build $(LDFLAGS) -o bin/$$bin ./cmd/$$bin; \
-	done
-	@for bin in $(PROTON_BINARIES); do \
-		echo "Building $$bin (separate module)..."; \
-		cd cmd/$$bin && go build $(PROTON_LDFLAGS) -o ../../bin/$$bin . && cd ../..; \
-	done
-	@echo "All binaries built in bin/"
+# Separate-module tools (each has its own go.mod under cmd/)
+SEPARATE := wasend
 
-install:
-	@for bin in $(BINARIES); do \
-		echo "Installing $$bin → $(INSTALL_DIR)/$$bin"; \
-		go install $(LDFLAGS) ./cmd/$$bin; \
-	done
-	@for bin in $(PROTON_BINARIES); do \
-		echo "Installing $$bin → $(INSTALL_DIR)/$$bin"; \
-		cd cmd/$$bin && go install $(PROTON_LDFLAGS) . && cd ../..; \
-	done
-	@echo "Installed to $(INSTALL_DIR)"
+ALL := $(CORE) $(SEPARATE)
+
+.PHONY: all core build clean install test $(ALL)
+
+# --- Aggregate targets ---
+
+all: $(ALL)
+
+core: $(CORE)
+
+build: all
+
+install: $(addprefix install-,$(ALL))
 
 clean:
 	rm -rf bin/
+
+test:
+	go test ./...
+
+# --- Core tools (root module) ---
+
+$(CORE):
+	@echo "Building $@..."
+	@go build $(LDFLAGS) -o bin/$@ ./cmd/$@
+
+$(addprefix install-,$(CORE)):
+	@echo "Installing $(subst install-,,$@) → $(INSTALL_DIR)/$(subst install-,,$@)"
+	@go install $(LDFLAGS) ./cmd/$(subst install-,,$@)
+
+# --- Separate-module tools ---
+
+wasend:
+	@echo "Building wasend..."
+	@cd cmd/wasend && go build $(LDFLAGS) -o ../../bin/wasend .
+
+install-wasend:
+	@echo "Installing wasend → $(INSTALL_DIR)/wasend"
+	@cd cmd/wasend && go install $(LDFLAGS) .

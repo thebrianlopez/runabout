@@ -7,15 +7,20 @@ import (
 
 	"github.com/blo-grindr/runabout/internal/perfgate"
 	"github.com/blo-grindr/runabout/internal/telemetry"
-	"github.com/blo-grindr/runabout/internal/version"
 	"github.com/spf13/cobra"
+)
+
+var (
+	version = "0.1.0"
+	commit  = "dev"
+	date    = "unknown"
 )
 
 func main() {
 	rootCmd := &cobra.Command{
 		Use:     "perfgate",
 		Short:   "Performance gate with statistical before/after comparison",
-		Version: fmt.Sprintf("%s (commit: %s, built: %s)", version.Version, version.Commit, version.Date),
+		Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
 	}
 
 	rootCmd.AddCommand(runCmd())

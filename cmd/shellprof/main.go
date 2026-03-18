@@ -6,15 +6,20 @@ import (
 
 	"github.com/blo-grindr/runabout/internal/shellprof"
 	"github.com/blo-grindr/runabout/internal/telemetry"
-	"github.com/blo-grindr/runabout/internal/version"
 	"github.com/spf13/cobra"
+)
+
+var (
+	version = "0.1.0"
+	commit  = "dev"
+	date    = "unknown"
 )
 
 func main() {
 	rootCmd := &cobra.Command{
 		Use:     "shellprof",
 		Short:   "Shell function profiler with call graphs",
-		Version: fmt.Sprintf("%s (commit: %s, built: %s)", version.Version, version.Commit, version.Date),
+		Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
 	}
 
 	rootCmd.AddCommand(profileCmd())

@@ -32,6 +32,7 @@ cmd/perfgate/     # perfgate CLI entry point (3 subcommands: run, compare, gate)
 cmd/shellprof/    # shellprof CLI entry point (3 subcommands: profile, trace, list)
 cmd/protonexport/ # protonexport CLI (separate module — Proton deps isolated from root)
   go-proton-api/  # vendored go-proton-api with auth fixes (local replace)
+cmd/wasend/       # wasend CLI (separate module — whatsmeow/sqlite deps isolated from root)
 internal/mdq/     # markdown parsing, querying, output formatting
 internal/perfgate/ # benchmark runner, statistics, gating logic
 internal/shellprof/ # fish instrumentation, profiling, call graph
