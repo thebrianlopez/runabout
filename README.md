@@ -1,5 +1,9 @@
 # runabout
 
+[![CI](https://github.com/blo-grindr/runabout/actions/workflows/test.yml/badge.svg)](https://github.com/blo-grindr/runabout/actions/workflows/test.yml)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
+![Tools](https://img.shields.io/badge/tools-5_CLIs-blue)
+
 Go devtools monorepo — five CLI tools for shell optimization and personal workflows.
 
 - **mdq** — query fields and tables across markdown files
