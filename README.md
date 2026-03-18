@@ -6,6 +6,8 @@
 
 Go devtools monorepo — five CLI tools for shell optimization and personal workflows.
 
+These tools occupy the **Go CLI layer** of an [automation knowledge topology](https://github.com/blo-grindr/infra-knowledge) — they represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
+
 - **mdq** — query fields and tables across markdown files
 - **perfgate** — statistical before/after performance gating
 - **shellprof** — fish shell function profiler with call graphs
@@ -56,7 +58,7 @@ mdq list "docs/**/*.md" --headings
 mdq list "docs/**/*.md" --headings --level 2
 ```
 
-Output formats: `text` (default), `json`, `table`.
+Output formats: `text` (default), `json`, `table`. JSON output enables direct consumption by AI agents and automation consumers without shell parsing.
 
 ## perfgate
 
@@ -73,11 +75,11 @@ perfgate compare --before baseline.json --after current.json
 perfgate gate --cmd "fish -c 'nowdate'" --baseline baseline.json --max-regression 5
 ```
 
-Stats reported: mean, median, P95, stddev, min, max. Exit code 1 on gate failure.
+Stats reported: mean, median, P95, stddev, min, max. Exit code 1 on gate failure. Perfgate provides the measurement layer for detecting when shell functions are fast enough to stay at the fish layer vs. when they should graduate to a compiled binary.
 
 ## shellprof
 
-Profile fish shell functions to find slow call paths.
+Profile fish shell functions to find slow call paths. Shellprof surfaces call-graph data that feeds graduation decisions — identifying which fish functions are hot enough to warrant crystallization into Go.
 
 ```bash
 # Profile a function (default: 3-level call depth)
@@ -136,6 +138,12 @@ go test ./... # run root module tests
 ```
 
 Version, commit, and build date are injected at build time via ldflags.
+
+## Telemetry
+
+Every tool emits schema v2 JSONL events to `~/.automation-metrics/events/YYYY-MM-DD.jsonl` via `emit_jsonl`. Events include command, subcommand, duration, exit code, and flags — correlated by `session_id` across the full [automation topology](https://github.com/blo-grindr/infra-knowledge).
+
+This telemetry feeds topology consumers like `agrad` (graduation signals) and `aregress` (regression detection), which track whether a tool is earning its place at the Go CLI layer or should be simplified back to a shell function.
 
 ## Layout
 
