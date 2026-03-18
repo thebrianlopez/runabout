@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
@@ -16,6 +17,7 @@ import (
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 
@@ -28,7 +30,10 @@ var (
 	date    = "unknown"
 )
 
-var dbPath string
+var (
+	dbPath string
+	debug  bool
+)
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -40,6 +45,7 @@ func main() {
 	home, _ := os.UserHomeDir()
 	defaultDB := filepath.Join(home, ".wasend", "session.db")
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", defaultDB, "path to session database")
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "enable debug logging")
 
 	rootCmd.AddCommand(loginCmd())
 	rootCmd.AddCommand(sendCmd())
@@ -56,18 +62,25 @@ func newClient() (*whatsmeow.Client, *sqlstore.Container, error) {
 		return nil, nil, fmt.Errorf("create db directory: %w", err)
 	}
 
-	container, err := sqlstore.New("sqlite3", "file:"+dbPath+"?_foreign_keys=on", waLog.Noop)
+	var logger waLog.Logger
+	if debug {
+		logger = waLog.Stdout("wasend", "DEBUG", true)
+	} else {
+		logger = waLog.Noop
+	}
+
+	container, err := sqlstore.New(context.Background(), "sqlite3", "file:"+dbPath+"?_foreign_keys=on", logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)
 	}
 
-	deviceStore, err := container.GetFirstDevice()
+	deviceStore, err := container.GetFirstDevice(context.Background())
 	if err != nil {
 		container.Close()
 		return nil, nil, fmt.Errorf("get device: %w", err)
 	}
 
-	return whatsmeow.NewClient(deviceStore, waLog.Noop), container, nil
+	return whatsmeow.NewClient(deviceStore, logger), container, nil
 }
 
 func loginCmd() *cobra.Command {
@@ -86,19 +99,27 @@ func loginCmd() *cobra.Command {
 				return nil
 			}
 
-			// Must register a handler before Connect — whatsmeow needs it
-			// to process the pairing response.
-			client.AddEventHandler(func(evt interface{}) {})
+			client.AddEventHandler(func(evt interface{}) {
+				if debug {
+					fmt.Fprintf(os.Stderr, "[event] %T: %+v\n", evt, evt)
+				}
+			})
 
 			qrChan, err := client.GetQRChannel(context.Background())
 			if err != nil {
 				return fmt.Errorf("get QR channel: %w", err)
+			}
+			if debug {
+				fmt.Fprintln(os.Stderr, "[debug] QR channel obtained, connecting...")
 			}
 
 			if err := client.Connect(); err != nil {
 				return fmt.Errorf("connect: %w", err)
 			}
 			defer client.Disconnect()
+			if debug {
+				fmt.Fprintln(os.Stderr, "[debug] connected, waiting for QR events...")
+			}
 
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -112,12 +133,17 @@ func loginCmd() *cobra.Command {
 					if !ok {
 						return fmt.Errorf("QR channel closed unexpectedly")
 					}
+					if debug {
+						fmt.Fprintf(os.Stderr, "[debug] QR event: %s\n", evt.Event)
+					}
 					switch evt.Event {
 					case "code":
 						qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
 						fmt.Println("\nWaiting for scan...")
 					case "success":
 						fmt.Println("Login successful!")
+						// Give the client time to persist the session before defer disconnect
+						time.Sleep(2 * time.Second)
 						return nil
 					case "timeout":
 						return fmt.Errorf("QR code timed out — run login again")
@@ -182,10 +208,27 @@ Examples:
 				return fmt.Errorf("not logged in — run 'wasend login' first")
 			}
 
+			connected := make(chan struct{}, 1)
+			client.AddEventHandler(func(evt interface{}) {
+				switch evt.(type) {
+				case *events.Connected:
+					select {
+					case connected <- struct{}{}:
+					default:
+					}
+				}
+			})
+
 			if err := client.Connect(); err != nil {
 				return fmt.Errorf("connect: %w", err)
 			}
 			defer client.Disconnect()
+
+			select {
+			case <-connected:
+			case <-time.After(15 * time.Second):
+				return fmt.Errorf("timed out waiting for WhatsApp connection")
+			}
 
 			resp, err := client.SendMessage(context.Background(), jid, &waProto.Message{
 				Conversation: proto.String(text),
@@ -222,7 +265,7 @@ func logoutCmd() *cobra.Command {
 				return nil
 			}
 
-			if err := client.Store.Delete(); err != nil {
+			if err := client.Store.Delete(context.Background()); err != nil {
 				return fmt.Errorf("delete session: %w", err)
 			}
 
