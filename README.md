@@ -2,25 +2,26 @@
 
 [![CI](https://github.com/blo-grindr/runabout/actions/workflows/test.yml/badge.svg)](https://github.com/blo-grindr/runabout/actions/workflows/test.yml)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
-![Tools](https://img.shields.io/badge/tools-5_CLIs-blue)
+![Tools](https://img.shields.io/badge/tools-6_CLIs-blue)
 
-Go devtools monorepo — five CLI tools for shell optimization and personal workflows.
+Go devtools monorepo — six CLI tools for shell optimization and personal workflows.
 
 These tools occupy the **Go CLI layer** of an [automation knowledge topology](https://github.com/blo-grindr/infra-knowledge) — they represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
 
 - **mdq** — query fields and tables across markdown files
 - **perfgate** — statistical before/after performance gating
 - **shellprof** — fish shell function profiler with call graphs
+- **hookval** — validate Claude hook signal contract against schema
 - **wasend** — send WhatsApp messages from the command line
 - **protonexport** — export ProtonMail conversations to markdown
 
 ## Status
 
-All 5 tools build and pass tests on Go 1.25. wasend Cloud API support (WhatsApp Business API via `--api cloud`) is planned under [EPIC-001 M4](docs/epics/PERSONAL_20260319T131921Z_WhatsApp_EPIC-001_whatsapp_business_api_account.md) — implementation ready, pending permanent access token (M2).
+All 6 tools build and pass tests on Go 1.25. `hookval` added (EPIC-002 M4) — validates Claude hook signal contract, generates CLAUDE.md signal table from schema. wasend Cloud API support planned, pending permanent access token.
 
-- Added auto-dispatch block for epic coordination (EPIC-006 M7)
-- wasend Business API implementation plan scoped: `cloud.go`, `--api cloud`/`--template` flags, zero new deps
-- Monorepo standardization complete: unified telemetry, version helper, Go 1.25
+- `hookval` delivered: `validate`, `gen-docs`, `lint-schema`; schema-driven, 15 unit tests; wired into `CORE`
+- Hook contract enforcement active: `hookval-on-edit.fish` fires on `prompt-context.fish` or schema edits
+- Auto-dispatch block added for epic coordination (EPIC-006 M7)
 
 **Last Updated:** 2026-03-19
 
@@ -95,6 +96,26 @@ shellprof trace nowdate
 shellprof profile nowdate --format flame
 ```
 
+## hookval
+
+Validate the Claude `UserPromptSubmit` hook signal contract against a machine-readable schema.
+
+```bash
+# Run hook, validate all 8 emitted signals against schema
+hookval validate
+
+# Generate Hook Context Signals markdown table (for CLAUDE.md insertion)
+hookval gen-docs
+
+# Validate schema file is well-formed
+hookval lint-schema
+
+# Override defaults
+hookval validate --schema ~/.claude/hook-signal-schema.yaml --hook ~/.claude/hooks/prompt-context.fish
+```
+
+Exit 0 = all signals pass. Exit 1 = per-signal violation report. Prevents silent doc/impl drift in hook context injection.
+
 ## wasend
 
 Send WhatsApp messages from the command line. Supports two transports: **personal** (whatsmeow, QR login) and **cloud** (WhatsApp Business API, token-based — [EPIC-001 M4](docs/epics/PERSONAL_20260319T131921Z_WhatsApp_EPIC-001_whatsapp_business_api_account.md), planned).
@@ -128,9 +149,9 @@ Credentials can also be set via `PROTON_USERNAME`, `PROTON_PASSWORD`, `PROTON_SE
 ## Build
 
 ```bash
-make build    # builds all 5 binaries to bin/
+make build    # builds all 6 binaries to bin/
 make install  # go install → ~/go/bin
-make core     # builds mdq, perfgate, shellprof only
+make core     # builds mdq, perfgate, shellprof, hookval only
 make clean    # removes bin/
 go test ./... # run root module tests
 ```
@@ -149,11 +170,13 @@ This telemetry feeds topology consumers like `agrad` (graduation signals) and `a
 cmd/mdq/              # mdq entry point
 cmd/perfgate/         # perfgate entry point
 cmd/shellprof/        # shellprof entry point
+cmd/hookval/          # hookval entry point
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
 internal/mdq/         # markdown parser, query engine, output formatting
 internal/perfgate/    # benchmark runner, statistics, gating logic
 internal/shellprof/   # fish instrumentation, profiling, call graph
+internal/hookval/     # schema parsing, signal validation, doc generation
 internal/telemetry/   # CLI telemetry via emit_jsonl
 internal/version/     # shared version formatting
 ```
