@@ -16,13 +16,13 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 
 ## Status
 
-All 5 tools build and pass tests on Go 1.25. Monorepo standardization complete: unified telemetry, version helper, code extraction, and restored protonexport with vendored go-proton-api.
+All 5 tools build and pass tests on Go 1.25. wasend Cloud API support (WhatsApp Business API via `--api cloud`) is planned under [EPIC-001 M4](docs/epics/PERSONAL_20260319T131921Z_WhatsApp_EPIC-001_whatsapp_business_api_account.md) — implementation ready, pending permanent access token (M2).
 
-- Standardized all modules on Go 1.25.0
-- Added telemetry to wasend and protonexport (copied pattern from `internal/telemetry`)
-- Extracted wasend logic into `message.go`, `client.go`; added protonexport helper tests
+- Added auto-dispatch block for epic coordination (EPIC-006 M7)
+- wasend Business API implementation plan scoped: `cloud.go`, `--api cloud`/`--template` flags, zero new deps
+- Monorepo standardization complete: unified telemetry, version helper, Go 1.25
 
-**Last Updated:** 2026-03-18
+**Last Updated:** 2026-03-19
 
 ## Install
 
@@ -97,20 +97,18 @@ shellprof profile nowdate --format flame
 
 ## wasend
 
-Send WhatsApp messages from the command line via whatsmeow.
+Send WhatsApp messages from the command line. Supports two transports: **personal** (whatsmeow, QR login) and **cloud** (WhatsApp Business API, token-based — [EPIC-001 M4](docs/epics/PERSONAL_20260319T131921Z_WhatsApp_EPIC-001_whatsapp_business_api_account.md), planned).
 
 ```bash
-# Authenticate (scan QR code)
+# Personal (default) — authenticate via QR code
 wasend login
-
-# Send a message
 wasend send -t 15551234567 "Hello from CLI"
-
-# Pipe message from stdin
 echo "Hello" | wasend send -t 15551234567 --stdin
-
-# Remove session
 wasend logout
+
+# Cloud API (planned) — headless, token-based
+wasend send --api cloud -t 15551234567 "Hello from CLI"
+wasend send --api cloud -t 15551234567 --template hello_world
 ```
 
 ## protonexport
