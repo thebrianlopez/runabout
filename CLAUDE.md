@@ -1,6 +1,6 @@
 # Runabout
 
-Go devtools monorepo — five CLI tools for shell optimization and personal workflows.
+Go devtools monorepo — six CLI tools for shell optimization and personal workflows.
 
 ## Module
 
@@ -29,10 +29,10 @@ Satellite modules can't import `internal/` from the root module (Go visibility r
 ## Build
 
 ```bash
-make build      # builds all 5 binaries to bin/
+make build      # builds all 6 binaries to bin/
 make install    # go install → ~/go/bin
 make clean      # removes bin/
-make core       # builds only mdq, perfgate, shellprof
+make core       # builds only mdq, perfgate, shellprof, hookval
 ```
 
 The Makefile has two groups: `CORE` (root module tools built with `go build ./cmd/<tool>`) and `SEPARATE` (satellite tools built with `cd cmd/<tool> && go build`). Both use the same ldflags for version injection.
@@ -55,6 +55,7 @@ Use `t.TempDir()` for file isolation in tests. No test fixtures checked in. Pure
 cmd/mdq/              # mdq CLI entry point (4 subcommands: query, table, extract, list)
 cmd/perfgate/         # perfgate CLI entry point (3 subcommands: run, compare, gate)
 cmd/shellprof/        # shellprof CLI entry point (3 subcommands: profile, trace, list)
+cmd/hookval/          # hookval CLI entry point (3 subcommands: validate, gen-docs, lint-schema)
 cmd/wasend/           # wasend CLI (separate module — whatsmeow/sqlite deps isolated)
   client.go           # WhatsApp client construction
   message.go          # message resolution and recipient parsing
@@ -65,6 +66,7 @@ cmd/protonexport/     # protonexport CLI (separate module — Proton deps isolat
 internal/mdq/         # markdown parsing, querying, output formatting
 internal/perfgate/    # benchmark runner, statistics, gating logic
 internal/shellprof/   # fish instrumentation, profiling, call graph
+internal/hookval/     # schema parsing, signal validation, doc generation
 internal/telemetry/   # CLI telemetry via emit_jsonl (core tools)
 internal/version/     # shared version formatting (core tools)
 go.work               # Go workspace: root + cmd/protonexport + cmd/wasend

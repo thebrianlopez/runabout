@@ -23,7 +23,7 @@ All 6 tools build and pass tests on Go 1.25. `hookval` added (EPIC-002 M4) — v
 - Hook contract enforcement active: `hookval-on-edit.fish` fires on `prompt-context.fish` or schema edits
 - Auto-dispatch block added for epic coordination (EPIC-006 M7)
 
-**Last Updated:** 2026-03-19
+**Last Updated:** 2026-03-21
 
 ## Install
 
