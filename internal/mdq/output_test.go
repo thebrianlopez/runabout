@@ -80,6 +80,81 @@ func TestFormatTableRenderer(t *testing.T) {
 	}
 }
 
+func TestGroupByDir(t *testing.T) {
+	results := []QueryResult{
+		{File: "docs/epics/a.md", Field: "heading", Value: "Epic A"},
+		{File: "docs/epics/b.md", Field: "heading", Value: "Epic B"},
+		{File: "docs/ideas/c.md", Field: "heading", Value: "Idea C"},
+	}
+	groups := GroupByDir(results)
+	if len(groups) != 2 {
+		t.Fatalf("got %d groups, want 2", len(groups))
+	}
+	if groups[0].Folder != "epics" {
+		t.Errorf("groups[0].Folder = %q, want epics", groups[0].Folder)
+	}
+	if groups[0].Count != 2 {
+		t.Errorf("groups[0].Count = %d, want 2", groups[0].Count)
+	}
+	if groups[1].Folder != "ideas" {
+		t.Errorf("groups[1].Folder = %q, want ideas", groups[1].Folder)
+	}
+	if groups[1].Count != 1 {
+		t.Errorf("groups[1].Count = %d, want 1", groups[1].Count)
+	}
+}
+
+func TestFormatGroupedText(t *testing.T) {
+	groups := []GroupEntry{
+		{Folder: "epics", Count: 2, Titles: []string{"Epic A", "Epic B"}},
+		{Folder: "ideas", Count: 1, Titles: []string{"Idea C"}},
+	}
+	got := FormatGrouped(groups, "text")
+	if !strings.Contains(got, "epics/ (2 files)") {
+		t.Errorf("missing epics header in %q", got)
+	}
+	if !strings.Contains(got, "  • Epic A") {
+		t.Errorf("missing Epic A in %q", got)
+	}
+	if !strings.Contains(got, "ideas/ (1 files)") {
+		t.Errorf("missing ideas header in %q", got)
+	}
+}
+
+func TestFormatGroupedJSON(t *testing.T) {
+	groups := []GroupEntry{
+		{Folder: "epics", Count: 2, Titles: []string{"A", "B"}},
+	}
+	got := FormatGrouped(groups, "json")
+	var parsed []GroupEntry
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, got)
+	}
+	if len(parsed) != 1 || parsed[0].Folder != "epics" || parsed[0].Count != 2 {
+		t.Errorf("unexpected parsed result: %+v", parsed)
+	}
+}
+
+func TestFormatGroupedTable(t *testing.T) {
+	groups := []GroupEntry{
+		{Folder: "epics", Count: 2, Titles: []string{"A", "B"}},
+	}
+	got := FormatGrouped(groups, "table")
+	if !strings.Contains(got, "FOLDER") || !strings.Contains(got, "COUNT") {
+		t.Errorf("missing table headers in %q", got)
+	}
+	if !strings.Contains(got, "epics") {
+		t.Errorf("missing epics row in %q", got)
+	}
+}
+
+func TestFormatGroupedEmpty(t *testing.T) {
+	got := FormatGrouped(nil, "text")
+	if got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
 func TestFormatSection(t *testing.T) {
 	sec := &Section{
 		Content: "Hello world.",

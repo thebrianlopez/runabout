@@ -180,3 +180,88 @@ func TestExecuteBadPattern(t *testing.T) {
 		t.Error("expected error for bad glob pattern")
 	}
 }
+
+func TestExecuteWithExclude(t *testing.T) {
+	dir := t.TempDir()
+	// Create subdirectories with markdown files.
+	for _, sub := range []string{"epics", "standups", "ideas"} {
+		subDir := filepath.Join(dir, sub)
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, subDir, "doc.md", "# "+sub+" Doc\n")
+	}
+
+	// Without exclude: all 3 files.
+	all, err := ExecuteWithOptions(filepath.Join(dir, "*/*.md"), Query{Heading: "*"}, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("got %d results without exclude, want 3", len(all))
+	}
+
+	// With exclude: skip standups.
+	filtered, err := ExecuteWithOptions(filepath.Join(dir, "*/*.md"), Query{Heading: "*"}, ListOptions{
+		Exclude: []string{"standups"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered) != 2 {
+		t.Fatalf("got %d results with exclude, want 2", len(filtered))
+	}
+	for _, r := range filtered {
+		if filepath.Base(filepath.Dir(r.File)) == "standups" {
+			t.Errorf("standups should have been excluded, got %s", r.File)
+		}
+	}
+}
+
+func TestExecuteGitAlwaysExcluded(t *testing.T) {
+	dir := t.TempDir()
+	gitDir := filepath.Join(dir, ".git")
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, gitDir, "config.md", "# Git Config\n")
+	okDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(okDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, okDir, "readme.md", "# Readme\n")
+
+	results, err := ExecuteWithOptions(filepath.Join(dir, "*/*.md"), Query{Heading: "*"}, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1 (.git should be auto-excluded)", len(results))
+	}
+	if filepath.Base(filepath.Dir(results[0].File)) != "docs" {
+		t.Errorf("expected docs file, got %s", results[0].File)
+	}
+}
+
+func TestShouldExclude(t *testing.T) {
+	excludeSet := map[string]bool{".git": true, "temp": true}
+
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"docs/epics/file.md", false},
+		{".git/config.md", true},
+		{"a/temp/file.md", true},
+		{"a/b/temp/file.md", true},
+		{"temp/file.md", true},
+		{"docs/temporary/file.md", false}, // "temporary" != "temp"
+	}
+
+	for _, tt := range tests {
+		got := shouldExclude(tt.path, excludeSet)
+		if got != tt.want {
+			t.Errorf("shouldExclude(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
