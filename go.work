@@ -3,5 +3,6 @@ go 1.25.0
 use (
 	.
 	./cmd/protonexport
+	./cmd/sharehook
 	./cmd/wasend
 )
