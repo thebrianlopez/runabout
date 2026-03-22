@@ -3,6 +3,8 @@ package mdq
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -125,6 +127,103 @@ func FormatSection(s *Section) string {
 	for _, t := range s.Tables {
 		b.WriteString("\n\n")
 		b.WriteString(FormatTable(t))
+	}
+	return b.String()
+}
+
+// GroupEntry represents a directory group with its file count and titles.
+type GroupEntry struct {
+	Folder string   `json:"folder"`
+	Count  int      `json:"count"`
+	Titles []string `json:"titles"`
+}
+
+// GroupByDir groups query results by parent directory.
+func GroupByDir(results []QueryResult) []GroupEntry {
+	orderMap := map[string]int{}    // first-seen order
+	groups := map[string][]string{} // folder -> titles
+
+	for _, r := range results {
+		folder := filepath.Base(filepath.Dir(r.File))
+		if _, seen := orderMap[folder]; !seen {
+			orderMap[folder] = len(orderMap)
+		}
+		groups[folder] = append(groups[folder], r.Value)
+	}
+
+	entries := make([]GroupEntry, 0, len(groups))
+	for folder, titles := range groups {
+		entries = append(entries, GroupEntry{
+			Folder: folder,
+			Count:  len(titles),
+			Titles: titles,
+		})
+	}
+
+	// Sort by first-seen order (stable directory ordering from glob).
+	sort.Slice(entries, func(i, j int) bool {
+		return orderMap[entries[i].Folder] < orderMap[entries[j].Folder]
+	})
+
+	return entries
+}
+
+// FormatGrouped renders grouped results in the specified format.
+func FormatGrouped(groups []GroupEntry, format string) string {
+	if len(groups) == 0 {
+		return ""
+	}
+	switch format {
+	case "json":
+		return formatGroupedJSON(groups)
+	case "table":
+		return formatGroupedTable(groups)
+	default:
+		return formatGroupedText(groups)
+	}
+}
+
+func formatGroupedText(groups []GroupEntry) string {
+	var b strings.Builder
+	for _, g := range groups {
+		fmt.Fprintf(&b, "%s/ (%d files)\n", g.Folder, g.Count)
+		for _, t := range g.Titles {
+			fmt.Fprintf(&b, "  • %s\n", t)
+		}
+	}
+	return b.String()
+}
+
+func formatGroupedJSON(groups []GroupEntry) string {
+	data, err := json.MarshalIndent(groups, "", "  ")
+	if err != nil {
+		return fmt.Sprintf(`{"error": %q}`, err.Error())
+	}
+	return string(data) + "\n"
+}
+
+func formatGroupedTable(groups []GroupEntry) string {
+	folderW, countW, titlesW := len("FOLDER"), len("COUNT"), len("TITLES")
+	for _, g := range groups {
+		if len(g.Folder) > folderW {
+			folderW = len(g.Folder)
+		}
+		countStr := fmt.Sprintf("%d", g.Count)
+		if len(countStr) > countW {
+			countW = len(countStr)
+		}
+		joined := strings.Join(g.Titles, ", ")
+		if len(joined) > titlesW {
+			titlesW = len(joined)
+		}
+	}
+
+	var b strings.Builder
+	fmtStr := fmt.Sprintf("%%-%ds  %%%ds  %%-%ds\n", folderW, countW, titlesW)
+	fmt.Fprintf(&b, fmtStr, "FOLDER", "COUNT", "TITLES")
+	fmt.Fprintf(&b, "%s  %s  %s\n", strings.Repeat("-", folderW), strings.Repeat("-", countW), strings.Repeat("-", titlesW))
+	for _, g := range groups {
+		fmt.Fprintf(&b, fmtStr, g.Folder, fmt.Sprintf("%d", g.Count), strings.Join(g.Titles, ", "))
 	}
 	return b.String()
 }

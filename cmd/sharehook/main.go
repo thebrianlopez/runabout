@@ -70,6 +70,8 @@ Configuration via flags or environment variables:
 				session = envSession
 			}
 
+			ring := NewRingLog(100)
+			log.SetOutput(ring.Writer())
 			if debug {
 				log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 				log.Printf("[DEBUG] config: port=%d session=%q debug=true", port, session)
@@ -77,7 +79,7 @@ Configuration via flags or environment variables:
 
 			tmux := &TmuxRunner{DefaultSession: session, Debug: debug}
 			router := NewRouter(tmux, debug)
-			srv := NewServer(token, router, debug)
+			srv := NewServer(token, router, ring, debug)
 
 			httpServer := &http.Server{
 				Addr:         fmt.Sprintf(":%d", port),

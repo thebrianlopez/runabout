@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -29,20 +31,86 @@ type ShareResponse struct {
 	Timestamp string `json:"timestamp"`
 }
 
+// RingLog is a thread-safe ring buffer that captures log lines and
+// fans out new lines to SSE subscribers.
+type RingLog struct {
+	mu    sync.Mutex
+	lines []string
+	max   int
+	subs  map[chan string]struct{}
+}
+
+// NewRingLog creates a ring buffer that keeps the last n log lines.
+func NewRingLog(n int) *RingLog {
+	return &RingLog{max: n, subs: make(map[chan string]struct{})}
+}
+
+// Write implements io.Writer so RingLog can be used with log.SetOutput.
+func (r *RingLog) Write(p []byte) (int, error) {
+	line := string(p)
+	r.mu.Lock()
+	r.lines = append(r.lines, line)
+	if len(r.lines) > r.max {
+		r.lines = r.lines[len(r.lines)-r.max:]
+	}
+	// Fan out to subscribers (non-blocking).
+	for ch := range r.subs {
+		select {
+		case ch <- line:
+		default:
+		}
+	}
+	r.mu.Unlock()
+	return len(p), nil
+}
+
+// Lines returns a copy of the buffered log lines.
+func (r *RingLog) Lines() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, len(r.lines))
+	copy(out, r.lines)
+	return out
+}
+
+// Subscribe returns a channel that receives new log lines.
+func (r *RingLog) Subscribe() chan string {
+	ch := make(chan string, 64)
+	r.mu.Lock()
+	r.subs[ch] = struct{}{}
+	r.mu.Unlock()
+	return ch
+}
+
+// Unsubscribe removes a subscriber channel.
+func (r *RingLog) Unsubscribe(ch chan string) {
+	r.mu.Lock()
+	delete(r.subs, ch)
+	r.mu.Unlock()
+	close(ch)
+}
+
+// Writer returns an io.Writer that fans out to both stdout and the ring buffer.
+func (r *RingLog) Writer() io.Writer {
+	return io.MultiWriter(os.Stdout, r)
+}
+
 // Server handles HTTP requests with authentication and rate limiting.
 type Server struct {
 	token   string
 	router  *Router
 	limiter *rateLimiter
+	ring    *RingLog
 	debug   bool
 }
 
 // NewServer creates a new Server with the given bearer token and router.
-func NewServer(token string, router *Router, debug bool) *Server {
+func NewServer(token string, router *Router, ring *RingLog, debug bool) *Server {
 	return &Server{
 		token:   token,
 		router:  router,
 		limiter: newRateLimiter(30, time.Minute),
+		ring:    ring,
 		debug:   debug,
 	}
 }
@@ -52,7 +120,79 @@ func (s *Server) Mux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/share", s.handleShare)
 	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/logs", s.handleLogs)
+	mux.HandleFunc("/logs/stream", s.handleLogStream)
 	return mux
+}
+
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Auth — same bearer token as /share
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	for _, line := range s.ring.Lines() {
+		io.WriteString(w, line)
+	}
+}
+
+func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Auth via query param (?token=...) since browsers can't set headers on EventSource.
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		// Also accept Authorization header for curl usage.
+		auth := r.Header.Get("Authorization")
+		if strings.HasPrefix(auth, "Bearer ") {
+			token = strings.TrimPrefix(auth, "Bearer ")
+		}
+	}
+	if token != s.token {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Replay buffered lines first.
+	for _, line := range s.ring.Lines() {
+		fmt.Fprintf(w, "data: %s\n", strings.TrimRight(line, "\n"))
+	}
+	flusher.Flush()
+
+	// Stream new lines until client disconnects.
+	ch := s.ring.Subscribe()
+	defer s.ring.Unsubscribe(ch)
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case line := <-ch:
+			fmt.Fprintf(w, "data: %s\n", strings.TrimRight(line, "\n"))
+			flusher.Flush()
+		}
+	}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

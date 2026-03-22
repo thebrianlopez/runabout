@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/blo-grindr/runabout/internal/mdq"
 	"github.com/blo-grindr/runabout/internal/telemetry"
@@ -128,6 +129,8 @@ func listCmd() *cobra.Command {
 	var headings bool
 	var level int
 	var format string
+	var exclude string
+	var groupBy string
 
 	cmd := &cobra.Command{
 		Use:   "list <glob>",
@@ -138,11 +141,23 @@ func listCmd() *cobra.Command {
 			if headings {
 				q.Heading = "*"
 			}
-			results, err := mdq.Execute(args[0], q)
+
+			opts := mdq.ListOptions{GroupBy: groupBy}
+			if exclude != "" {
+				opts.Exclude = strings.Split(exclude, ",")
+			}
+
+			results, err := mdq.ExecuteWithOptions(args[0], q, opts)
 			if err != nil {
 				return err
 			}
-			fmt.Print(mdq.Format(results, format))
+
+			if opts.GroupBy == "dir" {
+				groups := mdq.GroupByDir(results)
+				fmt.Print(mdq.FormatGrouped(groups, format))
+			} else {
+				fmt.Print(mdq.Format(results, format))
+			}
 			return nil
 		},
 	}
@@ -150,6 +165,8 @@ func listCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&headings, "headings", false, "list headings only")
 	cmd.Flags().IntVar(&level, "level", 0, "filter by heading level")
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, table")
+	cmd.Flags().StringVar(&exclude, "exclude", "", "comma-separated directory names to skip")
+	cmd.Flags().StringVar(&groupBy, "group-by", "", "group results (supported: dir)")
 
 	return cmd
 }

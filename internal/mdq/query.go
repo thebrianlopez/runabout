@@ -23,8 +23,19 @@ type QueryResult struct {
 	Value   string
 }
 
+// ListOptions controls filtering and grouping for list operations.
+type ListOptions struct {
+	Exclude []string // directory names to skip
+	GroupBy string   // "dir" to group by parent directory
+}
+
 // Execute runs a query across files matching the glob pattern.
 func Execute(pattern string, q Query) ([]QueryResult, error) {
+	return ExecuteWithOptions(pattern, q, ListOptions{})
+}
+
+// ExecuteWithOptions runs a query with exclude filtering.
+func ExecuteWithOptions(pattern string, q Query, opts ListOptions) ([]QueryResult, error) {
 	files, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("invalid glob pattern: %w", err)
@@ -33,8 +44,20 @@ func Execute(pattern string, q Query) ([]QueryResult, error) {
 		return nil, nil
 	}
 
+	// Always exclude .git, plus any user-specified directories.
+	excludeSet := map[string]bool{".git": true}
+	for _, e := range opts.Exclude {
+		e = strings.TrimSpace(e)
+		if e != "" {
+			excludeSet[e] = true
+		}
+	}
+
 	var results []QueryResult
 	for _, path := range files {
+		if shouldExclude(path, excludeSet) {
+			continue
+		}
 		r, err := queryFile(path, q)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
@@ -42,6 +65,19 @@ func Execute(pattern string, q Query) ([]QueryResult, error) {
 		results = append(results, r...)
 	}
 	return results, nil
+}
+
+// shouldExclude returns true if any path component matches an excluded directory name.
+func shouldExclude(path string, excludeSet map[string]bool) bool {
+	dir := filepath.Dir(path)
+	for dir != "." && dir != "/" {
+		base := filepath.Base(dir)
+		if excludeSet[base] {
+			return true
+		}
+		dir = filepath.Dir(dir)
+	}
+	return false
 }
 
 func queryFile(path string, q Query) ([]QueryResult, error) {
