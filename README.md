@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/blo-grindr/runabout/actions/workflows/test.yml/badge.svg)](https://github.com/blo-grindr/runabout/actions/workflows/test.yml)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
-![Tools](https://img.shields.io/badge/tools-6_CLIs-blue)
+![Tools](https://img.shields.io/badge/tools-7_CLIs-blue)
 
-Go devtools monorepo — six CLI tools for shell optimization and personal workflows.
+Go devtools monorepo — seven CLI tools for shell optimization and personal workflows.
 
 These tools occupy the **Go CLI layer** of an [automation knowledge topology](https://github.com/blo-grindr/infra-knowledge) — they represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
 
@@ -12,18 +12,19 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 - **perfgate** — statistical before/after performance gating
 - **shellprof** — fish shell function profiler with call graphs
 - **hookval** — validate Claude hook signal contract against schema
+- **sharehook** — Android share → tmux webhook bridge
 - **wasend** — send WhatsApp messages from the command line
 - **protonexport** — export ProtonMail conversations to markdown
 
 ## Status
 
-All 6 tools build and pass tests on Go 1.25. `hookval` added (EPIC-002 M4) — validates Claude hook signal contract, generates CLAUDE.md signal table from schema. wasend Cloud API support planned, pending permanent access token.
+All 7 tools build and pass tests on Go 1.25. `sharehook` added — Android share-to-tmux webhook bridge (EPIC-001 M1–M3). wasend Cloud API support planned, pending permanent access token.
 
-- `hookval` delivered: `validate`, `gen-docs`, `lint-schema`; schema-driven, 15 unit tests; wired into `CORE`
-- Hook contract enforcement active: `hookval-on-edit.fish` fires on `prompt-context.fish` or schema edits
-- Auto-dispatch block added for epic coordination (EPIC-006 M7)
+- `sharehook` delivered: HTTP service with bearer auth, rate limiting, tmux `send-keys` integration, `uinit` URL routing, shell injection prevention
+- `hookval` delivered: `validate`, `gen-docs`, `lint-schema`; schema-driven, 15 unit tests
+- Auto-dispatch epic coordination active (EPIC-006 M7)
 
-**Last Updated:** 2026-03-21
+**Last Updated:** 2026-03-22
 
 ## Install
 
@@ -116,6 +117,20 @@ hookval validate --schema ~/.claude/hook-signal-schema.yaml --hook ~/.claude/hoo
 
 Exit 0 = all signals pass. Exit 1 = per-signal violation report. Prevents silent doc/impl drift in hook context injection.
 
+## sharehook
+
+Webhook service that bridges Android share actions to tmux sessions over Tailscale. Receives `POST /share` from HTTP Shortcuts, validates and routes payloads, then sends text or commands into a target tmux pane.
+
+```bash
+# Start the server (requires bearer token)
+sharehook serve --token $SHAREHOOK_TOKEN
+
+# Or via environment variables
+SHAREHOOK_TOKEN=secret SHAREHOOK_PORT=8080 SHAREHOOK_TMUX_SESSION=android-share sharehook serve
+```
+
+Payload types: `text` (paste into tmux), `url` (dispatch via `uinit`). Bearer token auth, in-memory rate limiting, session auto-create, graceful shutdown.
+
 ## wasend
 
 Send WhatsApp messages from the command line. Supports two transports: **personal** (whatsmeow, QR login) and **cloud** (WhatsApp Business API, token-based — [EPIC-001 M4](docs/epics/PERSONAL_20260319T131921Z_WhatsApp_EPIC-001_whatsapp_business_api_account.md), planned).
@@ -149,7 +164,7 @@ Credentials can also be set via `PROTON_USERNAME`, `PROTON_PASSWORD`, `PROTON_SE
 ## Build
 
 ```bash
-make build    # builds all 6 binaries to bin/
+make build    # builds all 7 binaries to bin/
 make install  # go install → ~/go/bin
 make core     # builds mdq, perfgate, shellprof, hookval only
 make clean    # removes bin/
@@ -171,6 +186,7 @@ cmd/mdq/              # mdq entry point
 cmd/perfgate/         # perfgate entry point
 cmd/shellprof/        # shellprof entry point
 cmd/hookval/          # hookval entry point
+cmd/sharehook/        # sharehook entry point (separate module)
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
 internal/mdq/         # markdown parser, query engine, output formatting
