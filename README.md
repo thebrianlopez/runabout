@@ -18,11 +18,11 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 
 ## Status
 
-All 7 tools build and pass tests on Go 1.25. `sharehook` added — Android share-to-tmux webhook bridge (EPIC-001 M1–M3). wasend Cloud API support planned, pending permanent access token.
+All 7 tools build and pass tests on Go 1.25. wasend Cloud API support planned, pending permanent access token.
 
-- `sharehook` delivered: HTTP service with bearer auth, rate limiting, tmux `send-keys` integration, `uinit` URL routing, shell injection prevention
+- `mdq list` extended with `--group-by dir` and `--exclude` flags (EPIC-004) — directory-level KB manifests in one call
+- `sharehook` delivered: Android share → tmux webhook bridge with bearer auth, rate limiting, `uinit` URL routing
 - `hookval` delivered: `validate`, `gen-docs`, `lint-schema`; schema-driven, 15 unit tests
-- Auto-dispatch epic coordination active (EPIC-006 M7)
 
 **Last Updated:** 2026-03-22
 
@@ -58,9 +58,18 @@ mdq list "docs/**/*.md" --headings
 
 # Filter headings by level
 mdq list "docs/**/*.md" --headings --level 2
+
+# Group by parent directory (KB manifest)
+mdq list "docs/*/*.md" --headings --level 1 --group-by dir
+
+# Exclude noisy directories
+mdq list "docs/*/*.md" --headings --group-by dir --exclude standups,temp,.output
+
+# JSON output for scripting/agents
+mdq list "docs/*/*.md" --headings --level 1 --group-by dir --format json
 ```
 
-Output formats: `text` (default), `json`, `table`. JSON output enables direct consumption by AI agents and automation consumers without shell parsing.
+Output formats: `text` (default), `json`, `table`. JSON output enables direct consumption by AI agents and automation consumers without shell parsing. `--group-by dir` produces `[{folder, count, titles}]` in JSON mode.
 
 ## perfgate
 
