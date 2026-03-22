@@ -2,6 +2,7 @@ bin/
 *.exe
 *.test
 *.out
+sharehook
 .DS_Store
 
 docs/
