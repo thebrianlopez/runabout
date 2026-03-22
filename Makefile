@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := protonexport wasend
+SEPARATE := protonexport sharehook wasend
 
 ALL := $(CORE) $(SEPARATE)
 
@@ -49,6 +49,18 @@ protonexport:
 install-protonexport:
 	@echo "Installing protonexport → $(INSTALL_DIR)/protonexport"
 	@cd cmd/protonexport && go install $(LDFLAGS) .
+
+sharehook:
+	@echo "Building sharehook..."
+	@cd cmd/sharehook && go build $(LDFLAGS) -o ../../bin/sharehook .
+
+install-sharehook:
+	@echo "Installing sharehook → $(INSTALL_DIR)/sharehook"
+	@cd cmd/sharehook && go install $(LDFLAGS) .
+
+serve-sharehook:
+	@echo "Starting sharehook on :8080..."
+	@SHAREHOOK_TOKEN=80dd9f732e836cfeddcd4c3c3f9149cd bin/sharehook serve
 
 wasend:
 	@echo "Building wasend..."
