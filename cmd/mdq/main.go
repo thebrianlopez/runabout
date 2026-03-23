@@ -125,6 +125,10 @@ func extractCmd() *cobra.Command {
 	}
 }
 
+func isGlob(s string) bool {
+	return strings.ContainsAny(s, "*?[")
+}
+
 func listCmd() *cobra.Command {
 	var headings bool
 	var level int
@@ -137,6 +141,12 @@ func listCmd() *cobra.Command {
 		Short: "List headings across markdown files",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if headings && isGlob(args[0]) {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"hint: to extract field values across multiple files, prefer:\n  mdq query %q --field <FieldName>\n\n",
+					args[0])
+			}
+
 			q := mdq.Query{Level: level}
 			if headings {
 				q.Heading = "*"
