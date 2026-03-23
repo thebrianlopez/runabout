@@ -20,11 +20,11 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 
 All 7 tools build and pass tests on Go 1.25. wasend Cloud API support planned, pending permanent access token.
 
-- `linkari` expanded: FCM push notifications for high-scoring uinit evaluations (score >= 80), `POST /notify` + `/register` endpoints, `ginit` action handler, `GET /actions` registry, `/logs` ring buffer + `/logs/stream` SSE, `--firebase-sa` flag for Firebase credentials
+- `linkari` queue/replay layer added: persistent job queue (`queue.go`) with replay support (`replay.go`), full test coverage
+- `mdq list <glob> --headings` emits stderr hint redirecting to `mdq query --field` when glob pattern detected
 - `mdq list` extended with `--group-by dir` and `--exclude` flags (EPIC-004)
-- `hookval` delivered: `validate`, `gen-docs`, `lint-schema`; schema-driven, 15 unit tests
 
-**Last Updated:** 2026-03-22
+**Last Updated:** 2026-03-23
 
 ## Install
 
