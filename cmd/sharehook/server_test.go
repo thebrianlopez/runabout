@@ -10,7 +10,9 @@ import (
 )
 
 func TestHealthz(t *testing.T) {
-	srv := NewServer("test-token", nil)
+	tmux := &TmuxRunner{DefaultSession: "test"}
+	router := NewRouter(tmux, false, "", 0)
+	srv := NewServer("test-token", router, NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -31,7 +33,7 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestShareUnauthorized(t *testing.T) {
-	srv := NewServer("secret", nil)
+	srv := NewServer("secret", nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	body := `{"type":"text","text":"hello"}`
@@ -46,7 +48,7 @@ func TestShareUnauthorized(t *testing.T) {
 }
 
 func TestShareNoAuth(t *testing.T) {
-	srv := NewServer("secret", nil)
+	srv := NewServer("secret", nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	body := `{"type":"text","text":"hello"}`
@@ -60,7 +62,7 @@ func TestShareNoAuth(t *testing.T) {
 }
 
 func TestShareMethodNotAllowed(t *testing.T) {
-	srv := NewServer("secret", nil)
+	srv := NewServer("secret", nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	req := httptest.NewRequest(http.MethodGet, "/share", nil)
@@ -131,5 +133,89 @@ func TestShellQuote(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("shellQuote(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestActionsReturnsProfileTagged(t *testing.T) {
+	tmux := &TmuxRunner{DefaultSession: "test"}
+	router := NewRouter(tmux, false, "", 0)
+	srv := NewServer("test-token", router, NewRingLog(10), false, nil)
+	mux := srv.Mux()
+
+	req := httptest.NewRequest(http.MethodGet, "/actions", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var actions []Action
+	if err := json.NewDecoder(w.Body).Decode(&actions); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Expect uinit_eng, uinit_life, uinit_finance plus note and ginit.
+	wantIDs := map[string]string{
+		"uinit_eng":     "eng",
+		"uinit_life":    "life",
+		"uinit_finance": "finance",
+	}
+	found := 0
+	for _, a := range actions {
+		if wantIcon, ok := wantIDs[a.ID]; ok {
+			found++
+			if a.Icon != wantIcon {
+				t.Errorf("action %q: icon = %q, want %q", a.ID, a.Icon, wantIcon)
+			}
+			if a.Type != "url" {
+				t.Errorf("action %q: type = %q, want %q", a.ID, a.Type, "url")
+			}
+		}
+	}
+	if found != len(wantIDs) {
+		t.Errorf("found %d profile actions, want %d (actions: %+v)", found, len(wantIDs), actions)
+	}
+}
+
+func TestProfileExtractionFromAction(t *testing.T) {
+	tmux := &TmuxRunner{DefaultSession: "test"}
+	router := NewRouter(tmux, false, "", 0)
+
+	// Route a request with action "uinit_life" — should extract profile "life".
+	req := &ShareRequest{
+		Type:   "url",
+		Action: "uinit_life",
+		URL:    "https://example.com",
+	}
+
+	// Route will call URLHandler.Handle which calls tmux.NewWindow.
+	// We don't have a real tmux, so we expect an error from the tmux call,
+	// but we can verify the profile was extracted by checking req.Profile after routing.
+	router.Route(req)
+
+	if req.Profile != "life" {
+		t.Errorf("profile = %q, want %q", req.Profile, "life")
+	}
+}
+
+func TestProfileFieldInPayload(t *testing.T) {
+	tmux := &TmuxRunner{DefaultSession: "test"}
+	router := NewRouter(tmux, false, "", 0)
+
+	// Explicit profile in payload takes precedence — action extraction
+	// does not overwrite it.
+	req := &ShareRequest{
+		Type:    "url",
+		Action:  "uinit_eng",
+		URL:     "https://example.com",
+		Profile: "finance",
+	}
+
+	router.Route(req)
+
+	if req.Profile != "finance" {
+		t.Errorf("profile = %q, want %q (explicit payload should take precedence)", req.Profile, "finance")
 	}
 }

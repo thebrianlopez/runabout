@@ -20,8 +20,8 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 
 All 7 tools build and pass tests on Go 1.25. wasend Cloud API support planned, pending permanent access token.
 
-- `mdq list` extended with `--group-by dir` and `--exclude` flags (EPIC-004) — directory-level KB manifests in one call
-- `sharehook` delivered: Android share → tmux webhook bridge with bearer auth, rate limiting, `uinit` URL routing
+- `sharehook` expanded: FCM push notifications for high-scoring uinit evaluations (score >= 80), `POST /notify` + `/register` endpoints, `ginit` action handler, `GET /actions` registry, `/logs` ring buffer + `/logs/stream` SSE, `--firebase-sa` flag for Firebase credentials
+- `mdq list` extended with `--group-by dir` and `--exclude` flags (EPIC-004)
 - `hookval` delivered: `validate`, `gen-docs`, `lint-schema`; schema-driven, 15 unit tests
 
 **Last Updated:** 2026-03-22
@@ -128,17 +128,21 @@ Exit 0 = all signals pass. Exit 1 = per-signal violation report. Prevents silent
 
 ## sharehook
 
-Webhook service that bridges Android share actions to tmux sessions over Tailscale. Receives `POST /share` from HTTP Shortcuts, validates and routes payloads, then sends text or commands into a target tmux pane.
+Webhook service that bridges Android share actions to tmux sessions over Tailscale. Receives `POST /share` from Android (HTTP Shortcuts or standalone APK), validates and routes payloads to tmux.
 
 ```bash
-# Start the server (requires bearer token)
-sharehook serve --token $SHAREHOOK_TOKEN
+# Start with debug logging + FCM push notifications
+sharehook serve --debug --token $SHAREHOOK_TOKEN --firebase-sa ~/.config/sharehook/firebase-sa.json
 
 # Or via environment variables
-SHAREHOOK_TOKEN=secret SHAREHOOK_PORT=8080 SHAREHOOK_TMUX_SESSION=android-share sharehook serve
+SHAREHOOK_TOKEN=secret SHAREHOOK_FIREBASE_SA=~/.config/sharehook/firebase-sa.json sharehook serve
 ```
 
-Payload types: `text` (paste into tmux), `url` (dispatch via `uinit`). Bearer token auth, in-memory rate limiting, session auto-create, graceful shutdown.
+Actions: `text` (paste into existing pane), `url` (opens new tmux window via `uinit`), `ginit` (parses Jira key from URL or text, opens `ginit <KEY>` in new window). URL windows use `remain-on-exit failed` — auto-close on success, stay open on error.
+
+Endpoints: `POST /share`, `GET /healthz`, `GET /actions` (action registry for dynamic Android intents), `GET /logs` (last 100 lines), `GET /logs/stream` (SSE realtime), `POST /notify` (score callback → FCM push), `POST /register` (FCM device token). Bearer token auth, rate limiting, session auto-create.
+
+URL shares include a score callback — after uinit completes, the tmux window curls `POST /notify` with `$UINIT_SCORE`. If score >= 80 and a device FCM token is registered, sharehook sends a push notification to the Android device via Firebase Cloud Messaging.
 
 ## wasend
 

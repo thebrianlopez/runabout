@@ -8,11 +8,11 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := protonexport sharehook wasend
+SEPARATE := fetchpage protonexport sharehook wasend
 
 ALL := $(CORE) $(SEPARATE)
 
-.PHONY: all core build clean install test $(ALL)
+.PHONY: all core build clean install test setup-fetchpage $(ALL)
 
 # --- Aggregate targets ---
 
@@ -41,6 +41,23 @@ $(addprefix install-,$(CORE)):
 	@go install $(LDFLAGS) ./cmd/$(subst install-,,$@)
 
 # --- Separate-module tools ---
+
+PLAYWRIGHT_MARKER := $(HOME)/Library/Caches/ms-playwright/.fetchpage-setup
+
+setup-fetchpage: $(PLAYWRIGHT_MARKER)
+
+$(PLAYWRIGHT_MARKER):
+	@echo "Installing Playwright driver (one-time setup)..."
+	@cd cmd/fetchpage && go run github.com/playwright-community/playwright-go/cmd/playwright install --with-deps
+	@touch $(PLAYWRIGHT_MARKER)
+
+fetchpage: setup-fetchpage
+	@echo "Building fetchpage..."
+	@cd cmd/fetchpage && go build $(LDFLAGS) -o ../../bin/fetchpage .
+
+install-fetchpage: setup-fetchpage
+	@echo "Installing fetchpage → $(INSTALL_DIR)/fetchpage"
+	@cd cmd/fetchpage && go install $(LDFLAGS) .
 
 protonexport:
 	@echo "Building protonexport..."
