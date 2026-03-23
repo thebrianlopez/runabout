@@ -104,6 +104,7 @@ func (r *RingLog) Writer() io.Writer {
 type Server struct {
 	token   string
 	router  *Router
+	queue   *Queue
 	limiter *rateLimiter
 	ring    *RingLog
 	debug   bool
@@ -112,13 +113,16 @@ type Server struct {
 	fcmMu          sync.Mutex
 	fcmToken       string
 	fcmTokenSource oauth2.TokenSource // nil when Firebase is not configured
+
+	lastDigestPush time.Time
 }
 
-// NewServer creates a new Server with the given bearer token and router.
-func NewServer(token string, router *Router, ring *RingLog, debug bool, fcmTS oauth2.TokenSource) *Server {
+// NewServer creates a new Server with the given bearer token, router, and optional queue.
+func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug bool, fcmTS oauth2.TokenSource) *Server {
 	return &Server{
 		token:          token,
 		router:         router,
+		queue:          queue,
 		limiter:        newRateLimiter(30, time.Minute),
 		ring:           ring,
 		debug:          debug,
@@ -137,6 +141,10 @@ func (s *Server) Mux() http.Handler {
 	mux.HandleFunc("/actions", s.handleActions)
 	mux.HandleFunc("/register", s.handleRegister)
 	mux.HandleFunc("/notify", s.handleNotify)
+	mux.HandleFunc("/queue", s.handleQueue)
+	mux.HandleFunc("POST /queue/{id}/score", s.handleQueueScore)
+	mux.HandleFunc("/archive", s.handleArchive)
+	mux.HandleFunc("/digest", s.handleDigest)
 	return mux
 }
 
@@ -313,7 +321,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.debug {
-		log.Printf("[DEBUG] parsed: type=%q action=%q target=%q enter=%t text_len=%d url_len=%d", req.Type, req.Action, req.Target, req.Enter, len(req.Text), len(req.URL))
+		log.Printf("[DEBUG] parsed: type=%q action=%q profile=%q target=%q enter=%t text_len=%d url_len=%d", req.Type, req.Action, req.Profile, req.Target, req.Enter, len(req.Text), len(req.URL))
 	}
 
 	// Validate
@@ -325,20 +333,236 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enqueue for persistence (before routing — survives tmux failures).
+	var queueID int64
+	if s.queue != nil {
+		id, err := s.queue.Enqueue(&req)
+		if err != nil {
+			log.Printf("WARN: queue enqueue failed: %v", err)
+		} else {
+			queueID = id
+			if s.debug {
+				log.Printf("[DEBUG] queue: enqueued id=%d", id)
+			}
+		}
+	}
+
 	// Route
 	result, err := s.router.Route(&req)
 	if err != nil {
+		// If queue is active, return 200 "queued" instead of 500 —
+		// the replay goroutine will retry when tmux is available.
+		if s.queue != nil {
+			log.Printf("queued %s request (profile=%s): routing failed: %v", req.Type, req.Profile, err)
+			writeJSON(w, http.StatusOK, ShareResponse{
+				Status:    "queued",
+				Message:   "tmux unavailable, queued for replay",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			})
+			return
+		}
 		log.Printf("error routing %s request: %v", req.Type, err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
-	log.Printf("handled %s request → %s", req.Type, result)
+	// Mark as relayed immediately since routing succeeded.
+	// Uses the exact enqueued ID to prevent replay goroutine from re-processing.
+	if s.queue != nil && queueID > 0 {
+		s.queue.MarkRelayed(queueID)
+	}
+
+	log.Printf("handled %s request (profile=%s) → %s", req.Type, req.Profile, result)
 	writeJSON(w, http.StatusOK, ShareResponse{
 		Status:    "ok",
 		Message:   result,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if s.queue == nil {
+		writeError(w, http.StatusServiceUnavailable, "queue not configured")
+		return
+	}
+
+	status := r.URL.Query().Get("status")
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+
+	items, err := s.queue.List(status, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("queue list: %v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+// archiveThreshold returns the minimum score for auto-archiving by profile.
+// Returns -1 for profiles where archiving is disabled.
+func archiveThreshold(profile string) int {
+	switch profile {
+	case "finance":
+		return 70
+	case "life":
+		return -1 // no auto-archive for life URLs
+	default:
+		return 80
+	}
+}
+
+type scoreRequest struct {
+	Score int    `json:"score"`
+	Slug  string `json:"slug"`
+	Tags  string `json:"tags"`
+}
+
+func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if s.queue == nil {
+		writeError(w, http.StatusServiceUnavailable, "queue not configured")
+		return
+	}
+
+	// Extract ID from path: /queue/{id}/score
+	idStr := r.PathValue("id")
+	var id int64
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid queue item ID")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
+	var req scoreRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	if err := s.queue.UpdateScore(id, req.Score, req.Tags); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("update score: %v", err))
+		return
+	}
+
+	// Auto-archive if score meets profile threshold.
+	item, err := s.queue.GetByID(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("get item: %v", err))
+		return
+	}
+
+	threshold := archiveThreshold(item.Profile)
+	if threshold >= 0 && req.Score >= threshold {
+		s.queue.Archive(id)
+		item.Status = "archived"
+		log.Printf("archive: id=%d score=%d profile=%s tags=%s", id, req.Score, item.Profile, req.Tags)
+
+		// FCM digest push — at most once per hour.
+		s.maybeDigestPush(req.Score, req.Slug)
+	} else {
+		log.Printf("scored: id=%d score=%d profile=%s (threshold=%d)", id, req.Score, item.Profile, threshold)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(item)
+}
+
+func (s *Server) maybeDigestPush(score int, slug string) {
+	if time.Since(s.lastDigestPush) < time.Hour {
+		return
+	}
+	deviceToken := s.GetFCMToken()
+	if deviceToken == "" || s.fcmTokenSource == nil {
+		return
+	}
+	if err := s.sendFCMPush(deviceToken, score, slug); err != nil {
+		log.Printf("WARN: digest FCM push failed: %v", err)
+		return
+	}
+	s.lastDigestPush = time.Now()
+	log.Printf("digest FCM push sent: score=%d slug=%s", score, slug)
+}
+
+func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.queue == nil {
+		writeError(w, http.StatusServiceUnavailable, "queue not configured")
+		return
+	}
+
+	profile := r.URL.Query().Get("profile")
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+
+	items, err := s.queue.ListArchived(profile, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list archived: %v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.queue == nil {
+		writeError(w, http.StatusServiceUnavailable, "queue not configured")
+		return
+	}
+
+	since := time.Now().Add(-24 * time.Hour)
+	limit := 20
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+
+	items, err := s.queue.RecentScored(since, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("recent scored: %v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
 }
 
 // registerRequest is the JSON body for POST /register.
@@ -400,9 +624,10 @@ func (s *Server) GetFCMToken() string {
 
 // notifyRequest is the JSON body for POST /notify.
 type notifyRequest struct {
-	Score int    `json:"score"`
-	URL   string `json:"url"`
-	Slug  string `json:"slug"`
+	Score   int    `json:"score"`
+	URL     string `json:"url"`
+	Slug    string `json:"slug"`
+	Profile string `json:"profile,omitempty"`
 }
 
 func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
@@ -430,11 +655,12 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Always log the notification.
-	log.Printf("notify: score=%d url=%s slug=%s", req.Score, req.URL, req.Slug)
+	log.Printf("notify: score=%d profile=%s url=%s slug=%s", req.Score, req.Profile, req.URL, req.Slug)
 
-	if req.Score < 80 {
+	threshold := archiveThreshold(req.Profile)
+	if threshold < 0 || req.Score < threshold {
 		if s.debug {
-			log.Printf("[DEBUG] score %d < 80, skipping FCM push", req.Score)
+			log.Printf("[DEBUG] score %d below threshold %d (profile=%s), skipping FCM push", req.Score, threshold, req.Profile)
 		}
 		writeJSON(w, http.StatusOK, ShareResponse{
 			Status:    "ok",
@@ -444,7 +670,7 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Score >= 80 — attempt FCM push.
+	// Score meets profile threshold — attempt FCM push.
 	deviceToken := s.GetFCMToken()
 	if deviceToken == "" {
 		log.Printf("WARN: score %d qualifies for push but no FCM token registered", req.Score)

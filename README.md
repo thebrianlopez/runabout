@@ -12,7 +12,7 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 - **perfgate** — statistical before/after performance gating
 - **shellprof** — fish shell function profiler with call graphs
 - **hookval** — validate Claude hook signal contract against schema
-- **sharehook** — Android share → tmux webhook bridge
+- **linkari** — Android share → tmux webhook bridge
 - **wasend** — send WhatsApp messages from the command line
 - **protonexport** — export ProtonMail conversations to markdown
 
@@ -20,7 +20,7 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 
 All 7 tools build and pass tests on Go 1.25. wasend Cloud API support planned, pending permanent access token.
 
-- `sharehook` expanded: FCM push notifications for high-scoring uinit evaluations (score >= 80), `POST /notify` + `/register` endpoints, `ginit` action handler, `GET /actions` registry, `/logs` ring buffer + `/logs/stream` SSE, `--firebase-sa` flag for Firebase credentials
+- `linkari` expanded: FCM push notifications for high-scoring uinit evaluations (score >= 80), `POST /notify` + `/register` endpoints, `ginit` action handler, `GET /actions` registry, `/logs` ring buffer + `/logs/stream` SSE, `--firebase-sa` flag for Firebase credentials
 - `mdq list` extended with `--group-by dir` and `--exclude` flags (EPIC-004)
 - `hookval` delivered: `validate`, `gen-docs`, `lint-schema`; schema-driven, 15 unit tests
 
@@ -126,23 +126,23 @@ hookval validate --schema ~/.claude/hook-signal-schema.yaml --hook ~/.claude/hoo
 
 Exit 0 = all signals pass. Exit 1 = per-signal violation report. Prevents silent doc/impl drift in hook context injection.
 
-## sharehook
+## linkari
 
 Webhook service that bridges Android share actions to tmux sessions over Tailscale. Receives `POST /share` from Android (HTTP Shortcuts or standalone APK), validates and routes payloads to tmux.
 
 ```bash
 # Start with debug logging + FCM push notifications
-sharehook serve --debug --token $SHAREHOOK_TOKEN --firebase-sa ~/.config/sharehook/firebase-sa.json
+linkari serve --debug --token $LINKARI_TOKEN --firebase-sa ~/.config/linkari/firebase-sa.json
 
 # Or via environment variables
-SHAREHOOK_TOKEN=secret SHAREHOOK_FIREBASE_SA=~/.config/sharehook/firebase-sa.json sharehook serve
+LINKARI_TOKEN=secret LINKARI_FIREBASE_SA=~/.config/linkari/firebase-sa.json linkari serve
 ```
 
 Actions: `text` (paste into existing pane), `url` (opens new tmux window via `uinit`), `ginit` (parses Jira key from URL or text, opens `ginit <KEY>` in new window). URL windows use `remain-on-exit failed` — auto-close on success, stay open on error.
 
 Endpoints: `POST /share`, `GET /healthz`, `GET /actions` (action registry for dynamic Android intents), `GET /logs` (last 100 lines), `GET /logs/stream` (SSE realtime), `POST /notify` (score callback → FCM push), `POST /register` (FCM device token). Bearer token auth, rate limiting, session auto-create.
 
-URL shares include a score callback — after uinit completes, the tmux window curls `POST /notify` with `$UINIT_SCORE`. If score >= 80 and a device FCM token is registered, sharehook sends a push notification to the Android device via Firebase Cloud Messaging.
+URL shares include a score callback — after uinit completes, the tmux window curls `POST /notify` with `$UINIT_SCORE`. If score >= 80 and a device FCM token is registered, linkari sends a push notification to the Android device via Firebase Cloud Messaging.
 
 ## wasend
 
@@ -199,7 +199,7 @@ cmd/mdq/              # mdq entry point
 cmd/perfgate/         # perfgate entry point
 cmd/shellprof/        # shellprof entry point
 cmd/hookval/          # hookval entry point
-cmd/sharehook/        # sharehook entry point (separate module)
+cmd/linkari/        # linkari entry point (separate module)
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
 internal/mdq/         # markdown parser, query engine, output formatting
