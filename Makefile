@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := fetchpage protonexport sharehook wasend
+SEPARATE := fetchpage protonexport linkari wasend
 
 ALL := $(CORE) $(SEPARATE)
 
@@ -67,17 +67,22 @@ install-protonexport:
 	@echo "Installing protonexport → $(INSTALL_DIR)/protonexport"
 	@cd cmd/protonexport && go install $(LDFLAGS) .
 
-sharehook:
-	@echo "Building sharehook..."
-	@cd cmd/sharehook && go build $(LDFLAGS) -o ../../bin/sharehook .
+linkari:
+	@echo "Building linkari..."
+	@cd cmd/linkari && go build $(LDFLAGS) -o ../../bin/linkari .
 
-install-sharehook:
-	@echo "Installing sharehook → $(INSTALL_DIR)/sharehook"
-	@cd cmd/sharehook && go install $(LDFLAGS) .
+install-linkari:
+	@echo "Installing linkari → $(INSTALL_DIR)/linkari"
+	@cd cmd/linkari && go install $(LDFLAGS) .
 
-serve-sharehook:
-	@echo "Starting sharehook on :8080..."
-	@SHAREHOOK_TOKEN=80dd9f732e836cfeddcd4c3c3f9149cd bin/sharehook serve
+LINKARI_TOKEN := 80dd9f732e836cfeddcd4c3c3f9149cd
+
+serve-linkari:
+	@echo "Starting linkari on :8080..."
+	@LINKARI_TOKEN=$(LINKARI_TOKEN) LINKARI_FIREBASE_SA=$(HOME)/.config/linkari/firebase-sa.json bin/linkari serve
+
+logs-linkari:
+	@curl -sN "http://localhost:8080/logs/stream?token=$(LINKARI_TOKEN)"
 
 wasend:
 	@echo "Building wasend..."

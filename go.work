@@ -4,6 +4,6 @@ use (
 	.
 	./cmd/fetchpage
 	./cmd/protonexport
-	./cmd/sharehook
+	./cmd/linkari
 	./cmd/wasend
 )

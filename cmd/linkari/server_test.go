@@ -12,7 +12,7 @@ import (
 func TestHealthz(t *testing.T) {
 	tmux := &TmuxRunner{DefaultSession: "test"}
 	router := NewRouter(tmux, false, "", 0)
-	srv := NewServer("test-token", router, NewRingLog(10), false, nil)
+	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -33,7 +33,7 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestShareUnauthorized(t *testing.T) {
-	srv := NewServer("secret", nil, NewRingLog(10), false, nil)
+	srv := NewServer("secret", nil, nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	body := `{"type":"text","text":"hello"}`
@@ -48,7 +48,7 @@ func TestShareUnauthorized(t *testing.T) {
 }
 
 func TestShareNoAuth(t *testing.T) {
-	srv := NewServer("secret", nil, NewRingLog(10), false, nil)
+	srv := NewServer("secret", nil, nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	body := `{"type":"text","text":"hello"}`
@@ -62,7 +62,7 @@ func TestShareNoAuth(t *testing.T) {
 }
 
 func TestShareMethodNotAllowed(t *testing.T) {
-	srv := NewServer("secret", nil, NewRingLog(10), false, nil)
+	srv := NewServer("secret", nil, nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	req := httptest.NewRequest(http.MethodGet, "/share", nil)
@@ -139,7 +139,7 @@ func TestShellQuote(t *testing.T) {
 func TestActionsReturnsProfileTagged(t *testing.T) {
 	tmux := &TmuxRunner{DefaultSession: "test"}
 	router := NewRouter(tmux, false, "", 0)
-	srv := NewServer("test-token", router, NewRingLog(10), false, nil)
+	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	req := httptest.NewRequest(http.MethodGet, "/actions", nil)

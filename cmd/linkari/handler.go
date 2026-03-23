@@ -43,9 +43,9 @@ func NewRouter(tmux *TmuxRunner, debug bool, callbackToken string, callbackPort 
 	r.handlers["ginit"] = &GinitHandler{}
 
 	r.actions = []Action{
-		{ID: "uinit_eng", Label: "Sharehook (Eng)", Icon: "eng", Type: "url", Target: "android-share:0"},
-		{ID: "uinit_life", Label: "Sharehook (Life)", Icon: "life", Type: "url", Target: "android-share:0"},
-		{ID: "uinit_finance", Label: "Sharehook (Finance)", Icon: "finance", Type: "url", Target: "android-share:0"},
+		{ID: "uinit_eng", Label: "Linkari (Eng)", Icon: "eng", Type: "url", Target: "android-share:0"},
+		{ID: "uinit_life", Label: "Linkari (Life)", Icon: "life", Type: "url", Target: "android-share:0"},
+		{ID: "uinit_finance", Label: "Linkari (Finance)", Icon: "finance", Type: "url", Target: "android-share:0"},
 		{ID: "note", Label: "Capture Note", Icon: "note", Type: "text", Target: "android-share:0"},
 		{ID: "ginit", Label: "ginit", Icon: "work", Type: "text", Target: "android-share:0"},
 	}
@@ -70,7 +70,10 @@ func (r *Router) Route(req *ShareRequest) (string, error) {
 	}
 
 	// Extract profile from uinit_<profile> action IDs.
-	if strings.HasPrefix(key, "uinit_") {
+	// Bare "uinit" (legacy/default) maps to "url" handler with no profile.
+	if key == "uinit" {
+		key = "url"
+	} else if strings.HasPrefix(key, "uinit_") {
 		profile := strings.TrimPrefix(key, "uinit_")
 		if req.Profile == "" {
 			req.Profile = profile
@@ -122,7 +125,7 @@ func (h *URLHandler) Handle(req *ShareRequest, tmux *TmuxRunner) (string, error)
 	// Quote the URL to prevent shell interpretation of special characters.
 	//
 	// After uinit completes, if $UINIT_SCORE is set, curl back to POST /notify
-	// so sharehook can trigger FCM push notifications for high scores.
+	// so linkari can trigger FCM push notifications for high scores.
 	// The callback runs inside fish -c via tmux new-window, so we use fish
 	// test syntax and fish variable expansion ($UINIT_SCORE, $UINIT_URL, $UINIT_SLUG).
 	command := fmt.Sprintf("uinit %s", shellQuote(req.URL))
