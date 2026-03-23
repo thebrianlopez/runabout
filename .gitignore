@@ -2,7 +2,7 @@ bin/
 *.exe
 *.test
 *.out
-sharehook
+linkari
 .DS_Store
 
 docs/
