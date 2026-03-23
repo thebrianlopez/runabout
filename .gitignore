@@ -2,7 +2,7 @@ bin/
 *.exe
 *.test
 *.out
-linkari
+/linkari
 .DS_Store
 
 docs/
