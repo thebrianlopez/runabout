@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 var (
@@ -38,10 +40,11 @@ func main() {
 
 func serveCmd() *cobra.Command {
 	var (
-		port    int
-		token   string
-		session string
-		debug   bool
+		port       int
+		token      string
+		session    string
+		debug      bool
+		firebaseSA string
 	)
 
 	cmd := &cobra.Command{
@@ -70,16 +73,41 @@ Configuration via flags or environment variables:
 				session = envSession
 			}
 
+			// Resolve firebase service account path.
+			if firebaseSA == "" {
+				firebaseSA = os.Getenv("SHAREHOOK_FIREBASE_SA")
+			}
+
+			var fcmTokenSource oauth2.TokenSource
+			if firebaseSA != "" {
+				saJSON, err := os.ReadFile(firebaseSA)
+				if err != nil {
+					return fmt.Errorf("reading firebase service account: %w", err)
+				}
+				creds, err := google.CredentialsFromJSON(context.Background(), saJSON,
+					"https://www.googleapis.com/auth/firebase.messaging",
+				)
+				if err != nil {
+					return fmt.Errorf("parsing firebase credentials: %w", err)
+				}
+				fcmTokenSource = creds.TokenSource
+			}
+
 			ring := NewRingLog(100)
 			log.SetOutput(ring.Writer())
 			if debug {
 				log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-				log.Printf("[DEBUG] config: port=%d session=%q debug=true", port, session)
+				log.Printf("[DEBUG] config: port=%d session=%q debug=true firebase_sa=%q", port, session, firebaseSA)
 			}
 
 			tmux := &TmuxRunner{DefaultSession: session, Debug: debug}
-			router := NewRouter(tmux, debug)
-			srv := NewServer(token, router, ring, debug)
+			router := NewRouter(tmux, debug, token, port)
+			srv := NewServer(token, router, ring, debug, fcmTokenSource)
+			if fcmTokenSource != nil {
+				log.Printf("FCM push notifications enabled (sa=%s)", firebaseSA)
+			} else {
+				log.Printf("FCM push notifications disabled (no firebase SA configured)")
+			}
 
 			httpServer := &http.Server{
 				Addr:         fmt.Sprintf(":%d", port),
@@ -117,6 +145,7 @@ Configuration via flags or environment variables:
 	cmd.Flags().StringVar(&token, "token", "", "bearer token for authentication (or SHAREHOOK_TOKEN)")
 	cmd.Flags().StringVar(&session, "session", "android-share", "target tmux session name")
 	cmd.Flags().BoolVar(&debug, "debug", false, "enable debug logging to stdout")
+	cmd.Flags().StringVar(&firebaseSA, "firebase-sa", "", "path to Firebase service account JSON (or SHAREHOOK_FIREBASE_SA)")
 
 	return cmd
 }

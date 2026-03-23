@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 // maxPayloadSize limits request body to 64KB.
@@ -17,11 +20,13 @@ const maxPayloadSize = 64 * 1024
 
 // ShareRequest is the incoming payload from Android HTTP Shortcuts.
 type ShareRequest struct {
-	Type   string `json:"type"`
-	Text   string `json:"text,omitempty"`
-	URL    string `json:"url,omitempty"`
-	Target string `json:"target,omitempty"`
-	Enter  bool   `json:"enter"`
+	Type    string `json:"type"`
+	Action  string `json:"action,omitempty"`
+	Text    string `json:"text,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Target  string `json:"target,omitempty"`
+	Enter   bool   `json:"enter"`
+	Profile string `json:"profile,omitempty"`
 }
 
 // ShareResponse is the structured JSON response.
@@ -102,16 +107,23 @@ type Server struct {
 	limiter *rateLimiter
 	ring    *RingLog
 	debug   bool
+	startAt time.Time
+
+	fcmMu          sync.Mutex
+	fcmToken       string
+	fcmTokenSource oauth2.TokenSource // nil when Firebase is not configured
 }
 
 // NewServer creates a new Server with the given bearer token and router.
-func NewServer(token string, router *Router, ring *RingLog, debug bool) *Server {
+func NewServer(token string, router *Router, ring *RingLog, debug bool, fcmTS oauth2.TokenSource) *Server {
 	return &Server{
-		token:   token,
-		router:  router,
-		limiter: newRateLimiter(30, time.Minute),
-		ring:    ring,
-		debug:   debug,
+		token:          token,
+		router:         router,
+		limiter:        newRateLimiter(30, time.Minute),
+		ring:           ring,
+		debug:          debug,
+		startAt:        time.Now(),
+		fcmTokenSource: fcmTS,
 	}
 }
 
@@ -122,6 +134,9 @@ func (s *Server) Mux() http.Handler {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/logs", s.handleLogs)
 	mux.HandleFunc("/logs/stream", s.handleLogStream)
+	mux.HandleFunc("/actions", s.handleActions)
+	mux.HandleFunc("/register", s.handleRegister)
+	mux.HandleFunc("/notify", s.handleNotify)
 	return mux
 }
 
@@ -142,6 +157,32 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	for _, line := range s.ring.Lines() {
 		io.WriteString(w, line)
 	}
+}
+
+func (s *Server) handleActions(w http.ResponseWriter, r *http.Request) {
+	if s.debug {
+		log.Printf("[DEBUG] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Auth — same bearer token as /share
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	actions := s.router.Actions()
+	if s.debug {
+		log.Printf("[DEBUG] returning %d actions", len(actions))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(actions)
 }
 
 func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
@@ -203,12 +244,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	uptime := time.Since(s.startAt).Truncate(time.Second).String()
+	fcmToken := s.GetFCMToken()
+	actions := s.router.Actions()
+
+	health := map[string]interface{}{
+		"status":         "ok",
+		"timestamp":      time.Now().UTC().Format(time.RFC3339),
+		"uptime":         uptime,
+		"actions":        len(actions),
+		"fcm_enabled":    s.fcmTokenSource != nil,
+		"fcm_registered": fcmToken != "",
+		"debug":          s.debug,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ShareResponse{
-		Status:    "ok",
-		Message:   "healthy",
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	})
+	json.NewEncoder(w).Encode(health)
 }
 
 func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
@@ -261,7 +313,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.debug {
-		log.Printf("[DEBUG] parsed: type=%q target=%q enter=%t text_len=%d url_len=%d", req.Type, req.Target, req.Enter, len(req.Text), len(req.URL))
+		log.Printf("[DEBUG] parsed: type=%q action=%q target=%q enter=%t text_len=%d url_len=%d", req.Type, req.Action, req.Target, req.Enter, len(req.Text), len(req.URL))
 	}
 
 	// Validate
@@ -287,6 +339,194 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		Message:   result,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// registerRequest is the JSON body for POST /register.
+type registerRequest struct {
+	FCMToken string `json:"fcm_token"`
+}
+
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if s.debug {
+		log.Printf("[DEBUG] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+	}
+
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Auth — same bearer token as other endpoints.
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
+	var req registerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	if req.FCMToken == "" {
+		writeError(w, http.StatusBadRequest, "fcm_token is required")
+		return
+	}
+
+	s.fcmMu.Lock()
+	s.fcmToken = req.FCMToken
+	s.fcmMu.Unlock()
+
+	if s.debug {
+		log.Printf("[DEBUG] FCM token registered (len=%d)", len(req.FCMToken))
+	}
+	log.Printf("FCM token registered")
+
+	writeJSON(w, http.StatusOK, ShareResponse{
+		Status:    "ok",
+		Message:   "token registered",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// GetFCMToken returns the currently registered FCM device token.
+func (s *Server) GetFCMToken() string {
+	s.fcmMu.Lock()
+	defer s.fcmMu.Unlock()
+	return s.fcmToken
+}
+
+// notifyRequest is the JSON body for POST /notify.
+type notifyRequest struct {
+	Score int    `json:"score"`
+	URL   string `json:"url"`
+	Slug  string `json:"slug"`
+}
+
+func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
+	if s.debug {
+		log.Printf("[DEBUG] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+	}
+
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Auth
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
+	var req notifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	// Always log the notification.
+	log.Printf("notify: score=%d url=%s slug=%s", req.Score, req.URL, req.Slug)
+
+	if req.Score < 80 {
+		if s.debug {
+			log.Printf("[DEBUG] score %d < 80, skipping FCM push", req.Score)
+		}
+		writeJSON(w, http.StatusOK, ShareResponse{
+			Status:    "ok",
+			Message:   fmt.Sprintf("score %d below threshold, logged only", req.Score),
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+		return
+	}
+
+	// Score >= 80 — attempt FCM push.
+	deviceToken := s.GetFCMToken()
+	if deviceToken == "" {
+		log.Printf("WARN: score %d qualifies for push but no FCM token registered", req.Score)
+		writeJSON(w, http.StatusOK, ShareResponse{
+			Status:    "ok",
+			Message:   "no FCM token registered, logged only",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+		return
+	}
+
+	if s.fcmTokenSource == nil {
+		log.Printf("WARN: score %d qualifies for push but Firebase SA not configured", req.Score)
+		writeJSON(w, http.StatusOK, ShareResponse{
+			Status:    "ok",
+			Message:   "firebase not configured, logged only",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+		return
+	}
+
+	if err := s.sendFCMPush(deviceToken, req.Score, req.Slug); err != nil {
+		log.Printf("ERROR: FCM push failed: %v", err)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("FCM push failed: %v", err))
+		return
+	}
+
+	log.Printf("FCM push sent: score=%d slug=%s", req.Score, req.Slug)
+	writeJSON(w, http.StatusOK, ShareResponse{
+		Status:    "ok",
+		Message:   fmt.Sprintf("push sent (score=%d)", req.Score),
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// fcmEndpoint is the FCM HTTP v1 API endpoint.
+const fcmEndpoint = "https://fcm.googleapis.com/v1/projects/bloinlagr/messages:send"
+
+// sendFCMPush sends a push notification via the FCM HTTP v1 API.
+func (s *Server) sendFCMPush(deviceToken string, score int, slug string) error {
+	tok, err := s.fcmTokenSource.Token()
+	if err != nil {
+		return fmt.Errorf("obtaining oauth2 token: %w", err)
+	}
+
+	payload := map[string]interface{}{
+		"message": map[string]interface{}{
+			"token": deviceToken,
+			"notification": map[string]string{
+				"title": fmt.Sprintf("uinit: %d/100", score),
+				"body":  slug,
+			},
+			"android": map[string]string{
+				"priority": "high",
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshaling FCM payload: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, fcmEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating FCM request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending FCM request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("FCM returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
 }
 
 func validateRequest(req *ShareRequest) error {

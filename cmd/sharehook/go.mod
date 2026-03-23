@@ -7,4 +7,8 @@ require (
 	github.com/spf13/pflag v1.0.9
 )
 
-require github.com/inconshreveable/mousetrap v1.1.0 // indirect
+require (
+	cloud.google.com/go/compute/metadata v0.3.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
+)
