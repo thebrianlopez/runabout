@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/blo-grindr/runabout/actions/workflows/test.yml/badge.svg)](https://github.com/blo-grindr/runabout/actions/workflows/test.yml)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
-![Tools](https://img.shields.io/badge/tools-7_CLIs-blue)
+![Tools](https://img.shields.io/badge/tools-8_CLIs-blue)
 
-Go devtools monorepo — seven CLI tools for shell optimization and personal workflows.
+Go devtools monorepo — eight CLI tools for shell optimization and personal workflows.
 
 These tools occupy the **Go CLI layer** of an [automation knowledge topology](https://github.com/blo-grindr/infra-knowledge) — they represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
 
@@ -12,19 +12,20 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 - **perfgate** — statistical before/after performance gating
 - **shellprof** — fish shell function profiler with call graphs
 - **hookval** — validate Claude hook signal contract against schema
+- **effiscore** — Anthropic API efficiency scoring via Datadog metrics
 - **linkari** — Android share → tmux webhook bridge
 - **wasend** — send WhatsApp messages from the command line
 - **protonexport** — export ProtonMail conversations to markdown
 
 ## Status
 
-All 7 tools build and pass tests on Go 1.25. wasend Cloud API support planned, pending permanent access token.
+All 8 tools build and pass tests on Go 1.25. wasend Cloud API support planned, pending permanent access token.
 
-- `linkari` queue/replay layer added: persistent job queue (`queue.go`) with replay support (`replay.go`), full test coverage
-- `mdq list <glob> --headings` emits stderr hint redirecting to `mdq query --field` when glob pattern detected
-- `mdq list` extended with `--group-by dir` and `--exclude` flags (EPIC-004)
+- `effiscore` added: Anthropic API efficiency scoring via DD Metrics API — 5 weighted dimensions, composite score with tier classification, `--json` for ClaudeConfig M2 integration, topology event emission
+- `linkari` queue/replay layer with persistent job queue and full test coverage
+- `mdq list` extended with `--group-by dir`, `--exclude`, and glob guard (`--headings` hint)
 
-**Last Updated:** 2026-03-23
+**Last Updated:** 2026-03-24
 
 ## Install
 
@@ -126,6 +127,23 @@ hookval validate --schema ~/.claude/hook-signal-schema.yaml --hook ~/.claude/hoo
 
 Exit 0 = all signals pass. Exit 1 = per-signal violation report. Prevents silent doc/impl drift in hook context injection.
 
+## effiscore
+
+Compute per-user Anthropic API efficiency signals from Datadog metrics. Data adapter for the ClaudeConfig AI usage scoring rubric.
+
+```bash
+# Plain text report (default 7d window)
+effiscore score --user brian_lopez
+
+# JSON output (ClaudeConfig M2 contract)
+effiscore score --user brian_lopez --json
+
+# Custom window
+effiscore score --user brian_lopez --window 14d
+```
+
+Five dimensions: Cache Hit Rate, Cache Reuse Factor, I/O Ratio, Token Savings, Model Mix (Haiku %). Composite score weighted 30/25/20/15/10 with tier classification (poor/fair/good/excellent). Requires `DD_API_KEY` and `DD_APP_KEY` environment variables. Every run emits `cloud_llm_efficiency` and `dd_api_health` events to the topology bus.
+
 ## linkari
 
 Webhook service that bridges Android share actions to tmux sessions over Tailscale. Receives `POST /share` from Android (HTTP Shortcuts or standalone APK), validates and routes payloads to tmux.
@@ -177,7 +195,7 @@ Credentials can also be set via `PROTON_USERNAME`, `PROTON_PASSWORD`, `PROTON_SE
 ## Build
 
 ```bash
-make build    # builds all 7 binaries to bin/
+make build    # builds all 8 binaries to bin/
 make install  # go install → ~/go/bin
 make core     # builds mdq, perfgate, shellprof, hookval only
 make clean    # removes bin/
@@ -199,6 +217,7 @@ cmd/mdq/              # mdq entry point
 cmd/perfgate/         # perfgate entry point
 cmd/shellprof/        # shellprof entry point
 cmd/hookval/          # hookval entry point
+cmd/effiscore/        # effiscore entry point
 cmd/linkari/        # linkari entry point (separate module)
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
@@ -206,6 +225,7 @@ internal/mdq/         # markdown parser, query engine, output formatting
 internal/perfgate/    # benchmark runner, statistics, gating logic
 internal/shellprof/   # fish instrumentation, profiling, call graph
 internal/hookval/     # schema parsing, signal validation, doc generation
+internal/effiscore/   # DD metrics client, efficiency scoring, topology emission
 internal/telemetry/   # CLI telemetry via emit_jsonl
 internal/version/     # shared version formatting
 ```

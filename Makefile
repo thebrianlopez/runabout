@@ -5,7 +5,7 @@ LDFLAGS  = -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main
 INSTALL_DIR := $(shell go env GOPATH)/bin
 
 # Core tools (root module)
-CORE := mdq perfgate shellprof hookval
+CORE := mdq perfgate shellprof hookval effiscore
 
 # Separate-module tools (each has its own go.mod under cmd/)
 SEPARATE := fetchpage protonexport linkari wasend
