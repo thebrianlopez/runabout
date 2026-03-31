@@ -12,7 +12,7 @@ SEPARATE := fetchpage protonexport linkari wasend
 
 ALL := $(CORE) $(SEPARATE)
 
-.PHONY: all core build clean install test setup-fetchpage $(ALL)
+.PHONY: all core build clean install test linkari-serve-local linkari-logs-local setup-fetchpage $(ALL)
 
 # --- Aggregate targets ---
 
@@ -76,6 +76,13 @@ install-linkari:
 	@cd cmd/linkari && go install $(LDFLAGS) .
 
 LINKARI_TOKEN := 80dd9f732e836cfeddcd4c3c3f9149cd
+
+linkari-serve-local: linkari
+	@echo "Starting linkari on :8080 (token=mytoken, debug)..."
+	@bin/linkari serve --port 8080 --token mytoken --debug
+
+linkari-logs-local:
+	@curl -sN "http://localhost:8080/logs/stream?token=mytoken"
 
 serve-linkari:
 	@echo "Starting linkari on :8080..."
