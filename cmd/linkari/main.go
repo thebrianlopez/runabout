@@ -124,6 +124,16 @@ Configuration via flags or environment variables:
 			tmux := &TmuxRunner{DefaultSession: session, Debug: debug}
 			router := NewRouter(tmux, debug, token, port)
 			srv := NewServer(token, router, queue, ring, debug, fcmTokenSource)
+
+			// Event logging — append to logs/ next to queue db.
+			eventsPath := filepath.Join(filepath.Dir(queueDB), "linkari_events.jsonl")
+			events, err := NewEventLogger(eventsPath)
+			if err != nil {
+				log.Printf("WARN: event logger disabled: %v", err)
+			} else {
+				srv.events = events
+				log.Printf("event logging enabled (path=%s)", eventsPath)
+			}
 			if fcmTokenSource != nil {
 				log.Printf("FCM push notifications enabled (sa=%s)", firebaseSA)
 			} else {
