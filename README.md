@@ -21,11 +21,11 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 
 All 8 tools build and pass tests on Go 1.25. wasend Cloud API support planned, pending permanent access token.
 
-- `effiscore` added: Anthropic API efficiency scoring via DD Metrics API — 5 weighted dimensions, composite score with tier classification, `--json` for ClaudeConfig M2 integration, topology event emission
-- `linkari` queue/replay layer with persistent job queue and full test coverage
+- `linkari` share actions expanded — added `uinit_travel` and `uinit_fashion` profile targets for Android share sheet
+- `effiscore` added: Anthropic API efficiency scoring via DD Metrics API — 5 weighted dimensions, composite score with tier classification
 - `mdq list` extended with `--group-by dir`, `--exclude`, and glob guard (`--headings` hint)
 
-**Last Updated:** 2026-03-24
+**Last Updated:** 2026-03-31
 
 ## Install
 
