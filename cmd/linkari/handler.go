@@ -43,14 +43,14 @@ func NewRouter(tmux *TmuxRunner, debug bool, callbackToken string, callbackPort 
 	r.handlers["ginit"] = &GinitHandler{}
 
 	r.actions = []Action{
-		{ID: "uinit_eng", Label: "Linkari (Eng)", Icon: "eng", Type: "url", Target: "android-share:0"},
-		{ID: "uinit_life", Label: "Linkari (Life)", Icon: "life", Type: "url", Target: "android-share:0"},
-		{ID: "uinit_travel", Label: "Linkari (Travel)", Icon: "travel", Type: "url", Target: "android-share:0"},
-		{ID: "uinit_fashion", Label: "Linkari (Fashion)", Icon: "fashion", Type: "url", Target: "android-share:0"},
-		{ID: "uinit_music", Label: "Linkari (Music)", Icon: "music", Type: "url", Target: "android-share:0"},
-		{ID: "uinit_finance", Label: "Linkari (Finance)", Icon: "finance", Type: "url", Target: "android-share:0"},
+		{ID: "uinit_eng", Label: "Linkari (Eng)", Icon: "eng", Type: "url", Target: "eng:0"},
+		{ID: "uinit_life", Label: "Linkari (Life)", Icon: "life", Type: "url", Target: "life:0"},
+		{ID: "uinit_travel", Label: "Linkari (Travel)", Icon: "travel", Type: "url", Target: "travel:0"},
+		{ID: "uinit_fashion", Label: "Linkari (Fashion)", Icon: "fashion", Type: "url", Target: "fashion:0"},
+		{ID: "uinit_music", Label: "Linkari (Music)", Icon: "music", Type: "url", Target: "music:0"},
+		{ID: "uinit_finance", Label: "Linkari (Finance)", Icon: "finance", Type: "url", Target: "finance:0"},
 		{ID: "note", Label: "Capture Note", Icon: "note", Type: "text", Target: "android-share:0"},
-		{ID: "ginit", Label: "ginit", Icon: "work", Type: "text", Target: "android-share:0"},
+		{ID: "ginit", Label: "ginit", Icon: "work", Type: "text", Target: "JIRA:0"},
 	}
 
 	return r
@@ -175,17 +175,15 @@ type GinitHandler struct{}
 func (h *GinitHandler) Handle(req *ShareRequest, tmux *TmuxRunner) (string, error) {
 	key := jiraKeyRe.FindString(strings.TrimSpace(req.Text))
 	if key == "" {
-		return "", fmt.Errorf("no Jira key found in text %q", req.Text)
+		key = jiraKeyRe.FindString(req.URL)
+	}
+	if key == "" {
+		return "", fmt.Errorf("no Jira key found in text %q or url %q", req.Text, req.URL)
 	}
 
-	session := tmux.DefaultSession
-	if req.Target != "" {
-		session = strings.Split(req.Target, ":")[0]
-	}
-
-	command := fmt.Sprintf("ginit %s", key)
-	if err := tmux.NewWindow(session, command); err != nil {
+	command := fmt.Sprintf("ginit %s --yolo", key)
+	if err := tmux.NewWindow("JIRA", command); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("ginit %s in %s", key, session), nil
+	return fmt.Sprintf("ginit %s in JIRA", key), nil
 }

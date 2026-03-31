@@ -24,6 +24,7 @@ type ShareRequest struct {
 	Action  string `json:"action,omitempty"`
 	Text    string `json:"text,omitempty"`
 	URL     string `json:"url,omitempty"`
+	Title   string `json:"title,omitempty"`
 	Target  string `json:"target,omitempty"`
 	Enter   bool   `json:"enter"`
 	Profile string `json:"profile,omitempty"`
@@ -322,7 +323,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.debug {
-		log.Printf("[DEBUG] parsed: type=%q action=%q profile=%q target=%q enter=%t text_len=%d url_len=%d", req.Type, req.Action, req.Profile, req.Target, req.Enter, len(req.Text), len(req.URL))
+		log.Printf("[DEBUG] parsed: type=%q action=%q profile=%q target=%q enter=%t text_len=%d url_len=%d title=%q", req.Type, req.Action, req.Profile, req.Target, req.Enter, len(req.Text), len(req.URL), req.Title)
 	}
 
 	shareStart := time.Now()
@@ -378,7 +379,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 
 	s.emitShareEvent(&req, "success", shareStart, req.URL)
 
-	log.Printf("handled %s request (profile=%s) → %s", req.Type, req.Profile, result)
+	log.Printf("handled %s request (profile=%s title=%q) → %s", req.Type, req.Profile, req.Title, result)
 	writeJSON(w, http.StatusOK, ShareResponse{
 		Status:    "ok",
 		Message:   result,
