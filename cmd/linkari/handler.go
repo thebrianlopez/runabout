@@ -45,6 +45,8 @@ func NewRouter(tmux *TmuxRunner, debug bool, callbackToken string, callbackPort 
 	r.actions = []Action{
 		{ID: "uinit_eng", Label: "Linkari (Eng)", Icon: "eng", Type: "url", Target: "android-share:0"},
 		{ID: "uinit_life", Label: "Linkari (Life)", Icon: "life", Type: "url", Target: "android-share:0"},
+		{ID: "uinit_travel", Label: "Linkari (Travel)", Icon: "travel", Type: "url", Target: "android-share:0"},
+		{ID: "uinit_fashion", Label: "Linkari (Fashion)", Icon: "fashion", Type: "url", Target: "android-share:0"},
 		{ID: "uinit_finance", Label: "Linkari (Finance)", Icon: "finance", Type: "url", Target: "android-share:0"},
 		{ID: "note", Label: "Capture Note", Icon: "note", Type: "text", Target: "android-share:0"},
 		{ID: "ginit", Label: "ginit", Icon: "work", Type: "text", Target: "android-share:0"},
