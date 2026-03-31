@@ -107,6 +107,7 @@ type Server struct {
 	queue   *Queue
 	limiter *rateLimiter
 	ring    *RingLog
+	events  *EventLogger // nil when event logging is not configured
 	debug   bool
 	startAt time.Time
 
@@ -324,6 +325,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[DEBUG] parsed: type=%q action=%q profile=%q target=%q enter=%t text_len=%d url_len=%d", req.Type, req.Action, req.Profile, req.Target, req.Enter, len(req.Text), len(req.URL))
 	}
 
+	shareStart := time.Now()
+
 	// Validate
 	if err := validateRequest(&req); err != nil {
 		if s.debug {
@@ -350,6 +353,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	// Route
 	result, err := s.router.Route(&req)
 	if err != nil {
+		s.emitShareEvent(&req, "failure", shareStart, "")
 		// If queue is active, return 200 "queued" instead of 500 —
 		// the replay goroutine will retry when tmux is available.
 		if s.queue != nil {
@@ -371,6 +375,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	if s.queue != nil && queueID > 0 {
 		s.queue.MarkRelayed(queueID)
 	}
+
+	s.emitShareEvent(&req, "success", shareStart, req.URL)
 
 	log.Printf("handled %s request (profile=%s) → %s", req.Type, req.Profile, result)
 	writeJSON(w, http.StatusOK, ShareResponse{
@@ -549,6 +555,8 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	digestStart := time.Now()
+
 	since := time.Now().Add(-24 * time.Hour)
 	limit := 20
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -560,6 +568,10 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("recent scored: %v", err))
 		return
 	}
+
+	// Determine dominant profile from digest items.
+	profile := r.URL.Query().Get("profile")
+	s.emitDigestEvent(profile, len(items), digestStart)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
@@ -792,6 +804,37 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
+}
+
+// emitShareEvent logs a linkari_share JSONL event.
+func (s *Server) emitShareEvent(req *ShareRequest, status string, start time.Time, rawURL string) {
+	if s.events == nil {
+		return
+	}
+	meta := map[string]interface{}{
+		"profile":     req.Profile,
+		"url_domain":  domainFromURL(rawURL),
+		"status":      status,
+		"duration_ms": time.Since(start).Milliseconds(),
+	}
+	if err := s.events.Emit("linkari_share", meta); err != nil {
+		log.Printf("WARN: event emit linkari_share: %v", err)
+	}
+}
+
+// emitDigestEvent logs a linkari_digest JSONL event.
+func (s *Server) emitDigestEvent(profile string, itemCount int, start time.Time) {
+	if s.events == nil {
+		return
+	}
+	meta := map[string]interface{}{
+		"profile":     profile,
+		"item_count":  itemCount,
+		"duration_ms": time.Since(start).Milliseconds(),
+	}
+	if err := s.events.Emit("linkari_digest", meta); err != nil {
+		log.Printf("WARN: event emit linkari_digest: %v", err)
+	}
 }
 
 // rateLimiter implements a simple sliding window rate limiter.

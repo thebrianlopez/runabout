@@ -156,12 +156,13 @@ func TestActionsReturnsProfileTagged(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// Expect uinit_eng, uinit_life, uinit_travel, uinit_fashion, uinit_finance plus note and ginit.
+	// Expect uinit_eng, uinit_life, uinit_travel, uinit_fashion, uinit_music, uinit_finance plus note and ginit.
 	wantIDs := map[string]string{
 		"uinit_eng":     "eng",
 		"uinit_life":    "life",
 		"uinit_travel":  "travel",
 		"uinit_fashion": "fashion",
+		"uinit_music":   "music",
 		"uinit_finance": "finance",
 	}
 	found := 0
