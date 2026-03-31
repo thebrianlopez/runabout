@@ -61,15 +61,21 @@ func (t *TmuxRunner) SendKeys(target, text string, enter bool) error {
 
 // ensureSession creates the default tmux session if it doesn't exist.
 func (t *TmuxRunner) ensureSession() error {
-	if t.sessionExists(t.DefaultSession) {
+	return t.createSession(t.DefaultSession)
+}
+
+// createSession creates a named tmux session if it doesn't already exist.
+func (t *TmuxRunner) createSession(name string) error {
+	if t.sessionExists(name) {
 		return nil
 	}
-
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", t.DefaultSession)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("create session %q: %w: %s", t.DefaultSession, err, string(out))
+	if t.Debug {
+		log.Printf("[DEBUG] tmux: creating session %q", name)
 	}
-
+	cmd := exec.Command("tmux", "new-session", "-d", "-s", name)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("create session %q: %w: %s", name, err, string(out))
+	}
 	return nil
 }
 
@@ -85,12 +91,8 @@ func (t *TmuxRunner) NewWindow(session, command string) error {
 		log.Printf("[DEBUG] tmux: new-window session=%q command=%q", session, command)
 	}
 
-	if err := t.ensureSession(); err != nil {
+	if err := t.createSession(session); err != nil {
 		return fmt.Errorf("ensure session: %w", err)
-	}
-
-	if !t.sessionExists(session) {
-		return fmt.Errorf("tmux session %q does not exist", session)
 	}
 
 	// Create new window running the command in fish; exec fish keeps the
