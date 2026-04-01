@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -40,7 +41,6 @@ func NewRouter(tmux *TmuxRunner, debug bool, callbackToken string, callbackPort 
 	}
 	r.handlers["text"] = &TextHandler{}
 	r.handlers["url"] = &URLHandler{callbackToken: callbackToken, callbackPort: callbackPort}
-	r.handlers["ginit"] = &GinitHandler{}
 
 	r.actions = []Action{
 		{ID: "uinit_eng", Label: "Linkari (Eng)", Icon: "eng", Type: "url", Target: "eng:0"},
@@ -49,8 +49,23 @@ func NewRouter(tmux *TmuxRunner, debug bool, callbackToken string, callbackPort 
 		{ID: "uinit_fashion", Label: "Linkari (Fashion)", Icon: "fashion", Type: "url", Target: "fashion:0"},
 		{ID: "uinit_music", Label: "Linkari (Music)", Icon: "music", Type: "url", Target: "music:0"},
 		{ID: "uinit_finance", Label: "Linkari (Finance)", Icon: "finance", Type: "url", Target: "finance:0"},
-		{ID: "note", Label: "Capture Note", Icon: "note", Type: "text", Target: "android-share:0"},
-		{ID: "ginit", Label: "ginit", Icon: "work", Type: "text", Target: "JIRA:0"},
+	}
+
+	if os.Getenv("ATLASSIAN_DOMAIN") == "grindr.atlassian.net" {
+		r.handlers["ginit"] = &GinitHandler{}
+		r.actions = append(r.actions, Action{ID: "ginit", Label: "ginit", Icon: "work", Type: "text", Target: "JIRA:0"})
+	}
+
+	// Pre-create tmux sessions for each share type so they're ready before first share.
+	for _, a := range r.actions {
+		session := strings.Split(a.Target, ":")[0]
+		if session != "" {
+			if err := tmux.createSession(session); err != nil {
+				log.Printf("warning: failed to pre-create tmux session %q: %v", session, err)
+			} else if debug {
+				log.Printf("[DEBUG] pre-created tmux session %q", session)
+			}
+		}
 	}
 
 	return r
@@ -70,6 +85,16 @@ func (r *Router) Route(req *ShareRequest) (string, error) {
 	key := req.Type
 	if req.Action != "" {
 		key = req.Action
+	}
+
+	// Resolve target from action definition when the client doesn't send one.
+	if req.Target == "" && req.Action != "" {
+		for _, a := range r.actions {
+			if a.ID == req.Action {
+				req.Target = a.Target
+				break
+			}
+		}
 	}
 
 	// Extract profile from uinit_<profile> action IDs.
@@ -101,12 +126,14 @@ func (r *Router) Route(req *ShareRequest) (string, error) {
 type TextHandler struct{}
 
 func (h *TextHandler) Handle(req *ShareRequest, tmux *TmuxRunner) (string, error) {
-	target := resolveTarget(req.Target, tmux.DefaultSession)
+	if req.Target == "" {
+		return "", fmt.Errorf("target is required for text handler")
+	}
 
-	if err := tmux.SendKeys(target, req.Text, req.Enter); err != nil {
+	if err := tmux.SendKeys(req.Target, req.Text, req.Enter); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Sent to %s", target), nil
+	return fmt.Sprintf("Sent to %s", req.Target), nil
 }
 
 // URLHandler routes URLs to uinit via tmux. Always sends Enter to execute.
@@ -118,11 +145,11 @@ type URLHandler struct {
 }
 
 func (h *URLHandler) Handle(req *ShareRequest, tmux *TmuxRunner) (string, error) {
-	// Parse session name from target ("session:pane" → "session"), falling back to default.
-	session := tmux.DefaultSession
-	if req.Target != "" {
-		session = strings.Split(req.Target, ":")[0]
+	// Parse session name from target ("session:pane" → "session").
+	if req.Target == "" {
+		return "", fmt.Errorf("target is required for url handler")
 	}
+	session := strings.Split(req.Target, ":")[0]
 
 	// Shell-safe: only pass validated URLs (http/https prefix enforced in validation).
 	// Quote the URL to prevent shell interpretation of special characters.
@@ -150,13 +177,6 @@ func (h *URLHandler) Handle(req *ShareRequest, tmux *TmuxRunner) (string, error)
 	return fmt.Sprintf("Opened new window in %s", session), nil
 }
 
-// resolveTarget returns the explicit target or falls back to default session:0.
-func resolveTarget(target, defaultSession string) string {
-	if target != "" {
-		return target
-	}
-	return defaultSession
-}
 
 // shellQuote wraps a string in single quotes, escaping embedded single quotes.
 // This prevents shell injection via URL payloads.

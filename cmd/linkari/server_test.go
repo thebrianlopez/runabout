@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthz(t *testing.T) {
-	tmux := &TmuxRunner{DefaultSession: "test"}
+	tmux := &TmuxRunner{}
 	router := NewRouter(tmux, false, "", 0)
 	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
@@ -137,7 +137,7 @@ func TestShellQuote(t *testing.T) {
 }
 
 func TestActionsReturnsProfileTagged(t *testing.T) {
-	tmux := &TmuxRunner{DefaultSession: "test"}
+	tmux := &TmuxRunner{}
 	router := NewRouter(tmux, false, "", 0)
 	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
@@ -156,7 +156,8 @@ func TestActionsReturnsProfileTagged(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// Expect uinit_eng, uinit_life, uinit_travel, uinit_fashion, uinit_music, uinit_finance plus note and ginit.
+	// Expect uinit_eng, uinit_life, uinit_travel, uinit_fashion, uinit_music, uinit_finance plus note.
+	// ginit is only present when ATLASSIAN_DOMAIN=grindr.atlassian.net.
 	wantIDs := map[string]string{
 		"uinit_eng":     "eng",
 		"uinit_life":    "life",
@@ -183,7 +184,7 @@ func TestActionsReturnsProfileTagged(t *testing.T) {
 }
 
 func TestProfileExtractionFromAction(t *testing.T) {
-	tmux := &TmuxRunner{DefaultSession: "test"}
+	tmux := &TmuxRunner{}
 	router := NewRouter(tmux, false, "", 0)
 
 	// Route a request with action "uinit_life" — should extract profile "life".
@@ -204,7 +205,7 @@ func TestProfileExtractionFromAction(t *testing.T) {
 }
 
 func TestProfileFieldInPayload(t *testing.T) {
-	tmux := &TmuxRunner{DefaultSession: "test"}
+	tmux := &TmuxRunner{}
 	router := NewRouter(tmux, false, "", 0)
 
 	// Explicit profile in payload takes precedence — action extraction

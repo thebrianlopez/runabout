@@ -9,29 +9,24 @@ import (
 
 // TmuxRunner wraps tmux operations for sending keys to sessions.
 type TmuxRunner struct {
-	DefaultSession string
-	Debug          bool
+	Debug bool
 }
 
 // SendKeys sends text to a tmux target using send-keys -l (literal mode).
 // If enter is true, it also sends C-m to execute the line.
 func (t *TmuxRunner) SendKeys(target, text string, enter bool) error {
 	if target == "" {
-		target = t.DefaultSession + ":0"
+		return fmt.Errorf("tmux target is required")
 	}
 
 	if t.Debug {
 		log.Printf("[DEBUG] tmux: send-keys target=%q text_len=%d enter=%t", target, len(text), enter)
 	}
 
-	if err := t.ensureSession(); err != nil {
-		return fmt.Errorf("ensure session: %w", err)
-	}
-
-	// Validate the target session exists
+	// Ensure the target session exists, creating it if needed.
 	sessionName := strings.Split(target, ":")[0]
-	if !t.sessionExists(sessionName) {
-		return fmt.Errorf("tmux session %q does not exist", sessionName)
+	if err := t.createSession(sessionName); err != nil {
+		return fmt.Errorf("ensure session: %w", err)
 	}
 
 	// send-keys -l sends text literally (no key name interpretation)
@@ -59,11 +54,6 @@ func (t *TmuxRunner) SendKeys(target, text string, enter bool) error {
 	return nil
 }
 
-// ensureSession creates the default tmux session if it doesn't exist.
-func (t *TmuxRunner) ensureSession() error {
-	return t.createSession(t.DefaultSession)
-}
-
 // createSession creates a named tmux session if it doesn't already exist.
 func (t *TmuxRunner) createSession(name string) error {
 	if t.sessionExists(name) {
@@ -84,7 +74,7 @@ func (t *TmuxRunner) createSession(name string) error {
 // but stays open when the command exits with a non-zero status.
 func (t *TmuxRunner) NewWindow(session, command string) error {
 	if session == "" {
-		session = t.DefaultSession
+		return fmt.Errorf("tmux session name is required")
 	}
 
 	if t.Debug {
@@ -125,5 +115,11 @@ func (t *TmuxRunner) NewWindow(session, command string) error {
 // sessionExists checks if a tmux session exists.
 func (t *TmuxRunner) sessionExists(name string) bool {
 	cmd := exec.Command("tmux", "has-session", "-t", name)
+	return cmd.Run() == nil
+}
+
+// serverRunning checks if the tmux server is running (any sessions exist).
+func (t *TmuxRunner) serverRunning() bool {
+	cmd := exec.Command("tmux", "list-sessions")
 	return cmd.Run() == nil
 }
