@@ -43,7 +43,6 @@ func serveCmd() *cobra.Command {
 	var (
 		port       int
 		token      string
-		session    string
 		debug      bool
 		firebaseSA string
 		queueDB    string
@@ -58,7 +57,6 @@ from Android HTTP Shortcuts and routes them to tmux sessions.
 Configuration via flags or environment variables:
   LINKARI_TOKEN        Bearer token for authentication
   LINKARI_PORT         Listen port (default 8080)
-  LINKARI_TMUX_SESSION Target tmux session (default "android-share")
   LINKARI_QUEUE_DB     SQLite queue database path (default ~/.config/linkari/queue.db)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if token == "" {
@@ -70,10 +68,6 @@ Configuration via flags or environment variables:
 
 			if envPort := os.Getenv("LINKARI_PORT"); envPort != "" && !cmd.Flags().Changed("port") {
 				fmt.Sscanf(envPort, "%d", &port)
-			}
-
-			if envSession := os.Getenv("LINKARI_TMUX_SESSION"); envSession != "" && !cmd.Flags().Changed("session") {
-				session = envSession
 			}
 
 			// Resolve firebase service account path.
@@ -118,10 +112,10 @@ Configuration via flags or environment variables:
 			log.SetOutput(ring.Writer())
 			if debug {
 				log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-				log.Printf("[DEBUG] config: port=%d session=%q debug=true firebase_sa=%q queue_db=%q", port, session, firebaseSA, queueDB)
+				log.Printf("[DEBUG] config: port=%d debug=true firebase_sa=%q queue_db=%q", port, firebaseSA, queueDB)
 			}
 
-			tmux := &TmuxRunner{DefaultSession: session, Debug: debug}
+			tmux := &TmuxRunner{Debug: debug}
 			router := NewRouter(tmux, debug, token, port)
 			srv := NewServer(token, router, queue, ring, debug, fcmTokenSource)
 
@@ -153,7 +147,7 @@ Configuration via flags or environment variables:
 
 			errCh := make(chan error, 1)
 			go func() {
-				log.Printf("linkari listening on :%d (session=%s)", port, session)
+				log.Printf("linkari listening on :%d", port)
 				errCh <- httpServer.ListenAndServe()
 			}()
 
@@ -177,7 +171,6 @@ Configuration via flags or environment variables:
 
 	cmd.Flags().IntVar(&port, "port", 8080, "listen port")
 	cmd.Flags().StringVar(&token, "token", "", "bearer token for authentication (or LINKARI_TOKEN)")
-	cmd.Flags().StringVar(&session, "session", "android-share", "target tmux session name")
 	cmd.Flags().BoolVar(&debug, "debug", false, "enable debug logging to stdout")
 	cmd.Flags().StringVar(&firebaseSA, "firebase-sa", "", "path to Firebase service account JSON (or LINKARI_FIREBASE_SA)")
 	cmd.Flags().StringVar(&queueDB, "queue-db", "", "path to SQLite queue database (or LINKARI_QUEUE_DB)")
