@@ -41,6 +41,7 @@ func main() {
 
 	rootCmd.AddCommand(loginCmd())
 	rootCmd.AddCommand(sendCmd())
+	rootCmd.AddCommand(listenCmd())
 	rootCmd.AddCommand(logoutCmd())
 
 	t := instrument(rootCmd, "wasend")
@@ -127,8 +128,9 @@ func loginCmd() *cobra.Command {
 
 func sendCmd() *cobra.Command {
 	var (
-		to    string
-		stdin bool
+		to        string
+		stdin     bool
+		clipboard bool
 	)
 
 	cmd := &cobra.Command{
@@ -137,16 +139,29 @@ func sendCmd() *cobra.Command {
 		Long: `Send a text message to a WhatsApp number.
 
 The recipient is a phone number in international format (digits only, no +).
-The message can be passed as arguments or piped via stdin with --stdin.
+The message can be passed as arguments, piped via stdin with --stdin, or read
+from the macOS clipboard with --clipboard.
 
 Examples:
   wasend send -t 15551234567 "Hello from CLI"
   echo "Hello" | wasend send -t 15551234567 --stdin
-  wasend send -t 15551234567 --stdin < message.txt`,
+  wasend send -t 15551234567 --stdin < message.txt
+  wasend send -t 15551234567 --clipboard`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			text, err := resolveMessage(stdin, args, os.Stdin)
-			if err != nil {
-				return err
+			var (
+				text string
+				err  error
+			)
+			if clipboard {
+				text, err = readClipboard()
+				if err != nil {
+					return err
+				}
+			} else {
+				text, err = resolveMessage(stdin, args, os.Stdin)
+				if err != nil {
+					return err
+				}
 			}
 			if text == "" {
 				return fmt.Errorf("message cannot be empty")
@@ -203,6 +218,7 @@ Examples:
 
 	cmd.Flags().StringVarP(&to, "to", "t", "", "recipient phone number (digits only, e.g. 15551234567)")
 	cmd.Flags().BoolVar(&stdin, "stdin", false, "read message from stdin")
+	cmd.Flags().BoolVar(&clipboard, "clipboard", false, "read message from clipboard (macOS)")
 	cmd.MarkFlagRequired("to")
 
 	return cmd
