@@ -13,9 +13,9 @@ func StartReplay(q *Queue, router *Router, tmux *TmuxRunner, interval time.Durat
 		defer ticker.Stop()
 
 		for range ticker.C {
-			if !tmux.sessionExists(tmux.DefaultSession) {
+			if !tmux.serverRunning() {
 				if debug {
-					log.Printf("[DEBUG] replay: tmux session %q not available, skipping", tmux.DefaultSession)
+					log.Printf("[DEBUG] replay: tmux server not running, skipping")
 				}
 				continue
 			}
