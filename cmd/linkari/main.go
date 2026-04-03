@@ -46,6 +46,9 @@ func serveCmd() *cobra.Command {
 		debug      bool
 		firebaseSA string
 		queueDB    string
+		tlsEnabled bool
+		certFile   string
+		keyFile    string
 	)
 
 	cmd := &cobra.Command{
@@ -57,7 +60,10 @@ from Android HTTP Shortcuts and routes them to tmux sessions.
 Configuration via flags or environment variables:
   LINKARI_TOKEN        Bearer token for authentication
   LINKARI_PORT         Listen port (default 8080)
-  LINKARI_QUEUE_DB     SQLite queue database path (default ~/.config/linkari/queue.db)`,
+  LINKARI_QUEUE_DB     SQLite queue database path (default ~/.config/linkari/queue.db)
+  LINKARI_TLS          Enable TLS when set to "1" or "true"
+  LINKARI_CERT_FILE    TLS certificate PEM path (default ~/.config/linkari/cert.pem)
+  LINKARI_KEY_FILE     TLS private key PEM path (default ~/.config/linkari/key.pem)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if token == "" {
 				token = os.Getenv("LINKARI_TOKEN")
@@ -100,6 +106,32 @@ Configuration via flags or environment variables:
 			}
 			if err := os.MkdirAll(filepath.Dir(queueDB), 0755); err != nil {
 				return fmt.Errorf("creating queue db directory: %w", err)
+			}
+
+			// TLS env fallbacks (flags take precedence when explicitly set).
+			if !tlsEnabled {
+				tlsEnabled = os.Getenv("LINKARI_TLS") == "1" || os.Getenv("LINKARI_TLS") == "true"
+			}
+			configDir := filepath.Dir(queueDB)
+			if certFile == "" {
+				certFile = os.Getenv("LINKARI_CERT_FILE")
+			}
+			if certFile == "" {
+				certFile = filepath.Join(configDir, "cert.pem")
+			}
+			if keyFile == "" {
+				keyFile = os.Getenv("LINKARI_KEY_FILE")
+			}
+			if keyFile == "" {
+				keyFile = filepath.Join(configDir, "key.pem")
+			}
+			if tlsEnabled {
+				if _, err := os.Stat(certFile); err != nil {
+					return fmt.Errorf("TLS cert file not found: %s (run: mkcert -cert-file %s -key-file %s localhost 127.0.0.1)", certFile, certFile, keyFile)
+				}
+				if _, err := os.Stat(keyFile); err != nil {
+					return fmt.Errorf("TLS key file not found: %s (run: mkcert -cert-file %s -key-file %s localhost 127.0.0.1)", keyFile, certFile, keyFile)
+				}
 			}
 
 			queue, err := NewQueue(queueDB, debug)
@@ -147,8 +179,13 @@ Configuration via flags or environment variables:
 
 			errCh := make(chan error, 1)
 			go func() {
-				log.Printf("linkari listening on :%d", port)
-				errCh <- httpServer.ListenAndServe()
+				if tlsEnabled {
+					log.Printf("linkari listening on :%d (TLS)", port)
+					errCh <- httpServer.ListenAndServeTLS(certFile, keyFile)
+				} else {
+					log.Printf("linkari listening on :%d", port)
+					errCh <- httpServer.ListenAndServe()
+				}
 			}()
 
 			sig := make(chan os.Signal, 1)
@@ -174,6 +211,9 @@ Configuration via flags or environment variables:
 	cmd.Flags().BoolVar(&debug, "debug", false, "enable debug logging to stdout")
 	cmd.Flags().StringVar(&firebaseSA, "firebase-sa", "", "path to Firebase service account JSON (or LINKARI_FIREBASE_SA)")
 	cmd.Flags().StringVar(&queueDB, "queue-db", "", "path to SQLite queue database (or LINKARI_QUEUE_DB)")
+	cmd.Flags().BoolVar(&tlsEnabled, "tls", false, "enable TLS (requires mkcert-generated cert/key, or LINKARI_TLS=1)")
+	cmd.Flags().StringVar(&certFile, "cert-file", "", "TLS certificate PEM (default ~/.config/linkari/cert.pem, or LINKARI_CERT_FILE)")
+	cmd.Flags().StringVar(&keyFile, "key-file", "", "TLS private key PEM (default ~/.config/linkari/key.pem, or LINKARI_KEY_FILE)")
 
 	return cmd
 }
