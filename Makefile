@@ -84,12 +84,26 @@ linkari-serve-local: linkari
 linkari-logs-local:
 	@curl -sN "http://localhost:8080/logs/stream?token=mytoken"
 
+linkari-serve-local-tls: linkari
+	@echo "Starting linkari on :8080 (TLS, token=mytoken, debug)..."
+	@bin/linkari serve --port 8080 --token mytoken --debug --tls
+
+linkari-logs-local-tls:
+	@curl -sN "https://localhost:8080/logs/stream?token=mytoken"
+
 serve-linkari:
 	@echo "Starting linkari on :8080..."
 	@LINKARI_TOKEN=$(LINKARI_TOKEN) LINKARI_FIREBASE_SA=$(HOME)/.config/linkari/firebase-sa.json bin/linkari serve
 
+serve-linkari-tls:
+	@echo "Starting linkari on :8080 (TLS)..."
+	@LINKARI_TOKEN=$(LINKARI_TOKEN) LINKARI_FIREBASE_SA=$(HOME)/.config/linkari/firebase-sa.json bin/linkari serve --tls
+
 logs-linkari:
 	@curl -sN "http://localhost:8080/logs/stream?token=$(LINKARI_TOKEN)"
+
+logs-linkari-tls:
+	@curl -sN "https://localhost:8080/logs/stream?token=$(LINKARI_TOKEN)"
 
 wasend:
 	@echo "Building wasend..."
