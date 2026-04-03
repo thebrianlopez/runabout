@@ -1,7 +1,0 @@
-{
-  "task": "verify-profile-prompt-mapping",
-  "agent": "linkari-server",
-  "instructions": "Verify that the Linkari server correctly maps all 6 profiles (eng, life, finance, travel, fashion, music) to their corresponding prompt templates at docs/prompts/profiles/<profile>.md. Confirm each profile name resolves to the correct file path and that the files exist and are readable.",
-  "epic_path": "/Users/brian/code/personal/docs/epics/PERSONAL_20260401T031744Z_uinit_EPIC-002_Profile_Prompt_Triage.md",
-  "dispatched_at": "20260401T032555Z"
-}

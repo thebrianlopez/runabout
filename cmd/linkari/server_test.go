@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -201,6 +203,38 @@ func TestProfileExtractionFromAction(t *testing.T) {
 
 	if req.Profile != "life" {
 		t.Errorf("profile = %q, want %q", req.Profile, "life")
+	}
+}
+
+func TestTLSCertMissing(t *testing.T) {
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "cert.pem")
+	keyFile := filepath.Join(dir, "key.pem")
+	// Neither file exists — os.Stat should fail.
+	if _, err := os.Stat(certFile); err == nil {
+		t.Fatal("expected cert file to be absent")
+	}
+	if _, err := os.Stat(keyFile); err == nil {
+		t.Fatal("expected key file to be absent")
+	}
+}
+
+func TestTLSCertPresent(t *testing.T) {
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "cert.pem")
+	keyFile := filepath.Join(dir, "key.pem")
+	// Write placeholder files to simulate mkcert output being present.
+	if err := os.WriteFile(certFile, []byte("cert"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, []byte("key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(certFile); err != nil {
+		t.Fatalf("cert file should be present: %v", err)
+	}
+	if _, err := os.Stat(keyFile); err != nil {
+		t.Fatalf("key file should be present: %v", err)
 	}
 }
 
