@@ -9,3 +9,8 @@ docs/
 docs
 dev-docs/
 dev-docs
+
+# EPIC-043: triage eval fixtures live in ~/.config/linkari/fixtures (private corpus).
+# Only seed-*.json files ship in-repo for `go test ./...`.
+cmd/linkari/testdata/triage/*.json
+!cmd/linkari/testdata/triage/seed-*.json

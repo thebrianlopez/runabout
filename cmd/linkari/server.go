@@ -20,14 +20,15 @@ const maxPayloadSize = 64 * 1024
 
 // ShareRequest is the incoming payload from Android HTTP Shortcuts.
 type ShareRequest struct {
-	Type    string `json:"type"`
-	Action  string `json:"action,omitempty"`
-	Text    string `json:"text,omitempty"`
-	URL     string `json:"url,omitempty"`
-	Title   string `json:"title,omitempty"`
-	Target  string `json:"target,omitempty"`
-	Enter   bool   `json:"enter"`
-	Profile string `json:"profile,omitempty"`
+	Type     string `json:"type"`
+	Action   string `json:"action,omitempty"`
+	Text     string `json:"text,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Target   string `json:"target,omitempty"`
+	Enter    bool   `json:"enter"`
+	Profile  string `json:"profile,omitempty"`
+	FCMToken string `json:"fcm_token,omitempty"`
 }
 
 // ShareResponse is the structured JSON response.
@@ -111,11 +112,13 @@ type Server struct {
 	events  *EventLogger // nil when event logging is not configured
 	debug   bool
 	startAt time.Time
+	tsnetAddr string // Funnel FQDN; empty when tsnet is not enabled
 
 	fcmMu          sync.Mutex
 	fcmToken       string
 	fcmTokenSource oauth2.TokenSource // nil when Firebase is not configured
 
+	notifyMinScore int // configurable floor for FCM push in /notify; 0 = use per-profile archiveThreshold
 	lastDigestPush time.Time
 }
 
@@ -133,13 +136,46 @@ func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug 
 	}
 }
 
-// Mux returns the HTTP handler mux.
+// SetTsnetAddr records the tsnet Funnel address for health reporting.
+func (s *Server) SetTsnetAddr(addr string) {
+	s.tsnetAddr = addr
+}
+
+// corsMiddleware adds CORS headers to all responses and handles preflight OPTIONS requests.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Mux returns the full HTTP handler mux (for local listener).
 func (s *Server) Mux() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/share", s.handleShare)
+	s.registerRoutes(mux)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/logs", s.handleLogs)
 	mux.HandleFunc("/logs/stream", s.handleLogStream)
+	return corsMiddleware(mux)
+}
+
+// FunnelMux returns a restricted mux for the public Funnel listener.
+// Local-only endpoints (/healthz, /logs, /logs/stream) are excluded.
+func (s *Server) FunnelMux() http.Handler {
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return corsMiddleware(mux)
+}
+
+// registerRoutes adds the shared authenticated routes to a mux.
+func (s *Server) registerRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/share", s.handleShare)
 	mux.HandleFunc("/actions", s.handleActions)
 	mux.HandleFunc("/register", s.handleRegister)
 	mux.HandleFunc("/notify", s.handleNotify)
@@ -147,7 +183,7 @@ func (s *Server) Mux() http.Handler {
 	mux.HandleFunc("POST /queue/{id}/score", s.handleQueueScore)
 	mux.HandleFunc("/archive", s.handleArchive)
 	mux.HandleFunc("/digest", s.handleDigest)
-	return mux
+	mux.HandleFunc("POST /search", s.handleSearch)
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
@@ -266,6 +302,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"actions":        len(actions),
 		"fcm_enabled":    s.fcmTokenSource != nil,
 		"fcm_registered": fcmToken != "",
+		"tsnet_enabled":  s.tsnetAddr != "",
+		"tsnet_addr":     s.tsnetAddr,
 		"debug":          s.debug,
 	}
 
@@ -420,23 +458,11 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(items)
 }
 
-// archiveThreshold returns the minimum score for auto-archiving by profile.
-// Returns -1 for profiles where archiving is disabled.
-func archiveThreshold(profile string) int {
-	switch profile {
-	case "finance":
-		return 70
-	case "life":
-		return -1 // no auto-archive for life URLs
-	default:
-		return 80
-	}
-}
-
 type scoreRequest struct {
-	Score int    `json:"score"`
-	Slug  string `json:"slug"`
-	Tags  string `json:"tags"`
+	Score   int    `json:"score"`
+	Slug    string `json:"slug"`
+	Tags    string `json:"tags"`
+	Verdict string `json:"verdict"`
 }
 
 func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
@@ -466,7 +492,7 @@ func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.queue.UpdateScore(id, req.Score, req.Tags); err != nil {
+	if err := s.queue.UpdateScore(id, req.Score, req.Tags, req.Verdict, req.Slug); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("update score: %v", err))
 		return
 	}
@@ -502,7 +528,7 @@ func (s *Server) maybeDigestPush(score int, slug string) {
 	if deviceToken == "" || s.fcmTokenSource == nil {
 		return
 	}
-	if err := s.sendFCMPush(deviceToken, score, slug); err != nil {
+	if err := s.sendFCMPush(deviceToken, score, slug, "", ""); err != nil {
 		log.Printf("WARN: digest FCM push failed: %v", err)
 		return
 	}
@@ -578,6 +604,45 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(items)
 }
 
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.queue == nil {
+		writeError(w, http.StatusServiceUnavailable, "queue not configured")
+		return
+	}
+
+	var req struct {
+		Query   string `json:"query"`
+		Profile string `json:"profile"`
+		Limit   int    `json:"limit"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+	if req.Query == "" {
+		writeError(w, http.StatusBadRequest, "query is required")
+		return
+	}
+	if req.Limit <= 0 {
+		req.Limit = 10
+	}
+
+	items, err := s.queue.SearchFTS5(req.Query, req.Profile, req.Limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("search: %v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
 // registerRequest is the JSON body for POST /register.
 type registerRequest struct {
 	FCMToken string `json:"fcm_token"`
@@ -636,11 +701,16 @@ func (s *Server) GetFCMToken() string {
 }
 
 // notifyRequest is the JSON body for POST /notify.
+// When called from the _score.json sidecar callback, all fields are populated.
 type notifyRequest struct {
-	Score   int    `json:"score"`
-	URL     string `json:"url"`
-	Slug    string `json:"slug"`
-	Profile string `json:"profile,omitempty"`
+	Score       int    `json:"score"`
+	URL         string `json:"url"`
+	Slug        string `json:"slug"`
+	Profile     string `json:"profile,omitempty"`
+	Verdict     string `json:"verdict,omitempty"`
+	Tags        string `json:"tags,omitempty"`
+	ActionItems string `json:"action_items,omitempty"`
+	ScoredAt    string `json:"scored_at,omitempty"`
 }
 
 func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
@@ -668,23 +738,47 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Always log the notification.
-	log.Printf("notify: score=%d profile=%s url=%s slug=%s", req.Score, req.Profile, req.URL, req.Slug)
+	log.Printf("notify: score=%d profile=%s url=%s slug=%s verdict_len=%d", req.Score, req.Profile, req.URL, req.Slug, len(req.Verdict))
+
+	// Persist score + verdict to queue and auto-archive if threshold met.
+	if s.queue != nil && req.URL != "" {
+		item, _, err := s.queue.ScoreByURL(req.URL, req.Score, req.Verdict, req.Tags, req.Profile, req.Slug)
+		if err != nil {
+			log.Printf("WARN: notify queue persist: %v", err)
+		} else {
+			at := archiveThreshold(req.Profile)
+			if at >= 0 && item.Score != nil && *item.Score >= at {
+				if archErr := s.queue.Archive(item.ID); archErr == nil {
+					if s.debug {
+						log.Printf("[DEBUG] auto-archived item %d (score=%d threshold=%d)", item.ID, *item.Score, at)
+					}
+				}
+			}
+		}
+	}
 
 	threshold := archiveThreshold(req.Profile)
+	if s.notifyMinScore > 0 {
+		threshold = s.notifyMinScore
+	}
 	if threshold < 0 || req.Score < threshold {
 		if s.debug {
 			log.Printf("[DEBUG] score %d below threshold %d (profile=%s), skipping FCM push", req.Score, threshold, req.Profile)
 		}
 		writeJSON(w, http.StatusOK, ShareResponse{
 			Status:    "ok",
-			Message:   fmt.Sprintf("score %d below threshold, logged only", req.Score),
+			Message:   fmt.Sprintf("score %d below threshold %d, logged only", req.Score, threshold),
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 		})
 		return
 	}
 
-	// Score meets profile threshold — attempt FCM push.
-	deviceToken := s.GetFCMToken()
+	// Per-device FCM token from the originating share request takes precedence
+	// over the globally registered token from POST /register.
+	deviceToken := r.URL.Query().Get("device_fcm_token")
+	if deviceToken == "" {
+		deviceToken = s.GetFCMToken()
+	}
 	if deviceToken == "" {
 		log.Printf("WARN: score %d qualifies for push but no FCM token registered", req.Score)
 		writeJSON(w, http.StatusOK, ShareResponse{
@@ -705,7 +799,7 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.sendFCMPush(deviceToken, req.Score, req.Slug); err != nil {
+	if err := s.sendFCMPush(deviceToken, req.Score, req.Slug, req.Verdict, req.URL); err != nil {
 		log.Printf("ERROR: FCM push failed: %v", err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("FCM push failed: %v", err))
 		return
@@ -723,18 +817,44 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 const fcmEndpoint = "https://fcm.googleapis.com/v1/projects/bloinlagr/messages:send"
 
 // sendFCMPush sends a push notification via the FCM HTTP v1 API.
-func (s *Server) sendFCMPush(deviceToken string, score int, slug string) error {
+// The notification popup shows the first sentence of the verdict as a summary.
+// Full verdict, URL, slug, and profile are passed in the data payload so the
+// Linkari app can render a detail view on tap.
+func (s *Server) sendFCMPush(deviceToken string, score int, slug string, verdict string, url string) error {
 	tok, err := s.fcmTokenSource.Token()
 	if err != nil {
 		return fmt.Errorf("obtaining oauth2 token: %w", err)
+	}
+
+	// Build a concise popup summary from the verdict's first sentence.
+	notifBody := slug
+	if verdict != "" {
+		notifBody = firstSentence(verdict, 120)
+	}
+
+	// Score-based actionable title.
+	var title string
+	switch {
+	case score >= 70:
+		title = fmt.Sprintf("Worth reading — %d/100", score)
+	case score >= 40:
+		title = fmt.Sprintf("Maybe — %d/100", score)
+	default:
+		title = fmt.Sprintf("Skip it — %d/100", score)
 	}
 
 	payload := map[string]interface{}{
 		"message": map[string]interface{}{
 			"token": deviceToken,
 			"notification": map[string]string{
-				"title": fmt.Sprintf("uinit: %d/100", score),
-				"body":  slug,
+				"title": title,
+				"body":  notifBody,
+			},
+			"data": map[string]string{
+				"slug":    slug,
+				"verdict": verdict,
+				"url":     url,
+				"score":   fmt.Sprintf("%d", score),
 			},
 			"android": map[string]string{
 				"priority": "high",
@@ -766,6 +886,26 @@ func (s *Server) sendFCMPush(deviceToken string, score int, slug string) error {
 	}
 
 	return nil
+}
+
+// firstSentence extracts the first sentence from text, truncating to maxLen.
+// It splits on ". ", "— ", or newline boundaries to find a natural break.
+func firstSentence(text string, maxLen int) string {
+	// Try natural sentence boundaries.
+	for _, sep := range []string{". ", " — ", "\n"} {
+		if idx := strings.Index(text, sep); idx > 0 && idx <= maxLen {
+			return text[:idx+1]
+		}
+	}
+	// No boundary found within limit — hard truncate.
+	if len(text) > maxLen {
+		// Try to break at last space.
+		if sp := strings.LastIndex(text[:maxLen], " "); sp > maxLen/2 {
+			return text[:sp] + "…"
+		}
+		return text[:maxLen-1] + "…"
+	}
+	return text
 }
 
 func validateRequest(req *ShareRequest) error {

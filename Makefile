@@ -75,6 +75,13 @@ install-linkari:
 	@echo "Installing linkari → $(INSTALL_DIR)/linkari"
 	@cd cmd/linkari && go install $(LDFLAGS) .
 
+# Generate fish completions and install to ~/.config/fish/completions/.
+# Fish auto-loads anything in this directory — no edit to config.fish.
+install-linkari-completions: install-linkari
+	@mkdir -p $(HOME)/.config/fish/completions
+	@$(INSTALL_DIR)/linkari completion fish > $(HOME)/.config/fish/completions/linkari.fish
+	@echo "Installed fish completions → $(HOME)/.config/fish/completions/linkari.fish"
+
 LINKARI_TOKEN := 80dd9f732e836cfeddcd4c3c3f9149cd
 
 linkari-serve-local: linkari

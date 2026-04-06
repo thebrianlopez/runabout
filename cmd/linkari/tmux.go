@@ -8,8 +8,28 @@ import (
 )
 
 // TmuxRunner wraps tmux operations for sending keys to sessions.
+// Shell and ShellArgs control which shell runs inside new tmux windows.
+// Defaults: Shell="fish", ShellArgs="-c".
 type TmuxRunner struct {
-	Debug bool
+	Debug     bool
+	Shell     string // shell binary (default: "fish")
+	ShellArgs string // shell command flag (default: "-c")
+}
+
+// shell returns the configured shell or "fish".
+func (t *TmuxRunner) shell() string {
+	if t.Shell != "" {
+		return t.Shell
+	}
+	return "fish"
+}
+
+// shellArgs returns the configured shell args or "-c".
+func (t *TmuxRunner) shellArgs() string {
+	if t.ShellArgs != "" {
+		return t.ShellArgs
+	}
+	return "-c"
 }
 
 // SendKeys sends text to a tmux target using send-keys -l (literal mode).
@@ -29,8 +49,10 @@ func (t *TmuxRunner) SendKeys(target, text string, enter bool) error {
 		return fmt.Errorf("ensure session: %w", err)
 	}
 
-	// send-keys -l sends text literally (no key name interpretation)
-	cmd := exec.Command("tmux", "send-keys", "-t", target, "-l", text)
+	// send-keys -l sends text literally (no key name interpretation).
+	// Use "=" prefix on the session part for exact matching.
+	exactTarget := "=" + target
+	cmd := exec.Command("tmux", "send-keys", "-t", exactTarget, "-l", text)
 	if t.Debug {
 		log.Printf("[DEBUG] tmux: exec %v", cmd.Args)
 	}
@@ -39,7 +61,7 @@ func (t *TmuxRunner) SendKeys(target, text string, enter bool) error {
 	}
 
 	if enter {
-		cmd := exec.Command("tmux", "send-keys", "-t", target, "C-m")
+		cmd := exec.Command("tmux", "send-keys", "-t", exactTarget, "C-m")
 		if t.Debug {
 			log.Printf("[DEBUG] tmux: exec %v", cmd.Args)
 		}
@@ -70,25 +92,35 @@ func (t *TmuxRunner) createSession(name string) error {
 }
 
 // NewWindow creates a new tmux window in the given session and runs command in it.
+// The optional name parameter sets the window name via -n; if empty, tmux uses its default.
 // The window has remain-on-exit set to "failed" so it auto-closes on success
 // but stays open when the command exits with a non-zero status.
-func (t *TmuxRunner) NewWindow(session, command string) error {
+func (t *TmuxRunner) NewWindow(session, command string, name string) error {
 	if session == "" {
 		return fmt.Errorf("tmux session name is required")
 	}
 
 	if t.Debug {
-		log.Printf("[DEBUG] tmux: new-window session=%q command=%q", session, command)
+		log.Printf("[DEBUG] tmux: new-window session=%q command=%q name=%q", session, command, name)
 	}
 
 	if err := t.createSession(session); err != nil {
 		return fmt.Errorf("ensure session: %w", err)
 	}
 
-	// Create new window running the command in fish; exec fish keeps the
-	// shell alive after uinit completes (on success, remain-on-exit closes it).
-	shellCmd := fmt.Sprintf("%s; exec fish", command)
-	cmd := exec.Command("tmux", "new-window", "-a", "-t", session, "fish", "-c", shellCmd)
+	// Create new window running the command in the configured shell; exec keeps
+	// the shell alive after the command completes (on success, remain-on-exit closes it).
+	// Use "=" prefix for exact session matching to prevent tmux from resolving
+	// the target to a window with the same name in a different session.
+	sh := t.shell()
+	shellCmd := fmt.Sprintf("%s; exec %s", command, sh)
+	exactSession := "=" + session
+	args := []string{"new-window", "-a", "-t", exactSession}
+	if name != "" {
+		args = append(args, "-n", name)
+	}
+	args = append(args, sh, t.shellArgs(), shellCmd)
+	cmd := exec.Command("tmux", args...)
 	if t.Debug {
 		log.Printf("[DEBUG] tmux: exec %v", cmd.Args)
 	}
@@ -98,7 +130,7 @@ func (t *TmuxRunner) NewWindow(session, command string) error {
 
 	// Set remain-on-exit to "failed" on the newly created (last) window so it
 	// only persists when the command fails.
-	setCmd := exec.Command("tmux", "set-option", "-p", "-t", session+":{end}", "remain-on-exit", "failed")
+	setCmd := exec.Command("tmux", "set-option", "-p", "-t", exactSession+":{end}", "remain-on-exit", "failed")
 	if t.Debug {
 		log.Printf("[DEBUG] tmux: exec %v", setCmd.Args)
 	}
@@ -112,9 +144,12 @@ func (t *TmuxRunner) NewWindow(session, command string) error {
 	return nil
 }
 
-// sessionExists checks if a tmux session exists.
+// sessionExists checks if a tmux session with this exact name exists.
+// The "=" prefix forces exact matching — without it, tmux resolves "-t linkari"
+// to a window named "linkari" in another session (e.g. local:linkari), causing
+// new windows to land in the wrong session.
 func (t *TmuxRunner) sessionExists(name string) bool {
-	cmd := exec.Command("tmux", "has-session", "-t", name)
+	cmd := exec.Command("tmux", "has-session", "-t", "="+name)
 	return cmd.Run() == nil
 }
 

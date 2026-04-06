@@ -3,10 +3,30 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"regexp"
+	"net/url"
+	"os/exec"
 	"strings"
+	"sync"
 )
+
+// archiveThresholdCache lazily loads the actions config once per process so
+// the package-level `archiveThreshold` helper used by cmd_score / cmd_triage
+// and the server FCM path doesn't re-parse actions.yaml on every call.
+var (
+	archiveThresholdOnce sync.Once
+	archiveThresholdCfg  *Config
+)
+
+func loadArchiveThresholdConfig() *Config {
+	archiveThresholdOnce.Do(func() {
+		cfg, err := LoadConfig("")
+		if err != nil {
+			cfg = builtinConfig()
+		}
+		archiveThresholdCfg = cfg
+	})
+	return archiveThresholdCfg
+}
 
 // Action describes a share target exposed via GET /actions.
 type Action struct {
@@ -19,10 +39,12 @@ type Action struct {
 
 // Router dispatches share requests to the appropriate handler based on payload type.
 type Router struct {
-	tmux     *TmuxRunner
-	handlers map[string]Handler
-	actions  []Action
-	debug    bool
+	tmux       *TmuxRunner
+	actions    []Action
+	actionsCfg []ActionConfig
+	cfgIndex   map[string]*ActionConfig
+	debug      bool
+	mu         sync.RWMutex
 }
 
 // Handler processes a share request and returns a result message.
@@ -30,33 +52,15 @@ type Handler interface {
 	Handle(req *ShareRequest, tmux *TmuxRunner) (string, error)
 }
 
-// NewRouter creates a router with default handlers for text and url types.
-// callbackToken and callbackPort configure the score callback from uinit
-// to POST /notify for FCM push notifications.
-func NewRouter(tmux *TmuxRunner, debug bool, callbackToken string, callbackPort int) *Router {
+// NewRouterFromConfig creates a config-driven router. Actions are loaded from cfg.
+func NewRouterFromConfig(tmux *TmuxRunner, cfg *Config, debug bool) *Router {
 	r := &Router{
-		tmux:     tmux,
-		handlers: make(map[string]Handler),
-		debug:    debug,
+		tmux:  tmux,
+		debug: debug,
 	}
-	r.handlers["text"] = &TextHandler{}
-	r.handlers["url"] = &URLHandler{callbackToken: callbackToken, callbackPort: callbackPort}
+	r.loadConfig(cfg)
 
-	r.actions = []Action{
-		{ID: "uinit_eng", Label: "Linkari (Eng)", Icon: "eng", Type: "url", Target: "eng:0"},
-		{ID: "uinit_life", Label: "Linkari (Life)", Icon: "life", Type: "url", Target: "life:0"},
-		{ID: "uinit_travel", Label: "Linkari (Travel)", Icon: "travel", Type: "url", Target: "travel:0"},
-		{ID: "uinit_fashion", Label: "Linkari (Fashion)", Icon: "fashion", Type: "url", Target: "fashion:0"},
-		{ID: "uinit_music", Label: "Linkari (Music)", Icon: "music", Type: "url", Target: "music:0"},
-		{ID: "uinit_finance", Label: "Linkari (Finance)", Icon: "finance", Type: "url", Target: "finance:0"},
-	}
-
-	if os.Getenv("ATLASSIAN_DOMAIN") == "grindr.atlassian.net" {
-		r.handlers["ginit"] = &GinitHandler{}
-		r.actions = append(r.actions, Action{ID: "ginit", Label: "ginit", Icon: "work", Type: "text", Target: "JIRA:0"})
-	}
-
-	// Pre-create tmux sessions for each share type so they're ready before first share.
+	// Pre-create tmux sessions.
 	for _, a := range r.actions {
 		session := strings.Split(a.Target, ":")[0]
 		if session != "" {
@@ -71,139 +75,286 @@ func NewRouter(tmux *TmuxRunner, debug bool, callbackToken string, callbackPort 
 	return r
 }
 
+// loadConfig replaces the current action set from a Config. Thread-safe for hot-reload.
+func (r *Router) loadConfig(cfg *Config) {
+	active := cfg.ActiveActions()
+	actions := make([]Action, 0, len(active))
+	index := make(map[string]*ActionConfig, len(active))
+
+	for i := range active {
+		a := &active[i]
+		// Apply default archive threshold if not set.
+		if a.ArchiveThreshold == 0 && cfg.DefaultArchiveThreshold != 0 {
+			a.ArchiveThreshold = cfg.DefaultArchiveThreshold
+		}
+		actions = append(actions, a.ToAction())
+		index[a.ID] = a
+	}
+
+	r.mu.Lock()
+	r.actionsCfg = active
+	r.actions = actions
+	r.cfgIndex = index
+	r.mu.Unlock()
+}
+
+// Reload replaces the router's config from a new Config. Used for SIGHUP hot-reload.
+func (r *Router) Reload(cfg *Config) {
+	r.loadConfig(cfg)
+	if r.debug {
+		log.Printf("[DEBUG] router: reloaded %d actions", len(r.actions))
+	}
+}
+
 // Actions returns the registered share actions.
 func (r *Router) Actions() []Action {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.actions
 }
 
-// Route dispatches a request to the appropriate handler.
-// When req.Action is set, the handler is looked up by action ID;
-// otherwise it falls back to type-based routing.
-// For uinit_* actions, the profile suffix is extracted and set on
-// the request, then routing falls through to the "url" handler.
+// ArchiveThreshold returns the archive threshold for a given action/profile
+// using this router's live actions config. Falls back to the package-level
+// `archiveThreshold` helper (also config-driven) when no in-memory action
+// matches — this covers profiles not listed in actions.yaml but present in
+// the cached default config.
+func (r *Router) ArchiveThreshold(profile string) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, a := range r.actionsCfg {
+		if a.ProfileMap == "prefix" {
+			suffix := strings.TrimPrefix(a.ID, "uinit_")
+			if suffix == profile {
+				return a.ArchiveThreshold
+			}
+		}
+	}
+	return archiveThreshold(profile)
+}
+
+// archiveThreshold returns the archive threshold for a profile using the
+// actions config loaded from ~/.config/linkari/actions.yaml (or the builtin
+// fallback). EPIC-043 M4: replaces the legacy hardcoded switch with a
+// config-driven lookup so thresholds are edited in one place — the YAML.
+// Unknown profiles fall back to the config's default_archive_threshold.
+func archiveThreshold(profile string) int {
+	cfg := loadArchiveThresholdConfig()
+	for i := range cfg.Actions {
+		a := &cfg.Actions[i]
+		if a.ProfileMap != "prefix" {
+			continue
+		}
+		if strings.TrimPrefix(a.ID, "uinit_") == profile {
+			return a.ArchiveThreshold
+		}
+	}
+	if cfg.DefaultArchiveThreshold != 0 {
+		return cfg.DefaultArchiveThreshold
+	}
+	return 80
+}
+
+// Route dispatches a request using config-driven actions.
 func (r *Router) Route(req *ShareRequest) (string, error) {
-	key := req.Type
-	if req.Action != "" {
-		key = req.Action
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	actionID := req.Action
+	if actionID == "" {
+		actionID = req.Type
 	}
 
 	// Resolve target from action definition when the client doesn't send one.
-	if req.Target == "" && req.Action != "" {
-		for _, a := range r.actions {
-			if a.ID == req.Action {
-				req.Target = a.Target
-				break
+	if req.Target == "" && actionID != "" {
+		if ac, ok := r.cfgIndex[actionID]; ok {
+			req.Target = ac.Target
+		}
+	}
+
+	// Extract profile from action ID with profile_map=prefix.
+	if ac, ok := r.cfgIndex[actionID]; ok {
+		if ac.ProfileMap == "prefix" {
+			parts := strings.SplitN(actionID, "_", 2)
+			if len(parts) == 2 && req.Profile == "" {
+				req.Profile = parts[1]
+			}
+			// Normalize bare prefix to first action of that prefix type.
+		}
+	} else {
+		// Try prefix matching for uinit_<profile> pattern.
+		if strings.HasPrefix(actionID, "uinit_") {
+			profile := strings.TrimPrefix(actionID, "uinit_")
+			if req.Profile == "" {
+				req.Profile = profile
+			}
+			// Look for a uinit_eng or similar template action to use.
+			for id, ac := range r.cfgIndex {
+				if ac.ProfileMap == "prefix" && strings.HasPrefix(id, "uinit_") {
+					actionID = id
+					req.Target = ac.Target
+					break
+				}
 			}
 		}
 	}
 
-	// Extract profile from uinit_<profile> action IDs.
-	// Bare "uinit" (legacy/default) maps to "url" handler with no profile.
-	if key == "uinit" {
-		key = "url"
-	} else if strings.HasPrefix(key, "uinit_") {
-		profile := strings.TrimPrefix(key, "uinit_")
-		if req.Profile == "" {
-			req.Profile = profile
-		}
-		key = "url"
+	ac, ok := r.cfgIndex[actionID]
+	if !ok {
+		return "", fmt.Errorf("no action for %q", actionID)
 	}
 
-	h, ok := r.handlers[key]
-	if !ok {
-		if req.Action != "" {
-			return "", fmt.Errorf("no handler for action %q", req.Action)
-		}
-		return "", fmt.Errorf("no handler for type %q", req.Type)
-	}
 	if r.debug {
-		log.Printf("[DEBUG] route: key=%q profile=%q → %T", key, req.Profile, h)
+		log.Printf("[DEBUG] route: action=%q kind=%s profile=%q", actionID, ac.Kind, req.Profile)
 	}
-	return h.Handle(req, r.tmux)
+
+	switch ac.Kind {
+	case KindLiteral:
+		return r.handleLiteral(ac, req)
+	case KindTemplate:
+		return r.handleTemplate(ac, req)
+	case KindRegex:
+		return r.handleRegex(ac, req)
+	default:
+		return "", fmt.Errorf("unknown action kind %q", ac.Kind)
+	}
 }
 
-// TextHandler pastes text literally into tmux. No execution unless Enter is requested.
-type TextHandler struct{}
-
-func (h *TextHandler) Handle(req *ShareRequest, tmux *TmuxRunner) (string, error) {
+func (r *Router) handleLiteral(ac *ActionConfig, req *ShareRequest) (string, error) {
 	if req.Target == "" {
-		return "", fmt.Errorf("target is required for text handler")
+		return "", fmt.Errorf("target is required for literal action %q", ac.ID)
 	}
-
-	if err := tmux.SendKeys(req.Target, req.Text, req.Enter); err != nil {
+	if err := r.tmux.SendKeys(req.Target, req.Text, req.Enter); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Sent to %s", req.Target), nil
+	return "Locked in", nil
 }
 
-// URLHandler routes URLs to uinit via tmux. Always sends Enter to execute.
-// callbackToken and callbackPort are used to construct a curl callback to
-// POST /notify after uinit completes, reporting the score for FCM push.
-type URLHandler struct {
-	callbackToken string
-	callbackPort  int
-}
+func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, error) {
+	data := TemplateData{
+		URL:     req.URL,
+		Text:    req.Text,
+		Profile: req.Profile,
+		Slug:    urlToSlug(req.URL),
+	}
 
-func (h *URLHandler) Handle(req *ShareRequest, tmux *TmuxRunner) (string, error) {
-	// Parse session name from target ("session:pane" → "session").
+	command, err := ac.RenderCommand(data)
+	if err != nil {
+		return "", err
+	}
+
+	// EPIC-043 M5: inline_triage=true runs the rendered command headlessly
+	// (no tmux window, no interactive review pane). Used for fire-and-forget
+	// scoring where the score is consumed via /notify FCM push or the queue
+	// DB rather than a human eyeballing a tmux window.
+	if ac.InlineTriage {
+		return r.handleInlineTriage(ac, command)
+	}
+
 	if req.Target == "" {
-		return "", fmt.Errorf("target is required for url handler")
+		return "", fmt.Errorf("target is required for template action %q", ac.ID)
 	}
 	session := strings.Split(req.Target, ":")[0]
 
-	// Shell-safe: only pass validated URLs (http/https prefix enforced in validation).
-	// Quote the URL to prevent shell interpretation of special characters.
-	//
-	// After uinit completes, if $UINIT_SCORE is set, curl back to POST /notify
-	// so linkari can trigger FCM push notifications for high scores.
-	// The callback runs inside fish -c via tmux new-window, so we use fish
-	// test syntax and fish variable expansion ($UINIT_SCORE, $UINIT_URL, $UINIT_SLUG).
-	command := fmt.Sprintf("uinit %s", shellQuote(req.URL))
-	if req.Profile != "" && req.Profile != "eng" {
-		command = fmt.Sprintf("uinit --profile %s %s", req.Profile, shellQuote(req.URL))
-	}
-	if h.callbackToken != "" && h.callbackPort > 0 {
-		callback := fmt.Sprintf(
-			"; if test -n \"$UINIT_SCORE\"; curl -s -X POST http://localhost:%d/notify -H 'Authorization: Bearer %s' -H 'Content-Type: application/json' -d '{\"score\":'$UINIT_SCORE',\"url\":\"'$UINIT_URL'\",\"slug\":\"'$UINIT_SLUG'\"}'; end",
-			h.callbackPort, h.callbackToken,
-		)
-		command += callback
+	windowName := data.Slug
+	if req.Profile != "" {
+		windowName = fmt.Sprintf("%s: %s", req.Profile, data.Slug)
 	}
 
-	// Open a dedicated tmux window for each URL share.
-	if err := tmux.NewWindow(session, command); err != nil {
+	if err := r.tmux.NewWindow(session, command, windowName); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Opened new window in %s", session), nil
+	return "Cooking... verdict drops soon", nil
 }
 
+// handleInlineTriage runs the rendered command via the configured shell with
+// no tmux wrapper. The command is spawned detached (fire-and-forget) because
+// triage pipelines take 5–30s and the HTTP share request must return
+// immediately. stdout/stderr are discarded; the score path writes to the
+// queue + sidecar + FCM on its own.
+func (r *Router) handleInlineTriage(ac *ActionConfig, command string) (string, error) {
+	shell := r.tmux.shell()
+	shellArg := r.tmux.shellArgs()
+	if r.debug {
+		log.Printf("[DEBUG] inline_triage: action=%q shell=%q command=%q", ac.ID, shell, command)
+	}
+	cmd := exec.Command(shell, shellArg, command)
+	// Detach from parent stdio so the server doesn't block on the child.
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("inline triage exec: %w", err)
+	}
+	// Fire and forget: reap the child in the background to avoid zombies.
+	go func() { _ = cmd.Wait() }()
+	return "Scoring headless — verdict via FCM", nil
+}
+
+func (r *Router) handleRegex(ac *ActionConfig, req *ShareRequest) (string, error) {
+	// Try text first, then URL.
+	match := ac.ExtractMatch(strings.TrimSpace(req.Text))
+	if match == "" {
+		match = ac.ExtractMatch(req.URL)
+	}
+	if match == "" {
+		return "", fmt.Errorf("no match for pattern in action %q", ac.ID)
+	}
+
+	session := strings.Split(req.Target, ":")[0]
+	data := TemplateData{
+		URL:     req.URL,
+		Text:    req.Text,
+		Profile: req.Profile,
+		Match:   match,
+	}
+
+	command, err := ac.RenderCommand(data)
+	if err != nil {
+		return "", err
+	}
+
+	if err := r.tmux.NewWindow(session, command, match); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Spinning up %s", match), nil
+}
 
 // shellQuote wraps a string in single quotes, escaping embedded single quotes.
 // This prevents shell injection via URL payloads.
 func shellQuote(s string) string {
-	// Replace ' with '\'' (end quote, escaped quote, start quote)
 	escaped := strings.ReplaceAll(s, "'", "'\\''")
 	return "'" + escaped + "'"
 }
 
-// jiraKeyRe matches Jira issue keys like ISRE-1234.
-var jiraKeyRe = regexp.MustCompile(`[A-Z][A-Z0-9]+-[0-9]+`)
-
-// GinitHandler parses a Jira key from shared text and runs ginit in a new tmux window.
-type GinitHandler struct{}
-
-func (h *GinitHandler) Handle(req *ShareRequest, tmux *TmuxRunner) (string, error) {
-	key := jiraKeyRe.FindString(strings.TrimSpace(req.Text))
-	if key == "" {
-		key = jiraKeyRe.FindString(req.URL)
+// urlToSlug extracts a short slug from a URL for use as a tmux window name.
+func urlToSlug(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Path == "" || u.Path == "/" {
+		if u != nil && u.Host != "" {
+			return sanitizeWindowName(u.Host)
+		}
+		return "untitled"
 	}
-	if key == "" {
-		return "", fmt.Errorf("no Jira key found in text %q or url %q", req.Text, req.URL)
-	}
+	path := strings.Trim(u.Path, "/")
+	slug := strings.ReplaceAll(path, "/", "-")
+	return sanitizeWindowName(slug)
+}
 
-	command := fmt.Sprintf("ginit %s --yolo", key)
-	if err := tmux.NewWindow("JIRA", command); err != nil {
-		return "", err
+// sanitizeWindowName removes characters that are problematic in tmux window names.
+func sanitizeWindowName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r == ':' || r == '.' || r < 32:
+			b.WriteRune('-')
+		default:
+			b.WriteRune(r)
+		}
 	}
-	return fmt.Sprintf("ginit %s in JIRA", key), nil
+	s := b.String()
+	if len(s) > 50 {
+		s = s[:50]
+	}
+	return s
 }
