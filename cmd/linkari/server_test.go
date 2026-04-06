@@ -13,7 +13,7 @@ import (
 
 func TestHealthz(t *testing.T) {
 	tmux := &TmuxRunner{}
-	router := NewRouter(tmux, false, "", 0)
+	router := NewRouterFromConfig(tmux, builtinConfig(), false)
 	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
@@ -140,7 +140,7 @@ func TestShellQuote(t *testing.T) {
 
 func TestActionsReturnsProfileTagged(t *testing.T) {
 	tmux := &TmuxRunner{}
-	router := NewRouter(tmux, false, "", 0)
+	router := NewRouterFromConfig(tmux, builtinConfig(), false)
 	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
@@ -158,7 +158,7 @@ func TestActionsReturnsProfileTagged(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// Expect uinit_eng, uinit_life, uinit_travel, uinit_fashion, uinit_music, uinit_finance plus note.
+	// Expect uinit_eng, uinit_life, uinit_travel, uinit_fashion, uinit_music, uinit_finance, uinit_dining.
 	// ginit is only present when ATLASSIAN_DOMAIN=grindr.atlassian.net.
 	wantIDs := map[string]string{
 		"uinit_eng":     "eng",
@@ -167,6 +167,7 @@ func TestActionsReturnsProfileTagged(t *testing.T) {
 		"uinit_fashion": "fashion",
 		"uinit_music":   "music",
 		"uinit_finance": "finance",
+		"uinit_dining":  "dining",
 	}
 	found := 0
 	for _, a := range actions {
@@ -187,7 +188,7 @@ func TestActionsReturnsProfileTagged(t *testing.T) {
 
 func TestProfileExtractionFromAction(t *testing.T) {
 	tmux := &TmuxRunner{}
-	router := NewRouter(tmux, false, "", 0)
+	router := NewRouterFromConfig(tmux, builtinConfig(), false)
 
 	// Route a request with action "uinit_life" — should extract profile "life".
 	req := &ShareRequest{
@@ -238,9 +239,160 @@ func TestTLSCertPresent(t *testing.T) {
 	}
 }
 
+func TestNotifyWithVerdict(t *testing.T) {
+	tmux := &TmuxRunner{}
+	router := NewRouterFromConfig(tmux, builtinConfig(), false)
+	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
+	mux := srv.Mux()
+
+	payload := notifyRequest{
+		Score:   85,
+		URL:     "https://example.com/paper",
+		Slug:    "cool-paper",
+		Profile: "eng",
+		Verdict: "Actionable research on fine-tuning with self-distillation",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/notify", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp ShareResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Errorf("expected status ok, got %q", resp.Status)
+	}
+}
+
+func TestNotifyBelowThreshold(t *testing.T) {
+	tmux := &TmuxRunner{}
+	router := NewRouterFromConfig(tmux, builtinConfig(), false)
+	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
+	mux := srv.Mux()
+
+	payload := notifyRequest{
+		Score:   40,
+		URL:     "https://example.com/low",
+		Slug:    "low-score-item",
+		Profile: "eng",
+		Verdict: "Not relevant",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/notify", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp ShareResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != "ok" {
+		t.Errorf("expected status ok, got %q", resp.Status)
+	}
+	// Below threshold → message should indicate "logged only"
+	if resp.Message == "" {
+		t.Error("expected non-empty message")
+	}
+}
+
+func TestNotifyDeviceFCMTokenOverride(t *testing.T) {
+	tmux := &TmuxRunner{}
+	router := NewRouterFromConfig(tmux, builtinConfig(), false)
+	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
+
+	// Register a global FCM token.
+	srv.fcmMu.Lock()
+	srv.fcmToken = "global-token"
+	srv.fcmMu.Unlock()
+
+	mux := srv.Mux()
+
+	payload := notifyRequest{
+		Score:   85,
+		URL:     "https://example.com/paper",
+		Slug:    "cool-paper",
+		Profile: "eng",
+		Verdict: "Great paper on transformers",
+	}
+	body, _ := json.Marshal(payload)
+
+	// Pass device_fcm_token as query param — should be preferred over global.
+	req := httptest.NewRequest(http.MethodPost, "/notify?device_fcm_token=device-token-123", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp ShareResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	// Without a real fcmTokenSource the push will fail, but the device token
+	// path is exercised (firebase not configured → logged only).
+	if resp.Status != "ok" {
+		t.Errorf("expected status ok, got %q: %s", resp.Status, resp.Message)
+	}
+}
+
+func TestNotifyFallbackToGlobalToken(t *testing.T) {
+	tmux := &TmuxRunner{}
+	router := NewRouterFromConfig(tmux, builtinConfig(), false)
+	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
+
+	// Register a global FCM token but no fcmTokenSource — will get "firebase not configured".
+	srv.fcmMu.Lock()
+	srv.fcmToken = "global-token"
+	srv.fcmMu.Unlock()
+
+	mux := srv.Mux()
+
+	payload := notifyRequest{
+		Score:   85,
+		URL:     "https://example.com/paper",
+		Slug:    "cool-paper",
+		Profile: "eng",
+	}
+	body, _ := json.Marshal(payload)
+
+	// No device_fcm_token query param — should fall back to global token.
+	req := httptest.NewRequest(http.MethodPost, "/notify", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp ShareResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != "ok" {
+		t.Errorf("expected status ok, got %q", resp.Status)
+	}
+	// Global token found + no fcmTokenSource → "firebase not configured, logged only"
+	if resp.Message != "firebase not configured, logged only" {
+		t.Errorf("expected firebase not configured message, got %q", resp.Message)
+	}
+}
+
 func TestProfileFieldInPayload(t *testing.T) {
 	tmux := &TmuxRunner{}
-	router := NewRouter(tmux, false, "", 0)
+	router := NewRouterFromConfig(tmux, builtinConfig(), false)
 
 	// Explicit profile in payload takes precedence — action extraction
 	// does not overwrite it.

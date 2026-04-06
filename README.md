@@ -21,11 +21,11 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 
 All 8 tools build and pass tests on Go 1.25. wasend Cloud API support planned, pending permanent access token.
 
-- `linkari` share actions expanded — added `uinit_travel` and `uinit_fashion` profile targets for Android share sheet
+- `linkari` expanded — 7 share profiles, SQLite queue/replay, scoring/archiving pipeline, digest endpoint, Tailscale Funnel (`--tsnet`), TLS support, JSONL observability
 - `effiscore` added: Anthropic API efficiency scoring via DD Metrics API — 5 weighted dimensions, composite score with tier classification
 - `mdq list` extended with `--group-by dir`, `--exclude`, and glob guard (`--headings` hint)
 
-**Last Updated:** 2026-03-31
+**Last Updated:** 2026-04-05
 
 ## Install
 
@@ -146,21 +146,47 @@ Five dimensions: Cache Hit Rate, Cache Reuse Factor, I/O Ratio, Token Savings, M
 
 ## linkari
 
-Webhook service that bridges Android share actions to tmux sessions over Tailscale. Receives `POST /share` from Android (HTTP Shortcuts or standalone APK), validates and routes payloads to tmux.
+Webhook service that bridges Android share actions to tmux sessions. Receives `POST /share` from Android (HTTP Shortcuts or standalone APK), validates and routes payloads to tmux via a local HTTP server or Tailscale Funnel.
 
 ```bash
-# Start with debug logging + FCM push notifications
+# Local with debug logging + FCM push
 linkari serve --debug --token $LINKARI_TOKEN --firebase-sa ~/.config/linkari/firebase-sa.json
 
+# Dual listener: local HTTP + Tailscale Funnel (HTTPS, public Android ingress)
+linkari serve --token $LINKARI_TOKEN --tsnet --tsnet-hostname linkari
+
+# TLS on local listener (mkcert)
+linkari serve --token $LINKARI_TOKEN --tls
+
 # Or via environment variables
-LINKARI_TOKEN=secret LINKARI_FIREBASE_SA=~/.config/linkari/firebase-sa.json linkari serve
+LINKARI_TOKEN=secret LINKARI_TSNET=1 linkari serve
 ```
 
-Actions: `text` (paste into existing pane), `url` (opens new tmux window via `uinit`), `ginit` (parses Jira key from URL or text, opens `ginit <KEY>` in new window). URL windows use `remain-on-exit failed` — auto-close on success, stay open on error.
+**Actions:** `text` (paste into existing pane), `url` (opens new tmux window via `uinit` with profile), `ginit` (parses Jira key, opens `ginit <KEY>`). Seven URL profiles: eng, life, travel, fashion, music, finance, dining. URL windows use `remain-on-exit failed` — auto-close on success, stay open on error.
 
-Endpoints: `POST /share`, `GET /healthz`, `GET /actions` (action registry for dynamic Android intents), `GET /logs` (last 100 lines), `GET /logs/stream` (SSE realtime), `POST /notify` (score callback → FCM push), `POST /register` (FCM device token). Bearer token auth, rate limiting, session auto-create.
+**Endpoints:**
 
-URL shares include a score callback — after uinit completes, the tmux window curls `POST /notify` with `$UINIT_SCORE`. If score >= 80 and a device FCM token is registered, linkari sends a push notification to the Android device via Firebase Cloud Messaging.
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/share` | POST | Route share payloads to tmux |
+| `/actions` | GET | Action registry for dynamic Android intents |
+| `/queue` | GET | List queued items (filter by `?status=`) |
+| `/queue/{id}/score` | POST | Score a queued item; auto-archives above profile threshold |
+| `/archive` | GET | List archived items (filter by `?profile=`) |
+| `/digest` | GET | Recent scored items (last 24h) |
+| `/notify` | POST | Score callback → FCM push when above threshold |
+| `/register` | POST | Register FCM device token for push notifications |
+| `/healthz` | GET | Health check (local only) |
+| `/logs` | GET | Last 100 log lines (local only) |
+| `/logs/stream` | GET | SSE realtime log stream (local only) |
+
+All endpoints except `/healthz`, `/logs`, and `/logs/stream` require bearer token auth. Rate limited to 30 req/min per IP.
+
+**Queue & replay:** Every share is persisted to SQLite before routing. If tmux is unavailable, the request returns `"queued"` and a background goroutine replays pending items every 30s when tmux comes back.
+
+**Scoring & archiving:** `POST /queue/{id}/score` accepts a score (0-100), tags, and slug. Items auto-archive when score meets the profile threshold (80 default, 70 for finance/dining, disabled for life). Archived high-score items trigger an FCM digest push at most once per hour.
+
+**Observability:** JSONL event logging to `~/.config/linkari/linkari_events.jsonl` — emits `linkari_share` and `linkari_digest` events with profile, domain, duration, and status.
 
 ## wasend
 

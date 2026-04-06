@@ -26,6 +26,8 @@ type QueueItem struct {
 	RelayedAt  string `json:"relayed_at,omitempty"`
 	ScoredAt   string `json:"scored_at,omitempty"`
 	ArchivedAt string `json:"archived_at,omitempty"`
+	Verdict    string `json:"verdict,omitempty"`
+	Slug       string `json:"slug,omitempty"`
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -69,12 +71,47 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE queue ADD COLUMN tags TEXT DEFAULT ''",
 		"ALTER TABLE queue ADD COLUMN scored_at TEXT DEFAULT NULL",
 		"ALTER TABLE queue ADD COLUMN archived_at TEXT DEFAULT NULL",
+		"ALTER TABLE queue ADD COLUMN verdict TEXT DEFAULT ''",
+		"ALTER TABLE queue ADD COLUMN slug TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
 	}
 
+	// FTS5 full-text search index over queue content.
+	const fts5Setup = `
+		CREATE VIRTUAL TABLE IF NOT EXISTS queue_fts
+			USING fts5(url, tags, profile, verdict, content='queue', content_rowid='id');
+
+		CREATE TRIGGER IF NOT EXISTS queue_fts_insert AFTER INSERT ON queue BEGIN
+			INSERT INTO queue_fts(rowid, url, tags, profile, verdict)
+			VALUES (new.id, new.url, COALESCE(new.tags,''), COALESCE(new.profile,''), COALESCE(new.verdict,''));
+		END;
+
+		CREATE TRIGGER IF NOT EXISTS queue_fts_update AFTER UPDATE ON queue BEGIN
+			INSERT INTO queue_fts(queue_fts, rowid, url, tags, profile, verdict)
+			VALUES ('delete', old.id, old.url, COALESCE(old.tags,''), COALESCE(old.profile,''), COALESCE(old.verdict,''));
+			INSERT INTO queue_fts(rowid, url, tags, profile, verdict)
+			VALUES (new.id, new.url, COALESCE(new.tags,''), COALESCE(new.profile,''), COALESCE(new.verdict,''));
+		END;
+
+		CREATE TRIGGER IF NOT EXISTS queue_fts_delete AFTER DELETE ON queue BEGIN
+			INSERT INTO queue_fts(queue_fts, rowid, url, tags, profile, verdict)
+			VALUES ('delete', old.id, old.url, COALESCE(old.tags,''), COALESCE(old.profile,''), COALESCE(old.verdict,''));
+		END;
+	`
+	if _, err := db.Exec(fts5Setup); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create fts5 index: %w", err)
+	}
+
 	q := &Queue{db: db, debug: debug}
+
+	// Backfill FTS5 index with any existing rows not yet indexed.
+	if err := q.initFTS5(); err != nil {
+		log.Printf("WARN: fts5 backfill: %v", err)
+	}
+
 	if err := q.Prune(); err != nil {
 		log.Printf("WARN: queue prune on startup: %v", err)
 	}
@@ -99,7 +136,7 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,'')"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,'')"
 
 // Pending returns all items with status=pending, ordered by id ASC (FIFO).
 func (q *Queue) Pending() ([]QueueItem, error) {
@@ -130,12 +167,12 @@ func (q *Queue) MarkFailed(id int64) error {
 	return err
 }
 
-// UpdateScore sets the score and tags on a queue item, promoting to 'scored' status.
-func (q *Queue) UpdateScore(id int64, score int, tags string) error {
+// UpdateScore sets the score, tags, verdict, and slug on a queue item, promoting to 'scored' status.
+func (q *Queue) UpdateScore(id int64, score int, tags, verdict, slug string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := q.db.Exec(
-		"UPDATE queue SET status='scored', score=?, tags=?, scored_at=? WHERE id=?",
-		score, tags, now, id,
+		"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=? WHERE id=?",
+		score, tags, verdict, slug, now, id,
 	)
 	return err
 }
@@ -195,6 +232,86 @@ func (q *Queue) Close() error {
 	return q.db.Close()
 }
 
+// initFTS5 rebuilds the FTS5 index from the content table.
+// This ensures existing rows (inserted before triggers existed) are indexed,
+// and prevents "disk image is malformed" errors from stale index state.
+func (q *Queue) initFTS5() error {
+	// Rebuild completely re-reads all content from the queue table.
+	_, err := q.db.Exec("INSERT INTO queue_fts(queue_fts) VALUES('rebuild')")
+	return err
+}
+
+// ScoreByURL finds a relayed item by URL and updates it to scored, or inserts
+// a new scored row if no relayed item exists. Returns the item and whether it
+// was an insert (true) or update (false).
+func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug string) (*QueueItem, bool, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Check for already-scored/archived item to prevent duplicates on re-run.
+	existing, err := q.query(
+		"SELECT "+queueCols+" FROM queue WHERE url=? AND status IN ('scored','archived') ORDER BY id DESC LIMIT 1",
+		url,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(existing) > 0 {
+		return &existing[0], false, nil
+	}
+
+	// Try to find an existing relayed item by URL.
+	relayed, err := q.query(
+		"SELECT "+queueCols+" FROM queue WHERE url=? AND status='relayed' ORDER BY id DESC LIMIT 1",
+		url,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if len(relayed) > 0 {
+		id := relayed[0].ID
+		_, err = q.db.Exec(
+			"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=? WHERE id=?",
+			score, tags, verdict, slug, now, id,
+		)
+		if err != nil {
+			return nil, false, fmt.Errorf("ScoreByURL update: %w", err)
+		}
+		item, err := q.GetByID(id)
+		return item, false, err
+	}
+
+	// INSERT path — CLI-originated score with no prior relayed row.
+	res, err := q.db.Exec(
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, scored_at, score, tags, verdict, slug)
+		 VALUES (?, '', 'url', '', ?, 'scored', ?, ?, ?, ?, ?, ?)`,
+		url, profile, now, now, score, tags, verdict, slug,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("ScoreByURL insert: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	item, err := q.GetByID(id)
+	return item, true, err
+}
+
+// SearchFTS5 runs a full-text search against the queue_fts index.
+func (q *Queue) SearchFTS5(query string, profile string, limit int) ([]QueueItem, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if profile != "" {
+		return q.query(
+			"SELECT "+queueCols+" FROM queue WHERE id IN (SELECT rowid FROM queue_fts WHERE queue_fts MATCH ? ORDER BY rank LIMIT ?) AND profile=?",
+			query, limit, profile,
+		)
+	}
+	return q.query(
+		"SELECT "+queueCols+" FROM queue WHERE id IN (SELECT rowid FROM queue_fts WHERE queue_fts MATCH ? ORDER BY rank LIMIT ?)",
+		query, limit,
+	)
+}
+
 func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 	rows, err := q.db.Query(sqlStr, args...)
 	if err != nil {
@@ -206,7 +323,7 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 	for rows.Next() {
 		var it QueueItem
 		var score int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt); err != nil {
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug); err != nil {
 			return nil, err
 		}
 		if score != 0 {
