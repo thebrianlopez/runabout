@@ -27,6 +27,7 @@ package main
 // M2 will register a real `triageScorer` implementation in cmd_triage.go.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -70,6 +71,11 @@ type Golden struct {
 	// Raw triage markdown — preserved so prompt-format regressions are
 	// debuggable even if the score happens to land within tolerance.
 	RawMarkdown string `json:"raw_markdown"`
+	// RefreshedFrom is the prior score before a `linkari eval refresh-goldens`
+	// rewrite (EPIC-044 M2). Audit trail so future drift can be measured
+	// against the score the previous manifest produced. Pointer to keep
+	// older fixtures byte-stable (omitempty when unset).
+	RefreshedFrom *int `json:"refreshed_from,omitempty"`
 }
 
 // Scorer is the pluggable contract M2 will satisfy with the real Go triage
@@ -114,6 +120,138 @@ Default fixtures directory (both subcommands), in priority order:
 	}
 	cmd.AddCommand(evalCaptureCmd())
 	cmd.AddCommand(evalRunCmd())
+	cmd.AddCommand(evalRefreshGoldensCmd())
+	return cmd
+}
+
+// refreshScorerFn is the indirection point tests stub for
+// `linkari eval refresh-goldens`. Production path loads the profile
+// manifest and calls the JSON Haiku contract (haikuVerdictWithRepair).
+// Tests swap in a deterministic fake.
+var refreshScorerFn = func(ctx context.Context, profile, content string) (TriageVerdict, error) {
+	_, sysPrompt, err := loadProfileTemplate(profile)
+	if err != nil {
+		return TriageVerdict{}, fmt.Errorf("load template: %w", err)
+	}
+	v, _, err := haikuVerdictWithRepair(ctx, sysPrompt, truncateRunes(content, contentTruncationRunes))
+	return v, err
+}
+
+func evalRefreshGoldensCmd() *cobra.Command {
+	var (
+		fixturesDir string
+		profileFlag string
+		dryRun      bool
+		yes         bool
+	)
+	cmd := &cobra.Command{
+		Use:   "refresh-goldens",
+		Short: "Re-score fixtures via Haiku and rewrite golden.score/verdict/raw_markdown in place (EPIC-044 M2)",
+		Long: `Refresh the golden outputs on every fixture in --fixtures by re-running
+the current profile manifest through Haiku (JSON contract). Used after a
+profile manifest change makes the existing goldens stale.
+
+DESTRUCTIVE: rewriting goldens nukes the regression baseline. Without
+--yes the command prints a summary of old→new score deltas and asks for
+confirmation. Use --dry-run to preview without writing.
+
+Each refreshed fixture preserves id/captured_at(source)/url/profile/content
+unchanged; only golden.{score,verdict,raw_markdown} are rewritten and
+golden.refreshed_from is set to the prior score for audit. captured_at
+is bumped to the refresh timestamp.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if fixturesDir == "" {
+				fixturesDir = defaultFixturesDir()
+			}
+			fixtures, err := loadFixtures(fixturesDir)
+			if err != nil {
+				return err
+			}
+			if profileFlag != "" {
+				fixtures = filterFixturesByProfile(fixtures, profileFlag)
+			}
+			if len(fixtures) == 0 {
+				return fmt.Errorf("no fixtures in %s (profile=%q)", fixturesDir, profileFlag)
+			}
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			type pending struct {
+				path     string
+				prior    int
+				fixture  Fixture
+				verdict  TriageVerdict
+				rendered string
+			}
+			var refreshed []pending
+			for _, fix := range fixtures {
+				v, err := refreshScorerFn(ctx, fix.Profile, fix.Content)
+				if err != nil {
+					return fmt.Errorf("rescore %s: %w", fix.ID, err)
+				}
+				refreshed = append(refreshed, pending{
+					path:     filepath.Join(fixturesDir, fix.ID+".json"),
+					prior:    fix.Golden.Score,
+					fixture:  fix,
+					verdict:  v,
+					rendered: v.RenderMarkdown(),
+				})
+			}
+
+			fmt.Fprintf(os.Stderr, "refresh-goldens: %d fixture(s) in %s\n", len(refreshed), fixturesDir)
+			for _, p := range refreshed {
+				delta := p.verdict.Score - p.prior
+				fmt.Fprintf(os.Stderr, "  %s  %d → %d  (Δ%+d)\n", p.fixture.ID, p.prior, p.verdict.Score, delta)
+			}
+
+			if dryRun {
+				fmt.Fprintln(os.Stderr, "refresh-goldens: --dry-run, not writing")
+				return nil
+			}
+			if !yes {
+				fmt.Fprint(os.Stderr, "\nrewrite goldens? [y/N]: ")
+				var resp string
+				fmt.Fscanln(os.Stdin, &resp)
+				resp = strings.TrimSpace(strings.ToLower(resp))
+				if resp != "y" && resp != "yes" {
+					return fmt.Errorf("aborted")
+				}
+			}
+
+			now := time.Now().UTC().Format(time.RFC3339)
+			for _, p := range refreshed {
+				prior := p.prior
+				out := p.fixture
+				out.CapturedAt = now
+				out.Golden = Golden{
+					Score:         p.verdict.Score,
+					Verdict:       p.verdict.Verdict,
+					RawMarkdown:   p.rendered,
+					RefreshedFrom: &prior,
+				}
+				f, err := os.Create(p.path)
+				if err != nil {
+					return fmt.Errorf("create %s: %w", p.path, err)
+				}
+				enc := json.NewEncoder(f)
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(out); err != nil {
+					f.Close()
+					return fmt.Errorf("encode %s: %w", p.path, err)
+				}
+				f.Close()
+			}
+			fmt.Fprintf(os.Stderr, "refresh-goldens: rewrote %d fixture(s)\n", len(refreshed))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&fixturesDir, "fixtures", "", "fixtures directory (default: $LINKARI_EVAL_FIXTURES, then ~/.config/linkari/fixtures, then ./testdata/triage)")
+	cmd.Flags().StringVar(&profileFlag, "profile", "", "only refresh fixtures matching this profile id")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print old→new deltas, do not write")
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip interactive confirmation (destructive — refreshes the regression baseline)")
 	return cmd
 }
 
@@ -171,6 +309,8 @@ func evalRunCmd() *cobra.Command {
 		fixturesDir string
 		tolerance   int
 		verbose     bool
+		profileFlag string
+		changedOnly bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -182,6 +322,15 @@ func evalRunCmd() *cobra.Command {
 			fixtures, err := loadFixtures(fixturesDir)
 			if err != nil {
 				return err
+			}
+			// EPIC-044 M3: --profile / --changed-only narrow the corpus
+			// for the pre-commit hook path so per-profile gates stay <30s.
+			if profileFlag != "" || changedOnly {
+				wantProfile := profileFlag
+				if wantProfile == "" && changedOnly {
+					return fmt.Errorf("--changed-only requires --profile")
+				}
+				fixtures = filterFixturesByProfile(fixtures, wantProfile)
 			}
 			if len(fixtures) == 0 {
 				return fmt.Errorf("no fixtures in %s — capture some first", fixturesDir)
@@ -226,7 +375,25 @@ func evalRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&fixturesDir, "fixtures", "", "fixtures directory (default: $LINKARI_EVAL_FIXTURES, then ~/.config/linkari/fixtures, then ./testdata/triage)")
 	cmd.Flags().IntVar(&tolerance, "tolerance", 5, "max absolute score delta before a fixture fails")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print every fixture result, not just failures")
+	cmd.Flags().StringVar(&profileFlag, "profile", "", "EPIC-044 M3: only run fixtures matching this profile id")
+	cmd.Flags().BoolVar(&changedOnly, "changed-only", false, "EPIC-044 M3: only run fixtures for --profile (pre-commit hook path)")
 	return cmd
+}
+
+// filterFixturesByProfile returns the subset of fixtures whose Profile
+// matches the given id. EPIC-044 M3 — used by `--profile` and
+// `--changed-only` to scope the eval gate per profile.
+func filterFixturesByProfile(fixtures []Fixture, profileID string) []Fixture {
+	if profileID == "" {
+		return fixtures
+	}
+	out := fixtures[:0:0]
+	for _, f := range fixtures {
+		if f.Profile == profileID {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // --- Capture: read fish-produced workspace into a Fixture ---

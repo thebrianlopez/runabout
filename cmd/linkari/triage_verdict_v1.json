@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TriageVerdict",
+  "description": "Linkari triage v1 — typed contract for Haiku-scored link verdicts (EPIC-044 M1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["score", "verdict", "rubric_scores"],
+  "properties": {
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Total score across all rubric axes."
+    },
+    "verdict": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One-paragraph verdict for the link."
+    },
+    "action_items": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "maxItems": 10
+    },
+    "tags": {
+      "type": "string",
+      "description": "Comma-separated tag list."
+    },
+    "rubric_scores": {
+      "type": "object",
+      "description": "Per-axis scores keyed by axis name from the profile manifest.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100
+      }
+    },
+    "profile": {"type": "string"},
+    "profile_version": {"type": "integer", "minimum": 1}
+  }
+}

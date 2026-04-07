@@ -99,9 +99,16 @@ func TestLoadProfileTemplate_Fallback(t *testing.T) {
 	if err != nil {
 		t.Skip("no home dir")
 	}
-	expected := filepath.Join(home, "code", "personal", "docs", "prompts", "profiles", "eng.md")
+	// EPIC-044 M2: YAML manifest is preferred over the legacy .md when
+	// present (loadProfileTemplate tries yaml first, falls back to md).
+	expected := filepath.Join(home, "code", "personal", "docs", "prompts", "profiles", "eng.yaml")
 	if _, err := os.Stat(expected); err != nil {
-		t.Skipf("personal eng.md not present: %v", err)
+		// Fall back to the legacy .md path for clean checkouts that
+		// haven't migrated yet.
+		expected = filepath.Join(home, "code", "personal", "docs", "prompts", "profiles", "eng.md")
+		if _, err := os.Stat(expected); err != nil {
+			t.Skipf("personal eng manifest not present: %v", err)
+		}
 	}
 	path, content, err := loadProfileTemplate("eng")
 	if err != nil {
@@ -131,7 +138,7 @@ func TestWriteScoreSidecar(t *testing.T) {
 	defer func() { nowRFC3339UTC = orig }()
 	nowRFC3339UTC = func() string { return "2026-04-06T12:00:00Z" }
 
-	if err := writeScoreSidecar(ws, 73, "looks fine", "my-slug", "eng", "https://example.com"); err != nil {
+	if err := writeScoreSidecar(ws, 73, "looks fine", "my-slug", "eng", "https://example.com", nil); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(ws, "_score.json"))

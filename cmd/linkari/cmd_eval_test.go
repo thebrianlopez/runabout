@@ -1,11 +1,73 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestRefreshGoldensRewritesAndAudits(t *testing.T) {
+	dir := t.TempDir()
+	orig := Fixture{
+		ID:         "fx1",
+		CapturedAt: "2026-01-01T00:00:00Z",
+		Source:     "fish-exact",
+		URL:        "https://example.com",
+		Profile:    "eng",
+		Content:    "some content",
+		Golden:     Golden{Score: 50, Verdict: "old", RawMarkdown: "old md"},
+	}
+	path := filepath.Join(dir, orig.ID+".json")
+	b, _ := json.MarshalIndent(orig, "", "  ")
+	if err := os.WriteFile(path, b, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := refreshScorerFn
+	t.Cleanup(func() { refreshScorerFn = prev })
+	refreshScorerFn = func(ctx context.Context, profile, content string) (TriageVerdict, error) {
+		return TriageVerdict{
+			Score:        82,
+			Verdict:      "fresh",
+			RubricScores: map[string]int{"signal": 82},
+		}, nil
+	}
+
+	cmd := evalRefreshGoldensCmd()
+	cmd.SetArgs([]string{"--fixtures", dir, "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	rewritten, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Fixture
+	if err := json.Unmarshal(rewritten, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Golden.Score != 82 {
+		t.Errorf("score = %d, want 82", got.Golden.Score)
+	}
+	if got.Golden.Verdict != "fresh" {
+		t.Errorf("verdict = %q, want fresh", got.Golden.Verdict)
+	}
+	if got.Golden.RefreshedFrom == nil || *got.Golden.RefreshedFrom != 50 {
+		t.Errorf("refreshed_from = %v, want 50", got.Golden.RefreshedFrom)
+	}
+	if got.ID != orig.ID || got.URL != orig.URL || got.Profile != orig.Profile || got.Content != orig.Content || got.Source != orig.Source {
+		t.Errorf("non-golden fields drifted: %+v", got)
+	}
+	if got.CapturedAt == orig.CapturedAt {
+		t.Errorf("captured_at not bumped")
+	}
+	if got.Golden.RawMarkdown == "" {
+		t.Errorf("raw_markdown empty after refresh")
+	}
+}
 
 func TestExtractTriageBlock(t *testing.T) {
 	readme := "# Title\n\nbody body\n\n---\n\n## Score: 72/100\n\n## Verdict\nkeep it\n"
