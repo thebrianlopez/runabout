@@ -63,6 +63,7 @@ func triageCmd() *cobra.Command {
 		contentFile string
 		dryRun      bool
 		noPersist   bool
+		useJSON     bool
 	)
 
 	cmd := &cobra.Command{
@@ -128,22 +129,44 @@ the eval harness path).`,
 				return nil
 			}
 
-			// 4. Call Haiku.
+			// 4. Call Haiku — JSON-mode (EPIC-044 M1) or markdown (legacy).
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			raw, err := execHaiku(ctx, sysPrompt, content)
-			if err != nil {
-				return fmt.Errorf("haiku: %w", err)
-			}
 
-			// 5. Parse triage markdown.
-			res, err := parseTriageMarkdown(raw)
-			if err != nil {
-				return fmt.Errorf("parse triage: %w", err)
+			var (
+				raw     string
+				res     TriageResult
+				verdict *TriageVerdict // populated only on the JSON path
+			)
+			if useJSON {
+				v, _, jerr := haikuVerdictWithRepair(ctx, sysPrompt, content)
+				if jerr != nil {
+					return fmt.Errorf("haiku-json: %w", jerr)
+				}
+				verdict = &v
+				raw = v.RenderMarkdown()
+				res = TriageResult{
+					Score:       v.Score,
+					Verdict:     v.Verdict,
+					ActionItems: v.ActionItems,
+					Tags:        v.Tags,
+					RawMarkdown: raw,
+				}
+			} else {
+				rawMD, err := execHaiku(ctx, sysPrompt, content)
+				if err != nil {
+					return fmt.Errorf("haiku: %w", err)
+				}
+				parsed, err := parseTriageMarkdown(rawMD)
+				if err != nil {
+					return fmt.Errorf("parse triage: %w", err)
+				}
+				parsed.RawMarkdown = rawMD
+				raw = rawMD
+				res = parsed
 			}
-			res.RawMarkdown = raw
 
 			if noPersist {
 				enc := json.NewEncoder(os.Stdout)
@@ -173,7 +196,18 @@ the eval harness path).`,
 			}
 
 			// 7. Write _score.json sidecar (fish line 138-145 shape).
-			if err := writeScoreSidecar(workspace, res.Score, res.Verdict, slug, profile, url); err != nil {
+			//    EPIC-044: additive-only; JSON path also writes profile_version
+			//    + rubric_scores. Existing readers (cmd_eval.go captureFromWorkspace)
+			//    decode by named field and ignore unknown keys.
+			var extras *sidecarExtras
+			if verdict != nil {
+				extras = &sidecarExtras{
+					SchemaVersion:  "triage_verdict_v1",
+					ProfileVersion: verdict.ProfileVersion,
+					RubricScores:   verdict.RubricScores,
+				}
+			}
+			if err := writeScoreSidecar(workspace, res.Score, res.Verdict, slug, profile, url, extras); err != nil {
 				fmt.Fprintf(os.Stderr, "WARN: write _score.json: %v\n", err)
 			}
 
@@ -195,6 +229,7 @@ the eval harness path).`,
 	cmd.Flags().StringVar(&contentFile, "content-file", "", "content file to score (default: <workspace>/README.md, '-' for stdin)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "assemble + dump prompt, skip Haiku call and persist")
 	cmd.Flags().BoolVar(&noPersist, "no-persist", false, "call Haiku + parse but skip queue write and sidecar (used by eval)")
+	cmd.Flags().BoolVar(&useJSON, "use-json", false, "EPIC-044 M1: use the typed TriageVerdict contract via `claude --json-schema` instead of regex-parsing markdown (per-profile staged rollout flag)")
 
 	return cmd
 }
@@ -202,27 +237,62 @@ the eval harness path).`,
 // loadProfileTemplate finds the profile prompt template using the same
 // precedence as _uinit_profile_prompt.fish lines 19-29:
 //
-//  1. $ORG_PATH/docs/prompts/profiles/<profile>.md
-//  2. ~/code/personal/docs/prompts/profiles/<profile>.md
+//  1. $ORG_PATH/docs/prompts/profiles/<profile>.{yaml,md}
+//  2. ~/code/personal/docs/prompts/profiles/<profile>.{yaml,md}
+//
+// EPIC-044 M2: YAML manifests (Layer 1) are tried first; the legacy .md
+// path is the fallback so the migration can land per-profile without
+// bricking unmigrated ones.
 func loadProfileTemplate(profile string) (path, content string, err error) {
-	var candidates []string
+	var dirs []string
 	if orgPath := os.Getenv("ORG_PATH"); orgPath != "" {
-		candidates = append(candidates, filepath.Join(orgPath, "docs", "prompts", "profiles", profile+".md"))
+		dirs = append(dirs, filepath.Join(orgPath, "docs", "prompts", "profiles"))
 	}
 	if home, herr := os.UserHomeDir(); herr == nil {
-		candidates = append(candidates, filepath.Join(home, "code", "personal", "docs", "prompts", "profiles", profile+".md"))
+		dirs = append(dirs, filepath.Join(home, "code", "personal", "docs", "prompts", "profiles"))
 	}
-	for _, p := range candidates {
-		b, rerr := os.ReadFile(p)
+	var checked []string
+	for _, d := range dirs {
+		yamlPath := filepath.Join(d, profile+".yaml")
+		checked = append(checked, yamlPath)
+		if _, statErr := os.Stat(yamlPath); statErr == nil {
+			m, lerr := LoadProfileManifest(yamlPath)
+			if lerr != nil {
+				return "", "", lerr
+			}
+			rendered, rerr := m.Render()
+			if rerr != nil {
+				return "", "", rerr
+			}
+			return yamlPath, rendered, nil
+		}
+		mdPath := filepath.Join(d, profile+".md")
+		checked = append(checked, mdPath)
+		b, rerr := os.ReadFile(mdPath)
 		if rerr != nil {
 			continue
 		}
 		if len(bytes.TrimSpace(b)) == 0 {
 			continue
 		}
-		return p, string(b), nil
+		return mdPath, string(b), nil
 	}
-	return "", "", fmt.Errorf("no profile prompt template for %q (checked %v)", profile, candidates)
+	return "", "", fmt.Errorf("no profile prompt template for %q (checked %v)", profile, checked)
+}
+
+// haikuEnv returns os.Environ minus CLAUDECODE — claude CLI behaves
+// differently when invoked from inside Claude Code itself, so both the
+// markdown and JSON Haiku paths strip it. (Mirrors fish `env -u CLAUDECODE`.)
+func haikuEnv() []string {
+	env := os.Environ()
+	filtered := env[:0]
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "CLAUDECODE=") {
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	return filtered
 }
 
 // runClaudeHaiku shells out to the claude CLI for a single-turn Haiku call,
@@ -243,17 +313,7 @@ func runClaudeHaiku(ctx context.Context, systemPrompt, content string) (string, 
 		"--system-prompt", systemPrompt,
 	)
 	cmd.Stdin = strings.NewReader(content)
-
-	// Mirror fish `env -u CLAUDECODE`: copy current env minus CLAUDECODE.
-	env := os.Environ()
-	filtered := env[:0]
-	for _, kv := range env {
-		if strings.HasPrefix(kv, "CLAUDECODE=") {
-			continue
-		}
-		filtered = append(filtered, kv)
-	}
-	cmd.Env = filtered
+	cmd.Env = haikuEnv()
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -376,17 +436,34 @@ func truncateRunes(s string, n int) string {
 	return string(r[:n])
 }
 
+// sidecarExtras carries the EPIC-044 M1 additive fields. Pass nil from the
+// legacy markdown path; pass a populated value from the JSON path. Every
+// field is omitempty so the v1 sidecar shape (the six fields below) stays
+// byte-stable when extras is nil — see TestWriteScoreSidecar / the
+// `_score.json` additive-only invariant in cmd_eval.go captureFromWorkspace.
+type sidecarExtras struct {
+	SchemaVersion  string         `json:"schema_version,omitempty"`
+	ProfileVersion int            `json:"profile_version,omitempty"`
+	RubricScores   map[string]int `json:"rubric_scores,omitempty"`
+}
+
 // writeScoreSidecar writes _score.json with byte-equivalent shape to fish
-// _uinit_profile_prompt.fish lines 138-145.
-func writeScoreSidecar(workspace string, score int, verdict, slug, profile, url string) error {
-	payload := struct {
+// _uinit_profile_prompt.fish lines 138-145, plus optional additive fields
+// (schema_version, profile_version, rubric_scores) when extras is non-nil.
+func writeScoreSidecar(workspace string, score int, verdict, slug, profile, url string, extras *sidecarExtras) error {
+	type payloadV1 struct {
 		Score    int    `json:"score"`
 		Verdict  string `json:"verdict"`
 		Slug     string `json:"slug"`
 		Profile  string `json:"profile"`
 		URL      string `json:"url"`
 		ScoredAt string `json:"scored_at"`
-	}{
+	}
+	type payloadV2 struct {
+		payloadV1
+		sidecarExtras
+	}
+	v1 := payloadV1{
 		Score:    score,
 		Verdict:  verdict,
 		Slug:     slug,
@@ -394,7 +471,13 @@ func writeScoreSidecar(workspace string, score int, verdict, slug, profile, url 
 		URL:      url,
 		ScoredAt: nowRFC3339UTC(),
 	}
-	b, err := json.Marshal(payload)
+	var b []byte
+	var err error
+	if extras == nil {
+		b, err = json.Marshal(v1)
+	} else {
+		b, err = json.Marshal(payloadV2{payloadV1: v1, sidecarExtras: *extras})
+	}
 	if err != nil {
 		return err
 	}
