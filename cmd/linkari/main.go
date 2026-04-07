@@ -37,6 +37,7 @@ func main() {
 	rootCmd.AddCommand(digestCmd())
 	rootCmd.AddCommand(evalCmd())
 	rootCmd.AddCommand(triageCmd())
+	rootCmd.AddCommand(profileCmd())
 	rootCmd.AddCommand(completionCmd(rootCmd))
 
 	registerCompletions(rootCmd)
