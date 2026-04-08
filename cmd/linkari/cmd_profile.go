@@ -26,7 +26,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const fixtureCapPerProfile = 8
+const (
+	fixtureCapPerProfile  = 8
+	fixtureWarnThreshold  = 5
+)
 
 func profileCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -41,6 +44,7 @@ func profileLintCmd() *cobra.Command {
 	var (
 		fixturesDir string
 		strict      bool
+		minFixtures int
 	)
 	cmd := &cobra.Command{
 		Use:   "lint [manifest.yaml ...]",
@@ -87,8 +91,16 @@ also fatal.`,
 					n, ok := countFixturesForProfile(fixturesDir, m.ID)
 					if !ok {
 						warns = append(warns, fmt.Sprintf("%s: fixtures dir %s missing or unreadable", path, fixturesDir))
-					} else if n > fixtureCapPerProfile {
-						warns = append(warns, fmt.Sprintf("%s: profile %q has %d fixtures > cap %d (pre-commit hook will exceed 30s budget)", path, m.ID, n, fixtureCapPerProfile))
+					} else {
+						if n > fixtureCapPerProfile {
+							warns = append(warns, fmt.Sprintf("%s: profile %q has %d fixtures > cap %d (pre-commit hook will exceed 30s budget)", path, m.ID, n, fixtureCapPerProfile))
+						}
+						if n < fixtureWarnThreshold {
+							fmt.Fprintf(os.Stderr, "warn: profile %s has %d fixtures (<%d)\n", m.ID, n, fixtureWarnThreshold)
+						}
+						if minFixtures > 0 && n < minFixtures {
+							errs = append(errs, fmt.Sprintf("%s: profile %q has %d fixtures, below --min-fixtures=%d", path, m.ID, n, minFixtures))
+						}
 					}
 				}
 				fmt.Fprintf(os.Stderr, "OK   %s (id=%s rubric=%d axes)\n", path, m.ID, len(m.Rubric))
@@ -110,6 +122,7 @@ also fatal.`,
 	}
 	cmd.Flags().StringVar(&fixturesDir, "fixtures", "", "fixtures directory (default: same as `linkari eval run`)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "treat warnings as fatal")
+	cmd.Flags().IntVar(&minFixtures, "min-fixtures", 0, "hard-fail any profile with fewer than N fixtures (0 = disabled)")
 	return cmd
 }
 
@@ -123,11 +136,10 @@ func countFixturesForProfile(fixturesDir, profileID string) (int, bool) {
 	}
 	count := 0
 	for _, e := range entries {
-		if !e.IsDir() {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		// Each fixture is a subdir with fixture.json — peek at .Profile.
-		fp := filepath.Join(fixturesDir, e.Name(), "fixture.json")
+		fp := filepath.Join(fixturesDir, e.Name())
 		b, rerr := os.ReadFile(fp)
 		if rerr != nil {
 			continue

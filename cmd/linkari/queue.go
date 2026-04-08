@@ -78,6 +78,35 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		db.Exec(m) // Ignore "duplicate column" errors.
 	}
 
+	// EPIC-045 M1: push_outbox and devices tables.
+	const pushSchema = `
+		CREATE TABLE IF NOT EXISTS push_outbox (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			score         INTEGER NOT NULL,
+			slug          TEXT NOT NULL DEFAULT '',
+			verdict       TEXT NOT NULL DEFAULT '',
+			url           TEXT NOT NULL DEFAULT '',
+			kind          TEXT NOT NULL DEFAULT 'notify',
+			status        TEXT NOT NULL DEFAULT 'pending',
+			attempts      INTEGER NOT NULL DEFAULT 0,
+			next_attempt  INTEGER NOT NULL DEFAULT 0,
+			created_at    INTEGER NOT NULL,
+			updated_at    INTEGER NOT NULL,
+			last_error    TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_push_outbox_status_next
+			ON push_outbox(status, next_attempt);
+
+		CREATE TABLE IF NOT EXISTS devices (
+			token      TEXT PRIMARY KEY,
+			updated_at INTEGER NOT NULL
+		);
+	`
+	if _, err := db.Exec(pushSchema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create push_outbox/devices: %w", err)
+	}
+
 	// FTS5 full-text search index over queue content.
 	const fts5Setup = `
 		CREATE VIRTUAL TABLE IF NOT EXISTS queue_fts
@@ -310,6 +339,144 @@ func (q *Queue) SearchFTS5(query string, profile string, limit int) ([]QueueItem
 		"SELECT "+queueCols+" FROM queue WHERE id IN (SELECT rowid FROM queue_fts WHERE queue_fts MATCH ? ORDER BY rank LIMIT ?)",
 		query, limit,
 	)
+}
+
+// --- EPIC-045: push_outbox + devices ---
+
+// PushItem is a row in the push_outbox table.
+type PushItem struct {
+	ID          int64
+	Score       int
+	Slug        string
+	Verdict     string
+	URL         string
+	Kind        string
+	Status      string
+	Attempts    int
+	NextAttempt int64
+	CreatedAt   int64
+	UpdatedAt   int64
+	LastError   string
+}
+
+// EnqueuePush inserts a pending row into push_outbox and returns its id.
+func (q *Queue) EnqueuePush(kind string, score int, slug, verdict, url string) (int64, error) {
+	now := time.Now().Unix()
+	res, err := q.db.Exec(
+		`INSERT INTO push_outbox (score, slug, verdict, url, kind, status, attempts, next_attempt, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+		score, slug, verdict, url, kind, now, now, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("enqueue push: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	return id, nil
+}
+
+// PendingPushes returns up to limit pending rows whose next_attempt <= now.
+func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := q.db.Query(
+		`SELECT id, score, slug, verdict, url, kind, status, attempts, next_attempt, created_at, updated_at, last_error
+		 FROM push_outbox WHERE status='pending' AND next_attempt <= ? ORDER BY id ASC LIMIT ?`,
+		time.Now().Unix(), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PushItem
+	for rows.Next() {
+		var p PushItem
+		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError); err != nil {
+			return nil, err
+		}
+		items = append(items, p)
+	}
+	return items, rows.Err()
+}
+
+// MarkPushSent marks a push row as sent.
+func (q *Queue) MarkPushSent(id int64) error {
+	now := time.Now().Unix()
+	_, err := q.db.Exec(
+		`UPDATE push_outbox SET status='sent', updated_at=?, last_error='' WHERE id=?`,
+		now, id,
+	)
+	return err
+}
+
+// BumpPushAttempt increments attempts and schedules next_attempt after backoff seconds.
+func (q *Queue) BumpPushAttempt(id int64, backoffSeconds int64, lastErr string) error {
+	now := time.Now().Unix()
+	_, err := q.db.Exec(
+		`UPDATE push_outbox SET attempts = attempts + 1, next_attempt = ?, updated_at = ?, last_error = ? WHERE id = ?`,
+		now+backoffSeconds, now, lastErr, id,
+	)
+	return err
+}
+
+// ParkPush bumps next_attempt without incrementing attempts (missing-token park).
+func (q *Queue) ParkPush(id int64, backoffSeconds int64) error {
+	now := time.Now().Unix()
+	_, err := q.db.Exec(
+		`UPDATE push_outbox SET next_attempt = ?, updated_at = ?, last_error = 'parked: no fcm token' WHERE id = ?`,
+		now+backoffSeconds, now, id,
+	)
+	return err
+}
+
+// MarkPushDead marks a push row as dead-lettered.
+func (q *Queue) MarkPushDead(id int64, reason string) error {
+	now := time.Now().Unix()
+	_, err := q.db.Exec(
+		`UPDATE push_outbox SET status='dead', updated_at=?, last_error=? WHERE id=?`,
+		now, reason, id,
+	)
+	return err
+}
+
+// PrunePushes deletes sent rows older than 7 days.
+func (q *Queue) PrunePushes() error {
+	cutoff := time.Now().Add(-7 * 24 * time.Hour).Unix()
+	_, err := q.db.Exec(
+		`DELETE FROM push_outbox WHERE status='sent' AND updated_at < ?`,
+		cutoff,
+	)
+	return err
+}
+
+// UpsertDevice sets the single registered FCM token, replacing any prior row.
+func (q *Queue) UpsertDevice(token string) error {
+	now := time.Now().Unix()
+	tx, err := q.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM devices`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO devices(token, updated_at) VALUES(?, ?)`, token, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// GetDeviceToken returns the registered FCM token, or "" if none.
+func (q *Queue) GetDeviceToken() (string, error) {
+	row := q.db.QueryRow(`SELECT token FROM devices LIMIT 1`)
+	var token string
+	if err := row.Scan(&token); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return token, nil
 }
 
 func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {

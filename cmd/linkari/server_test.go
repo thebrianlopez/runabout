@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -242,7 +243,7 @@ func TestTLSCertPresent(t *testing.T) {
 func TestNotifyWithVerdict(t *testing.T) {
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, builtinConfig(), false)
-	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
+	srv := NewServer("test-token", router, newTestQueue(t), NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	payload := notifyRequest{
@@ -310,13 +311,7 @@ func TestNotifyBelowThreshold(t *testing.T) {
 func TestNotifyDeviceFCMTokenOverride(t *testing.T) {
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, builtinConfig(), false)
-	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
-
-	// Register a global FCM token.
-	srv.fcmMu.Lock()
-	srv.fcmToken = "global-token"
-	srv.fcmMu.Unlock()
-
+	srv := NewServer("test-token", router, newTestQueue(t), NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	payload := notifyRequest{
@@ -351,13 +346,7 @@ func TestNotifyDeviceFCMTokenOverride(t *testing.T) {
 func TestNotifyFallbackToGlobalToken(t *testing.T) {
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, builtinConfig(), false)
-	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
-
-	// Register a global FCM token but no fcmTokenSource — will get "firebase not configured".
-	srv.fcmMu.Lock()
-	srv.fcmToken = "global-token"
-	srv.fcmMu.Unlock()
-
+	srv := NewServer("test-token", router, newTestQueue(t), NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	payload := notifyRequest{
@@ -384,9 +373,9 @@ func TestNotifyFallbackToGlobalToken(t *testing.T) {
 	if resp.Status != "ok" {
 		t.Errorf("expected status ok, got %q", resp.Status)
 	}
-	// Global token found + no fcmTokenSource → "firebase not configured, logged only"
-	if resp.Message != "firebase not configured, logged only" {
-		t.Errorf("expected firebase not configured message, got %q", resp.Message)
+	// Push is now durably enqueued into push_outbox; worker handles delivery.
+	if !strings.Contains(resp.Message, "enqueued") {
+		t.Errorf("expected enqueued message, got %q", resp.Message)
 	}
 }
 

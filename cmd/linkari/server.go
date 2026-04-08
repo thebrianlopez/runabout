@@ -1,13 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +17,31 @@ import (
 
 // maxPayloadSize limits request body to 64KB.
 const maxPayloadSize = 64 * 1024
+
+// registerFaultEnv is the env var that, when set to a 5xx status code,
+// causes POST /register to short-circuit with that status before touching
+// the devices table. Debug-only; used by linkari-android FcmRegisterWorker
+// to exercise its Result.retry() 5xx backoff branch (EPIC-045 M6 Check 4).
+const registerFaultEnv = "LINKARI_REGISTER_FAULT"
+
+// ValidateRegisterFaultEnv parses $LINKARI_REGISTER_FAULT at startup.
+// Returns 0 when unset; a value in [500,599] when valid; fatals otherwise.
+// 2xx/4xx codes are rejected so operators cannot accidentally mask real
+// registration failures with a 200/400 short-circuit.
+func ValidateRegisterFaultEnv() int {
+	v := strings.TrimSpace(os.Getenv(registerFaultEnv))
+	if v == "" {
+		return 0
+	}
+	code, err := strconv.Atoi(v)
+	if err != nil {
+		log.Fatalf("FATAL: %s=%q is not an integer", registerFaultEnv, v)
+	}
+	if code < 500 || code > 599 {
+		log.Fatalf("FATAL: %s=%d must be in [500,599] (2xx/4xx rejected)", registerFaultEnv, code)
+	}
+	return code
+}
 
 // ShareRequest is the incoming payload from Android HTTP Shortcuts.
 type ShareRequest struct {
@@ -524,16 +549,21 @@ func (s *Server) maybeDigestPush(score int, slug string) {
 	if time.Since(s.lastDigestPush) < time.Hour {
 		return
 	}
-	deviceToken := s.GetFCMToken()
-	if deviceToken == "" || s.fcmTokenSource == nil {
+	if s.queue == nil {
 		return
 	}
-	if err := s.sendFCMPush(deviceToken, score, slug, "", ""); err != nil {
-		log.Printf("WARN: digest FCM push failed: %v", err)
+	id, err := s.queue.EnqueuePush("digest", score, slug, "", "")
+	if err != nil {
+		log.Printf("WARN: digest enqueue failed: %v", err)
 		return
 	}
 	s.lastDigestPush = time.Now()
-	log.Printf("digest FCM push sent: score=%d slug=%s", score, slug)
+	emitPushEvent("push_outbox_enqueued", map[string]interface{}{
+		"id": id, "kind": "digest", "score": score, "slug": slug,
+	})
+	if s.debug {
+		log.Printf("[DEBUG] digest push enqueued id=%d score=%d slug=%s", id, score, slug)
+	}
 }
 
 func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
@@ -677,9 +707,31 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// EPIC-045 M6 Check 4: debug-only fault injection for android
+	// FcmRegisterWorker retry path. Short-circuits BEFORE touching the
+	// devices table so replaying the toggle does not corrupt state.
+	if code := ValidateRegisterFaultEnv(); code != 0 {
+		emitPushEvent("push_register_fault_injected", map[string]interface{}{
+			"status": code,
+		})
+		w.WriteHeader(code)
+		return
+	}
+
 	s.fcmMu.Lock()
 	s.fcmToken = req.FCMToken
 	s.fcmMu.Unlock()
+
+	// EPIC-045 M3: durably upsert into devices table.
+	if s.queue != nil {
+		if err := s.queue.UpsertDevice(req.FCMToken); err != nil {
+			log.Printf("WARN: device upsert failed: %v", err)
+		} else {
+			emitPushEvent("push_register_upsert", map[string]interface{}{
+				"token_len": len(req.FCMToken),
+			})
+		}
+	}
 
 	if s.debug {
 		log.Printf("[DEBUG] FCM token registered (len=%d)", len(req.FCMToken))
@@ -773,120 +825,30 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-device FCM token from the originating share request takes precedence
-	// over the globally registered token from POST /register.
-	deviceToken := r.URL.Query().Get("device_fcm_token")
-	if deviceToken == "" {
-		deviceToken = s.GetFCMToken()
-	}
-	if deviceToken == "" {
-		log.Printf("WARN: score %d qualifies for push but no FCM token registered", req.Score)
-		writeJSON(w, http.StatusOK, ShareResponse{
-			Status:    "ok",
-			Message:   "no FCM token registered, logged only",
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		})
+	if s.queue == nil {
+		writeError(w, http.StatusServiceUnavailable, "queue not configured")
 		return
 	}
 
-	if s.fcmTokenSource == nil {
-		log.Printf("WARN: score %d qualifies for push but Firebase SA not configured", req.Score)
-		writeJSON(w, http.StatusOK, ShareResponse{
-			Status:    "ok",
-			Message:   "firebase not configured, logged only",
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		})
+	id, err := s.queue.EnqueuePush("notify", req.Score, req.Slug, req.Verdict, req.URL)
+	if err != nil {
+		log.Printf("ERROR: notify enqueue failed: %v", err)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue: %v", err))
 		return
 	}
-
-	if err := s.sendFCMPush(deviceToken, req.Score, req.Slug, req.Verdict, req.URL); err != nil {
-		log.Printf("ERROR: FCM push failed: %v", err)
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("FCM push failed: %v", err))
-		return
-	}
-
-	log.Printf("FCM push sent: score=%d slug=%s", req.Score, req.Slug)
+	emitPushEvent("push_outbox_enqueued", map[string]interface{}{
+		"id": id, "kind": "notify", "score": req.Score, "slug": req.Slug, "url": req.URL,
+	})
+	log.Printf("push enqueued: id=%d score=%d slug=%s", id, req.Score, req.Slug)
 	writeJSON(w, http.StatusOK, ShareResponse{
 		Status:    "ok",
-		Message:   fmt.Sprintf("push sent (score=%d)", req.Score),
+		Message:   fmt.Sprintf("push enqueued id=%d (score=%d)", id, req.Score),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
-// fcmEndpoint is the FCM HTTP v1 API endpoint.
+// fcmEndpoint is the FCM HTTP v1 API endpoint (used by the push outbox worker).
 const fcmEndpoint = "https://fcm.googleapis.com/v1/projects/LINKARI_FCM_PROJECT_ID/messages:send"
-
-// sendFCMPush sends a push notification via the FCM HTTP v1 API.
-// The notification popup shows the first sentence of the verdict as a summary.
-// Full verdict, URL, slug, and profile are passed in the data payload so the
-// Linkari app can render a detail view on tap.
-func (s *Server) sendFCMPush(deviceToken string, score int, slug string, verdict string, url string) error {
-	tok, err := s.fcmTokenSource.Token()
-	if err != nil {
-		return fmt.Errorf("obtaining oauth2 token: %w", err)
-	}
-
-	// Build a concise popup summary from the verdict's first sentence.
-	notifBody := slug
-	if verdict != "" {
-		notifBody = firstSentence(verdict, 120)
-	}
-
-	// Score-based actionable title.
-	var title string
-	switch {
-	case score >= 70:
-		title = fmt.Sprintf("Worth reading — %d/100", score)
-	case score >= 40:
-		title = fmt.Sprintf("Maybe — %d/100", score)
-	default:
-		title = fmt.Sprintf("Skip it — %d/100", score)
-	}
-
-	payload := map[string]interface{}{
-		"message": map[string]interface{}{
-			"token": deviceToken,
-			"notification": map[string]string{
-				"title": title,
-				"body":  notifBody,
-			},
-			"data": map[string]string{
-				"slug":    slug,
-				"verdict": verdict,
-				"url":     url,
-				"score":   fmt.Sprintf("%d", score),
-			},
-			"android": map[string]string{
-				"priority": "high",
-			},
-		},
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshaling FCM payload: %w", err)
-	}
-
-	req, err := http.NewRequest(http.MethodPost, fcmEndpoint, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("creating FCM request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("sending FCM request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("FCM returned %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	return nil
-}
 
 // firstSentence extracts the first sentence from text, truncating to maxLen.
 // It splits on ". ", "— ", or newline boundaries to find a natural break.

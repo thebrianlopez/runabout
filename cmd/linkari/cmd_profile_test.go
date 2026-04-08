@@ -36,6 +36,62 @@ func TestProfileLintCmdBadWeights(t *testing.T) {
 	}
 }
 
+func writeFixture(t *testing.T, dir, id, profile string) {
+	t.Helper()
+	body := `{"id":"` + id + `","profile":"` + profile + `"}`
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProfileLintMinFixturesAllPass(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "eng.yaml")
+	if err := os.WriteFile(yamlPath, []byte(validEngYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fxDir := t.TempDir()
+	writeFixture(t, fxDir, "a", "eng")
+	writeFixture(t, fxDir, "b", "eng")
+	cmd := profileCmd()
+	cmd.SetArgs([]string{"lint", "--fixtures", fxDir, "--min-fixtures", "2", yamlPath})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected pass, got %v", err)
+	}
+}
+
+func TestProfileLintMinFixturesHardFail(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "eng.yaml")
+	if err := os.WriteFile(yamlPath, []byte(validEngYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fxDir := t.TempDir()
+	writeFixture(t, fxDir, "a", "eng")
+	cmd := profileCmd()
+	cmd.SetArgs([]string{"lint", "--fixtures", fxDir, "--min-fixtures", "3", yamlPath})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("expected hard-fail, got nil")
+	}
+}
+
+func TestProfileLintWarnOnly(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "eng.yaml")
+	if err := os.WriteFile(yamlPath, []byte(validEngYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fxDir := t.TempDir()
+	writeFixture(t, fxDir, "a", "eng")
+	writeFixture(t, fxDir, "b", "eng")
+	// 2 fixtures: below warn threshold (5), but min-fixtures=1 should pass.
+	cmd := profileCmd()
+	cmd.SetArgs([]string{"lint", "--fixtures", fxDir, "--min-fixtures", "1", yamlPath})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected warn-only pass, got %v", err)
+	}
+}
+
 func TestFilterFixturesByProfile(t *testing.T) {
 	fx := []Fixture{
 		{ID: "a", Profile: "eng"},
