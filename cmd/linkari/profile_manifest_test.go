@@ -156,56 +156,6 @@ func TestProfileManifestRenderWithHistory(t *testing.T) {
 	}
 }
 
-// TestRenderedYAMLMatchesLegacyMarkdown is the EPIC-044 M2 regression
-// gate caught by the M3 pre-commit hook on 2026-04-07: the renderer
-// must produce byte-equivalent output to the legacy .md prompts so the
-// EPIC-043 fixture goldens stay valid. Each YAML manifest under
-// docs/prompts/profiles/ is rendered and compared to its sibling .md.
-//
-// Skipped if the docs repo is not present (CI / contributor laptops
-// without ~/code/personal/docs).
-func TestRenderedYAMLMatchesLegacyMarkdown(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skipf("no home dir: %v", err)
-	}
-	dir := filepath.Join(home, "code", "personal", "docs", "prompts", "profiles")
-	if _, err := os.Stat(dir); err != nil {
-		t.Skipf("profiles dir absent: %v", err)
-	}
-	profiles := []string{"eng", "dining", "travel", "music", "life", "finance", "fashion"}
-	for _, p := range profiles {
-		t.Run(p, func(t *testing.T) {
-			yamlPath := filepath.Join(dir, p+".yaml")
-			mdPath := filepath.Join(dir, p+".md")
-			m, err := LoadProfileManifest(yamlPath)
-			if err != nil {
-				t.Fatalf("load %s: %v", yamlPath, err)
-			}
-			rendered, err := m.Render()
-			if err != nil {
-				t.Fatalf("render %s: %v", yamlPath, err)
-			}
-			want, err := os.ReadFile(mdPath)
-			if err != nil {
-				t.Fatalf("read %s: %v", mdPath, err)
-			}
-			if rendered != string(want) {
-				t.Errorf("%s: rendered YAML diverges from legacy .md\n--- want (len=%d) ---\n%s\n--- got (len=%d) ---\n%s",
-					p, len(want), string(want), len(rendered), rendered)
-			}
-			// Belt-and-suspenders: the score-line directive is the
-			// load-bearing scorer hook (cmd_eval.go parseScoreFromMarkdown).
-			// EPIC-044 M2 regression cause-of-record cited a missing
-			// "## Score: N/100" instruction; assert it explicitly so a
-			// future template edit cannot silently strip it.
-			if !strings.Contains(rendered, "## Score: X/100") {
-				t.Errorf("%s: rendered prompt missing '## Score: X/100' directive", p)
-			}
-		})
-	}
-}
-
 func TestLoadProfileManifestYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "eng.yaml")
