@@ -148,19 +148,38 @@ Five dimensions: Cache Hit Rate, Cache Reuse Factor, I/O Ratio, Token Savings, M
 
 Webhook service that bridges Android share actions to tmux sessions. Receives `POST /share` from Android (HTTP Shortcuts or standalone APK), validates and routes payloads to tmux via a local HTTP server or Tailscale Funnel.
 
+**First run (fresh host):**
+
 ```bash
-# Local with debug logging + FCM push
-linkari serve --debug --token $LINKARI_TOKEN --firebase-sa ~/.config/linkari/firebase-sa.json
-
-# Dual listener: local HTTP + Tailscale Funnel (HTTPS, public Android ingress)
-linkari serve --token $LINKARI_TOKEN --tsnet --tsnet-hostname linkari
-
-# TLS on local listener (mkcert)
-linkari serve --token $LINKARI_TOKEN --tls
-
-# Or via environment variables
-LINKARI_TOKEN=secret LINKARI_TSNET=1 linkari serve
+# 1. Scaffold ~/.config/linkari/server.yaml with secretsmanager:// defaults
+linkari config init
+# 2. Edit secret URIs as needed, then validate
+linkari doctor
+# 3. Zero-flag production boot
+linkari serve
 ```
+
+**Operations:**
+
+```bash
+# Validate secrets + dirs without booting
+linkari doctor                          # human-readable  (exit 1 on any fail)
+linkari doctor --json                   # structured JSON
+
+# Background daemon (POSIX: macOS, Linux, Termux)
+linkari serve --detach
+kill $(cat ~/.local/state/linkari/linkari.pid)
+
+# Local dev (skip Tailscale Funnel)
+linkari serve --local
+LINKARI_LOCAL=1 linkari serve
+
+# Break-glass (all flags; no server.yaml required)
+linkari serve --tsnet --tsnet-authkey $TS_AUTHKEY --token $LINKARI_TOKEN \
+  --firebase-sa ~/.config/linkari/firebase-sa.json --notify-min-score 10 --debug
+```
+
+If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `linkari serve` automatically falls back to local-only mode with a WARN log.
 
 **Actions:** `text` (paste into existing pane), `url` (opens new tmux window via `uinit` with profile), `ginit` (parses Jira key, opens `ginit <KEY>`). Seven URL profiles: eng, life, travel, fashion, music, finance, dining. URL windows use `remain-on-exit failed` — auto-close on success, stay open on error.
 

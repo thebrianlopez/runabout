@@ -74,6 +74,8 @@ go.work               # Go workspace: root + cmd/protonexport + cmd/wasend
 
 ## Patterns
 
+- `linkari serve` defaults to tsnet Funnel on; pass `--local` for local-only. Falls back to local with WARN when no `tsnet_authkey` is resolvable (EPIC-048).
+- `linkari config init` scaffolds `~/.config/linkari/server.yaml`; `linkari doctor` validates secrets without booting; `serve --detach` is the portable POSIX fork-detach primitive with PID file at `~/.local/state/linkari/linkari.pid` (EPIC-049).
 - Cobra subcommands added to rootCmd in each `cmd/` main.go
 - Flags bound via pflag (cobra's default)
 - Internal packages export types + functions; `cmd/` wires them to CLI
