@@ -67,6 +67,46 @@ type ServerConfig struct {
 	ShellArgs      string `yaml:"shell_args"`
 	NotifyMinScore int    `yaml:"notify_min_score"`
 	ServerURL      string `yaml:"server_url"` // base URL fish callbacks should use
+	TSNetAuthKey   string `yaml:"tsnet_authkey"` // EPIC-047: secretsmanager:// URI or literal
+
+	// EPIC-048: new fields for zero-flag boot.
+	// Tsnet uses *bool so nil encodes "absent" (→ default true) vs explicit false.
+	// Debug and NotifyMinScore remain plain-typed (zero-value == unset is safe).
+	Tsnet         *bool  `yaml:"tsnet"`
+	TsnetHostname string `yaml:"tsnet_hostname"`
+	TsnetStateDir string `yaml:"tsnet_state_dir"`
+	Debug         bool   `yaml:"debug"`
+}
+
+// ServerFile is the on-disk shape of ~/.config/linkari/server.yaml. It wraps
+// ServerConfig under a top-level `server:` key so the file's layout matches
+// the deprecated [server:] block in actions.yaml. Introduced by EPIC-047 M3.
+type ServerFile struct {
+	Server ServerConfig `yaml:"server"`
+}
+
+// LoadServerFile reads ~/.config/linkari/server.yaml (or another path) and
+// returns the parsed ServerConfig. Returns (nil, nil) if the file does not
+// exist — callers fall through to the deprecated actions.yaml[server:] block.
+func LoadServerFile(path string) (*ServerConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read server.yaml: %w", err)
+	}
+	var sf ServerFile
+	if err := yaml.Unmarshal(data, &sf); err != nil {
+		return nil, fmt.Errorf("parse server.yaml: %w", err)
+	}
+	return &sf.Server, nil
+}
+
+// defaultServerConfigPath returns ~/.config/linkari/server.yaml.
+func defaultServerConfigPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "linkari", "server.yaml")
 }
 
 // TemplateData is the data passed to command templates.

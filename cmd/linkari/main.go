@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,7 +16,45 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+
+	"github.com/blo-grindr/runabout/cmd/linkari/internal/secrets"
+	"github.com/blo-grindr/runabout/cmd/linkari/internal/xdgpath"
 )
+
+// provenanceEntry buffers a (field, source, fingerprint, tier) tuple resolved
+// before log.SetOutput is called. Flushed via flushProvenance once the
+// configured log sink is wired so lines land in the ring/log-file.
+//
+// Format pinned by EPIC-047 locked decision #8:
+//
+//	linkari: secret <field> resolved from <source> fp=<8-hex> tier=<tier>
+type provenanceEntry struct {
+	field  string
+	source string
+	fp     string
+	tier   string
+}
+
+func flushProvenance(entries []provenanceEntry) {
+	for _, e := range entries {
+		log.Printf("linkari: secret %s resolved from %s fp=%s tier=%s",
+			e.field, e.source, e.fp, e.tier)
+	}
+}
+
+// recordProvenance appends a provenance entry for a non-empty resolved value.
+// Empty values (default tier short-circuit) skip emission per locked decision #4.
+func recordProvenance(entries []provenanceEntry, field, value, tier string, src secrets.Source) []provenanceEntry {
+	if value == "" {
+		return entries
+	}
+	return append(entries, provenanceEntry{
+		field:  field,
+		source: src.String(),
+		fp:     secrets.Fingerprint(value),
+		tier:   tier,
+	})
+}
 
 var (
 	version = "0.1.0"
@@ -31,6 +70,8 @@ func main() {
 	}
 
 	rootCmd.AddCommand(serveCmd())
+	rootCmd.AddCommand(configCmd())
+	rootCmd.AddCommand(doctorCmd())
 	rootCmd.AddCommand(scoreCmd())
 	rootCmd.AddCommand(searchCmd())
 	rootCmd.AddCommand(backfillCmd())
@@ -61,6 +102,7 @@ func serveCmd() *cobra.Command {
 		certFile      string
 		keyFile       string
 		tsnetEnabled  bool
+		localEnabled  bool
 		tsnetHostname  string
 		tsnetStateDir  string
 		tsnetAuthKey   string
@@ -68,6 +110,7 @@ func serveCmd() *cobra.Command {
 		shell          string
 		shellArgs      string
 		configFile     string
+		detach         bool
 	)
 
 	cmd := &cobra.Command{
@@ -76,7 +119,13 @@ func serveCmd() *cobra.Command {
 		Long: `Start the linkari HTTP server that accepts POST /share requests
 from Android HTTP Shortcuts and routes them to tmux sessions.
 
-Configuration via flags or environment variables:
+Zero-flag production boot (requires ~/.config/linkari/server.yaml):
+  linkari serve
+
+Local-only dev mode (skips Tailscale Funnel):
+  linkari serve --local
+
+Configuration via flags, environment variables, or server.yaml:
   LINKARI_TOKEN        Bearer token for authentication
   LINKARI_PORT         Listen port (default 8080)
   LINKARI_QUEUE_DB     SQLite queue database path (default ~/.config/linkari/queue.db)
@@ -88,32 +137,108 @@ Configuration via flags or environment variables:
   LINKARI_SHELL        Shell binary for tmux windows (default fish)
   LINKARI_SHELL_ARGS   Shell command flag (default -c)
 
-Tailscale Funnel (--tsnet):
-  LINKARI_TSNET            Enable Tailscale Funnel when set to "1" or "true"
+Tailscale Funnel (on by default):
+  LINKARI_LOCAL            Disable tsnet and use local listener only ("1" or "true")
+  LINKARI_TSNET            Override tsnet enable/disable ("1" or "true" to force on)
   LINKARI_TSNET_HOSTNAME   Tailscale node hostname (default "linkari")
   LINKARI_TSNET_STATE_DIR  tsnet state directory (default ~/.config/linkari/tsnet)
 
-When --tsnet is set, linkari serves on BOTH the local port (plain HTTP, for
-localhost debug) and via Tailscale Funnel (HTTPS, public Android ingress).
-TLS is handled by Tailscale; no cert management required.
+linkari serves on BOTH the local port (plain HTTP, localhost debug) and via
+Tailscale Funnel (HTTPS, public Android ingress). TLS is handled by Tailscale;
+no cert management required.
 
-On first run with --tsnet, an auth URL is printed to complete Tailscale login.
-For unattended startup, set TS_AUTHKEY in the environment.`,
+If no tsnet_authkey is resolvable and tsnet was not explicitly enabled, linkari
+falls back to local-only mode with a WARN log (safe for fresh-clone dev laptops).
+
+On first tsnet run an auth URL is printed to complete Tailscale login.
+For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if token == "" {
-				token = os.Getenv("LINKARI_TOKEN")
+			ctx := cmd.Context()
+
+			// EPIC-049 M3: --detach re-execs the binary without --detach,
+			// setsid, waits for child ready signal, writes PID file, exits parent.
+			// maybeDetach calls os.Exit(0) from parent; child returns nil here.
+			if err := maybeDetach(detach); err != nil {
+				return err
+			}
+
+			// EPIC-047 M3: load ~/.config/linkari/server.yaml (new file wins).
+			// If absent, fall through to actions.yaml[server:] (deprecated).
+			serverFilePath := defaultServerConfigPath()
+			serverFileCfg, err := LoadServerFile(serverFilePath)
+			if err != nil {
+				return fmt.Errorf("load server.yaml: %w", err)
+			}
+
+			// Build the resolver early — it lazily wires AWS SDK on first
+			// secretsmanager:// URI, so cost is zero when no SM URIs are used.
+			resolver := secrets.New(secrets.DefaultAWSFactory())
+
+			var provenance []provenanceEntry
+
+			// Helper closure: resolve a single field through the pipeline and
+			// record provenance. Hard-fail on resolver error (locked decision #2).
+			resolveField := func(field, flag, env, def string, yamlVal func(*ServerConfig) string) (string, error) {
+				var y string
+				if serverFileCfg != nil {
+					y = yamlVal(serverFileCfg)
+				}
+				v, tier, src, err := resolveServerField(ctx, resolver, flag, env, y, def)
+				if err != nil {
+					return "", fmt.Errorf("resolve %s: %w", field, err)
+				}
+				provenance = recordProvenance(provenance, field, v, tier, src)
+				return v, nil
+			}
+
+			// token: flag > LINKARI_TOKEN > server.yaml.token > (no default; required)
+			token, err = resolveField("token", token, os.Getenv("LINKARI_TOKEN"), "",
+				func(s *ServerConfig) string { return s.Token })
+			if err != nil {
+				return err
 			}
 			if token == "" {
-				return fmt.Errorf("bearer token required: set --token or LINKARI_TOKEN")
+				return fmt.Errorf("bearer token required: set --token, LINKARI_TOKEN, or server.yaml token")
 			}
 
 			if envPort := os.Getenv("LINKARI_PORT"); envPort != "" && !cmd.Flags().Changed("port") {
 				fmt.Sscanf(envPort, "%d", &port)
 			}
 
-			// Resolve firebase service account path.
-			if firebaseSA == "" {
-				firebaseSA = os.Getenv("LINKARI_FIREBASE_SA")
+			// firebase_sa: flag > LINKARI_FIREBASE_SA > server.yaml.firebase_sa
+			// Pre-resolve so we can detect whether the resolved value is a path
+			// (literal/env/flag) or JSON content (secretsmanager://) and
+			// materialize to cache in the latter case (EPIC-047 M4).
+			{
+				var (
+					yamlVal string
+					tier    string
+					src     secrets.Source
+					value   string
+				)
+				if serverFileCfg != nil {
+					yamlVal = serverFileCfg.FirebaseSA
+				}
+				value, tier, src, err = resolveServerField(ctx, resolver, firebaseSA, os.Getenv("LINKARI_FIREBASE_SA"), yamlVal, "")
+				if err != nil {
+					return fmt.Errorf("resolve firebase_sa: %w", err)
+				}
+				if value != "" && tier == "yaml-sm" {
+					// Materialize JSON content into cache and treat the cache
+					// path as the firebase service account file going forward.
+					cacheDir, cacheErr := xdgpath.CacheDir()
+					if cacheErr != nil {
+						return fmt.Errorf("firebase_sa cache: %w", cacheErr)
+					}
+					cachePath := filepath.Join(cacheDir, "firebase-sa.json")
+					if writeErr := os.WriteFile(cachePath, []byte(value), 0o600); writeErr != nil {
+						return fmt.Errorf("firebase_sa write: %w", writeErr)
+					}
+					firebaseSA = cachePath
+				} else {
+					firebaseSA = value
+				}
+				provenance = recordProvenance(provenance, "firebase_sa", value, tier, src)
 			}
 
 			var fcmTokenSource oauth2.TokenSource
@@ -169,24 +294,44 @@ For unattended startup, set TS_AUTHKEY in the environment.`,
 				}
 			}
 
-			// tsnet env fallbacks.
-			if !tsnetEnabled {
-				tsnetEnabled = os.Getenv("LINKARI_TSNET") == "1" || os.Getenv("LINKARI_TSNET") == "true"
+			// EPIC-048 M2: resolve tsnet/local through the four-tier helper pipeline.
+			// Two separate resolveBoolField calls reconciled via NOT.
+			// tsnetExplicit is consumed by the M3 fallback rule.
+			var yamlTsnet *bool
+			if serverFileCfg != nil {
+				yamlTsnet = serverFileCfg.Tsnet
 			}
-			if tsnetHostname == "" {
-				if h := os.Getenv("LINKARI_TSNET_HOSTNAME"); h != "" {
-					tsnetHostname = h
-				}
+			localEnv := os.Getenv("LINKARI_LOCAL")
+			tsnetEnv := os.Getenv("LINKARI_TSNET")
+			tsnetResolved, _, _ := resolveBoolField(tsnetEnabled, cmd.Flags().Changed("tsnet"), tsnetEnv, yamlTsnet, true)
+			localResolved, _, _ := resolveBoolField(localEnabled, cmd.Flags().Changed("local"), localEnv, nil, false)
+			tsnetEnabled = tsnetResolved && !localResolved
+			// tsnetExplicit: any layer explicitly opted in or out of tsnet.
+			// Five inputs: cli-tsnet, cli-local, env-tsnet, env-local, yaml.
+			tsnetExplicit := cmd.Flags().Changed("tsnet") || cmd.Flags().Changed("local") ||
+				tsnetEnv != "" || localEnv != "" || yamlTsnet != nil
+
+			// Resolve tsnet string tunables.
+			var yamlTsnetHostname, yamlTsnetStateDir string
+			if serverFileCfg != nil {
+				yamlTsnetHostname = serverFileCfg.TsnetHostname
+				yamlTsnetStateDir = serverFileCfg.TsnetStateDir
 			}
-			if tsnetAuthKey == "" {
-				tsnetAuthKey = os.Getenv("TS_AUTHKEY")
+			tsnetHostname, _, _ = resolveStringField(tsnetHostname, os.Getenv("LINKARI_TSNET_HOSTNAME"), yamlTsnetHostname, "linkari")
+			// tsnet_authkey routes through the secret resolver pipeline (EPIC-047).
+			tsnetAuthKey, err = resolveField("tsnet_authkey", tsnetAuthKey, os.Getenv("TS_AUTHKEY"), "",
+				func(s *ServerConfig) string { return s.TSNetAuthKey })
+			if err != nil {
+				return err
 			}
-			if tsnetStateDir == "" {
-				tsnetStateDir = os.Getenv("LINKARI_TSNET_STATE_DIR")
+			// EPIC-048 M3: fallback-to-local rule. Fires before state-dir
+			// creation so we skip the MkdirAll when falling back.
+			// logger has no flags so the WARN string is golden-testable.
+			{
+				warnLogger := log.New(log.Default().Writer(), "", 0)
+				tsnetEnabled = applyTsnetFallback(tsnetEnabled, tsnetExplicit, tsnetAuthKey, warnLogger)
 			}
-			if tsnetStateDir == "" {
-				tsnetStateDir = filepath.Join(configDir, "tsnet")
-			}
+			tsnetStateDir, _, _ = resolveStringField(tsnetStateDir, os.Getenv("LINKARI_TSNET_STATE_DIR"), yamlTsnetStateDir, filepath.Join(configDir, "tsnet"))
 			if tsnetEnabled {
 				if err := os.MkdirAll(tsnetStateDir, 0700); err != nil {
 					return fmt.Errorf("creating tsnet state dir: %w", err)
@@ -196,12 +341,18 @@ For unattended startup, set TS_AUTHKEY in the environment.`,
 				log.Printf("WARN: --tls and --tsnet both set; --tls applies only to the local listener")
 			}
 
-			// Notify min score env fallback.
-			if notifyMinScore == 0 {
-				if v := os.Getenv("LINKARI_NOTIFY_MIN_SCORE"); v != "" {
-					fmt.Sscanf(v, "%d", &notifyMinScore)
-				}
+			// EPIC-048 M2: resolve notify_min_score and debug via the helper pipeline.
+			var notifyYAML *int
+			if serverFileCfg != nil && serverFileCfg.NotifyMinScore != 0 {
+				notifyYAML = &serverFileCfg.NotifyMinScore
 			}
+			notifyMinScore, _, _ = resolveIntField(notifyMinScore, cmd.Flags().Changed("notify-min-score"), os.Getenv("LINKARI_NOTIFY_MIN_SCORE"), notifyYAML, 0)
+			var yamlDebug *bool
+			if serverFileCfg != nil && serverFileCfg.Debug {
+				t := true
+				yamlDebug = &t
+			}
+			debug, _, _ = resolveBoolField(debug, cmd.Flags().Changed("debug"), "", yamlDebug, false)
 
 			queue, err := NewQueue(queueDB, debug)
 			if err != nil {
@@ -212,8 +363,18 @@ For unattended startup, set TS_AUTHKEY in the environment.`,
 			ring := NewRingLog(100)
 			logWriter := ring.Writer()
 
-			// Optional file logging via LINKARI_LOG_FILE.
-			logFilePath := os.Getenv("LINKARI_LOG_FILE")
+			// Optional file logging — no CLI flag; yaml+env only (EPIC-048).
+			// INVARIANT (pinned by EPIC-048 M4): log_file MUST be fully resolved
+			// into logWriter before log.SetOutput so flushProvenance lines land
+			// in the configured sink. Do not move this block below log.SetOutput.
+			// Relative paths resolve against the process cwd at invocation time
+			// (same semantics as LINKARI_LOG_FILE env-var; use absolute paths in
+			// server.yaml for operator clarity).
+			var yamlLogFile string
+			if serverFileCfg != nil {
+				yamlLogFile = serverFileCfg.LogFile
+			}
+			logFilePath, _, _ := resolveStringField("", os.Getenv("LINKARI_LOG_FILE"), yamlLogFile, "")
 			var logFile *os.File
 			if logFilePath != "" {
 				if err := os.MkdirAll(filepath.Dir(logFilePath), 0755); err != nil {
@@ -233,6 +394,9 @@ For unattended startup, set TS_AUTHKEY in the environment.`,
 			}()
 
 			log.SetOutput(logWriter)
+			// EPIC-047 M4: flush buffered provenance lines into the configured
+			// log sink so they land in ring/log-file (locked decision #7).
+			flushProvenance(provenance)
 			if debug {
 				log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 				log.Printf("[DEBUG] config: port=%d debug=true firebase_sa=%q queue_db=%q", port, firebaseSA, queueDB)
@@ -263,6 +427,13 @@ For unattended startup, set TS_AUTHKEY in the environment.`,
 			} else {
 				log.Printf("loaded %d actions from config", len(cfg.Actions))
 				router = NewRouterFromConfig(tmux, cfg, debug)
+
+				// EPIC-047 M3: deprecation warning when [server:] block in
+				// actions.yaml is present. server.yaml is the new home; the
+				// actions.yaml block remains as a back-compat fallback only.
+				if (cfg.Server != ServerConfig{}) {
+					log.Printf("WARN: actions.yaml [server:] block is deprecated — migrate to %s", serverFilePath)
+				}
 
 				// EPIC-042 M7: apply [server] section as the lowest-precedence
 				// fallback layer. Flag > env > config > default. Anything that
@@ -324,33 +495,46 @@ For unattended startup, set TS_AUTHKEY in the environment.`,
 
 			errCh := make(chan error, 2)
 
-			// Start local listener.
-			go func() {
-				if tlsEnabled {
-					log.Printf("linkari listening on :%d (local, TLS)", port)
+			// Start local listener using explicit net.Listen so we can signal
+			// detach-ready to the parent process (EPIC-049 M3) after the port
+			// is bound, before entering the accept loop.
+			if tlsEnabled {
+				log.Printf("linkari listening on :%d (local, TLS)", port)
+				go func() {
 					errCh <- httpServer.ListenAndServeTLS(certFile, keyFile)
-				} else {
-					log.Printf("linkari listening on :%d (local)", port)
-					errCh <- httpServer.ListenAndServe()
+				}()
+				// TLS: signal after starting goroutine (optimistic — port binds inside).
+				signalDetachReady()
+			} else {
+				ln, lnErr := net.Listen("tcp", fmt.Sprintf(":%d", port))
+				if lnErr != nil {
+					return fmt.Errorf("listen :%d: %w", port, lnErr)
 				}
-			}()
+				log.Printf("linkari listening on :%d (local)", port)
+				// Signal parent AFTER port is successfully bound.
+				signalDetachReady()
+				go func() {
+					errCh <- httpServer.Serve(ln)
+				}()
+			}
 
 			// Start tsnet Funnel listener if enabled.
-			var tsnetSrv *TsnetServer
+			// tsnetClose is set only on successful tsnet bring-up.
+			var tsnetClose func() error
 			var tsnetHTTPServer *http.Server
 
 			if tsnetEnabled {
-				tsnetSrv = NewTsnetServer(TsnetConfig{
+				ln, cleanup, fqdn, err := tsnetStart(cmd.Context(), TsnetConfig{
 					Hostname: tsnetHostname,
 					StateDir: tsnetStateDir,
 					AuthKey:  tsnetAuthKey,
 					Debug:    debug,
 				})
-				ln, err := tsnetSrv.Start(cmd.Context())
 				if err != nil {
 					log.Printf("WARN: tsnet failed to start: %v — continuing with local listener only", err)
 				} else {
-					srv.SetTsnetAddr(tsnetSrv.FQDN())
+					tsnetClose = cleanup
+					srv.SetTsnetAddr(fqdn)
 					tsnetHTTPServer = &http.Server{
 						Handler:      srv.FunnelMux(),
 						ReadTimeout:  10 * time.Second,
@@ -389,8 +573,8 @@ For unattended startup, set TS_AUTHKEY in the environment.`,
 							log.Printf("tsnet HTTP shutdown: %v", err)
 						}
 					}
-					if tsnetSrv != nil {
-						if err := tsnetSrv.Close(); err != nil {
+					if tsnetClose != nil {
+						if err := tsnetClose(); err != nil {
 							log.Printf("tsnet close: %v", err)
 						}
 					}
@@ -401,6 +585,22 @@ For unattended startup, set TS_AUTHKEY in the environment.`,
 						return err
 					}
 					return nil
+				case <-cmd.Context().Done():
+					// Context cancelled — integration tests use this for clean shutdown.
+					log.Println("shutting down (context cancelled)...")
+					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer shutdownCancel()
+					if tsnetHTTPServer != nil {
+						if err := tsnetHTTPServer.Shutdown(shutdownCtx); err != nil {
+							log.Printf("tsnet HTTP shutdown: %v", err)
+						}
+					}
+					if tsnetClose != nil {
+						if err := tsnetClose(); err != nil {
+							log.Printf("tsnet close: %v", err)
+						}
+					}
+					return httpServer.Shutdown(shutdownCtx)
 				}
 			}
 		},
@@ -414,14 +614,17 @@ For unattended startup, set TS_AUTHKEY in the environment.`,
 	cmd.Flags().BoolVar(&tlsEnabled, "tls", false, "enable TLS (requires mkcert-generated cert/key, or LINKARI_TLS=1)")
 	cmd.Flags().StringVar(&certFile, "cert-file", "", "TLS certificate PEM (default ~/.config/linkari/cert.pem, or LINKARI_CERT_FILE)")
 	cmd.Flags().StringVar(&keyFile, "key-file", "", "TLS private key PEM (default ~/.config/linkari/key.pem, or LINKARI_KEY_FILE)")
-	cmd.Flags().BoolVar(&tsnetEnabled, "tsnet", false, "enable Tailscale Funnel listener (or LINKARI_TSNET=1)")
-	cmd.Flags().StringVar(&tsnetHostname, "tsnet-hostname", "linkari", "Tailscale node hostname (or LINKARI_TSNET_HOSTNAME)")
+	cmd.Flags().BoolVar(&tsnetEnabled, "tsnet", true, "enable Tailscale Funnel (default: true; use --local to disable, or LINKARI_TSNET=1)")
+	cmd.Flags().BoolVar(&localEnabled, "local", false, "force local-only listener, disables tsnet (or LINKARI_LOCAL=1)")
+	cmd.Flags().StringVar(&tsnetHostname, "tsnet-hostname", "", "Tailscale node hostname (default: linkari, or LINKARI_TSNET_HOSTNAME)")
 	cmd.Flags().StringVar(&tsnetStateDir, "tsnet-state-dir", "", "tsnet state directory (default ~/.config/linkari/tsnet, or LINKARI_TSNET_STATE_DIR)")
 	cmd.Flags().StringVar(&tsnetAuthKey, "tsnet-authkey", "", "Tailscale auth key (or TS_AUTHKEY env)")
+	cmd.MarkFlagsMutuallyExclusive("tsnet", "local")
 	cmd.Flags().IntVar(&notifyMinScore, "notify-min-score", 0, "minimum score for /notify FCM push (0 = use per-profile default, or LINKARI_NOTIFY_MIN_SCORE)")
 	cmd.Flags().StringVar(&shell, "shell", "", "shell binary for tmux windows (default fish, or LINKARI_SHELL)")
 	cmd.Flags().StringVar(&shellArgs, "shell-args", "", "shell command flag for tmux windows (default -c, or LINKARI_SHELL_ARGS)")
 	cmd.Flags().StringVar(&configFile, "config", "", "path to actions.yaml config (default ~/.config/linkari/actions.yaml, or LINKARI_CONFIG)")
+	cmd.Flags().BoolVar(&detach, "detach", false, "fork to background (POSIX only); PID written to ~/.local/state/linkari/linkari.pid")
 
 	return cmd
 }
