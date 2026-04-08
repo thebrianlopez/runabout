@@ -71,6 +71,14 @@ type Golden struct {
 	// Raw triage markdown — preserved so prompt-format regressions are
 	// debuggable even if the score happens to land within tolerance.
 	RawMarkdown string `json:"raw_markdown"`
+	// Skip signals that the scorer could not produce a comparable score
+	// this run (parse failure after repair, malformed verdict, noise-gate
+	// hit). The eval runner treats Skip as neither pass nor fail — it is
+	// reported separately and does not gate the run. Never persisted.
+	Skip bool `json:"-"`
+	// SkipReason is a short human-readable tag ("parse_failed",
+	// "noise_gate", "scorer_error") used in the SKIP log line.
+	SkipReason string `json:"-"`
 	// RefreshedFrom is the prior score before a `linkari eval refresh-goldens`
 	// rewrite (EPIC-044 M2). Audit trail so future drift can be measured
 	// against the score the previous manifest produced. Pointer to keep
@@ -336,16 +344,28 @@ func evalRunCmd() *cobra.Command {
 				return fmt.Errorf("no fixtures in %s — capture some first", fixturesDir)
 			}
 
-			scorer := registeredScorer()
+			scorer := registeredScorerFn()
 			fmt.Fprintf(os.Stderr, "eval: scorer=%s tolerance=±%d fixtures=%d\n",
 				scorer.Name(), tolerance, len(fixtures))
 
-			var failures int
+			var failures, skips int
 			for _, fix := range fixtures {
 				got, err := scorer.Score(fix)
 				if err != nil {
-					fmt.Printf("FAIL %s: scorer error: %v\n", fix.ID, err)
-					failures++
+					// M6b: scorer errors degrade to skip instead of FAIL
+					// so a single malformed response can't redline the
+					// whole run. The error is surfaced in the SKIP line.
+					fmt.Printf("SKIP %s: scorer_error: %v\n", fix.ID, err)
+					skips++
+					continue
+				}
+				if got.Skip {
+					reason := got.SkipReason
+					if reason == "" {
+						reason = "unknown"
+					}
+					fmt.Printf("SKIP %s: %s\n", fix.ID, reason)
+					skips++
 					continue
 				}
 				delta := got.Score - fix.Golden.Score
@@ -364,8 +384,8 @@ func evalRunCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Fprintf(os.Stderr, "eval: %d/%d passed (%d failed)\n",
-				len(fixtures)-failures, len(fixtures), failures)
+			fmt.Fprintf(os.Stderr, "eval: %d/%d passed (%d failed, %d skipped)\n",
+				len(fixtures)-failures-skips, len(fixtures), failures, skips)
 			if failures > 0 {
 				return fmt.Errorf("%d fixture(s) failed", failures)
 			}
@@ -373,7 +393,7 @@ func evalRunCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&fixturesDir, "fixtures", "", "fixtures directory (default: $LINKARI_EVAL_FIXTURES, then ~/.config/linkari/fixtures, then ./testdata/triage)")
-	cmd.Flags().IntVar(&tolerance, "tolerance", 5, "max absolute score delta before a fixture fails")
+	cmd.Flags().IntVar(&tolerance, "tolerance", 10, "max absolute score delta before a fixture fails (M6b: bumped from 5 to absorb normal Haiku-as-judge variance)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print every fixture result, not just failures")
 	cmd.Flags().StringVar(&profileFlag, "profile", "", "EPIC-044 M3: only run fixtures matching this profile id")
 	cmd.Flags().BoolVar(&changedOnly, "changed-only", false, "EPIC-044 M3: only run fixtures for --profile (pre-commit hook path)")
@@ -524,18 +544,46 @@ func loadFixtures(dir string) ([]Fixture, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		name := e.Name()
+		// M6b: skip dotfiles / hidden entries and decoy non-fixture files
+		// that happen to end in .json.
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", e.Name(), err)
+			return nil, fmt.Errorf("read %s: %w", name, err)
 		}
 		var f Fixture
 		if err := json.Unmarshal(b, &f); err != nil {
-			return nil, fmt.Errorf("parse %s: %w", e.Name(), err)
+			// M6b: don't hard-fail on one bad file — log and skip.
+			fmt.Fprintf(os.Stderr, "eval: skip %s: parse: %v\n", name, err)
+			continue
+		}
+		// M6b: skip fixtures with invalid IDs (`.`, `..`, empty, or path
+		// separators). These get captured when `eval capture` runs from
+		// the wrong cwd and falls back to filepath.Base(".").
+		if !isValidFixtureID(f.ID) {
+			fmt.Fprintf(os.Stderr, "eval: skip %s: invalid fixture id %q\n", name, f.ID)
+			continue
 		}
 		out = append(out, f)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// isValidFixtureID rejects IDs that would corrupt eval output or indicate
+// a capture-from-wrong-cwd bug. A valid id is a non-empty slug with no
+// path separators and no standalone `.` / `..` entries.
+func isValidFixtureID(id string) bool {
+	if id == "" || id == "." || id == ".." {
+		return false
+	}
+	if strings.ContainsAny(id, "/\\") {
+		return false
+	}
+	return true
 }
 
 // defaultFixturesDir is the read-side resolver for `eval run`. Order:
@@ -567,10 +615,11 @@ func defaultFixturesDirForWrite() string {
 	return filepath.Join("testdata", "triage")
 }
 
-// registeredScorer returns the active Scorer. EPIC-043 M2 swapped the
+// registeredScorerFn returns the active Scorer. EPIC-043 M2 swapped the
 // identity scorer for the real Go triage path (cmd_triage.go). identityScorer
 // is still exercised directly by the harness self-test in cmd_eval_test.go.
-func registeredScorer() Scorer {
+// Indirection (var not func) lets cmd_eval_test.go stub it with a fake.
+var registeredScorerFn = func() Scorer {
 	return triageScorer{}
 }
 

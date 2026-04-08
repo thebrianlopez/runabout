@@ -151,3 +151,108 @@ func TestLoadFixturesAndIdentityScorerSelfTest(t *testing.T) {
 		}
 	}
 }
+
+// M6b: loadFixtures must reject fixtures with invalid IDs (captured from
+// the wrong cwd), decoy dotfiles, and unparseable JSON — and must not
+// hard-fail the whole load when it hits one.
+func TestLoadFixturesSkipsInvalidAndDecoys(t *testing.T) {
+	dir := t.TempDir()
+	good := Fixture{ID: "ok", Profile: "eng", Content: "c", Golden: Golden{Score: 50, Verdict: "v"}}
+	b, _ := json.MarshalIndent(good, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "ok.json"), b, 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Invalid ID "." — this is the real-world bogus fixture captured
+	// from cwd="." by `linkari eval capture`.
+	bad := good
+	bad.ID = "."
+	bb, _ := json.MarshalIndent(bad, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "dot_id.json"), bb, 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Decoy dotfile (editor swapfile, hidden metadata).
+	if err := os.WriteFile(filepath.Join(dir, ".hidden.json"), []byte(`{"id":"x"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Decoy garbage JSON.
+	if err := os.WriteFile(filepath.Join(dir, "garbage.json"), []byte(`{not json`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := loadFixtures(dir)
+	if err != nil {
+		t.Fatalf("loadFixtures: %v", err)
+	}
+	if len(loaded) != 1 || loaded[0].ID != "ok" {
+		t.Fatalf("loaded = %+v, want exactly the ok fixture", loaded)
+	}
+}
+
+func TestIsValidFixtureID(t *testing.T) {
+	cases := []struct {
+		id   string
+		want bool
+	}{
+		{"ok", true},
+		{"20260404_103238_gh_abc", true},
+		{"", false},
+		{".", false},
+		{"..", false},
+		{"a/b", false},
+		{`a\b`, false},
+	}
+	for _, c := range cases {
+		if got := isValidFixtureID(c.id); got != c.want {
+			t.Errorf("isValidFixtureID(%q) = %v, want %v", c.id, got, c.want)
+		}
+	}
+}
+
+// M6b: eval runner must treat Scorer results with Skip=true as SKIP and
+// must not gate the run on them. Also exercises the scorer-error degrade
+// path (hard error from the scorer is downgraded to SKIP too).
+func TestEvalRunTreatsSkipAndScorerErrorAsSkip(t *testing.T) {
+	dir := t.TempDir()
+	fixes := []Fixture{
+		{ID: "a_pass", Profile: "eng", Content: "x", Golden: Golden{Score: 50}},
+		{ID: "b_parse_failed", Profile: "eng", Content: "x", Golden: Golden{Score: 60}},
+		{ID: "c_scorer_error", Profile: "eng", Content: "x", Golden: Golden{Score: 70}},
+	}
+	for _, f := range fixes {
+		b, _ := json.MarshalIndent(f, "", "  ")
+		if err := os.WriteFile(filepath.Join(dir, f.ID+".json"), b, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	prev := registeredScorerFn
+	t.Cleanup(func() { registeredScorerFn = prev })
+	registeredScorerFn = func() Scorer { return fakeScorer{} }
+
+	cmd := evalRunCmd()
+	cmd.SetArgs([]string{"--fixtures", dir})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("eval run: %v (skips must not redline the run)", err)
+	}
+}
+
+type fakeScorer struct{}
+
+func (fakeScorer) Name() string { return "fake" }
+func (fakeScorer) Score(f Fixture) (Golden, error) {
+	switch f.ID {
+	case "a_pass":
+		return Golden{Score: 50}, nil
+	case "b_parse_failed":
+		return Golden{Skip: true, SkipReason: "parse_failed"}, nil
+	case "c_scorer_error":
+		return Golden{}, fmtErr("no score line")
+	}
+	return Golden{}, nil
+}
+
+func fmtErr(s string) error { return &stringErr{s} }
+
+type stringErr struct{ s string }
+
+func (e *stringErr) Error() string { return e.s }

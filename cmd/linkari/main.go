@@ -285,6 +285,10 @@ For unattended startup, set TS_AUTHKEY in the environment.`,
 					log.Printf("config server.server_url: %s (advertised to clients)", cfg.Server.ServerURL)
 				}
 			}
+			// Validate debug fault-injection env var before binding; fatal on bad value.
+			if code := ValidateRegisterFaultEnv(); code != 0 {
+				log.Printf("WARN: %s=%d active — POST /register will short-circuit with %d (debug only)", registerFaultEnv, code, code)
+			}
 			srv := NewServer(token, router, queue, ring, debug, fcmTokenSource)
 			srv.notifyMinScore = notifyMinScore
 
@@ -308,6 +312,7 @@ For unattended startup, set TS_AUTHKEY in the environment.`,
 
 			log.Printf("queue enabled (db=%s)", queueDB)
 			StartReplay(queue, router, tmux, 30*time.Second, debug)
+			srv.StartPushWorker(cmd.Context())
 
 			httpServer := &http.Server{
 				Addr:         fmt.Sprintf(":%d", port),
