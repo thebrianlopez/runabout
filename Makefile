@@ -84,7 +84,7 @@ install-linkari-completions: install-linkari
 
 AWS_REGION ?= us-east-2
 AWS_BEARER_SECRET_ID := linkari/bearer-token
-LINKARI_TOKEN = $(shell AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws secretsmanager get-secret-value --secret-id $(AWS_BEARER_SECRET_ID) --query SecretString --output text | tr -d '\r\n[:space:]')
+FETCH_TOKEN = AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws secretsmanager get-secret-value --secret-id $(AWS_BEARER_SECRET_ID) --query SecretString --output text | tr -d '\r\n[:space:]'
 
 linkari-serve-local: linkari
 	@echo "Starting linkari on :8080 (token=mytoken, debug)..."
@@ -103,18 +103,22 @@ linkari-logs-local-tls:
 serve-linkari:
 	@echo "Starting linkari on :8080..."
 	@test -n "$(AWS_PROFILE)" || { echo "❌ AWS_PROFILE unset (required to fetch $(AWS_BEARER_SECRET_ID))"; exit 1; }
-	@LINKARI_TOKEN=$(LINKARI_TOKEN) LINKARI_FIREBASE_SA=$(HOME)/.config/linkari/firebase-sa.json bin/linkari serve
+	@tok=$$($(FETCH_TOKEN)) && test -n "$$tok" && \
+		LINKARI_TOKEN=$$tok LINKARI_FIREBASE_SA=$(HOME)/.config/linkari/firebase-sa.json bin/linkari serve
 
 serve-linkari-tls:
 	@echo "Starting linkari on :8080 (TLS)..."
 	@test -n "$(AWS_PROFILE)" || { echo "❌ AWS_PROFILE unset (required to fetch $(AWS_BEARER_SECRET_ID))"; exit 1; }
-	@LINKARI_TOKEN=$(LINKARI_TOKEN) LINKARI_FIREBASE_SA=$(HOME)/.config/linkari/firebase-sa.json bin/linkari serve --tls
+	@tok=$$($(FETCH_TOKEN)) && test -n "$$tok" && \
+		LINKARI_TOKEN=$$tok LINKARI_FIREBASE_SA=$(HOME)/.config/linkari/firebase-sa.json bin/linkari serve --tls
 
 logs-linkari:
-	@curl -sN "http://localhost:8080/logs/stream?token=$(LINKARI_TOKEN)"
+	@test -n "$(AWS_PROFILE)" || { echo "❌ AWS_PROFILE unset"; exit 1; }
+	@tok=$$($(FETCH_TOKEN)) && curl -sN "http://localhost:8080/logs/stream?token=$$tok"
 
 logs-linkari-tls:
-	@curl -sN "https://localhost:8080/logs/stream?token=$(LINKARI_TOKEN)"
+	@test -n "$(AWS_PROFILE)" || { echo "❌ AWS_PROFILE unset"; exit 1; }
+	@tok=$$($(FETCH_TOKEN)) && curl -sN "https://localhost:8080/logs/stream?token=$$tok"
 
 wasend:
 	@echo "Building wasend..."
