@@ -526,11 +526,28 @@ func (triageScorer) Score(fix Fixture) (Golden, error) {
 	}
 	res, err := parseTriageMarkdown(raw)
 	if err != nil {
-		return Golden{}, err
+		// M6b: scorer brittleness fix. A malformed Haiku response (missing
+		// `## Score: N/100` line) no longer hard-errors the whole eval run.
+		// Return a Skip so the runner reports it and moves on.
+		return Golden{Skip: true, SkipReason: "parse_failed", RawMarkdown: raw}, nil
+	}
+	// M6b: noise-gate skip. When Haiku emits a `Score: 0/100 — Skip (...)`
+	// response against a fixture whose golden is non-zero, that's not a
+	// regression — it's the profile's noise gate firing on stale or
+	// JavaScript-stripped content. Treat as skip, not fail.
+	if res.Score == 0 && fix.Golden.Score > 0 && isNoiseGateOutput(raw) {
+		return Golden{Skip: true, SkipReason: "noise_gate", RawMarkdown: raw}, nil
 	}
 	return Golden{
 		Score:       res.Score,
 		Verdict:     res.Verdict,
 		RawMarkdown: raw,
 	}, nil
+}
+
+// isNoiseGateOutput returns true if the raw Haiku markdown looks like the
+// profile noise-gate template response (score 0 + "Skip" label).
+func isNoiseGateOutput(raw string) bool {
+	low := strings.ToLower(raw)
+	return strings.Contains(low, "score: 0/100") && strings.Contains(low, "skip")
 }

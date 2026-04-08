@@ -122,6 +122,84 @@ func TestLoadProfileTemplate_Fallback(t *testing.T) {
 	}
 }
 
+// EPIC-044 M4 — Loader fallback verification.
+//
+// Hermetic test: create a profile dir containing BOTH `<profile>.yaml`
+// and `<profile>.md` and assert loadProfileTemplate returns the YAML
+// path (Layer 1 wins). Then delete the YAML and assert it falls back
+// to the .md. This locks in the load order so the eventual .md
+// deletion (M6) is a runtime no-op.
+func TestLoadProfileTemplate_M4_YAMLPreferredOverMarkdown(t *testing.T) {
+	dir := t.TempDir()
+	profilesDir := filepath.Join(dir, "docs", "prompts", "profiles")
+	if err := os.MkdirAll(profilesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yamlPath := filepath.Join(profilesDir, "testprof.yaml")
+	mdPath := filepath.Join(profilesDir, "testprof.md")
+
+	manifest := `id: testprof
+version: 1
+schema_version: triage_verdict_v1
+persona_intro: Test persona intro.
+noise_gate:
+  min_chars: 100
+  skip_label: Test
+persona_body: |
+  Test persona body content.
+verdict_prompt: test verdict
+rubric:
+  - {name: A, weight: 20, rationale: a}
+  - {name: B, weight: 20, rationale: b}
+  - {name: C, weight: 20, rationale: c}
+  - {name: D, weight: 20, rationale: d}
+  - {name: E, weight: 20, rationale: e}
+action_items:
+  count: "3"
+  horizon_days: 7
+key_facts:
+  count: "5"
+`
+	if err := os.WriteFile(yamlPath, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mdPath, []byte("LEGACY MARKDOWN BODY\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("ORG_PATH", dir)
+	t.Setenv("HOME", t.TempDir()) // isolate from real ~/code/personal
+
+	path, content, err := loadProfileTemplate("testprof")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if path != yamlPath {
+		t.Errorf("loader returned %q, want yaml path %q (yaml must win over md)", path, yamlPath)
+	}
+	if strings.Contains(content, "LEGACY MARKDOWN BODY") {
+		t.Errorf("content came from .md fallback; expected rendered yaml")
+	}
+	if !strings.Contains(content, "Test persona intro.") {
+		t.Errorf("rendered yaml missing persona_intro; got %q", content[:min(200, len(content))])
+	}
+
+	// Now remove the yaml and confirm fallback to .md.
+	if err := os.Remove(yamlPath); err != nil {
+		t.Fatal(err)
+	}
+	path, content, err = loadProfileTemplate("testprof")
+	if err != nil {
+		t.Fatalf("load after yaml removed: %v", err)
+	}
+	if path != mdPath {
+		t.Errorf("after yaml removed, loader returned %q, want md path %q", path, mdPath)
+	}
+	if !strings.Contains(content, "LEGACY MARKDOWN BODY") {
+		t.Errorf("md fallback content unexpected: %q", content)
+	}
+}
+
 func TestLoadProfileTemplate_Missing(t *testing.T) {
 	t.Setenv("ORG_PATH", "/tmp/nonexistent-org-path-EPIC043M2")
 	t.Setenv("HOME", t.TempDir())
