@@ -12,7 +12,7 @@ SEPARATE := fetchpage protonexport linkari wasend
 
 ALL := $(CORE) $(SEPARATE)
 
-.PHONY: all core build clean install test linkari-serve-local linkari-logs-local setup-fetchpage $(ALL)
+.PHONY: all core build clean install test linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage $(ALL)
 
 # --- Aggregate targets ---
 
@@ -82,9 +82,14 @@ install-linkari-completions: install-linkari
 	@$(INSTALL_DIR)/linkari completion fish > $(HOME)/.config/fish/completions/linkari.fish
 	@echo "Installed fish completions → $(HOME)/.config/fish/completions/linkari.fish"
 
+AWS_PROFILE ?= brianonpoint
 AWS_REGION ?= us-east-2
 AWS_BEARER_SECRET_ID := linkari/bearer-token
 FETCH_TOKEN = AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws secretsmanager get-secret-value --secret-id $(AWS_BEARER_SECRET_ID) --query SecretString --output text | tr -d '\r\n[:space:]'
+
+linkari-serve: linkari
+	@echo "Starting linkari (profile=$(AWS_PROFILE) region=$(AWS_REGION), debug)..."
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) bin/linkari serve --debug
 
 linkari-serve-local: linkari
 	@echo "Starting linkari on :8080 (token=mytoken, debug)..."
