@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 func TestHealthz(t *testing.T) {
@@ -376,6 +378,114 @@ func TestNotifyFallbackToGlobalToken(t *testing.T) {
 	// Push is now durably enqueued into push_outbox; worker handles delivery.
 	if !strings.Contains(resp.Message, "enqueued") {
 		t.Errorf("expected enqueued message, got %q", resp.Message)
+	}
+}
+
+// --- EPIC-056 M3: POST /push/test --------------------------------------
+
+func newTestPushServer(t *testing.T, withDevice bool, withTokenSource bool) *Server {
+	t.Helper()
+	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
+	q := newTestQueue(t)
+	if withDevice {
+		if err := q.UpsertDevice("device-token-xyz"); err != nil {
+			t.Fatalf("upsert device: %v", err)
+		}
+	}
+	var ts oauth2.TokenSource
+	if withTokenSource {
+		ts = fakeTokenSource{}
+	}
+	return NewServer("test-token", router, q, NewRingLog(10), false, ts)
+}
+
+func TestPushTest_HappyPath(t *testing.T) {
+	isolateEventsDir(t)
+	installStubTransport(t, &stubRoundTripper{status: http.StatusOK})
+
+	srv := newTestPushServer(t, true, true)
+	req := httptest.NewRequest(http.MethodPost, "/push/test", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	srv.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp testPushResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Errorf("status = %q, want ok", resp.Status)
+	}
+	if resp.Reason != "" || resp.Error != "" {
+		t.Errorf("unexpected error fields: %+v", resp)
+	}
+}
+
+func TestPushTest_NoDeviceRegistered(t *testing.T) {
+	isolateEventsDir(t)
+	srv := newTestPushServer(t, false, true)
+	req := httptest.NewRequest(http.MethodPost, "/push/test", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	srv.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	var resp testPushResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Reason != "no_device_registered" {
+		t.Errorf("reason = %q, want no_device_registered", resp.Reason)
+	}
+}
+
+func TestPushTest_FCMSendFailed(t *testing.T) {
+	isolateEventsDir(t)
+	installStubTransport(t, &stubRoundTripper{status: http.StatusNotFound})
+
+	srv := newTestPushServer(t, true, true)
+	req := httptest.NewRequest(http.MethodPost, "/push/test", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	srv.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp testPushResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Reason != "fcm_send_failed" {
+		t.Errorf("reason = %q, want fcm_send_failed", resp.Reason)
+	}
+	if !strings.Contains(resp.Error, "404") {
+		t.Errorf("expected error to mention 404, got %q", resp.Error)
+	}
+}
+
+func TestPushTest_Unauthorized(t *testing.T) {
+	srv := newTestPushServer(t, true, true)
+	req := httptest.NewRequest(http.MethodPost, "/push/test", nil)
+	req.Header.Set("Authorization", "Bearer wrong")
+	w := httptest.NewRecorder()
+	srv.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestPushTest_MethodNotAllowed(t *testing.T) {
+	srv := newTestPushServer(t, true, true)
+	req := httptest.NewRequest(http.MethodGet, "/push/test", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	srv.Mux().ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", w.Code)
 	}
 }
 
