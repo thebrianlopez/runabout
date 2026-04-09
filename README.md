@@ -1,10 +1,10 @@
 # runabout
 
 [![CI](https://github.com/blo-grindr/runabout/actions/workflows/test.yml/badge.svg)](https://github.com/blo-grindr/runabout/actions/workflows/test.yml)
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
-![Tools](https://img.shields.io/badge/tools-8_CLIs-blue)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev)
+![Tools](https://img.shields.io/badge/tools-9_CLIs-blue)
 
-Go devtools monorepo — eight CLI tools for shell optimization and personal workflows.
+Go devtools monorepo — nine CLI tools for shell optimization and personal workflows.
 
 These tools occupy the **Go CLI layer** of an [automation knowledge topology](https://github.com/blo-grindr/infra-knowledge) — they represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
 
@@ -15,17 +15,18 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 - **effiscore** — Anthropic API efficiency scoring via Datadog metrics
 - **linkari** — Android share → tmux webhook bridge
 - **wasend** — send WhatsApp messages from the command line
+- **fetchpage** — headless webpage fetcher via Playwright
 - **protonexport** — export ProtonMail conversations to markdown
 
 ## Status
 
-All 8 tools build and pass tests on Go 1.25. wasend Cloud API support planned, pending permanent access token.
+All 9 tools build and pass tests on Go 1.26. wasend Cloud API support planned, pending permanent access token.
 
 - `linkari` expanded — 7 share profiles, SQLite queue/replay, scoring/archiving pipeline, digest endpoint, Tailscale Funnel (`--tsnet`), TLS support, JSONL observability
 - `effiscore` added: Anthropic API efficiency scoring via DD Metrics API — 5 weighted dimensions, composite score with tier classification
 - `mdq list` extended with `--group-by dir`, `--exclude`, and glob guard (`--headings` hint)
 
-**Last Updated:** 2026-04-05
+**Last Updated:** 2026-04-08
 
 ## Install
 
@@ -33,7 +34,7 @@ All 8 tools build and pass tests on Go 1.25. wasend Cloud API support planned, p
 make install   # go install → ~/go/bin
 ```
 
-Requires Go 1.25+.
+Requires Go 1.26+.
 
 ## mdq
 
@@ -239,12 +240,32 @@ protonexport export -u user@proton.me -p password -c contact@example.com -o ./ex
 
 Credentials can also be set via `PROTON_USERNAME`, `PROTON_PASSWORD`, `PROTON_SENDER` environment variables.
 
+## fetchpage
+
+Fetch fully rendered HTML from a URL using headless Chromium via Playwright. Waits for JS rendering and network idle before outputting to stdout.
+
+```bash
+# Basic fetch (outputs rendered HTML to stdout)
+fetchpage https://example.com
+
+# With stealth mode (anti-detection fingerprint)
+fetchpage https://example.com --stealth
+
+# Custom timeout and post-load wait
+fetchpage https://example.com --timeout 60 --wait 5
+
+# Use chromium instead of chrome
+fetchpage https://example.com --channel chromium
+```
+
+Requires one-time Playwright setup: `make setup-fetchpage`.
+
 ## Build
 
 ```bash
-make build    # builds all 8 binaries to bin/
+make build    # builds all 9 binaries to bin/
 make install  # go install → ~/go/bin
-make core     # builds mdq, perfgate, shellprof, hookval only
+make core     # builds mdq, perfgate, shellprof, hookval, effiscore
 make clean    # removes bin/
 go test ./... # run root module tests
 ```
@@ -265,7 +286,8 @@ cmd/perfgate/         # perfgate entry point
 cmd/shellprof/        # shellprof entry point
 cmd/hookval/          # hookval entry point
 cmd/effiscore/        # effiscore entry point
-cmd/linkari/        # linkari entry point (separate module)
+cmd/fetchpage/        # fetchpage entry point (separate module)
+cmd/linkari/          # linkari entry point (separate module)
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
 internal/mdq/         # markdown parser, query engine, output formatting
