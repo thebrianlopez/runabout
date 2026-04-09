@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -41,14 +41,14 @@ func (t *TsnetServer) Start(ctx context.Context) (net.Listener, error) {
 		AuthKey:  t.cfg.AuthKey,
 		// UserLogf surfaces auth URLs and status messages to the user.
 		UserLogf: func(format string, args ...any) {
-			log.Printf("[tsnet] "+format, args...)
+			slog.Info("tsnet", "event_type", "tsnet_event", "msg", fmt.Sprintf(format, args...))
 		},
 	}
 	// Logf controls verbose backend debug logs (wgengine, magicsock, etc).
-	// Only enable when debug mode is on to avoid flooding the RingLog.
+	// Gated at slog debug level so operators can toggle via --log-level.
 	if t.cfg.Debug {
 		t.ts.Logf = func(format string, args ...any) {
-			log.Printf("[tsnet] "+format, args...)
+			slog.Debug("tsnet", "event_type", "tsnet_event", "msg", fmt.Sprintf(format, args...))
 		}
 	}
 
@@ -83,7 +83,11 @@ func (t *TsnetServer) Start(ctx context.Context) (net.Listener, error) {
 	}
 
 	t.listener = ln
-	log.Printf("tsnet: Funnel listening at https://%s", t.fqdn)
+	slog.Info("tsnet Funnel listening",
+		"event_type", "tsnet_funnel_up",
+		"fqdn", t.fqdn,
+		"url", "https://"+t.fqdn,
+	)
 	return ln, nil
 }
 

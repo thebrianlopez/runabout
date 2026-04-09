@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -155,7 +156,7 @@ func TestPushOutbox_ProcessRestartRedeliver(t *testing.T) {
 
 	// --- restart ------------------------------------------------------------
 	srv2 := newOutboxServer(t, dbPath, true)
-	srv2.drainPushOutbox()
+	srv2.drainPushOutbox(context.Background())
 
 	// Every row must have reached the 'sent' terminal state exactly once.
 	var sentCount, pendingCount, deadCount int
@@ -185,7 +186,7 @@ func TestPushOutbox_ProcessRestartRedeliver(t *testing.T) {
 	if total != n {
 		t.Errorf("row count after restart drain: got %d want %d (duplicates?)", total, n)
 	}
-	srv2.drainPushOutbox()
+	srv2.drainPushOutbox(context.Background())
 }
 
 // --- M6 scenario 2: park then drain ---------------------------------------
@@ -212,7 +213,7 @@ func TestPushOutbox_ParkThenDrain(t *testing.T) {
 
 	// First drain: all rows should park-on-missing-token. They remain
 	// pending (parked is not a status; park bumps next_attempt forward).
-	srv.drainPushOutbox()
+	srv.drainPushOutbox(context.Background())
 
 	var parkedPending int
 	if err := srv.queue.db.QueryRow(
@@ -237,7 +238,7 @@ func TestPushOutbox_ParkThenDrain(t *testing.T) {
 	}
 
 	// Second drain — all parked rows must drain within one cycle.
-	srv.drainPushOutbox()
+	srv.drainPushOutbox(context.Background())
 
 	var sent int
 	if err := srv.queue.db.QueryRow(`SELECT COUNT(*) FROM push_outbox WHERE status='sent'`).Scan(&sent); err != nil {
@@ -332,7 +333,7 @@ func TestPushOutbox_EmitsAllFiveEventTypes(t *testing.T) {
 	})
 
 	// push_outbox_sent — drain the row we just enqueued.
-	srv.drainPushOutbox()
+	srv.drainPushOutbox(context.Background())
 
 	// push_outbox_parked_missing_token — wipe devices and enqueue a new row.
 	if _, err := srv.queue.db.Exec(`DELETE FROM devices`); err != nil {
@@ -341,7 +342,7 @@ func TestPushOutbox_EmitsAllFiveEventTypes(t *testing.T) {
 	if _, err := srv.queue.EnqueuePush("notify", 90, "slug-d", "v", "https://example.com/d"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	srv.drainPushOutbox()
+	srv.drainPushOutbox(context.Background())
 
 	// push_outbox_dead — backdate a pending row past the 24h age ceiling,
 	// then drain. Ensure a device token exists so the age check is reached
@@ -360,7 +361,7 @@ func TestPushOutbox_EmitsAllFiveEventTypes(t *testing.T) {
 	); err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
-	srv.drainPushOutbox()
+	srv.drainPushOutbox(context.Background())
 
 	// Flush: verify each of the 5 event types appears at least once.
 	counts := readEventTypes(t, eventsDir)
