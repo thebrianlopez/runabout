@@ -60,8 +60,13 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Actions) != 4 {
-		t.Fatalf("expected 4 actions, got %d", len(cfg.Actions))
+	// EPIC-051 M5: LoadConfig now merges the user file on top of builtins
+	// by ID instead of replacing the action list wholesale. The test file
+	// overrides 3 builtins (uinit_eng, uinit_life, ginit) and adds 1 new
+	// action (clipboard), so the merged result contains all 8 builtins plus
+	// the 1 extra = 9 actions.
+	if len(cfg.Actions) != 9 {
+		t.Fatalf("expected 9 merged actions, got %d", len(cfg.Actions))
 	}
 	if cfg.DefaultArchiveThreshold != 80 {
 		t.Errorf("default_archive_threshold = %d, want 80", cfg.DefaultArchiveThreshold)
@@ -227,4 +232,209 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// EPIC-051 M4: per-profile throttle config tests.
+
+func TestServerConfig_PushYAML_Parses(t *testing.T) {
+	yamlStr := `
+server:
+  notify_min_score: 10
+  push:
+    digest_throttle_default: 30m
+    digest_throttle:
+      eng: 1h
+      dining: 24h
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.yaml")
+	if err := os.WriteFile(path, []byte(yamlStr), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := LoadServerFile(path)
+	if err != nil || cfg == nil {
+		t.Fatalf("LoadServerFile: %v cfg=%v", err, cfg)
+	}
+	if cfg.NotifyMinScore != 10 {
+		t.Errorf("NotifyMinScore=%d want 10", cfg.NotifyMinScore)
+	}
+	if got := cfg.Push.DigestThrottleDefault.Duration(); got != 30*60*1e9 {
+		t.Errorf("default=%v want 30m", got)
+	}
+	durs := cfg.Push.DigestThrottle.Durations()
+	if durs["eng"].String() != "1h0m0s" {
+		t.Errorf("eng throttle=%v", durs["eng"])
+	}
+	if durs["dining"].String() != "24h0m0s" {
+		t.Errorf("dining throttle=%v", durs["dining"])
+	}
+}
+
+func TestServerConfig_PushConfig_Derivation(t *testing.T) {
+	s := ServerConfig{
+		NotifyMinScore: 25,
+		Push: PushYAMLConfig{
+			DigestThrottle: DurationMap{
+				"eng": Duration{D: 2 * 60 * 60 * 1e9},
+			},
+		},
+	}
+	pc := s.PushConfig()
+	if pc.NotifyMinScore != 25 {
+		t.Errorf("min=%d", pc.NotifyMinScore)
+	}
+	if pc.DigestThrottle["eng"].String() != "2h0m0s" {
+		t.Errorf("eng=%v", pc.DigestThrottle["eng"])
+	}
+	if got := pc.ThrottleFor("missing"); got.String() != "1h0m0s" {
+		t.Errorf("default fallback=%v", got)
+	}
+}
+
+func TestServerConfig_IsZero(t *testing.T) {
+	if !(ServerConfig{}).IsZero() {
+		t.Error("empty should be zero")
+	}
+	s := ServerConfig{Push: PushYAMLConfig{DigestThrottleDefault: Duration{D: 1}}}
+	if s.IsZero() {
+		t.Error("with push throttle should not be zero")
+	}
+}
+
+// EPIC-051 M5: MergeWithBuiltin tests.
+
+func TestMergeWithBuiltin_EmptyUser(t *testing.T) {
+	merged, err := MergeWithBuiltin(builtinConfig(), nil)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	if len(merged.Actions) != len(builtinConfig().Actions) {
+		t.Errorf("expected same action count, got %d", len(merged.Actions))
+	}
+}
+
+func TestMergeWithBuiltin_PartialOverride(t *testing.T) {
+	user := &Config{
+		Actions: []ActionConfig{
+			{ID: "uinit_eng", ArchiveThreshold: 95},
+			{ID: "uinit_dining", ArchiveThreshold: -1},
+		},
+	}
+	merged, err := MergeWithBuiltin(builtinConfig(), user)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	var eng, dining *ActionConfig
+	for i := range merged.Actions {
+		switch merged.Actions[i].ID {
+		case "uinit_eng":
+			eng = &merged.Actions[i]
+		case "uinit_dining":
+			dining = &merged.Actions[i]
+		}
+	}
+	if eng == nil || eng.ArchiveThreshold != 95 {
+		t.Errorf("eng override: %+v", eng)
+	}
+	if eng.CommandTemplate == "" {
+		t.Errorf("eng should retain builtin command template")
+	}
+	if dining == nil || dining.ArchiveThreshold != -1 {
+		t.Errorf("dining override: %+v", dining)
+	}
+}
+
+func TestMergeWithBuiltin_AppendsExtras(t *testing.T) {
+	user := &Config{
+		Actions: []ActionConfig{
+			{ID: "custom_new", Label: "Custom", Type: "url", Target: "linkari:0",
+				Kind: KindTemplate, CommandTemplate: "echo {{.URL}}"},
+		},
+	}
+	merged, err := MergeWithBuiltin(builtinConfig(), user)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	found := false
+	for _, a := range merged.Actions {
+		if a.ID == "custom_new" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("custom_new not appended")
+	}
+}
+
+func TestMergeWithBuiltin_ParityWithEPIC050(t *testing.T) {
+	// Empirical parity check: a user file that lists only ArchiveThreshold
+	// overrides produces the same archiveThreshold() values as hand-
+	// constructing the merged config. This mirrors the EPIC-050 diagnostic
+	// actions.yaml use case.
+	user := &Config{
+		Actions: []ActionConfig{
+			{ID: "uinit_eng", ArchiveThreshold: 85},
+		},
+	}
+	merged, err := MergeWithBuiltin(builtinConfig(), user)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	// The merged config should have exactly one eng action with threshold 85
+	// and all other builtin actions with their original thresholds.
+	for _, a := range merged.Actions {
+		if a.ID == "uinit_eng" && a.ArchiveThreshold != 85 {
+			t.Errorf("eng parity: %d", a.ArchiveThreshold)
+		}
+		if a.ID == "uinit_finance" && a.ArchiveThreshold != 70 {
+			t.Errorf("finance untouched parity: %d", a.ArchiveThreshold)
+		}
+	}
+}
+
+// EPIC-051 M6: ReloadArchiveThresholdConfig integration test.
+
+func TestReloadArchiveThresholdConfig(t *testing.T) {
+	// Reset cached state so this test is independent of ordering.
+	archiveThresholdMu.Lock()
+	archiveThresholdCfg = nil
+	archiveThresholdMu.Unlock()
+
+	// Point LoadConfig at a tempdir by chdir'ing the home override. The
+	// simplest path: construct a Config directly and install it, then
+	// verify archiveThreshold reads through the cached pointer.
+	cfg := &Config{
+		DefaultArchiveThreshold: 50,
+		Actions: []ActionConfig{
+			{ID: "uinit_eng", Kind: KindTemplate, CommandTemplate: "echo",
+				ProfileMap: "prefix", ArchiveThreshold: 99},
+		},
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	archiveThresholdMu.Lock()
+	archiveThresholdCfg = cfg
+	archiveThresholdMu.Unlock()
+	if got := archiveThreshold("eng"); got != 99 {
+		t.Errorf("after install: eng=%d want 99", got)
+	}
+
+	// Simulate a reload by swapping in a new config.
+	cfg2 := &Config{
+		DefaultArchiveThreshold: 50,
+		Actions: []ActionConfig{
+			{ID: "uinit_eng", Kind: KindTemplate, CommandTemplate: "echo",
+				ProfileMap: "prefix", ArchiveThreshold: 60},
+		},
+	}
+	if err := cfg2.validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	archiveThresholdMu.Lock()
+	archiveThresholdCfg = cfg2
+	archiveThresholdMu.Unlock()
+	if got := archiveThreshold("eng"); got != 60 {
+		t.Errorf("after reload: eng=%d want 60", got)
+	}
 }

@@ -205,6 +205,8 @@ All endpoints except `/healthz`, `/logs`, and `/logs/stream` require bearer toke
 
 **Scoring & archiving:** `POST /queue/{id}/score` accepts a score (0-100), tags, and slug. Items auto-archive when score meets the profile threshold (80 default, 70 for finance/dining, disabled for life). Archived high-score items trigger an FCM digest push at most once per hour.
 
+**Prompt iteration (`linkari score`):** Dedicated CLI entrypoint for re-running the scoring pipeline against a single URL without touching the `/share` path, score cache, or tmux. Supports `--prompt-file` to swap in a candidate system prompt, `--no-push` to suppress the FCM digest, and `--dry-run` to skip DB writes entirely. Reuses `Queue.ScoreByURL` + `EnqueueDigestIfDue` verbatim — same dual-writer invariant as `/queue/{id}/score` (EPIC-053). For batch evaluation across a fixture corpus, see EPIC-054 (planned).
+
 **Observability:** JSONL event logging to `~/.config/linkari/linkari_events.jsonl` — emits `linkari_share` and `linkari_digest` events with profile, domain, duration, and status.
 
 ## wasend

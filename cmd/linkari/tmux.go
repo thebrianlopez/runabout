@@ -1,3 +1,11 @@
+// Package tmux logging invariant:
+//
+// All tmux invocations in this file MUST log via logTmuxExec(cmd), never
+// raw slog.Debug("tmux exec", "args", cmd.Args). The raw form renders a
+// []string with %v, space-joining elements without quoting — argv
+// boundaries vanish and embedded spaces look like token separators. This
+// masked a suspected quoting bug during the 2026-04-09 linkari-server.log
+// investigation. Regression coverage: tmux_log_test.go.
 package main
 
 import (
@@ -6,6 +14,57 @@ import (
 	"os/exec"
 	"strings"
 )
+
+// posixQuote returns s quoted for a POSIX shell. Unlike strconv.Quote
+// (which uses Go escaping — unsafe for shell paste because $, `, and \
+// are re-interpreted inside double-quoted strings), this uses POSIX
+// single-quote escaping where the only metacharacter is ' itself
+// (escaped as '\''). Safe identifier characters pass through unquoted.
+func posixQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '_', r == '-', r == '/', r == '.', r == '=', r == ':', r == ',', r == '@', r == '+':
+			// safe
+		default:
+			safe = false
+		}
+		if !safe {
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// posixJoin joins argv into a single shell-pasteable command string.
+func posixJoin(argv []string) string {
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = posixQuote(a)
+	}
+	return strings.Join(parts, " ")
+}
+
+// logTmuxExec logs a tmux invocation with structured argv plus a
+// POSIX shell-quoted repro string. The repro field is copy-pasteable
+// into a terminal to reproduce exactly what the child process saw —
+// essential for debugging argv quoting/spacing bugs where slog's default
+// []string rendering hides element boundaries.
+func logTmuxExec(cmd *exec.Cmd) {
+	slog.Debug("tmux exec",
+		"argv", cmd.Args,
+		"repro", posixJoin(cmd.Args),
+	)
+}
 
 // TmuxRunner wraps tmux operations for sending keys to sessions.
 // Shell and ShellArgs control which shell runs inside new tmux windows.
@@ -56,14 +115,14 @@ func (t *TmuxRunner) SendKeys(target, text string, enter bool) error {
 	// Use "=" prefix on the session part for exact matching.
 	exactTarget := "=" + target
 	cmd := exec.Command("tmux", "send-keys", "-t", exactTarget, "-l", text)
-	slog.Debug("tmux exec", "args", cmd.Args)
+	logTmuxExec(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("send-keys: %w: %s", err, string(out))
 	}
 
 	if enter {
 		cmd := exec.Command("tmux", "send-keys", "-t", exactTarget, "C-m")
-		slog.Debug("tmux exec", "args", cmd.Args)
+		logTmuxExec(cmd)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("send-keys C-m: %w: %s", err, string(out))
 		}
@@ -119,7 +178,7 @@ func (t *TmuxRunner) NewWindow(session, command string, name string) error {
 	}
 	args = append(args, sh, t.shellArgs(), shellCmd)
 	cmd := exec.Command("tmux", args...)
-	slog.Debug("tmux exec", "args", cmd.Args)
+	logTmuxExec(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("new-window: %w: %s", err, string(out))
 	}
@@ -127,7 +186,7 @@ func (t *TmuxRunner) NewWindow(session, command string, name string) error {
 	// Set remain-on-exit to "failed" on the newly created (last) window so it
 	// only persists when the command fails.
 	setCmd := exec.Command("tmux", "set-option", "-p", "-t", exactSession+":{end}", "remain-on-exit", "failed")
-	slog.Debug("tmux exec", "args", setCmd.Args)
+	logTmuxExec(setCmd)
 	if out, err := setCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("set remain-on-exit: %w: %s", err, string(out))
 	}
