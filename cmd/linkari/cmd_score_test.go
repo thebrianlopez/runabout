@@ -13,7 +13,7 @@ import (
 func TestScoreCmd_AutoArchiveEnqueuesDigestPush(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 
-	cmd := scoreCmd()
+	cmd := scoreWriteCmd()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{

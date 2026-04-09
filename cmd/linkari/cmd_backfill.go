@@ -17,15 +17,7 @@ type backfillResult struct {
 	Skipped  int `json:"skipped"`
 }
 
-type scoreJSON struct {
-	Score    int    `json:"score"`
-	Verdict  string `json:"verdict"`
-	Slug     string `json:"slug"`
-	Profile  string `json:"profile"`
-	URL      string `json:"url"`
-	ScoredAt string `json:"scored_at"`
-	Tags     string `json:"tags,omitempty"`
-}
+// scoreJSON is defined in score_sidecar.go (shared with watchdog rescue path).
 
 func backfillCmd() *cobra.Command {
 	var (

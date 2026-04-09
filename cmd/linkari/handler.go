@@ -5,27 +5,60 @@ import (
 	"log/slog"
 	"net/url"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 )
 
-// archiveThresholdCache lazily loads the actions config once per process so
-// the package-level `archiveThreshold` helper used by cmd_score / cmd_triage
-// and the server FCM path doesn't re-parse actions.yaml on every call.
+// archiveThresholdCache lazily loads the actions config on first use and
+// supports hot-reload via SIGHUP (EPIC-051 M6). The sync.Once pattern that
+// preceded this holder required a full server restart to pick up a
+// threshold change — the 15-minute diagnostic detour documented in the
+// EPIC-050 PoMo timeline. Now a `kill -HUP $(cat linkari.pid)` is enough.
 var (
-	archiveThresholdOnce sync.Once
-	archiveThresholdCfg  *Config
+	archiveThresholdMu  sync.RWMutex
+	archiveThresholdCfg *Config
 )
 
 func loadArchiveThresholdConfig() *Config {
-	archiveThresholdOnce.Do(func() {
-		cfg, err := LoadConfig("")
-		if err != nil {
-			cfg = builtinConfig()
-		}
-		archiveThresholdCfg = cfg
-	})
+	archiveThresholdMu.RLock()
+	cfg := archiveThresholdCfg
+	archiveThresholdMu.RUnlock()
+	if cfg != nil {
+		return cfg
+	}
+
+	// Slow path: first call since process start (or since an explicit reset).
+	// Upgrade to a write lock and double-check.
+	archiveThresholdMu.Lock()
+	defer archiveThresholdMu.Unlock()
+	if archiveThresholdCfg != nil {
+		return archiveThresholdCfg
+	}
+	loaded, err := LoadConfig("")
+	if err != nil {
+		loaded = builtinConfig()
+	}
+	archiveThresholdCfg = loaded
 	return archiveThresholdCfg
+}
+
+// ReloadArchiveThresholdConfig re-parses actions.yaml and atomically swaps
+// the cached config. Safe to call from a signal handler — the write is
+// guarded by the same mutex readers use.  EPIC-051 M6.
+func ReloadArchiveThresholdConfig() error {
+	loaded, err := LoadConfig("")
+	if err != nil {
+		return fmt.Errorf("reload archive threshold: %w", err)
+	}
+	archiveThresholdMu.Lock()
+	archiveThresholdCfg = loaded
+	archiveThresholdMu.Unlock()
+	slog.Info("archive threshold config reloaded",
+		"event_type", "archive_threshold_reloaded",
+		"action_count", len(loaded.Actions),
+	)
+	return nil
 }
 
 // Action describes a share target exposed via GET /actions.
@@ -114,6 +147,17 @@ func (r *Router) Actions() []Action {
 	return r.actions
 }
 
+// ResolveShare is the server-facing entry point for EPIC-052's provenance
+// helper. It takes a read lock on the router's cfgIndex and delegates to the
+// pure `resolveShareAction` helper. Call this BEFORE writing a queue row so
+// the share_action_resolved event emitted by handleShare reflects the same
+// resolution the router will apply during Route.
+func (r *Router) ResolveShare(req *ShareRequest, heuristicOverrideEnabled bool) ShareResolution {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return resolveShareAction(req, r.cfgIndex, heuristicOverrideEnabled)
+}
+
 // ArchiveThreshold returns the archive threshold for a given action/profile
 // using this router's live actions config. Falls back to the package-level
 // `archiveThreshold` helper (also config-driven) when no in-memory action
@@ -156,47 +200,157 @@ func archiveThreshold(profile string) int {
 	return 80
 }
 
-// Route dispatches a request using config-driven actions.
-func (r *Router) Route(req *ShareRequest) (string, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+// ShareResolution records the provenance of a share request's (action, profile)
+// resolution. EPIC-052: every ingress path that writes a queue row emits this
+// so that a later queue-row inspection can be reconciled against what the
+// caller actually sent. Reason is empty when the resolved value matches the
+// received value (i.e. the caller-wins default held). Reason is non-empty
+// whenever the helper rewrote either field; the string names the code site
+// that made the override (e.g. "bare_uinit_pinned:uinit_eng",
+// "unknown_uinit_profile_pinned:uinit_eng").
+type ShareResolution struct {
+	ReceivedAction  string
+	ReceivedProfile string
+	ResolvedAction  string
+	ResolvedProfile string
+	Reason          string
+}
+
+// resolveShareAction is the single chokepoint every queue-writing path goes
+// through to determine the final (action, profile) pair for a share request.
+// It enforces EPIC-052's caller-wins invariant: when `received.Action` is
+// non-empty and present in cfgIndex, the received action is preserved verbatim
+// unless heuristicOverrideEnabled is true AND a future heuristic is registered
+// (none exist today — the flag is reserved for graceful migration).
+//
+// Four branches, each individually unit tested (M2):
+//
+//  1. Empty Action → fall back to req.Type (legacy ingress path that sends
+//     type="url" without an explicit action).
+//  2. Bare "uinit" → deterministically pin to the lexicographically-first
+//     uinit_<profile> action with profile_map=prefix in cfgIndex. This
+//     replaces the non-deterministic map-iteration fallback that previously
+//     lived in Router.Route (the PoMo's "Footgun 3").
+//  3. Unknown "uinit_<profile>" → extract the profile suffix and pin the
+//     action to the same deterministic default. The profile is preserved as
+//     the caller supplied; only the action slot is rewritten so the
+//     downstream template action actually exists.
+//  4. Known action → caller-wins path. Action and profile are returned
+//     unchanged; Reason stays empty.
+//
+// The helper is pure (no IO, no logging) so unit tests can exercise every
+// branch without mocks. Callers are expected to emit the
+// share_action_resolved event themselves after invoking this helper so the
+// event records the same provenance that this function decided.
+func resolveShareAction(req *ShareRequest, cfgIndex map[string]*ActionConfig, heuristicOverrideEnabled bool) ShareResolution {
+	res := ShareResolution{
+		ReceivedAction:  req.Action,
+		ReceivedProfile: req.Profile,
+	}
 
 	actionID := req.Action
 	if actionID == "" {
 		actionID = req.Type
 	}
+	profile := req.Profile
+
+	// Branch 2: bare "uinit" — deterministically pin.
+	if actionID == "uinit" {
+		if pinned := pinDefaultUinitAction(cfgIndex); pinned != "" {
+			actionID = pinned
+			res.Reason = "bare_uinit_pinned:" + pinned
+			// Inherit profile from pinned action suffix when caller sent none.
+			if profile == "" {
+				if ac, ok := cfgIndex[pinned]; ok && ac.ProfileMap == "prefix" {
+					parts := strings.SplitN(pinned, "_", 2)
+					if len(parts) == 2 {
+						profile = parts[1]
+					}
+				}
+			}
+		}
+		res.ResolvedAction = actionID
+		res.ResolvedProfile = profile
+		return res
+	}
+
+	// Branch 4: known action — caller-wins.
+	if ac, ok := cfgIndex[actionID]; ok {
+		if ac.ProfileMap == "prefix" && profile == "" {
+			parts := strings.SplitN(actionID, "_", 2)
+			if len(parts) == 2 {
+				profile = parts[1]
+			}
+		}
+		res.ResolvedAction = actionID
+		res.ResolvedProfile = profile
+		// heuristicOverrideEnabled is a no-op today: no heuristic is registered
+		// in this helper, so caller-wins is the only path even when the flag is
+		// true. The flag is reserved for a future graceful migration.
+		_ = heuristicOverrideEnabled
+		return res
+	}
+
+	// Branch 3: unknown "uinit_<profile>" — pin action, keep profile.
+	if strings.HasPrefix(actionID, "uinit_") {
+		if profile == "" {
+			profile = strings.TrimPrefix(actionID, "uinit_")
+		}
+		if pinned := pinDefaultUinitAction(cfgIndex); pinned != "" {
+			res.Reason = "unknown_uinit_profile_pinned:" + pinned
+			actionID = pinned
+		}
+		res.ResolvedAction = actionID
+		res.ResolvedProfile = profile
+		return res
+	}
+
+	// Branch 1 continuation: empty / unrecognized Type. Return as-is and let
+	// Route fail fast — the helper does not invent actions it can't name.
+	res.ResolvedAction = actionID
+	res.ResolvedProfile = profile
+	return res
+}
+
+// pinDefaultUinitAction returns the lexicographically-first action ID in
+// cfgIndex that has profile_map=prefix and a "uinit_" prefix. Deterministic
+// across processes and map-insertion orderings — same cfgIndex contents
+// always yield the same answer. Empty string when no candidate exists.
+func pinDefaultUinitAction(cfgIndex map[string]*ActionConfig) string {
+	var candidates []string
+	for id, ac := range cfgIndex {
+		if ac == nil {
+			continue
+		}
+		if ac.ProfileMap == "prefix" && strings.HasPrefix(id, "uinit_") {
+			candidates = append(candidates, id)
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	sort.Strings(candidates)
+	return candidates[0]
+}
+
+// Route dispatches a request using config-driven actions.
+func (r *Router) Route(req *ShareRequest) (string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	// EPIC-052: resolveShareAction is the single resolver for (action, profile).
+	// It replaces the non-deterministic map-iteration fallback that previously
+	// lived here (Footgun 3 in the EPIC-050 PoMo). The helper is pure; the
+	// caller-wins invariant + event emission happen in handleShare before the
+	// queue row is written.
+	resolution := resolveShareAction(req, r.cfgIndex, false)
+	actionID := resolution.ResolvedAction
+	req.Profile = resolution.ResolvedProfile
 
 	// Resolve target from action definition when the client doesn't send one.
 	if req.Target == "" && actionID != "" {
 		if ac, ok := r.cfgIndex[actionID]; ok {
 			req.Target = ac.Target
-		}
-	}
-
-	// Extract profile from action ID with profile_map=prefix.
-	if ac, ok := r.cfgIndex[actionID]; ok {
-		if ac.ProfileMap == "prefix" {
-			parts := strings.SplitN(actionID, "_", 2)
-			if len(parts) == 2 && req.Profile == "" {
-				req.Profile = parts[1]
-			}
-			// Normalize bare prefix to first action of that prefix type.
-		}
-	} else {
-		// Try prefix matching for uinit_<profile> pattern.
-		if strings.HasPrefix(actionID, "uinit_") {
-			profile := strings.TrimPrefix(actionID, "uinit_")
-			if req.Profile == "" {
-				req.Profile = profile
-			}
-			// Look for a uinit_eng or similar template action to use.
-			for id, ac := range r.cfgIndex {
-				if ac.ProfileMap == "prefix" && strings.HasPrefix(id, "uinit_") {
-					actionID = id
-					req.Target = ac.Target
-					break
-				}
-			}
 		}
 	}
 

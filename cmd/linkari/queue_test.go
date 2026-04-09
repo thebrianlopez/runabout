@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -349,3 +350,118 @@ func TestQueueVerdictSlugRoundTrip(t *testing.T) {
 		t.Errorf("slug = %q, want %q", item.Slug, "my-slug")
 	}
 }
+
+// EPIC-051 M2: EnqueueDigestIfDue tests.
+
+func TestEnqueueDigestIfDue_HappyPath(t *testing.T) {
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	res, err := q.EnqueueDigestIfDue(testCtx(), "eng", 90, "slug-1", "verdict", "https://a.com")
+	if err != nil {
+		t.Fatalf("EnqueueDigestIfDue: %v", err)
+	}
+	if !res.Enqueued || res.Reason != "enqueued" || res.ID == 0 {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+}
+
+func TestEnqueueDigestIfDue_ThrottledWithinWindow(t *testing.T) {
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	if _, err := q.EnqueueDigestIfDue(testCtx(), "eng", 90, "slug-1", "", ""); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	res, err := q.EnqueueDigestIfDue(testCtx(), "eng", 91, "slug-2", "", "")
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if res.Enqueued || res.Reason != "throttled" {
+		t.Fatalf("expected throttled, got %+v", res)
+	}
+	if res.SecondsUntilAllowed <= 0 {
+		t.Fatalf("expected positive SecondsUntilAllowed, got %d", res.SecondsUntilAllowed)
+	}
+}
+
+func TestEnqueueDigestIfDue_PerProfileIndependent(t *testing.T) {
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	if _, err := q.EnqueueDigestIfDue(testCtx(), "eng", 90, "a", "", ""); err != nil {
+		t.Fatalf("eng: %v", err)
+	}
+	res, err := q.EnqueueDigestIfDue(testCtx(), "dining", 90, "b", "", "")
+	if err != nil {
+		t.Fatalf("dining: %v", err)
+	}
+	if !res.Enqueued {
+		t.Fatalf("dining should be enqueued independently of eng: %+v", res)
+	}
+}
+
+func TestEnqueueDigestIfDue_BoundaryExactWindow(t *testing.T) {
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Second})
+
+	if _, err := q.EnqueueDigestIfDue(testCtx(), "eng", 90, "a", "", ""); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	res, err := q.EnqueueDigestIfDue(testCtx(), "eng", 90, "b", "", "")
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if !res.Enqueued {
+		t.Fatalf("expected boundary enqueue to succeed: %+v", res)
+	}
+}
+
+func TestEnqueueDigestIfDue_EmptyOutboxFirstCall(t *testing.T) {
+	q := newTestQueue(t)
+	res, err := q.EnqueueDigestIfDue(testCtx(), "eng", 90, "slug", "", "")
+	if err != nil {
+		t.Fatalf("EnqueueDigestIfDue: %v", err)
+	}
+	if !res.Enqueued {
+		t.Fatalf("first call on empty outbox should enqueue: %+v", res)
+	}
+}
+
+func TestEnqueueDigestIfDue_BelowMinScore(t *testing.T) {
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{NotifyMinScore: 70, DigestThrottleDefault: time.Hour})
+
+	res, err := q.EnqueueDigestIfDue(testCtx(), "eng", 40, "slug", "", "")
+	if err != nil {
+		t.Fatalf("EnqueueDigestIfDue: %v", err)
+	}
+	if res.Enqueued || res.Reason != "below_min_score" {
+		t.Fatalf("expected below_min_score, got %+v", res)
+	}
+}
+
+func TestEnqueueDigestIfDue_PerProfileOverride(t *testing.T) {
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{
+		DigestThrottleDefault: time.Hour,
+		DigestThrottle: map[string]time.Duration{
+			"dining": time.Nanosecond,
+		},
+	})
+
+	if _, err := q.EnqueueDigestIfDue(testCtx(), "dining", 90, "a", "", ""); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	res, err := q.EnqueueDigestIfDue(testCtx(), "dining", 90, "b", "", "")
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if !res.Enqueued {
+		t.Fatalf("dining with ns throttle should not suppress: %+v", res)
+	}
+}
+
+func testCtx() context.Context { return context.Background() }
