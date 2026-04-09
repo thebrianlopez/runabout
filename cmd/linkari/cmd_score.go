@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -50,6 +51,15 @@ Already-scored URLs are returned without modification (idempotent).`,
 			if threshold >= 0 && item.Score != nil && *item.Score >= threshold {
 				if archErr := q.Archive(item.ID); archErr == nil {
 					item.Status = "archived"
+					// Enqueue digest push so the server's outbox worker
+					// flushes it via FCM. Throttle via option (b): query
+					// MAX(created_at) from push_outbox where kind='digest'
+					// — cheapest cross-process check, no new tables, and
+					// the outbox table already exists.
+					last, lerr := q.LastDigestPushAt()
+					if lerr == nil && time.Since(time.Unix(last, 0)) >= time.Hour {
+						q.EnqueuePush("digest", *item.Score, item.Slug, "", "")
+					}
 				}
 			}
 

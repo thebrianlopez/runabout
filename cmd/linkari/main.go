@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
+	"github.com/blo-grindr/runabout/cmd/linkari/internal/linklog"
 	"github.com/blo-grindr/runabout/cmd/linkari/internal/secrets"
 	"github.com/blo-grindr/runabout/cmd/linkari/internal/xdgpath"
 )
@@ -111,6 +113,8 @@ func serveCmd() *cobra.Command {
 		shellArgs      string
 		configFile     string
 		detach         bool
+		logFormat      string
+		logLevel       string
 	)
 
 	cmd := &cobra.Command{
@@ -338,7 +342,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				}
 			}
 			if tsnetEnabled && tlsEnabled {
-				log.Printf("WARN: --tls and --tsnet both set; --tls applies only to the local listener")
+				slog.Warn("--tls and --tsnet both set; --tls applies only to the local listener")
 			}
 
 			// EPIC-048 M2: resolve notify_min_score and debug via the helper pipeline.
@@ -394,12 +398,45 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}()
 
 			log.SetOutput(logWriter)
+
+			// EPIC-051 M1: install structured slog handler alongside stdlib log.
+			// Both write to logWriter, so ring/log-file capture output from
+			// either path during the migration. Level is a LevelVar so SIGHUP
+			// can re-tune at runtime (EPIC-051 M3).
+			lvlVar := new(slog.LevelVar)
+			parsedLevel, lvlErr := linklog.ParseLevel(logLevel)
+			if lvlErr != nil {
+				return lvlErr
+			}
+			// --debug flag acts as a shorthand for --log-level=debug when
+			// --log-level is unset. Preserved for backwards compat; removed
+			// in EPIC-051 M3.
+			if debug && logLevel == "" {
+				parsedLevel = slog.LevelDebug
+			}
+			lvlVar.Set(parsedLevel)
+			parsedFormat, fmtErr := linklog.ParseFormat(logFormat)
+			if fmtErr != nil {
+				return fmtErr
+			}
+			slogHandler := linklog.New(logWriter, linklog.Options{
+				Level:   lvlVar,
+				Format:  parsedFormat,
+				Command: "linkari",
+			})
+			slog.SetDefault(slog.New(slogHandler))
+
 			// EPIC-047 M4: flush buffered provenance lines into the configured
 			// log sink so they land in ring/log-file (locked decision #7).
 			flushProvenance(provenance)
 			if debug {
 				log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-				log.Printf("[DEBUG] config: port=%d debug=true firebase_sa=%q queue_db=%q", port, firebaseSA, queueDB)
+				slog.Debug("startup config",
+					"event_type", "startup_config",
+					"port", port,
+					"firebase_sa", firebaseSA,
+					"queue_db", queueDB,
+				)
 			}
 
 			// Resolve shell from flag → env → default.
@@ -422,17 +459,17 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					// Explicit config path was set — fail if it can't be loaded.
 					return fmt.Errorf("load config: %w", cfgErr)
 				}
-				log.Printf("no action config found, using built-in defaults: %v", cfgErr)
+				slog.Info("no action config found, using built-in defaults", "error", cfgErr)
 				router = NewRouterFromConfig(tmux, builtinConfig(), debug)
 			} else {
-				log.Printf("loaded %d actions from config", len(cfg.Actions))
+				slog.Info("loaded actions from config", "count", len(cfg.Actions))
 				router = NewRouterFromConfig(tmux, cfg, debug)
 
 				// EPIC-047 M3: deprecation warning when [server:] block in
 				// actions.yaml is present. server.yaml is the new home; the
 				// actions.yaml block remains as a back-compat fallback only.
 				if (cfg.Server != ServerConfig{}) {
-					log.Printf("WARN: actions.yaml [server:] block is deprecated — migrate to %s", serverFilePath)
+					slog.Warn("actions.yaml [server:] block is deprecated", "migrate_to", serverFilePath)
 				}
 
 				// EPIC-042 M7: apply [server] section as the lowest-precedence
@@ -448,17 +485,19 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					tmux.ShellArgs = cfg.Server.ShellArgs
 				}
 				if cfg.Server.LogFile != "" && logFilePath == "" {
-					log.Printf("config server.log_file: %s (note: file logging applied at startup; restart to take effect)", cfg.Server.LogFile)
+					slog.Info("config server.log_file set (restart to take effect)", "log_file", cfg.Server.LogFile)
 				}
 				// server_url is consumed by fish callbacks via /actions or env;
 				// surface it in the log so operators can verify what shipped.
 				if cfg.Server.ServerURL != "" {
-					log.Printf("config server.server_url: %s (advertised to clients)", cfg.Server.ServerURL)
+					slog.Info("config server.server_url advertised to clients", "server_url", cfg.Server.ServerURL)
 				}
 			}
 			// Validate debug fault-injection env var before binding; fatal on bad value.
 			if code := ValidateRegisterFaultEnv(); code != 0 {
-				log.Printf("WARN: %s=%d active — POST /register will short-circuit with %d (debug only)", registerFaultEnv, code, code)
+				slog.Warn("register fault injection active (debug only)",
+					"var", registerFaultEnv, "status_code", code,
+				)
 			}
 			srv := NewServer(token, router, queue, ring, debug, fcmTokenSource)
 			srv.notifyMinScore = notifyMinScore
@@ -467,21 +506,21 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			eventsPath := filepath.Join(filepath.Dir(queueDB), "linkari_events.jsonl")
 			events, err := NewEventLogger(eventsPath)
 			if err != nil {
-				log.Printf("WARN: event logger disabled: %v", err)
+				slog.Warn("event logger disabled", "error", err)
 			} else {
 				srv.events = events
-				log.Printf("event logging enabled (path=%s)", eventsPath)
+				slog.Info("event logging enabled", "path", eventsPath)
 			}
 			if fcmTokenSource != nil {
-				log.Printf("FCM push notifications enabled (sa=%s)", firebaseSA)
+				slog.Info("FCM push notifications enabled", "firebase_sa", firebaseSA)
 			} else {
-				log.Printf("FCM push notifications disabled (no firebase SA configured)")
+				slog.Info("FCM push notifications disabled (no firebase SA configured)")
 			}
 			if notifyMinScore > 0 {
-				log.Printf("notify min score override: %d", notifyMinScore)
+				slog.Info("notify min score override", "score", notifyMinScore)
 			}
 
-			log.Printf("queue enabled (db=%s)", queueDB)
+			slog.Info("queue enabled", "db", queueDB)
 			StartReplay(queue, router, tmux, 30*time.Second, debug)
 			srv.StartPushWorker(cmd.Context())
 
@@ -499,7 +538,10 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// detach-ready to the parent process (EPIC-049 M3) after the port
 			// is bound, before entering the accept loop.
 			if tlsEnabled {
-				log.Printf("linkari listening on :%d (local, TLS)", port)
+				slog.Info("linkari listening",
+					"event_type", "listener_up",
+					"port", port, "mode", "local", "tls", true,
+				)
 				go func() {
 					errCh <- httpServer.ListenAndServeTLS(certFile, keyFile)
 				}()
@@ -510,7 +552,10 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				if lnErr != nil {
 					return fmt.Errorf("listen :%d: %w", port, lnErr)
 				}
-				log.Printf("linkari listening on :%d (local)", port)
+				slog.Info("linkari listening",
+					"event_type", "listener_up",
+					"port", port, "mode", "local", "tls", false,
+				)
 				// Signal parent AFTER port is successfully bound.
 				signalDetachReady()
 				go func() {
@@ -531,7 +576,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					Debug:    debug,
 				})
 				if err != nil {
-					log.Printf("WARN: tsnet failed to start: %v — continuing with local listener only", err)
+					slog.Warn("tsnet failed to start, continuing with local listener only", "error", err)
 				} else {
 					tsnetClose = cleanup
 					srv.SetTsnetAddr(fqdn)
@@ -557,25 +602,25 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 						// Hot-reload action config.
 						newCfg, reloadErr := LoadConfig(configFile)
 						if reloadErr != nil {
-							log.Printf("SIGHUP: config reload failed: %v", reloadErr)
+							slog.Error("SIGHUP config reload failed", "error", reloadErr)
 							continue
 						}
 						router.Reload(newCfg)
-						log.Printf("SIGHUP: reloaded %d actions from config", len(newCfg.Actions))
+						slog.Info("SIGHUP reloaded actions from config", "count", len(newCfg.Actions))
 						continue
 					}
-					log.Println("shutting down...")
+					slog.Info("shutting down")
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()
 
 					if tsnetHTTPServer != nil {
 						if err := tsnetHTTPServer.Shutdown(ctx); err != nil {
-							log.Printf("tsnet HTTP shutdown: %v", err)
+							slog.Error("tsnet HTTP shutdown failed", "error", err)
 						}
 					}
 					if tsnetClose != nil {
 						if err := tsnetClose(); err != nil {
-							log.Printf("tsnet close: %v", err)
+							slog.Error("tsnet close failed", "error", err)
 						}
 					}
 
@@ -587,17 +632,17 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					return nil
 				case <-cmd.Context().Done():
 					// Context cancelled — integration tests use this for clean shutdown.
-					log.Println("shutting down (context cancelled)...")
+					slog.Info("shutting down (context cancelled)")
 					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer shutdownCancel()
 					if tsnetHTTPServer != nil {
 						if err := tsnetHTTPServer.Shutdown(shutdownCtx); err != nil {
-							log.Printf("tsnet HTTP shutdown: %v", err)
+							slog.Error("tsnet HTTP shutdown failed", "error", err)
 						}
 					}
 					if tsnetClose != nil {
 						if err := tsnetClose(); err != nil {
-							log.Printf("tsnet close: %v", err)
+							slog.Error("tsnet close failed", "error", err)
 						}
 					}
 					return httpServer.Shutdown(shutdownCtx)
@@ -625,6 +670,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 	cmd.Flags().StringVar(&shellArgs, "shell-args", "", "shell command flag for tmux windows (default -c, or LINKARI_SHELL_ARGS)")
 	cmd.Flags().StringVar(&configFile, "config", "", "path to actions.yaml config (default ~/.config/linkari/actions.yaml, or LINKARI_CONFIG)")
 	cmd.Flags().BoolVar(&detach, "detach", false, "fork to background (POSIX only); PID written to ~/.local/state/linkari/linkari.pid")
+	cmd.Flags().StringVar(&logFormat, "log-format", "", "log output format: text (default, human-friendly) or json (automation-metrics envelope)")
+	cmd.Flags().StringVar(&logLevel, "log-level", "", "log level: debug|info|warn|error (default info; --debug forces debug)")
 
 	return cmd
 }

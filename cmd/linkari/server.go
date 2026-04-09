@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -12,7 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/oauth2"
+
+	"github.com/blo-grindr/runabout/cmd/linkari/internal/linklog"
 )
 
 // maxPayloadSize limits request body to 64KB.
@@ -35,10 +38,12 @@ func ValidateRegisterFaultEnv() int {
 	}
 	code, err := strconv.Atoi(v)
 	if err != nil {
-		log.Fatalf("FATAL: %s=%q is not an integer", registerFaultEnv, v)
+		slog.Error("register fault env is not an integer", "var", registerFaultEnv, "value", v)
+		os.Exit(1)
 	}
 	if code < 500 || code > 599 {
-		log.Fatalf("FATAL: %s=%d must be in [500,599] (2xx/4xx rejected)", registerFaultEnv, code)
+		slog.Error("register fault env must be in [500,599]", "var", registerFaultEnv, "value", code)
+		os.Exit(1)
 	}
 	return code
 }
@@ -187,7 +192,7 @@ func (s *Server) Mux() http.Handler {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/logs", s.handleLogs)
 	mux.HandleFunc("/logs/stream", s.handleLogStream)
-	return corsMiddleware(mux)
+	return traceMiddleware(corsMiddleware(mux))
 }
 
 // FunnelMux returns a restricted mux for the public Funnel listener.
@@ -195,7 +200,71 @@ func (s *Server) Mux() http.Handler {
 func (s *Server) FunnelMux() http.Handler {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
-	return corsMiddleware(mux)
+	return traceMiddleware(corsMiddleware(mux))
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the status code for
+// request logging. Flush/Hijack/Push are intentionally not implemented —
+// /logs/stream (the only SSE endpoint) writes its headers explicitly and
+// does not require a hijackable wrapper; the default 200 default is fine.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	wrote  bool
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	if !sr.wrote {
+		sr.status = code
+		sr.wrote = true
+	}
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+func (sr *statusRecorder) Write(b []byte) (int, error) {
+	if !sr.wrote {
+		sr.status = http.StatusOK
+		sr.wrote = true
+	}
+	return sr.ResponseWriter.Write(b)
+}
+
+// Flush forwards to the underlying ResponseWriter if it supports
+// http.Flusher. /logs/stream relies on this for SSE.
+func (sr *statusRecorder) Flush() {
+	if f, ok := sr.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// traceMiddleware mints a trace_id, attaches it to r.Context() via
+// linklog.WithTraceID, and emits a structured request log line with
+// method, path, status, duration_ms, and event_type=http_request on
+// completion. Downstream handlers access the trace_id via
+// linklog.TraceIDFromContext(r.Context()) for correlation.
+func traceMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		traceID := uuid.NewString()
+		ctx := linklog.WithTraceID(r.Context(), traceID)
+		r = r.WithContext(ctx)
+
+		// Advertise the trace ID on the response so clients can correlate.
+		w.Header().Set("X-Trace-ID", traceID)
+
+		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		start := time.Now()
+		next.ServeHTTP(sr, r)
+		dur := time.Since(start)
+
+		slog.InfoContext(ctx, "http_request",
+			"event_type", "http_request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", sr.status,
+			"duration_ms", dur.Milliseconds(),
+			"remote", r.RemoteAddr,
+		)
+	})
 }
 
 // registerRoutes adds the shared authenticated routes to a mux.
@@ -231,10 +300,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleActions(w http.ResponseWriter, r *http.Request) {
-	if s.debug {
-		log.Printf("[DEBUG] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
-	}
-
+	ctx := r.Context()
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -248,9 +314,7 @@ func (s *Server) handleActions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	actions := s.router.Actions()
-	if s.debug {
-		log.Printf("[DEBUG] returning %d actions", len(actions))
-	}
+	slog.DebugContext(ctx, "returning actions", "count", len(actions))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(actions)
@@ -308,9 +372,6 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if s.debug {
-		log.Printf("[DEBUG] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
-	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -337,14 +398,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
-	if s.debug {
-		log.Printf("[DEBUG] %s %s from %s content-length=%d", r.Method, r.URL.Path, r.RemoteAddr, r.ContentLength)
-	}
-
+	ctx := r.Context()
 	if r.Method != http.MethodPost {
-		if s.debug {
-			log.Printf("[DEBUG] rejected: method %s not allowed", r.Method)
-		}
+		slog.DebugContext(ctx, "share rejected: method not allowed", "method", r.Method)
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
@@ -352,9 +408,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	// Auth
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
-		if s.debug {
-			log.Printf("[DEBUG] rejected: auth failed (has_header=%t)", auth != "")
-		}
+		slog.DebugContext(ctx, "share rejected: auth failed", "has_header", auth != "")
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -365,37 +419,30 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		ip = strings.TrimSpace(strings.Split(fwd, ",")[0])
 	}
 	if !s.limiter.allow(ip) {
-		if s.debug {
-			log.Printf("[DEBUG] rejected: rate limit exceeded for ip=%s", ip)
-		}
+		slog.DebugContext(ctx, "share rejected: rate limit exceeded", "ip", ip)
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
-	}
-	if s.debug {
-		log.Printf("[DEBUG] auth ok, rate limit ok (ip=%s)", ip)
 	}
 
 	// Parse
 	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
 	var req ShareRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		if s.debug {
-			log.Printf("[DEBUG] rejected: JSON decode error: %v", err)
-		}
+		slog.DebugContext(ctx, "share rejected: JSON decode error", "error", err)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
 		return
 	}
-	if s.debug {
-		log.Printf("[DEBUG] parsed: type=%q action=%q profile=%q target=%q enter=%t text_len=%d url_len=%d title=%q", req.Type, req.Action, req.Profile, req.Target, req.Enter, len(req.Text), len(req.URL), req.Title)
-	}
+	slog.DebugContext(ctx, "share parsed",
+		"type", req.Type, "action", req.Action, "profile", req.Profile,
+		"target", req.Target, "enter", req.Enter,
+		"text_len", len(req.Text), "url_len", len(req.URL), "title", req.Title,
+	)
 
 	shareStart := time.Now()
 
 	// Validate
 	if err := validateRequest(&req); err != nil {
-		if s.debug {
-			log.Printf("[DEBUG] rejected: validation error: %v", err)
-		}
+		slog.DebugContext(ctx, "share rejected: validation error", "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -405,12 +452,10 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	if s.queue != nil {
 		id, err := s.queue.Enqueue(&req)
 		if err != nil {
-			log.Printf("WARN: queue enqueue failed: %v", err)
+			slog.WarnContext(ctx, "queue enqueue failed", "error", err)
 		} else {
 			queueID = id
-			if s.debug {
-				log.Printf("[DEBUG] queue: enqueued id=%d", id)
-			}
+			slog.DebugContext(ctx, "queue enqueued", "id", id)
 		}
 	}
 
@@ -421,7 +466,12 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		// If queue is active, return 200 "queued" instead of 500 —
 		// the replay goroutine will retry when tmux is available.
 		if s.queue != nil {
-			log.Printf("queued %s request (profile=%s): routing failed: %v", req.Type, req.Profile, err)
+			slog.InfoContext(ctx, "share queued: routing failed",
+				"event_type", "share_queued",
+				"type", req.Type,
+				"profile", req.Profile,
+				"error", err.Error(),
+			)
 			writeJSON(w, http.StatusOK, ShareResponse{
 				Status:    "queued",
 				Message:   "tmux unavailable, queued for replay",
@@ -429,7 +479,11 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		log.Printf("error routing %s request: %v", req.Type, err)
+		slog.ErrorContext(ctx, "share routing failed",
+			"event_type", "share_error",
+			"type", req.Type,
+			"error", err.Error(),
+		)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -442,12 +496,45 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 
 	s.emitShareEvent(&req, "success", shareStart, req.URL)
 
-	log.Printf("handled %s request (profile=%s title=%q) → %s", req.Type, req.Profile, req.Title, result)
+	slog.InfoContext(ctx, "share handled",
+		"event_type", "share_handled",
+		"type", req.Type,
+		"profile", req.Profile,
+		"title", req.Title,
+		"result", result,
+	)
 	writeJSON(w, http.StatusOK, ShareResponse{
 		Status:    "ok",
 		Message:   result,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// parseListParams extracts and validates the shared list query params used by
+// /archive and /queue: profile, status, before_id, limit. Returns a 400-ready
+// error describing the first invalid field.
+func parseListParams(r *http.Request) (profile, status string, beforeID int64, limit int, err error) {
+	profile = r.URL.Query().Get("profile")
+	status = r.URL.Query().Get("status")
+	if status != "" && !validStatuses[status] {
+		return "", "", 0, 0, fmt.Errorf("invalid status")
+	}
+	limit = 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		n, e := strconv.Atoi(l)
+		if e != nil || n <= 0 || n > 200 {
+			return "", "", 0, 0, fmt.Errorf("invalid limit")
+		}
+		limit = n
+	}
+	if b := r.URL.Query().Get("before_id"); b != "" {
+		n, e := strconv.ParseInt(b, 10, 64)
+		if e != nil || n < 0 {
+			return "", "", 0, 0, fmt.Errorf("invalid before_id")
+		}
+		beforeID = n
+	}
+	return
 }
 
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
@@ -467,13 +554,13 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := r.URL.Query().Get("status")
-	limit := 50
-	if l := r.URL.Query().Get("limit"); l != "" {
-		fmt.Sscanf(l, "%d", &limit)
+	_, status, beforeID, limit, perr := parseListParams(r)
+	if perr != nil {
+		writeError(w, http.StatusBadRequest, perr.Error())
+		return
 	}
 
-	items, err := s.queue.List(status, limit)
+	items, err := s.queue.ListCursor(status, beforeID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("queue list: %v", err))
 		return
@@ -533,12 +620,24 @@ func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
 	if threshold >= 0 && req.Score >= threshold {
 		s.queue.Archive(id)
 		item.Status = "archived"
-		log.Printf("archive: id=%d score=%d profile=%s tags=%s", id, req.Score, item.Profile, req.Tags)
+		slog.InfoContext(r.Context(), "archive",
+			"event_type", "archive",
+			"id", id,
+			"score", req.Score,
+			"profile", item.Profile,
+			"tags", req.Tags,
+		)
 
 		// FCM digest push — at most once per hour.
 		s.maybeDigestPush(req.Score, req.Slug)
 	} else {
-		log.Printf("scored: id=%d score=%d profile=%s (threshold=%d)", id, req.Score, item.Profile, threshold)
+		slog.InfoContext(r.Context(), "scored",
+			"event_type", "scored",
+			"id", id,
+			"score", req.Score,
+			"profile", item.Profile,
+			"threshold", threshold,
+		)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -554,16 +653,17 @@ func (s *Server) maybeDigestPush(score int, slug string) {
 	}
 	id, err := s.queue.EnqueuePush("digest", score, slug, "", "")
 	if err != nil {
-		log.Printf("WARN: digest enqueue failed: %v", err)
+		slog.Warn("digest enqueue failed", "error", err)
 		return
 	}
 	s.lastDigestPush = time.Now()
 	emitPushEvent("push_outbox_enqueued", map[string]interface{}{
 		"id": id, "kind": "digest", "score": score, "slug": slug,
 	})
-	if s.debug {
-		log.Printf("[DEBUG] digest push enqueued id=%d score=%d slug=%s", id, score, slug)
-	}
+	slog.Debug("digest push enqueued",
+		"event_type", "digest_push_enqueued",
+		"id", id, "score", score, "slug", slug,
+	)
 }
 
 func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
@@ -581,13 +681,13 @@ func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile := r.URL.Query().Get("profile")
-	limit := 50
-	if l := r.URL.Query().Get("limit"); l != "" {
-		fmt.Sscanf(l, "%d", &limit)
+	profile, status, beforeID, limit, perr := parseListParams(r)
+	if perr != nil {
+		writeError(w, http.StatusBadRequest, perr.Error())
+		return
 	}
 
-	items, err := s.queue.ListArchived(profile, limit)
+	items, err := s.queue.ListArchivedCursor(profile, status, beforeID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list archived: %v", err))
 		return
@@ -679,10 +779,7 @@ type registerRequest struct {
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
-	if s.debug {
-		log.Printf("[DEBUG] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
-	}
-
+	ctx := r.Context()
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -725,7 +822,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// EPIC-045 M3: durably upsert into devices table.
 	if s.queue != nil {
 		if err := s.queue.UpsertDevice(req.FCMToken); err != nil {
-			log.Printf("WARN: device upsert failed: %v", err)
+			slog.WarnContext(ctx, "device upsert failed", "error", err)
 		} else {
 			emitPushEvent("push_register_upsert", map[string]interface{}{
 				"token_len": len(req.FCMToken),
@@ -733,10 +830,10 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if s.debug {
-		log.Printf("[DEBUG] FCM token registered (len=%d)", len(req.FCMToken))
-	}
-	log.Printf("FCM token registered")
+	slog.InfoContext(ctx, "FCM token registered",
+		"event_type", "fcm_register",
+		"token_len", len(req.FCMToken),
+	)
 
 	writeJSON(w, http.StatusOK, ShareResponse{
 		Status:    "ok",
@@ -766,10 +863,7 @@ type notifyRequest struct {
 }
 
 func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
-	if s.debug {
-		log.Printf("[DEBUG] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
-	}
-
+	ctx := r.Context()
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -789,21 +883,28 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Always log the notification.
-	log.Printf("notify: score=%d profile=%s url=%s slug=%s verdict_len=%d", req.Score, req.Profile, req.URL, req.Slug, len(req.Verdict))
+	// Always log the notification as a structured event.
+	slog.InfoContext(ctx, "notify",
+		"event_type", "notify",
+		"score", req.Score,
+		"profile", req.Profile,
+		"url", req.URL,
+		"slug", req.Slug,
+		"verdict_len", len(req.Verdict),
+	)
 
 	// Persist score + verdict to queue and auto-archive if threshold met.
 	if s.queue != nil && req.URL != "" {
 		item, _, err := s.queue.ScoreByURL(req.URL, req.Score, req.Verdict, req.Tags, req.Profile, req.Slug)
 		if err != nil {
-			log.Printf("WARN: notify queue persist: %v", err)
+			slog.WarnContext(ctx, "notify queue persist failed", "error", err)
 		} else {
 			at := archiveThreshold(req.Profile)
 			if at >= 0 && item.Score != nil && *item.Score >= at {
 				if archErr := s.queue.Archive(item.ID); archErr == nil {
-					if s.debug {
-						log.Printf("[DEBUG] auto-archived item %d (score=%d threshold=%d)", item.ID, *item.Score, at)
-					}
+					slog.DebugContext(ctx, "auto-archived item",
+						"id", item.ID, "score", *item.Score, "threshold", at,
+					)
 				}
 			}
 		}
@@ -814,9 +915,9 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		threshold = s.notifyMinScore
 	}
 	if threshold < 0 || req.Score < threshold {
-		if s.debug {
-			log.Printf("[DEBUG] score %d below threshold %d (profile=%s), skipping FCM push", req.Score, threshold, req.Profile)
-		}
+		slog.DebugContext(ctx, "score below threshold, skipping FCM push",
+			"score", req.Score, "threshold", threshold, "profile", req.Profile,
+		)
 		writeJSON(w, http.StatusOK, ShareResponse{
 			Status:    "ok",
 			Message:   fmt.Sprintf("score %d below threshold %d, logged only", req.Score, threshold),
@@ -832,14 +933,17 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 
 	id, err := s.queue.EnqueuePush("notify", req.Score, req.Slug, req.Verdict, req.URL)
 	if err != nil {
-		log.Printf("ERROR: notify enqueue failed: %v", err)
+		slog.ErrorContext(ctx, "notify enqueue failed", "error", err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue: %v", err))
 		return
 	}
 	emitPushEvent("push_outbox_enqueued", map[string]interface{}{
 		"id": id, "kind": "notify", "score": req.Score, "slug": req.Slug, "url": req.URL,
 	})
-	log.Printf("push enqueued: id=%d score=%d slug=%s", id, req.Score, req.Slug)
+	slog.InfoContext(ctx, "push enqueued",
+		"event_type", "push_enqueued",
+		"id", id, "score", req.Score, "slug", req.Slug,
+	)
 	writeJSON(w, http.StatusOK, ShareResponse{
 		Status:    "ok",
 		Message:   fmt.Sprintf("push enqueued id=%d (score=%d)", id, req.Score),
@@ -921,7 +1025,7 @@ func (s *Server) emitShareEvent(req *ShareRequest, status string, start time.Tim
 		"duration_ms": time.Since(start).Milliseconds(),
 	}
 	if err := s.events.Emit("linkari_share", meta); err != nil {
-		log.Printf("WARN: event emit linkari_share: %v", err)
+		slog.Warn("event emit linkari_share failed", "error", err)
 	}
 }
 
@@ -936,7 +1040,7 @@ func (s *Server) emitDigestEvent(profile string, itemCount int, start time.Time)
 		"duration_ms": time.Since(start).Milliseconds(),
 	}
 	if err := s.events.Emit("linkari_digest", meta); err != nil {
-		log.Printf("WARN: event emit linkari_digest: %v", err)
+		slog.Warn("event emit linkari_digest failed", "error", err)
 	}
 }
 

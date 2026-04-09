@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"os/exec"
 	"strings"
@@ -65,9 +65,9 @@ func NewRouterFromConfig(tmux *TmuxRunner, cfg *Config, debug bool) *Router {
 		session := strings.Split(a.Target, ":")[0]
 		if session != "" {
 			if err := tmux.createSession(session); err != nil {
-				log.Printf("warning: failed to pre-create tmux session %q: %v", session, err)
-			} else if debug {
-				log.Printf("[DEBUG] pre-created tmux session %q", session)
+				slog.Warn("failed to pre-create tmux session", "session", session, "error", err)
+			} else {
+				slog.Debug("pre-created tmux session", "session", session)
 			}
 		}
 	}
@@ -101,9 +101,10 @@ func (r *Router) loadConfig(cfg *Config) {
 // Reload replaces the router's config from a new Config. Used for SIGHUP hot-reload.
 func (r *Router) Reload(cfg *Config) {
 	r.loadConfig(cfg)
-	if r.debug {
-		log.Printf("[DEBUG] router: reloaded %d actions", len(r.actions))
-	}
+	slog.Debug("router reloaded",
+		"event_type", "router_reload",
+		"action_count", len(r.actions),
+	)
 }
 
 // Actions returns the registered share actions.
@@ -204,9 +205,12 @@ func (r *Router) Route(req *ShareRequest) (string, error) {
 		return "", fmt.Errorf("no action for %q", actionID)
 	}
 
-	if r.debug {
-		log.Printf("[DEBUG] route: action=%q kind=%s profile=%q", actionID, ac.Kind, req.Profile)
-	}
+	slog.Debug("route decision",
+		"event_type", "route_decision",
+		"action", actionID,
+		"kind", string(ac.Kind),
+		"profile", req.Profile,
+	)
 
 	switch ac.Kind {
 	case KindLiteral:
@@ -275,9 +279,12 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 func (r *Router) handleInlineTriage(ac *ActionConfig, command string) (string, error) {
 	shell := r.tmux.shell()
 	shellArg := r.tmux.shellArgs()
-	if r.debug {
-		log.Printf("[DEBUG] inline_triage: action=%q shell=%q command=%q", ac.ID, shell, command)
-	}
+	slog.Debug("inline triage",
+		"event_type", "inline_triage",
+		"action", ac.ID,
+		"shell", shell,
+		"command", command,
+	)
 	cmd := exec.Command(shell, shellArg, command)
 	// Detach from parent stdio so the server doesn't block on the child.
 	cmd.Stdin = nil
