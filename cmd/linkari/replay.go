@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -14,22 +14,23 @@ func StartReplay(q *Queue, router *Router, tmux *TmuxRunner, interval time.Durat
 
 		for range ticker.C {
 			if !tmux.serverRunning() {
-				if debug {
-					log.Printf("[DEBUG] replay: tmux server not running, skipping")
-				}
+				slog.Debug("replay: tmux server not running, skipping")
 				continue
 			}
 
 			items, err := q.Pending()
 			if err != nil {
-				log.Printf("WARN: replay: pending query failed: %v", err)
+				slog.Warn("replay pending query failed", "error", err)
 				continue
 			}
 			if len(items) == 0 {
 				continue
 			}
 
-			log.Printf("replay: %d pending items, tmux session available", len(items))
+			slog.Info("replay batch",
+				"event_type", "replay_batch",
+				"pending_count", len(items),
+			)
 			for _, it := range items {
 				req := &ShareRequest{
 					Type:    it.Type,
@@ -41,12 +42,21 @@ func StartReplay(q *Queue, router *Router, tmux *TmuxRunner, interval time.Durat
 				}
 				result, err := router.Route(req)
 				if err != nil {
-					log.Printf("replay: id=%d failed: %v", it.ID, err)
+					slog.Error("replay item failed",
+						"event_type", "replay_result",
+						"id", it.ID,
+						"error", err.Error(),
+					)
 					q.MarkFailed(it.ID)
 					continue
 				}
 				q.MarkRelayed(it.ID)
-				log.Printf("replay: id=%d type=%s → %s", it.ID, it.Type, result)
+				slog.Info("replay item relayed",
+					"event_type", "replay_result",
+					"id", it.ID,
+					"type", it.Type,
+					"result", result,
+				)
 			}
 		}
 	}()

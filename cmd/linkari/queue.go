@@ -3,13 +3,25 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
+	"math"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 const maxQueueSize = 200
+
+// validStatuses enumerates every legal status value a client may filter on.
+// Used by /queue and /archive query-param validation.
+var validStatuses = map[string]bool{
+	"pending":  true,
+	"relayed":  true,
+	"scored":   true,
+	"archived": true,
+	"failed":   true,
+	"all":      true,
+}
 
 // QueueItem represents a persisted share request.
 type QueueItem struct {
@@ -138,11 +150,11 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 
 	// Backfill FTS5 index with any existing rows not yet indexed.
 	if err := q.initFTS5(); err != nil {
-		log.Printf("WARN: fts5 backfill: %v", err)
+		slog.Warn("fts5 backfill failed", "error", err)
 	}
 
 	if err := q.Prune(); err != nil {
-		log.Printf("WARN: queue prune on startup: %v", err)
+		slog.Warn("queue prune on startup failed", "error", err)
 	}
 	return q, nil
 }
@@ -159,9 +171,11 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 		return 0, fmt.Errorf("enqueue: %w", err)
 	}
 	id, _ := res.LastInsertId()
-	if q.debug {
-		log.Printf("[DEBUG] queue: enqueued id=%d type=%s", id, req.Type)
-	}
+	slog.Debug("queue enqueued",
+		"event_type", "queue_enqueue",
+		"id", id,
+		"type", req.Type,
+	)
 	return id, nil
 }
 
@@ -174,13 +188,23 @@ func (q *Queue) Pending() ([]QueueItem, error) {
 
 // List returns items filtered by status (empty string = all), limited to n rows.
 func (q *Queue) List(status string, limit int) ([]QueueItem, error) {
-	if limit <= 0 {
+	return q.ListCursor(status, math.MaxInt64, limit)
+}
+
+// ListCursor returns items filtered by status with id-based cursor pagination.
+// status="" or "all" means no status filter. beforeID is exclusive upper bound
+// (use math.MaxInt64 for the first page).
+func (q *Queue) ListCursor(status string, beforeID int64, limit int) ([]QueueItem, error) {
+	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	if status != "" {
-		return q.query("SELECT "+queueCols+" FROM queue WHERE status=? ORDER BY id DESC LIMIT ?", status, limit)
+	if beforeID <= 0 {
+		beforeID = math.MaxInt64
 	}
-	return q.query("SELECT "+queueCols+" FROM queue ORDER BY id DESC LIMIT ?", limit)
+	if status == "" || status == "all" {
+		return q.query("SELECT "+queueCols+" FROM queue WHERE id<? ORDER BY id DESC LIMIT ?", beforeID, limit)
+	}
+	return q.query("SELECT "+queueCols+" FROM queue WHERE status=? AND id<? ORDER BY id DESC LIMIT ?", status, beforeID, limit)
 }
 
 // MarkRelayed updates an item to status=relayed with the current timestamp.
@@ -217,14 +241,37 @@ func (q *Queue) Archive(id int64) error {
 }
 
 // ListArchived returns archived items, optionally filtered by profile.
+// Back-compat wrapper; new callers should prefer ListArchivedCursor.
 func (q *Queue) ListArchived(profile string, limit int) ([]QueueItem, error) {
-	if limit <= 0 {
+	return q.ListArchivedCursor(profile, "archived", math.MaxInt64, limit)
+}
+
+// ListArchivedCursor paginates by id (monotonic, stable) with status + profile
+// filters. status="" defaults to "archived"; status="all" disables the filter.
+// beforeID is exclusive; use math.MaxInt64 for the first page.
+func (q *Queue) ListArchivedCursor(profile, status string, beforeID int64, limit int) ([]QueueItem, error) {
+	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	if profile != "" {
-		return q.query("SELECT "+queueCols+" FROM queue WHERE status='archived' AND profile=? ORDER BY score DESC LIMIT ?", profile, limit)
+	if status == "" {
+		status = "archived"
 	}
-	return q.query("SELECT "+queueCols+" FROM queue WHERE status='archived' ORDER BY score DESC LIMIT ?", limit)
+	if beforeID <= 0 {
+		beforeID = math.MaxInt64
+	}
+	sqlStr := "SELECT " + queueCols + " FROM queue WHERE id<?"
+	args := []any{beforeID}
+	if status != "all" {
+		sqlStr += " AND status=?"
+		args = append(args, status)
+	}
+	if profile != "" {
+		sqlStr += " AND profile=?"
+		args = append(args, profile)
+	}
+	sqlStr += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+	return q.query(sqlStr, args...)
 }
 
 // RecentScored returns items scored since the given time, ranked by score descending.
@@ -374,6 +421,21 @@ func (q *Queue) EnqueuePush(kind string, score int, slug, verdict, url string) (
 	return id, nil
 }
 
+// LastDigestPushAt returns the unix timestamp of the most recent digest row
+// in push_outbox, or 0 if none exist. Used by the CLI score path to throttle
+// digest pushes without in-process state.
+func (q *Queue) LastDigestPushAt() (int64, error) {
+	var ts sql.NullInt64
+	err := q.db.QueryRow(`SELECT MAX(created_at) FROM push_outbox WHERE kind='digest'`).Scan(&ts)
+	if err != nil {
+		return 0, err
+	}
+	if !ts.Valid {
+		return 0, nil
+	}
+	return ts.Int64, nil
+}
+
 // PendingPushes returns up to limit pending rows whose next_attempt <= now.
 func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 	if limit <= 0 {
@@ -486,7 +548,7 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 	}
 	defer rows.Close()
 
-	var items []QueueItem
+	items := []QueueItem{}
 	for rows.Next() {
 		var it QueueItem
 		var score int

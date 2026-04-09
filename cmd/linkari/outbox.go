@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -48,29 +48,32 @@ func (s *Server) StartPushWorker(ctx context.Context) {
 		defer t.Stop()
 		prune := time.NewTicker(1 * time.Hour)
 		defer prune.Stop()
-		log.Printf("push outbox worker started (poll=%s)", pushPollInterval)
+		slog.InfoContext(ctx, "push outbox worker started",
+			"event_type", "push_worker_start",
+			"poll_interval", pushPollInterval.String(),
+		)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-prune.C:
-				if err := s.queue.PrunePushes(); err != nil && s.debug {
-					log.Printf("[DEBUG] push prune: %v", err)
+				if err := s.queue.PrunePushes(); err != nil {
+					slog.DebugContext(ctx, "push prune failed", "error", err)
 				}
 			case <-t.C:
-				s.drainPushOutbox()
+				s.drainPushOutbox(ctx)
 			}
 		}
 	}()
 }
 
-func (s *Server) drainPushOutbox() {
+func (s *Server) drainPushOutbox(ctx context.Context) {
 	outboxMu.Lock()
 	defer outboxMu.Unlock()
 
 	items, err := s.queue.PendingPushes(pushDrainLimit)
 	if err != nil {
-		log.Printf("WARN: pending pushes: %v", err)
+		slog.WarnContext(ctx, "pending pushes query failed", "error", err)
 		return
 	}
 	if len(items) == 0 {
@@ -80,7 +83,7 @@ func (s *Server) drainPushOutbox() {
 	// Snapshot device token and token source once per drain tick.
 	deviceToken, err := s.queue.GetDeviceToken()
 	if err != nil {
-		log.Printf("WARN: get device token: %v", err)
+		slog.WarnContext(ctx, "get device token failed", "error", err)
 		return
 	}
 
@@ -111,7 +114,13 @@ func (s *Server) drainPushOutbox() {
 			}
 			backoff := backoffSchedule[attempts]
 			_ = s.queue.BumpPushAttempt(p.ID, int64(backoff.Seconds()), err.Error())
-			log.Printf("WARN: push id=%d attempt %d failed: %v (retry in %s)", p.ID, attempts, err, backoff)
+			slog.WarnContext(ctx, "push attempt failed",
+				"event_type", "push_attempt",
+				"id", p.ID,
+				"attempt", attempts,
+				"error", err.Error(),
+				"retry_in", backoff.String(),
+			)
 			continue
 		}
 		_ = s.queue.MarkPushSent(p.ID)
@@ -140,7 +149,7 @@ func emitPushEvent(eventType string, meta map[string]interface{}) {
 		Metadata:      meta,
 	}
 	if err := writeEvent(e); err != nil {
-		log.Printf("WARN: emit %s: %v", eventType, err)
+		slog.Warn("telemetry emit failed", "event", eventType, "error", err)
 	}
 }
 

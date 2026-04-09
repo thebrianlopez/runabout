@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os/exec"
 	"strings"
 )
@@ -39,9 +39,12 @@ func (t *TmuxRunner) SendKeys(target, text string, enter bool) error {
 		return fmt.Errorf("tmux target is required")
 	}
 
-	if t.Debug {
-		log.Printf("[DEBUG] tmux: send-keys target=%q text_len=%d enter=%t", target, len(text), enter)
-	}
+	slog.Debug("tmux send-keys",
+		"event_type", "tmux_send_keys",
+		"target", target,
+		"text_len", len(text),
+		"enter", enter,
+	)
 
 	// Ensure the target session exists, creating it if needed.
 	sessionName := strings.Split(target, ":")[0]
@@ -53,26 +56,20 @@ func (t *TmuxRunner) SendKeys(target, text string, enter bool) error {
 	// Use "=" prefix on the session part for exact matching.
 	exactTarget := "=" + target
 	cmd := exec.Command("tmux", "send-keys", "-t", exactTarget, "-l", text)
-	if t.Debug {
-		log.Printf("[DEBUG] tmux: exec %v", cmd.Args)
-	}
+	slog.Debug("tmux exec", "args", cmd.Args)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("send-keys: %w: %s", err, string(out))
 	}
 
 	if enter {
 		cmd := exec.Command("tmux", "send-keys", "-t", exactTarget, "C-m")
-		if t.Debug {
-			log.Printf("[DEBUG] tmux: exec %v", cmd.Args)
-		}
+		slog.Debug("tmux exec", "args", cmd.Args)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("send-keys C-m: %w: %s", err, string(out))
 		}
 	}
 
-	if t.Debug {
-		log.Printf("[DEBUG] tmux: send-keys complete")
-	}
+	slog.Debug("tmux send-keys complete")
 	return nil
 }
 
@@ -81,9 +78,7 @@ func (t *TmuxRunner) createSession(name string) error {
 	if t.sessionExists(name) {
 		return nil
 	}
-	if t.Debug {
-		log.Printf("[DEBUG] tmux: creating session %q", name)
-	}
+	slog.Debug("tmux creating session", "session", name)
 	cmd := exec.Command("tmux", "new-session", "-d", "-s", name)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("create session %q: %w: %s", name, err, string(out))
@@ -100,9 +95,12 @@ func (t *TmuxRunner) NewWindow(session, command string, name string) error {
 		return fmt.Errorf("tmux session name is required")
 	}
 
-	if t.Debug {
-		log.Printf("[DEBUG] tmux: new-window session=%q command=%q name=%q", session, command, name)
-	}
+	slog.Debug("tmux new-window",
+		"event_type", "tmux_new_window",
+		"session", session,
+		"command", command,
+		"name", name,
+	)
 
 	if err := t.createSession(session); err != nil {
 		return fmt.Errorf("ensure session: %w", err)
@@ -121,9 +119,7 @@ func (t *TmuxRunner) NewWindow(session, command string, name string) error {
 	}
 	args = append(args, sh, t.shellArgs(), shellCmd)
 	cmd := exec.Command("tmux", args...)
-	if t.Debug {
-		log.Printf("[DEBUG] tmux: exec %v", cmd.Args)
-	}
+	slog.Debug("tmux exec", "args", cmd.Args)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("new-window: %w: %s", err, string(out))
 	}
@@ -131,16 +127,12 @@ func (t *TmuxRunner) NewWindow(session, command string, name string) error {
 	// Set remain-on-exit to "failed" on the newly created (last) window so it
 	// only persists when the command fails.
 	setCmd := exec.Command("tmux", "set-option", "-p", "-t", exactSession+":{end}", "remain-on-exit", "failed")
-	if t.Debug {
-		log.Printf("[DEBUG] tmux: exec %v", setCmd.Args)
-	}
+	slog.Debug("tmux exec", "args", setCmd.Args)
 	if out, err := setCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("set remain-on-exit: %w: %s", err, string(out))
 	}
 
-	if t.Debug {
-		log.Printf("[DEBUG] tmux: new-window complete")
-	}
+	slog.Debug("tmux new-window complete")
 	return nil
 }
 
