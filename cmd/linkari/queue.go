@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
 	"math"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -46,6 +48,28 @@ type QueueItem struct {
 type Queue struct {
 	db    *sql.DB
 	debug bool
+
+	// pushCfg is the live push config used by EnqueueDigestIfDue.
+	// Loaded atomically so SIGHUP reloads (EPIC-051 M6) can swap it in
+	// without blocking in-flight writer paths. Nil is treated as the
+	// zero-value PushConfig (1h throttle, no min score).
+	pushCfg atomic.Pointer[PushConfig]
+}
+
+// SetPushConfig atomically swaps in a new push config. Safe to call from
+// signal handlers and config-reload goroutines. A nil argument resets to
+// the zero-value defaults.
+func (q *Queue) SetPushConfig(cfg *PushConfig) {
+	q.pushCfg.Store(cfg)
+}
+
+// PushConfig returns the currently live push config, or a zero-value
+// PushConfig if none has been set.
+func (q *Queue) PushConfig() *PushConfig {
+	if p := q.pushCfg.Load(); p != nil {
+		return p
+	}
+	return &PushConfig{}
 }
 
 // NewQueue opens (or creates) the SQLite database at dbPath.
@@ -85,6 +109,9 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE queue ADD COLUMN archived_at TEXT DEFAULT NULL",
 		"ALTER TABLE queue ADD COLUMN verdict TEXT DEFAULT ''",
 		"ALTER TABLE queue ADD COLUMN slug TEXT DEFAULT ''",
+		// EPIC-054 M3: error_reason column for relayed-state watchdog and
+		// other failure classifiers. Nullable, empty string on legacy rows.
+		"ALTER TABLE queue ADD COLUMN error_reason TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -117,6 +144,22 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	if _, err := db.Exec(pushSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create push_outbox/devices: %w", err)
+	}
+
+	// EPIC-051 M2: per-profile throttle support. Add a `profile` column to
+	// push_outbox so EnqueueDigestIfDue can query MAX(created_at) scoped to
+	// a profile, and add a composite index to keep the throttle query flat
+	// as push_outbox grows. Both statements are idempotent.
+	pushMigrations := []string{
+		"ALTER TABLE push_outbox ADD COLUMN profile TEXT NOT NULL DEFAULT ''",
+	}
+	for _, m := range pushMigrations {
+		db.Exec(m) // ignore "duplicate column" errors
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_push_outbox_kind_profile_created
+		ON push_outbox(kind, profile, created_at)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create push_outbox kind/profile index: %w", err)
 	}
 
 	// FTS5 full-text search index over queue content.
@@ -218,6 +261,121 @@ func (q *Queue) MarkRelayed(id int64) error {
 func (q *Queue) MarkFailed(id int64) error {
 	_, err := q.db.Exec("UPDATE queue SET status='failed' WHERE id=?", id)
 	return err
+}
+
+// MarkFailedWithReason sets status=failed and records an error_reason.
+// EPIC-054 M3: used by the relayed-state watchdog to classify timeouts.
+func (q *Queue) MarkFailedWithReason(id int64, reason string) error {
+	_, err := q.db.Exec(
+		"UPDATE queue SET status='failed', error_reason=? WHERE id=?",
+		reason, id,
+	)
+	return err
+}
+
+// TimedOutRelayed represents a single queue row swept by the watchdog.
+// Populated by SweepRelayedTimeouts for the caller to emit provenance events.
+type TimedOutRelayed struct {
+	ID       int64
+	URL      string
+	Profile  string
+	QueuedAt string
+	AgeSecs  int64
+}
+
+// SelectStuckRelayed returns relayed rows older than maxAge relative to now,
+// without marking them failed. Split from SweepRelayedTimeouts so the watchdog
+// can interpose a rescue attempt between selection and fail-marking.
+// EPIC-055 M1.
+func (q *Queue) SelectStuckRelayed(now time.Time, maxAge time.Duration) ([]TimedOutRelayed, error) {
+	if maxAge <= 0 {
+		return nil, nil
+	}
+	cutoff := now.Add(-maxAge).UTC().Format(time.RFC3339)
+	rows, err := q.db.Query(
+		`SELECT id, url, COALESCE(profile,''), queued_at
+		 FROM queue WHERE status='relayed' AND queued_at < ?`,
+		cutoff,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("select stuck relayed: %w", err)
+	}
+	var stuck []TimedOutRelayed
+	for rows.Next() {
+		var t TimedOutRelayed
+		if err := rows.Scan(&t.ID, &t.URL, &t.Profile, &t.QueuedAt); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("select stuck scan: %w", err)
+		}
+		if parsed, perr := time.Parse(time.RFC3339, t.QueuedAt); perr == nil {
+			t.AgeSecs = int64(now.Sub(parsed).Seconds())
+		}
+		stuck = append(stuck, t)
+	}
+	rows.Close()
+	return stuck, rows.Err()
+}
+
+// MarkRelayedTimedOut marks each id as failed with error_reason="scoring_timeout".
+// Called only for rows that the rescue path could not recover. EPIC-055 M1.
+func (q *Queue) MarkRelayedTimedOut(ids []int64) error {
+	for _, id := range ids {
+		if err := q.MarkFailedWithReason(id, "scoring_timeout"); err != nil {
+			return fmt.Errorf("mark timed out id=%d: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// IngestScoreIfRelayed conditionally promotes a queue row from relayed → scored.
+// The WHERE id=? AND status='relayed' predicate is the race guard: if a
+// concurrent writer (real-time callback or another watchdog sweep) already
+// scored the row, rowsAffected==0 and this call is a no-op.
+//
+// Returns (true, nil) when the row was rescued; (false, nil) when the row was
+// already scored or not found (lost the race — safe to ignore).
+// EPIC-055 M1.
+func (q *Queue) IngestScoreIfRelayed(id int64, score int, tags, verdict, slug string) (bool, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := q.db.Exec(
+		`UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?
+		 WHERE id=? AND status='relayed'`,
+		score, tags, verdict, slug, now, id,
+	)
+	if err != nil {
+		return false, fmt.Errorf("ingest score if relayed id=%d: %w", id, err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// SweepRelayedTimeouts finds `relayed` rows whose queued_at is older than
+// maxAge relative to `now`, marks each one failed with error_reason
+// "scoring_timeout", and returns the swept rows (for event emission by the
+// caller). The WHERE status='relayed' filter guarantees idempotency — a row
+// that was already marked failed on a previous tick is never re-processed.
+//
+// Thin wrapper around SelectStuckRelayed + MarkRelayedTimedOut, preserved for
+// backward compatibility with existing callers and tests. New code should use
+// the split helpers when interposing rescue logic.
+//
+// EPIC-054 M3.
+func (q *Queue) SweepRelayedTimeouts(now time.Time, maxAge time.Duration) ([]TimedOutRelayed, error) {
+	stuck, err := q.SelectStuckRelayed(now, maxAge)
+	if err != nil {
+		return nil, err
+	}
+	if len(stuck) == 0 {
+		return nil, nil
+	}
+	ids := make([]int64, len(stuck))
+	for i, t := range stuck {
+		ids[i] = t.ID
+	}
+	if err := q.MarkRelayedTimedOut(ids); err != nil {
+		return stuck, err
+	}
+	return stuck, nil
 }
 
 // UpdateScore sets the score, tags, verdict, and slug on a queue item, promoting to 'scored' status.
@@ -407,18 +565,108 @@ type PushItem struct {
 }
 
 // EnqueuePush inserts a pending row into push_outbox and returns its id.
+// Profile defaults to "" for legacy callers. Prefer EnqueuePushWithProfile
+// or EnqueueDigestIfDue for new code.
 func (q *Queue) EnqueuePush(kind string, score int, slug, verdict, url string) (int64, error) {
+	return q.EnqueuePushWithProfile(kind, "", score, slug, verdict, url)
+}
+
+// EnqueuePushWithProfile is the profile-aware primitive used by
+// EnqueueDigestIfDue. Direct callers are discouraged outside the unified
+// helper — EPIC-051 M3 will consolidate call sites behind EnqueueDigestIfDue.
+func (q *Queue) EnqueuePushWithProfile(kind, profile string, score int, slug, verdict, url string) (int64, error) {
 	now := time.Now().Unix()
 	res, err := q.db.Exec(
-		`INSERT INTO push_outbox (score, slug, verdict, url, kind, status, attempts, next_attempt, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
-		score, slug, verdict, url, kind, now, now, now,
+		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+		score, slug, verdict, url, kind, profile, now, now, now,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue push: %w", err)
 	}
 	id, _ := res.LastInsertId()
 	return id, nil
+}
+
+// EnqueueDigestResult holds the outcome of EnqueueDigestIfDue. A successful
+// enqueue populates ID; a suppressed call leaves ID zero and records Reason.
+type EnqueueDigestResult struct {
+	Enqueued              bool
+	Reason                string // "enqueued", "throttled", "below_min_score"
+	ID                    int64  // row id when enqueued; 0 otherwise
+	SecondsUntilAllowed   int64  // populated on throttled
+	ThrottleRemainingMs   int64  // populated on enqueued (throttle window length ms)
+}
+
+// EnqueueDigestIfDue is the single sanctioned entry point for writing a
+// digest row to push_outbox. It applies the NotifyMinScore floor, consults
+// the per-profile throttle from the live PushConfig, and atomically inserts
+// a new row iff the window has elapsed. Safe for concurrent use across
+// multiple processes — the throttle check + insert happen inside a single
+// SQLite IMMEDIATE transaction so two racing linkari processes can't both
+// write a digest row inside the same window.
+//
+// EPIC-051 M2. See M1 decision in the epic Notes for the NotifyMinScore
+// rationale (Position B — honor as a uniform floor).
+func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score int, slug, verdict, url string) (EnqueueDigestResult, error) {
+	cfg := q.PushConfig()
+
+	// Uniform min-score floor (M1 decision).
+	if cfg.NotifyMinScore > 0 && score < cfg.NotifyMinScore {
+		return EnqueueDigestResult{Reason: "below_min_score"}, nil
+	}
+
+	throttle := cfg.ThrottleFor(profile)
+	now := time.Now().Unix()
+	cutoff := now - int64(throttle.Seconds())
+
+	tx, err := q.db.BeginTx(ctx, nil)
+	if err != nil {
+		return EnqueueDigestResult{}, fmt.Errorf("begin digest tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var last sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT MAX(created_at) FROM push_outbox WHERE kind='digest' AND profile=?`,
+		profile,
+	).Scan(&last); err != nil {
+		return EnqueueDigestResult{}, fmt.Errorf("query last digest: %w", err)
+	}
+
+	if last.Valid && last.Int64 > cutoff {
+		// Throttled: allowed time is lastPush + throttle.
+		secondsUntil := (last.Int64 + int64(throttle.Seconds())) - now
+		if secondsUntil < 0 {
+			secondsUntil = 0
+		}
+		if err := tx.Commit(); err != nil {
+			return EnqueueDigestResult{}, fmt.Errorf("commit throttled tx: %w", err)
+		}
+		return EnqueueDigestResult{
+			Reason:              "throttled",
+			SecondsUntilAllowed: secondsUntil,
+		}, nil
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 'digest', ?, 'pending', 0, ?, ?, ?)`,
+		score, slug, verdict, url, profile, now, now, now,
+	)
+	if err != nil {
+		return EnqueueDigestResult{}, fmt.Errorf("insert digest: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return EnqueueDigestResult{}, fmt.Errorf("commit digest tx: %w", err)
+	}
+	return EnqueueDigestResult{
+		Enqueued:            true,
+		Reason:              "enqueued",
+		ID:                  id,
+		ThrottleRemainingMs: throttle.Milliseconds(),
+	}, nil
 }
 
 // LastDigestPushAt returns the unix timestamp of the most recent digest row

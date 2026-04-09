@@ -35,6 +35,11 @@ var backoffSchedule = []time.Duration{
 // outboxMu serialises the in-process worker drain loop.
 var outboxMu sync.Mutex
 
+// idleEmitEvery is how many consecutive empty drain cycles trigger a
+// push_outbox_idle_metric event. With pushPollInterval=2s this emits once
+// every 60s of continuous idle state. EPIC-051 M7.
+const idleEmitEvery = 30
+
 // StartPushWorker launches the push_outbox drain goroutine. It polls every
 // pushPollInterval, drains up to pushDrainLimit pending rows per tick under
 // an app-level mutex, applies backoff / park / dead-letter semantics, and
@@ -52,6 +57,7 @@ func (s *Server) StartPushWorker(ctx context.Context) {
 			"event_type", "push_worker_start",
 			"poll_interval", pushPollInterval.String(),
 		)
+		var idleCycles int
 		for {
 			select {
 			case <-ctx.Done():
@@ -61,30 +67,48 @@ func (s *Server) StartPushWorker(ctx context.Context) {
 					slog.DebugContext(ctx, "push prune failed", "error", err)
 				}
 			case <-t.C:
-				s.drainPushOutbox(ctx)
+				drained := s.drainPushOutbox(ctx)
+				// EPIC-051 M7: idle observability. A single "drained 0 rows"
+				// tick isn't interesting; a minute of silence is. Emit once
+				// per idleEmitEvery consecutive empty cycles so operators
+				// can answer "is the worker alive but idle?" via a query.
+				if drained == 0 {
+					idleCycles++
+					if idleCycles%idleEmitEvery == 0 {
+						emitPushEvent("push_outbox_idle_metric", map[string]interface{}{
+							"idle_cycles":   idleCycles,
+							"poll_interval": pushPollInterval.String(),
+						})
+					}
+				} else {
+					idleCycles = 0
+				}
 			}
 		}
 	}()
 }
 
-func (s *Server) drainPushOutbox(ctx context.Context) {
+// drainPushOutbox runs one drain pass and returns the number of rows
+// processed (attempted + completed). A return of 0 means the outbox was
+// idle this tick — used by StartPushWorker to emit push_outbox_idle_metric.
+func (s *Server) drainPushOutbox(ctx context.Context) int {
 	outboxMu.Lock()
 	defer outboxMu.Unlock()
 
 	items, err := s.queue.PendingPushes(pushDrainLimit)
 	if err != nil {
 		slog.WarnContext(ctx, "pending pushes query failed", "error", err)
-		return
+		return 0
 	}
 	if len(items) == 0 {
-		return
+		return 0
 	}
 
 	// Snapshot device token and token source once per drain tick.
 	deviceToken, err := s.queue.GetDeviceToken()
 	if err != nil {
 		slog.WarnContext(ctx, "get device token failed", "error", err)
-		return
+		return 0
 	}
 
 	for _, p := range items {
@@ -128,6 +152,7 @@ func (s *Server) drainPushOutbox(ctx context.Context) {
 			"id": p.ID, "score": p.Score, "slug": p.Slug, "attempts": p.Attempts + 1,
 		})
 	}
+	return len(items)
 }
 
 // emitPushEvent writes a JSONL event to the telemetry events directory using
@@ -151,6 +176,42 @@ func emitPushEvent(eventType string, meta map[string]interface{}) {
 	if err := writeEvent(e); err != nil {
 		slog.Warn("telemetry emit failed", "event", eventType, "error", err)
 	}
+}
+
+// emitShareActionResolved writes a share_action_resolved event to the
+// telemetry events directory. EPIC-052: the single auditable record of how
+// any ingress path resolved its (action, profile) pair. Emit BEFORE the
+// queue DB write so failed inserts still produce the provenance trail (the
+// non-functional requirement in the epic).
+//
+// Schema (matches the epic's event block verbatim):
+//
+//	{
+//	  "event": "share_action_resolved",
+//	  "ts": "<utc>",
+//	  "received_action":  "uinit_eng",
+//	  "received_profile": "eng",
+//	  "resolved_action":  "uinit_life",
+//	  "resolved_profile": "life",
+//	  "resolution_reason": "content_heuristic:lifestyle_domain",
+//	  "url": "https://example.com",
+//	  "queue_id": 276
+//	}
+//
+// queueID should be 0 at emit-time (queue row has not been written yet) and
+// can be reconciled post-hoc by joining on url + ts window. The field is
+// carried so that a future chokepoint which knows the row id ahead of time
+// (e.g. a UUIDv7-keyed insert) can populate it without schema churn.
+func emitShareActionResolved(res ShareResolution, url string, queueID int64) {
+	emitPushEvent("share_action_resolved", map[string]interface{}{
+		"received_action":   res.ReceivedAction,
+		"received_profile":  res.ReceivedProfile,
+		"resolved_action":   res.ResolvedAction,
+		"resolved_profile":  res.ResolvedProfile,
+		"resolution_reason": res.Reason,
+		"url":               url,
+		"queue_id":          queueID,
+	})
 }
 
 // --- actual FCM delivery (concrete oauth2 signature) ---

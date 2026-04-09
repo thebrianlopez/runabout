@@ -55,8 +55,23 @@ const serverYAMLTemplate = `server:
   # Break-glass: firebase_sa: "file:///home/user/.config/linkari/firebase-sa.json"
   firebase_sa: secretsmanager://linkari/firebase-sa
 
-  # Minimum score [0-100] for pushing an FCM notification.
+  # Minimum score [0-100] for pushing an FCM notification. Honored as a
+  # uniform floor across ALL writer paths (HTTP /queue/{id}/score, /notify,
+  # and the linkari score CLI) since EPIC-051. Set to 0 to disable.
   notify_min_score: 10
+
+  # --- EPIC-051: Push gating ---
+  # Per-profile throttle for digest pushes. The unified EnqueueDigestIfDue
+  # helper writes at most one digest row per throttle window per profile.
+  # Missing profiles fall back to digest_throttle_default.
+  #
+  # push:
+  #   digest_throttle_default: 1h
+  #   digest_throttle:
+  #     eng: 1h
+  #     dining: 24h
+  #     fashion: 6h
+
 
   # --- Networking ---
 

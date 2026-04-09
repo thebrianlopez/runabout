@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -62,10 +63,14 @@ type ShareRequest struct {
 }
 
 // ShareResponse is the structured JSON response.
+// EPIC-055 U1: id and slug are included so the Android client can poll
+// /archive?status=scored for the scored row without a separate lookup.
 type ShareResponse struct {
 	Status    string `json:"status"`
 	Message   string `json:"message"`
 	Timestamp string `json:"timestamp"`
+	ID        int64  `json:"id,omitempty"`   // queue row id for client correlation (U1)
+	Slug      string `json:"slug,omitempty"` // URL slug for /archive polling (U1)
 }
 
 // RingLog is a thread-safe ring buffer that captures log lines and
@@ -149,7 +154,12 @@ type Server struct {
 	fcmTokenSource oauth2.TokenSource // nil when Firebase is not configured
 
 	notifyMinScore int // configurable floor for FCM push in /notify; 0 = use per-profile archiveThreshold
-	lastDigestPush time.Time
+
+	// EPIC-052: share action resolution policy. Default false (caller-wins).
+	// Populated from ServerConfig.Share.HeuristicOverrideEnabled at boot.
+	shareHeuristicOverride bool
+	// EPIC-051 M3: lastDigestPush deleted — throttle state lives in SQL via
+	// Queue.EnqueueDigestIfDue. Do not re-add in-memory throttle state here.
 }
 
 // NewServer creates a new Server with the given bearer token, router, and optional queue.
@@ -447,6 +457,18 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// EPIC-052: resolve (action, profile) provenance BEFORE any DB write so
+	// the share_action_resolved event lands even if the Enqueue below fails.
+	// The caller-wins invariant is enforced inside resolveShareAction — when
+	// s.shareHeuristicOverride is false (the default), received_action wins
+	// unconditionally. The resolved values are written back onto req so the
+	// queue row and downstream Route see the same resolution the event
+	// records.
+	resolution := s.router.ResolveShare(&req, s.shareHeuristicOverride)
+	req.Action = resolution.ResolvedAction
+	req.Profile = resolution.ResolvedProfile
+	emitShareActionResolved(resolution, req.URL, 0)
+
 	// Enqueue for persistence (before routing — survives tmux failures).
 	var queueID int64
 	if s.queue != nil {
@@ -476,6 +498,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 				Status:    "queued",
 				Message:   "tmux unavailable, queued for replay",
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				ID:        queueID,
+				Slug:      urlToSlug(req.URL),
 			})
 			return
 		}
@@ -507,6 +531,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		Status:    "ok",
 		Message:   result,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		ID:        queueID,
+		Slug:      urlToSlug(req.URL),
 	})
 }
 
@@ -628,8 +654,10 @@ func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
 			"tags", req.Tags,
 		)
 
-		// FCM digest push — at most once per hour.
-		s.maybeDigestPush(req.Score, req.Slug)
+		// EPIC-051 M3: route all digest pushes through the unified helper.
+		// Throttle, min-score floor, and cross-process race guard all live
+		// in Queue.EnqueueDigestIfDue.
+		s.enqueueDigestPush(r.Context(), item.Profile, req.Score, req.Slug, req.Verdict, "")
 	} else {
 		slog.InfoContext(r.Context(), "scored",
 			"event_type", "scored",
@@ -644,26 +672,45 @@ func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(item)
 }
 
-func (s *Server) maybeDigestPush(score int, slug string) {
-	if time.Since(s.lastDigestPush) < time.Hour {
-		return
-	}
+// enqueueDigestPush is a thin server-side wrapper around
+// Queue.EnqueueDigestIfDue that emits the matching observability events.
+// EPIC-051 M3 replaces the deleted maybeDigestPush helper. The helper itself
+// (not this wrapper) is the single sanctioned entry point for digest rows.
+func (s *Server) enqueueDigestPush(ctx context.Context, profile string, score int, slug, verdict, url string) {
 	if s.queue == nil {
 		return
 	}
-	id, err := s.queue.EnqueuePush("digest", score, slug, "", "")
+	res, err := s.queue.EnqueueDigestIfDue(ctx, profile, score, slug, verdict, url)
 	if err != nil {
-		slog.Warn("digest enqueue failed", "error", err)
+		slog.WarnContext(ctx, "digest enqueue failed", "error", err)
 		return
 	}
-	s.lastDigestPush = time.Now()
-	emitPushEvent("push_outbox_enqueued", map[string]interface{}{
-		"id": id, "kind": "digest", "score": score, "slug": slug,
-	})
-	slog.Debug("digest push enqueued",
-		"event_type", "digest_push_enqueued",
-		"id", id, "score", score, "slug", slug,
-	)
+	switch {
+	case res.Enqueued:
+		emitPushEvent("digest_push_enqueued", map[string]interface{}{
+			"id": res.ID, "profile": profile, "score": score, "slug": slug,
+			"throttle_remaining_ms": res.ThrottleRemainingMs,
+		})
+		slog.DebugContext(ctx, "digest push enqueued",
+			"event_type", "digest_push_enqueued",
+			"id", res.ID, "profile", profile, "score", score, "slug", slug,
+		)
+	case res.Reason == "throttled":
+		emitPushEvent("digest_push_throttled", map[string]interface{}{
+			"profile": profile, "score": score, "slug": slug,
+			"seconds_until_next_allowed": res.SecondsUntilAllowed,
+		})
+		slog.DebugContext(ctx, "digest push throttled",
+			"event_type", "digest_push_throttled",
+			"profile", profile, "score", score, "slug", slug,
+			"seconds_until_next_allowed", res.SecondsUntilAllowed,
+		)
+	case res.Reason == "below_min_score":
+		slog.DebugContext(ctx, "digest push suppressed: below min score",
+			"event_type", "digest_push_below_min_score",
+			"profile", profile, "score", score, "slug", slug,
+		)
+	}
 }
 
 func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
@@ -931,22 +978,14 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := s.queue.EnqueuePush("notify", req.Score, req.Slug, req.Verdict, req.URL)
-	if err != nil {
-		slog.ErrorContext(ctx, "notify enqueue failed", "error", err)
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue: %v", err))
-		return
-	}
-	emitPushEvent("push_outbox_enqueued", map[string]interface{}{
-		"id": id, "kind": "notify", "score": req.Score, "slug": req.Slug, "url": req.URL,
-	})
-	slog.InfoContext(ctx, "push enqueued",
-		"event_type", "push_enqueued",
-		"id", id, "score", req.Score, "slug", req.Slug,
-	)
+	// EPIC-051 M3: /notify is one of three writer paths now unified behind
+	// Queue.EnqueueDigestIfDue. The helper applies the configured min-score
+	// floor and per-profile throttle; this endpoint remains wired for any
+	// legacy caller that might still POST to it.
+	s.enqueueDigestPush(ctx, req.Profile, req.Score, req.Slug, req.Verdict, req.URL)
 	writeJSON(w, http.StatusOK, ShareResponse{
 		Status:    "ok",
-		Message:   fmt.Sprintf("push enqueued id=%d (score=%d)", id, req.Score),
+		Message:   fmt.Sprintf("push enqueued (score=%d)", req.Score),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 }

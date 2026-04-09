@@ -75,6 +75,7 @@ func main() {
 	rootCmd.AddCommand(configCmd())
 	rootCmd.AddCommand(doctorCmd())
 	rootCmd.AddCommand(scoreCmd())
+	rootCmd.AddCommand(scoreWriteCmd())
 	rootCmd.AddCommand(searchCmd())
 	rootCmd.AddCommand(backfillCmd())
 	rootCmd.AddCommand(digestCmd())
@@ -468,7 +469,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				// EPIC-047 M3: deprecation warning when [server:] block in
 				// actions.yaml is present. server.yaml is the new home; the
 				// actions.yaml block remains as a back-compat fallback only.
-				if (cfg.Server != ServerConfig{}) {
+				if !cfg.Server.IsZero() {
 					slog.Warn("actions.yaml [server:] block is deprecated", "migrate_to", serverFilePath)
 				}
 
@@ -501,6 +502,23 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 			srv := NewServer(token, router, queue, ring, debug, fcmTokenSource)
 			srv.notifyMinScore = notifyMinScore
+			// EPIC-052: caller-wins by default; only true if operator opted
+			// in via `share.heuristic_override_enabled: true` in server.yaml.
+			if serverFileCfg != nil {
+				srv.shareHeuristicOverride = serverFileCfg.Share.HeuristicOverrideEnabled
+			}
+
+			// EPIC-051 M3/M4: install the live push config on the queue so
+			// EnqueueDigestIfDue honors notify_min_score + per-profile
+			// throttle durations for every writer path (HTTP + CLI).
+			if queue != nil {
+				pcfg := &PushConfig{NotifyMinScore: notifyMinScore}
+				if serverFileCfg != nil {
+					pcfg.DigestThrottle = serverFileCfg.Push.DigestThrottle.Durations()
+					pcfg.DigestThrottleDefault = serverFileCfg.Push.DigestThrottleDefault.Duration()
+				}
+				queue.SetPushConfig(pcfg)
+			}
 
 			// Event logging — append to logs/ next to queue db.
 			eventsPath := filepath.Join(filepath.Dir(queueDB), "linkari_events.jsonl")
@@ -523,6 +541,23 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			slog.Info("queue enabled", "db", queueDB)
 			StartReplay(queue, router, tmux, 30*time.Second, debug)
 			srv.StartPushWorker(cmd.Context())
+
+			// EPIC-054 M3: relayed-state watchdog. Reclassifies rows stuck in
+			// `relayed` status past the configured max age as failed with
+			// error_reason="scoring_timeout" and emits one event per row.
+			// Config is hot-reloadable via SIGHUP.
+			var relayedWatchdog *RelayedWatchdog
+			if queue != nil {
+				// Default through a zero-valued ServerConfig so RelayedWatchdog()
+				// fills in UrlWorkDir from env/home and other EPIC-055 defaults.
+				defaultSC := &ServerConfig{}
+				wdCfg := defaultSC.RelayedWatchdog()
+				if serverFileCfg != nil {
+					wdCfg = serverFileCfg.RelayedWatchdog()
+				}
+				relayedWatchdog = NewRelayedWatchdog(queue, srv.events, wdCfg)
+				go relayedWatchdog.Run(cmd.Context())
+			}
 
 			httpServer := &http.Server{
 				Addr:         fmt.Sprintf(":%d", port),
@@ -606,6 +641,21 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 							continue
 						}
 						router.Reload(newCfg)
+						// EPIC-051 M6: also reload the package-level
+						// archiveThreshold cache used by the CLI/server
+						// scoring paths and refresh the push config on the
+						// queue so throttle knobs can be retuned live.
+						if reloadErr := ReloadArchiveThresholdConfig(); reloadErr != nil {
+							slog.Error("SIGHUP archive threshold reload failed", "error", reloadErr)
+						}
+						if queue != nil {
+							if sf, sfErr := LoadServerFile(serverFilePath); sfErr == nil && sf != nil {
+								queue.SetPushConfig(sf.PushConfig())
+								if relayedWatchdog != nil {
+									relayedWatchdog.SetConfig(sf.RelayedWatchdog())
+								}
+							}
+						}
 						slog.Info("SIGHUP reloaded actions from config", "count", len(newCfg.Actions))
 						continue
 					}
