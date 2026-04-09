@@ -283,6 +283,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/actions", s.handleActions)
 	mux.HandleFunc("/register", s.handleRegister)
 	mux.HandleFunc("/notify", s.handleNotify)
+	mux.HandleFunc("POST /push/test", s.handleTestPush)
 	mux.HandleFunc("/queue", s.handleQueue)
 	mux.HandleFunc("POST /queue/{id}/score", s.handleQueueScore)
 	mux.HandleFunc("/archive", s.handleArchive)
@@ -885,6 +886,92 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ShareResponse{
 		Status:    "ok",
 		Message:   "token registered",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// testPushResponse is the JSON body returned by POST /push/test. EPIC-056 M3.
+type testPushResponse struct {
+	Status    string `json:"status"`          // "ok" | "error"
+	Timestamp string `json:"timestamp"`       // RFC3339 UTC
+	Error     string `json:"error,omitempty"` // populated on failure
+	Reason    string `json:"reason,omitempty"`
+}
+
+// handleTestPush synchronously fires a single FCM notification to the
+// currently-registered device, bypassing push_outbox, throttle, and
+// min-score gating. EPIC-056 M3. Diagnostic-only — must NEVER touch
+// push_outbox or share the throttle state.
+func (s *Server) handleTestPush(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if s.queue == nil {
+		emitPushEvent("push_test_failed", map[string]interface{}{"reason": "queue_unavailable"})
+		writeError(w, http.StatusServiceUnavailable, "queue unavailable")
+		return
+	}
+
+	deviceToken, err := s.queue.GetDeviceToken()
+	if err != nil {
+		slog.WarnContext(ctx, "test push: device token lookup failed", "error", err)
+		emitPushEvent("push_test_failed", map[string]interface{}{
+			"reason": "device_lookup_error",
+			"error":  err.Error(),
+		})
+		writeError(w, http.StatusInternalServerError, "device lookup failed")
+		return
+	}
+	if deviceToken == "" {
+		emitPushEvent("push_test_failed", map[string]interface{}{"reason": "no_device_registered"})
+		writeJSON(w, http.StatusBadRequest, testPushResponse{
+			Status:    "error",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Error:     "no device registered; call /register first",
+			Reason:    "no_device_registered",
+		})
+		return
+	}
+
+	const (
+		testScore   = 75
+		testSlug    = "test"
+		testVerdict = "Test notification from Linkari settings."
+		testURL     = "https://linkari.test/ping"
+	)
+
+	if err := sendOutboxFCM(s, deviceToken, testScore, testSlug, testVerdict, testURL); err != nil {
+		slog.WarnContext(ctx, "test push: FCM send failed", "error", err)
+		emitPushEvent("push_test_failed", map[string]interface{}{
+			"reason":    "fcm_send_failed",
+			"error":     err.Error(),
+			"token_len": len(deviceToken),
+		})
+		writeJSON(w, http.StatusBadGateway, testPushResponse{
+			Status:    "error",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Error:     err.Error(),
+			Reason:    "fcm_send_failed",
+		})
+		return
+	}
+
+	emitPushEvent("push_test_sent", map[string]interface{}{
+		"score":     testScore,
+		"slug":      testSlug,
+		"token_len": len(deviceToken),
+	})
+	writeJSON(w, http.StatusOK, testPushResponse{
+		Status:    "ok",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 }
