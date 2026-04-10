@@ -214,6 +214,15 @@ the eval harness path).`,
 				}
 			}
 
+			// EPIC-059: triage path now produces push notifications (was missing
+			// since EPIC-051). Dual-writer invariant preserved.
+			if item.Score != nil {
+				resolvePushConfigOnce(q)
+				_, _ = q.EnqueueDigestIfDue(context.Background(),
+					item.Profile, *item.Score, item.Slug, item.Verdict, item.URL,
+					sc.GapSummary(3))
+			}
+
 			// 7. Write _score.json sidecar (fish line 138-145 shape).
 			//    EPIC-044: additive-only; JSON path also writes profile_version
 			//    + rubric_scores. Existing readers (cmd_eval.go captureFromWorkspace)

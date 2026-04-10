@@ -315,3 +315,62 @@ func TestScoreCLI_PromptFile_Override(t *testing.T) {
 		t.Errorf("expected error for missing --prompt-file, got nil")
 	}
 }
+
+// TestScoreCLI_BelowThreshold_StillPushes asserts that a score below the
+// archive threshold (default 80) still produces a push_outbox row.
+// EPIC-059: push is decoupled from archive gate.
+func TestScoreCLI_BelowThreshold_StillPushes(t *testing.T) {
+	stubHaiku(t, 5, "not actionable")
+	prompt := writePromptFile(t, "system prompt v1")
+	dbPath := filepath.Join(t.TempDir(), "queue.db")
+
+	// Force the builtin config (eng threshold=80) to prevent the test
+	// from picking up the user's disk config which may have a lower threshold.
+	archiveThresholdMu.Lock()
+	origCfg := archiveThresholdCfg
+	archiveThresholdCfg = builtinConfig()
+	archiveThresholdMu.Unlock()
+	t.Cleanup(func() {
+		archiveThresholdMu.Lock()
+		archiveThresholdCfg = origCfg
+		archiveThresholdMu.Unlock()
+	})
+
+	if _, err := runScore(t, dbPath, "the body",
+		"https://example.com/below-threshold",
+		"--profile", "eng",
+		"--prompt-file", prompt,
+	); err != nil {
+		t.Fatalf("score: %v", err)
+	}
+
+	q, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatalf("reopen queue: %v", err)
+	}
+	defer q.Close()
+
+	// Queue row should exist but NOT be archived (score 5 < threshold 80).
+	items, err := q.ListCursor("", 0, 100)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("queue rows = %d, want 1", len(items))
+	}
+	if items[0].Status == "archived" {
+		t.Errorf("item status = archived, want non-archived (score 5 < threshold 80)")
+	}
+
+	// Push row MUST exist despite being below archive threshold (EPIC-059).
+	pushes, err := q.PendingPushes(100)
+	if err != nil {
+		t.Fatalf("pending pushes: %v", err)
+	}
+	if len(pushes) != 1 {
+		t.Fatalf("push_outbox rows = %d, want 1 (EPIC-059: push decoupled from archive)", len(pushes))
+	}
+	if pushes[0].Score != 5 {
+		t.Errorf("push score = %d, want 5", pushes[0].Score)
+	}
+}

@@ -737,11 +737,6 @@ func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
 			"profile", item.Profile,
 			"tags", req.Tags,
 		)
-
-		// EPIC-051 M3: route all digest pushes through the unified helper.
-		// Throttle, min-score floor, and cross-process race guard all live
-		// in Queue.EnqueueDigestIfDue.
-		s.enqueueDigestPush(r.Context(), item.Profile, req.Score, req.Slug, req.Verdict, "")
 	} else {
 		slog.InfoContext(r.Context(), "scored",
 			"event_type", "scored",
@@ -751,6 +746,12 @@ func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
 			"threshold", threshold,
 		)
 	}
+
+	// EPIC-059: push notifications are decoupled from archive gate.
+	// Every scored item produces a push regardless of whether it meets the
+	// archive threshold. Throttle, min-score floor, and cross-process race
+	// guard all live in Queue.EnqueueDigestIfDue (EPIC-051 invariant).
+	s.enqueueDigestPush(r.Context(), item.Profile, req.Score, req.Slug, req.Verdict, "")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(item)
@@ -1127,21 +1128,10 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	threshold := archiveThreshold(req.Profile)
-	if s.notifyMinScore > 0 {
-		threshold = s.notifyMinScore
-	}
-	if threshold < 0 || req.Score < threshold {
-		slog.DebugContext(ctx, "score below threshold, skipping FCM push",
-			"score", req.Score, "threshold", threshold, "profile", req.Profile,
-		)
-		writeJSON(w, http.StatusOK, ShareResponse{
-			Status:    "ok",
-			Message:   fmt.Sprintf("score %d below threshold %d, logged only", req.Score, threshold),
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		})
-		return
-	}
+	// EPIC-059: removed redundant archive-threshold early return that predated
+	// EPIC-051's unification. EnqueueDigestIfDue already enforces notify_min_score
+	// and per-profile throttle — the old gate here silently dropped pushes for
+	// profiles like "life" (threshold=-1).
 
 	if s.queue == nil {
 		writeError(w, http.StatusServiceUnavailable, "queue not configured")
