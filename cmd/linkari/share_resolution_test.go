@@ -4,9 +4,10 @@ import (
 	"testing"
 )
 
-// EPIC-052: exhaustive coverage of the four branches of resolveShareAction.
-// The helper is pure, so these tests avoid any Queue/Server wiring and
-// exercise the decision tree directly on a hand-built cfgIndex.
+// EPIC-052: coverage of resolveShareAction caller-wins invariant.
+// EPIC-060 M2: branches 1–3 (empty-action fallback, bare-"uinit" pin,
+// unknown-"uinit_<profile>" pin) removed. All uinit_* actions are now in
+// cfgIndex as ServerScore=true and resolve via the caller-wins branch directly.
 
 func testCfgIndex() map[string]*ActionConfig {
 	profiles := []string{"eng", "life", "travel", "fashion", "music", "finance", "dining"}
@@ -14,10 +15,11 @@ func testCfgIndex() map[string]*ActionConfig {
 	for _, p := range profiles {
 		id := "uinit_" + p
 		idx[id] = &ActionConfig{
-			ID:         id,
-			Kind:       KindTemplate,
-			ProfileMap: "prefix",
-			Target:     "linkari:0",
+			ID:          id,
+			Kind:        KindTemplate,
+			ProfileMap:  "prefix",
+			Target:      "linkari:0",
+			ServerScore: true,
 		}
 	}
 	// EPIC-057: ginit_* actions use the same profile prefix scheme.
@@ -35,9 +37,9 @@ func testCfgIndex() map[string]*ActionConfig {
 	return idx
 }
 
-// Branch 4: known action — caller-wins. Every registered action resolves to
-// itself regardless of the heuristic-override flag. This is the invariant
-// from M2: received_action is never rewritten once it's recognized.
+// Caller-wins: every registered action resolves to itself regardless of the
+// heuristic-override flag. This is the invariant from EPIC-052 M2: received_action
+// is never rewritten once it's recognized.
 func TestResolveShareAction_CallerWins(t *testing.T) {
 	idx := testCfgIndex()
 	cases := []struct {
@@ -51,7 +53,7 @@ func TestResolveShareAction_CallerWins(t *testing.T) {
 		{"uinit_music", "music"},
 		{"uinit_finance", "finance"},
 		{"uinit_dining", "dining"},
-		// EPIC-057: ginit_* actions also resolve via caller-wins Branch 4.
+		// EPIC-057: ginit_* actions also resolve via caller-wins.
 		{"ginit_eng", "eng"},
 		{"ginit_life", "life"},
 		{"ginit_travel", "travel"},
@@ -77,9 +79,8 @@ func TestResolveShareAction_CallerWins(t *testing.T) {
 	}
 }
 
-// Branch 4 sub-case: profile is inferred from the action ID prefix when the
-// caller sends action but leaves profile blank. This guards the prefix
-// profile_map contract.
+// Profile is inferred from the action ID prefix when the caller sends action
+// but leaves profile blank. Guards the prefix profile_map contract.
 func TestResolveShareAction_InferProfileFromPrefix(t *testing.T) {
 	idx := testCfgIndex()
 	req := &ShareRequest{Action: "uinit_finance", Type: "url", URL: "https://example.com"}
@@ -92,76 +93,22 @@ func TestResolveShareAction_InferProfileFromPrefix(t *testing.T) {
 	}
 }
 
-// Branch 2: bare "uinit" — deterministically pinned to the first uinit_*
-// action in lexicographic order. This is the failure mode the epic calls
-// "Footgun 3" — the previous map-iteration fallback was non-deterministic.
-func TestResolveShareAction_BareUinitPinned(t *testing.T) {
+// Unknown action — returned as-is; Route fails fast on lookup miss.
+func TestResolveShareAction_UnknownActionPassThrough(t *testing.T) {
 	idx := testCfgIndex()
-	// Run many times: a map iteration-based fallback would non-deterministically
-	// pick different candidates; the sort-based pin always picks uinit_dining
-	// (lexicographically first among the seven test profiles).
-	const iters = 50
-	for i := 0; i < iters; i++ {
-		req := &ShareRequest{Action: "uinit", Type: "url", URL: "https://example.com"}
-		got := resolveShareAction(req, idx, false)
-		if got.ResolvedAction != "uinit_dining" {
-			t.Fatalf("iter %d: got resolved_action=%q want uinit_dining (deterministic pin)", i, got.ResolvedAction)
-		}
-		if got.ResolvedProfile != "dining" {
-			t.Errorf("iter %d: got profile=%q want dining", i, got.ResolvedProfile)
-		}
-		if got.Reason != "bare_uinit_pinned:uinit_dining" {
-			t.Errorf("iter %d: got reason=%q want bare_uinit_pinned:uinit_dining", i, got.Reason)
-		}
-	}
-}
-
-// Branch 3: unknown "uinit_<profile>" — e.g. a profile that isn't registered
-// in the config index. The helper preserves the caller's profile name and
-// pins the action to the deterministic default. This models a future profile
-// rollout where the Android client ships action=uinit_recipes before the
-// server config knows about "recipes".
-func TestResolveShareAction_UnknownUinitProfilePinned(t *testing.T) {
-	idx := testCfgIndex()
-	req := &ShareRequest{Action: "uinit_recipes", Type: "url", URL: "https://example.com"}
+	req := &ShareRequest{Action: "unknown_action", Type: "url", URL: "https://example.com", Profile: "eng"}
 	got := resolveShareAction(req, idx, false)
-	if got.ResolvedProfile != "recipes" {
-		t.Errorf("got profile=%q want recipes (profile preserved for unknown uinit_* prefix)", got.ResolvedProfile)
-	}
-	if got.ResolvedAction != "uinit_dining" {
-		t.Errorf("got action=%q want uinit_dining (deterministic pin)", got.ResolvedAction)
-	}
-	if got.Reason != "unknown_uinit_profile_pinned:uinit_dining" {
-		t.Errorf("got reason=%q want unknown_uinit_profile_pinned:uinit_dining", got.Reason)
-	}
-}
-
-// Branch 1: empty Action — the helper falls back to req.Type. Legacy ingress
-// paths that only send type="url" still resolve through the helper without
-// ending up in one of the uinit_* pin branches. Reason stays empty because no
-// override happened.
-func TestResolveShareAction_EmptyActionFallsBackToType(t *testing.T) {
-	idx := testCfgIndex()
-	req := &ShareRequest{Action: "", Type: "url", Profile: "eng", URL: "https://example.com"}
-	got := resolveShareAction(req, idx, false)
-	if got.ResolvedAction != "url" {
-		t.Errorf("got action=%q want url (fallback to req.Type)", got.ResolvedAction)
-	}
-	if got.ResolvedProfile != "eng" {
-		t.Errorf("got profile=%q want eng (preserved)", got.ResolvedProfile)
+	if got.ResolvedAction != "unknown_action" {
+		t.Errorf("got action=%q want unknown_action (pass-through)", got.ResolvedAction)
 	}
 	if got.Reason != "" {
-		t.Errorf("empty-action fallback should leave Reason empty, got %q", got.Reason)
-	}
-	if got.ReceivedAction != "" {
-		t.Errorf("received_action should echo input (empty), got %q", got.ReceivedAction)
+		t.Errorf("pass-through should leave Reason empty, got %q", got.Reason)
 	}
 }
 
 // Invariant: heuristicOverrideEnabled=true is currently a no-op because no
 // heuristic is registered in the helper. This test pins that contract so a
-// future heuristic rollout has to delete or modify this test on purpose —
-// making the behavior change visible in code review.
+// future heuristic rollout has to delete or modify this test on purpose.
 func TestResolveShareAction_HeuristicOverrideFlagIsNoOpToday(t *testing.T) {
 	idx := testCfgIndex()
 	req := &ShareRequest{Action: "uinit_eng", Profile: "eng", URL: "https://github.com/golang/go"}
@@ -172,11 +119,10 @@ func TestResolveShareAction_HeuristicOverrideFlagIsNoOpToday(t *testing.T) {
 	}
 }
 
-// Regression test (M5): 7 profiles × 5 representative URLs must round-trip
-// cleanly through resolveShareAction. For every (action, url) input, the
-// resolved action must equal the input action — no exceptions. This is the
-// structural guarantee that closes the EPIC-052 class of bug even if M3 can't
-// reproduce the specific incident on-device.
+// Regression test (M5 / EPIC-060 M2): 7 profiles × 5 representative URLs must
+// round-trip cleanly through resolveShareAction. For every (action, url) input,
+// the resolved action must equal the input action — no exceptions. This is the
+// structural guarantee that closes the EPIC-052 class of bug.
 func TestShareActionRoundTrip(t *testing.T) {
 	idx := testCfgIndex()
 	profiles := []string{"eng", "life", "travel", "fashion", "music", "finance", "dining"}
@@ -205,15 +151,5 @@ func TestShareActionRoundTrip(t *testing.T) {
 					got.Reason, p, u)
 			}
 		}
-	}
-
-	// Dedicated bare-"uinit" case required by M5.
-	bare := &ShareRequest{Action: "uinit", Type: "url", URL: "https://example.com"}
-	got := resolveShareAction(bare, idx, false)
-	if got.ResolvedAction == "uinit" {
-		t.Error("bare uinit should be pinned to a concrete uinit_<profile> action, not left as bare")
-	}
-	if got.Reason == "" {
-		t.Error("bare uinit pin must record a resolution reason")
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os/exec"
-	"sort"
 	"strings"
 	"sync"
 )
@@ -78,6 +77,15 @@ type Router struct {
 	cfgIndex   map[string]*ActionConfig
 	debug      bool
 	mu         sync.RWMutex
+	queue      *Queue // EPIC-060: for server-side scoring goroutine
+}
+
+// SetQueue wires the queue for server-side uinit_* scoring (EPIC-060 M1).
+// Called by NewServer so scoreURLAsync goroutines can persist results.
+func (r *Router) SetQueue(q *Queue) {
+	r.mu.Lock()
+	r.queue = q
+	r.mu.Unlock()
 }
 
 // Handler processes a share request and returns a result message.
@@ -225,30 +233,17 @@ type ShareResolution struct {
 
 // resolveShareAction is the single chokepoint every queue-writing path goes
 // through to determine the final (action, profile) pair for a share request.
-// It enforces EPIC-052's caller-wins invariant: when `received.Action` is
-// non-empty and present in cfgIndex, the received action is preserved verbatim
-// unless heuristicOverrideEnabled is true AND a future heuristic is registered
-// (none exist today — the flag is reserved for graceful migration).
+// It enforces EPIC-052's caller-wins invariant: when received.Action is present
+// in cfgIndex, the received action is preserved verbatim. Unknown or missing
+// actions are returned as-is; Route fails fast on lookup miss.
 //
-// Four branches, each individually unit tested (M2):
+// EPIC-060 M2: branches 1–3 (empty-action fallback, bare-"uinit" pin,
+// unknown-"uinit_<profile>" pin) removed. All uinit_* actions are now
+// registered in cfgIndex as ServerScore=true and always hit the caller-wins
+// branch directly. The three legacy fallback paths produced tmux-routable
+// action IDs; that routing no longer exists.
 //
-//  1. Empty Action → fall back to req.Type (legacy ingress path that sends
-//     type="url" without an explicit action).
-//  2. Bare "uinit" → deterministically pin to the lexicographically-first
-//     uinit_<profile> action with profile_map=prefix in cfgIndex. This
-//     replaces the non-deterministic map-iteration fallback that previously
-//     lived in Router.Route (the PoMo's "Footgun 3").
-//  3. Unknown "uinit_<profile>" → extract the profile suffix and pin the
-//     action to the same deterministic default. The profile is preserved as
-//     the caller supplied; only the action slot is rewritten so the
-//     downstream template action actually exists.
-//  4. Known action → caller-wins path. Action and profile are returned
-//     unchanged; Reason stays empty.
-//
-// The helper is pure (no IO, no logging) so unit tests can exercise every
-// branch without mocks. Callers are expected to emit the
-// share_action_resolved event themselves after invoking this helper so the
-// event records the same provenance that this function decided.
+// The helper is pure (no IO, no logging) so unit tests exercise it directly.
 func resolveShareAction(req *ShareRequest, cfgIndex map[string]*ActionConfig, heuristicOverrideEnabled bool) ShareResolution {
 	res := ShareResolution{
 		ReceivedAction:  req.Action,
@@ -256,32 +251,9 @@ func resolveShareAction(req *ShareRequest, cfgIndex map[string]*ActionConfig, he
 	}
 
 	actionID := req.Action
-	if actionID == "" {
-		actionID = req.Type
-	}
 	profile := req.Profile
 
-	// Branch 2: bare "uinit" — deterministically pin.
-	if actionID == "uinit" {
-		if pinned := pinDefaultUinitAction(cfgIndex); pinned != "" {
-			actionID = pinned
-			res.Reason = "bare_uinit_pinned:" + pinned
-			// Inherit profile from pinned action suffix when caller sent none.
-			if profile == "" {
-				if ac, ok := cfgIndex[pinned]; ok && ac.ProfileMap == "prefix" {
-					parts := strings.SplitN(pinned, "_", 2)
-					if len(parts) == 2 {
-						profile = parts[1]
-					}
-				}
-			}
-		}
-		res.ResolvedAction = actionID
-		res.ResolvedProfile = profile
-		return res
-	}
-
-	// Branch 4: known action — caller-wins.
+	// Caller-wins: known action is returned unchanged.
 	if ac, ok := cfgIndex[actionID]; ok {
 		if ac.ProfileMap == "prefix" && profile == "" {
 			parts := strings.SplitN(actionID, "_", 2)
@@ -291,53 +263,15 @@ func resolveShareAction(req *ShareRequest, cfgIndex map[string]*ActionConfig, he
 		}
 		res.ResolvedAction = actionID
 		res.ResolvedProfile = profile
-		// heuristicOverrideEnabled is a no-op today: no heuristic is registered
-		// in this helper, so caller-wins is the only path even when the flag is
-		// true. The flag is reserved for a future graceful migration.
+		// heuristicOverrideEnabled is a no-op: no heuristic is registered today.
 		_ = heuristicOverrideEnabled
 		return res
 	}
 
-	// Branch 3: unknown "uinit_<profile>" — pin action, keep profile.
-	if strings.HasPrefix(actionID, "uinit_") {
-		if profile == "" {
-			profile = strings.TrimPrefix(actionID, "uinit_")
-		}
-		if pinned := pinDefaultUinitAction(cfgIndex); pinned != "" {
-			res.Reason = "unknown_uinit_profile_pinned:" + pinned
-			actionID = pinned
-		}
-		res.ResolvedAction = actionID
-		res.ResolvedProfile = profile
-		return res
-	}
-
-	// Branch 1 continuation: empty / unrecognized Type. Return as-is and let
-	// Route fail fast — the helper does not invent actions it can't name.
+	// Unknown / missing action — return as-is and let Route fail fast.
 	res.ResolvedAction = actionID
 	res.ResolvedProfile = profile
 	return res
-}
-
-// pinDefaultUinitAction returns the lexicographically-first action ID in
-// cfgIndex that has profile_map=prefix and a "uinit_" prefix. Deterministic
-// across processes and map-insertion orderings — same cfgIndex contents
-// always yield the same answer. Empty string when no candidate exists.
-func pinDefaultUinitAction(cfgIndex map[string]*ActionConfig) string {
-	var candidates []string
-	for id, ac := range cfgIndex {
-		if ac == nil {
-			continue
-		}
-		if ac.ProfileMap == "prefix" && strings.HasPrefix(id, "uinit_") {
-			candidates = append(candidates, id)
-		}
-	}
-	if len(candidates) == 0 {
-		return ""
-	}
-	sort.Strings(candidates)
-	return candidates[0]
 }
 
 // Route dispatches a request using config-driven actions.
@@ -406,6 +340,16 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	command, err := ac.RenderCommand(data)
 	if err != nil {
 		return "", err
+	}
+
+	// EPIC-060 M1: server_score=true runs the full scoring pipeline entirely
+	// server-side — no tmux window, no shell subprocess. A goroutine fetches
+	// page content via Jina Reader, evaluates via Haiku, and persists through
+	// Queue.ScoreByURL + EnqueueDigestIfDue. Returns immediately; verdict
+	// arrives via FCM push.
+	if ac.ServerScore {
+		go scoreURLAsync(req.URL, req.Profile, r.queue, HaikuMarkdownEvaluator{})
+		return "Scoring — verdict via FCM", nil
 	}
 
 	// EPIC-043 M5: inline_triage=true runs the rendered command headlessly
