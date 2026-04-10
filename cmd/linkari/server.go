@@ -141,7 +141,11 @@ func (r *RingLog) Writer() io.Writer {
 // Server handles HTTP requests with authentication and rate limiting.
 type Server struct {
 	token     string
-	jiraToken string // EPIC-057: scoped bearer for ginit_* actions; empty = Jira ingress disabled
+	jiraToken      string // EPIC-057: scoped bearer for ginit_* actions; empty = Jira ingress disabled
+	jiraAPIUsername string // outbound Jira API username (from linkari/jira-webhook secret)
+	jiraAPIPassword string // outbound Jira API password
+	jiraDomain      string // e.g. "xxx.atlassian.net"
+	pagerDutyToken  string // PagerDuty API token
 	router  *Router
 	queue   *Queue
 	limiter *rateLimiter
@@ -479,6 +483,11 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		"target", req.Target, "enter", req.Enter,
 		"text_len", len(req.Text), "url_len", len(req.URL), "title", req.Title,
 	)
+	if s.debug {
+		if raw, err := json.MarshalIndent(req, "", "  "); err == nil {
+			slog.DebugContext(ctx, "share payload (debug)", "body", string(raw))
+		}
+	}
 
 	shareStart := time.Now()
 
