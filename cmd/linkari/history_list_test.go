@@ -52,6 +52,19 @@ func seedHistoryQueue(t *testing.T) (http.Handler, *Queue) {
 	for i := 0; i < 2; i++ {
 		mustEnq("default")
 	}
+	// EPIC-057: 2 ginit-sourced scored rows for ?type= filter testing.
+	for i := 0; i < 2; i++ {
+		id, err := q.EnqueueScored(&ShareRequest{
+			Action:  "ginit_eng",
+			Profile: "eng",
+			Type:    "text",
+			Text:    fmt.Sprintf("PROJ-%d", 100+i),
+		}, "workspace_bootstrapped")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = id
+	}
 
 	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
@@ -102,8 +115,9 @@ func TestArchiveStatusScored(t *testing.T) {
 		t.Fatalf("code=%d", w.Code)
 	}
 	items := decodeItems(t, w)
-	if len(items) != 5 {
-		t.Errorf("want 5 scored, got %d", len(items))
+	// 5 url-scored + 2 ginit auto-scored = 7 total scored rows.
+	if len(items) != 7 {
+		t.Errorf("want 7 scored, got %d", len(items))
 	}
 	for _, it := range items {
 		if it.Status != "scored" {
@@ -217,8 +231,52 @@ func TestQueueStatusAll(t *testing.T) {
 		t.Fatalf("code=%d", w.Code)
 	}
 	items := decodeItems(t, w)
-	if len(items) != 12 {
-		t.Errorf("want 12, got %d", len(items))
+	if len(items) != 14 {
+		t.Errorf("want 14, got %d", len(items))
+	}
+}
+
+// EPIC-057: ?type=jira returns only ginit_* rows; ?type=url excludes them.
+func TestArchiveTypeFilterJira(t *testing.T) {
+	mux, _ := seedHistoryQueue(t)
+	w := doGet(t, mux, "/archive?status=scored&type=jira&limit=50", "test-token")
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	items := decodeItems(t, w)
+	if len(items) != 2 {
+		t.Errorf("want 2 jira-scored rows, got %d", len(items))
+	}
+	for _, it := range items {
+		if it.Action != "ginit_eng" {
+			t.Errorf("type=jira leaked non-ginit row: action=%q", it.Action)
+		}
+	}
+}
+
+func TestArchiveTypeFilterURL(t *testing.T) {
+	mux, _ := seedHistoryQueue(t)
+	w := doGet(t, mux, "/archive?status=scored&type=url&limit=50", "test-token")
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	items := decodeItems(t, w)
+	// 5 scored url rows (default profile), 0 ginit
+	if len(items) != 5 {
+		t.Errorf("want 5 url-scored rows, got %d", len(items))
+	}
+	for _, it := range items {
+		if it.Action == "ginit_eng" {
+			t.Errorf("type=url should exclude ginit rows: %+v", it)
+		}
+	}
+}
+
+func TestArchiveTypeFilterInvalid(t *testing.T) {
+	mux, _ := seedHistoryQueue(t)
+	w := doGet(t, mux, "/archive?type=bogus", "test-token")
+	if w.Code != 400 {
+		t.Errorf("want 400 for invalid type, got %d", w.Code)
 	}
 }
 

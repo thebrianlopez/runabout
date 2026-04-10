@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -139,7 +140,8 @@ func (r *RingLog) Writer() io.Writer {
 
 // Server handles HTTP requests with authentication and rate limiting.
 type Server struct {
-	token   string
+	token     string
+	jiraToken string // EPIC-057: scoped bearer for ginit_* actions; empty = Jira ingress disabled
 	router  *Router
 	queue   *Queue
 	limiter *rateLimiter
@@ -408,6 +410,34 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(health)
 }
 
+// jiraKeyRegex validates Jira issue keys at the HTTP boundary. Only keys
+// matching this pattern may reach tmux send-keys via ginit_* templates.
+//
+// Jira Ingress Invariant (EPIC-057): No Jira-controlled byte may reach
+// `tmux send-keys -l` except via jiraKeyRegex-validated req.Text. The ginit_*
+// command template uses only {{.Text}} (never {{.Title}} or {{.URL}}). The
+// scoped-auth helper ensures requests bearing jira_token can only invoke
+// ginit_* action IDs, and requests bearing the mobile LINKARI_TOKEN cannot
+// invoke ginit_* actions. This invariant sits alongside the caller-wins
+// invariant (EPIC-052) and dual-writer invariant (EPIC-051).
+var jiraKeyRegex = regexp.MustCompile(`^[A-Z][A-Z0-9_]+-\d+$`)
+
+// checkScopedAuth verifies that the bearer token is authorized for the resolved
+// action. Returns (tokenKind, allowed). Token kinds: "mobile", "jira", "unknown".
+func (s *Server) checkScopedAuth(bearer, actionID string) (kind string, allowed bool) {
+	isGinit := strings.HasPrefix(actionID, "ginit_")
+	switch {
+	case bearer == s.token:
+		// Mobile/Chrome token: allowed for everything except ginit_*.
+		return "mobile", !isGinit
+	case s.jiraToken != "" && bearer == s.jiraToken:
+		// Jira token: allowed only for ginit_*.
+		return "jira", isGinit
+	default:
+		return "unknown", false
+	}
+}
+
 func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if r.Method != http.MethodPost {
@@ -416,9 +446,10 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auth
+	// Auth: accept either the mobile/Chrome token or the Jira-scoped token.
 	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+	bearer := strings.TrimPrefix(auth, "Bearer ")
+	if !strings.HasPrefix(auth, "Bearer ") || (bearer != s.token && (s.jiraToken == "" || bearer != s.jiraToken)) {
 		slog.DebugContext(ctx, "share rejected: auth failed", "has_header", auth != "")
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -468,17 +499,54 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	resolution := s.router.ResolveShare(&req, s.shareHeuristicOverride)
 	req.Action = resolution.ResolvedAction
 	req.Profile = resolution.ResolvedProfile
+
+	// EPIC-057: scoped-auth — verify the bearer token is authorized for
+	// the resolved action. Mobile tokens cannot invoke ginit_*; Jira tokens
+	// can only invoke ginit_*.
+	tokenKind, scopeOK := s.checkScopedAuth(bearer, req.Action)
+	if !scopeOK {
+		resolution.Reason = "rejected_scope_violation"
+		emitShareActionResolved(resolution, req.URL, 0)
+		slog.WarnContext(ctx, "share rejected: scope violation",
+			"token_kind", tokenKind, "action", req.Action)
+		writeError(w, http.StatusForbidden, "action not permitted for this token")
+		return
+	}
+
+	// EPIC-057: Jira key regex validation for ginit_* actions.
+	if strings.HasPrefix(req.Action, "ginit_") && !jiraKeyRegex.MatchString(req.Text) {
+		resolution.Reason = "rejected_invalid_jira_key"
+		emitShareActionResolved(resolution, req.URL, 0)
+		slog.WarnContext(ctx, "share rejected: invalid Jira key",
+			"action", req.Action, "text", req.Text)
+		writeError(w, http.StatusBadRequest, "invalid Jira issue key")
+		return
+	}
+
 	emitShareActionResolved(resolution, req.URL, 0)
 
 	// Enqueue for persistence (before routing — survives tmux failures).
+	// EPIC-057: actions with AutoScore=true are enqueued as pre-scored so the
+	// RelayedWatchdog never sweeps them.
 	var queueID int64
 	if s.queue != nil {
-		id, err := s.queue.Enqueue(&req)
-		if err != nil {
-			slog.WarnContext(ctx, "queue enqueue failed", "error", err)
+		ac := s.router.LookupAction(req.Action)
+		if ac != nil && ac.AutoScore {
+			id, err := s.queue.EnqueueScored(&req, "workspace_bootstrapped")
+			if err != nil {
+				slog.WarnContext(ctx, "queue enqueue (auto-scored) failed", "error", err)
+			} else {
+				queueID = id
+				slog.DebugContext(ctx, "queue enqueued (auto-scored)", "id", id)
+			}
 		} else {
-			queueID = id
-			slog.DebugContext(ctx, "queue enqueued", "id", id)
+			id, err := s.queue.Enqueue(&req)
+			if err != nil {
+				slog.WarnContext(ctx, "queue enqueue failed", "error", err)
+			} else {
+				queueID = id
+				slog.DebugContext(ctx, "queue enqueued", "id", id)
+			}
 		}
 	}
 
@@ -538,26 +606,32 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseListParams extracts and validates the shared list query params used by
-// /archive and /queue: profile, status, before_id, limit. Returns a 400-ready
-// error describing the first invalid field.
-func parseListParams(r *http.Request) (profile, status string, beforeID int64, limit int, err error) {
+// /archive and /queue: profile, status, before_id, limit, type. Returns a
+// 400-ready error describing the first invalid field.
+func parseListParams(r *http.Request) (profile, status, itemType string, beforeID int64, limit int, err error) {
 	profile = r.URL.Query().Get("profile")
 	status = r.URL.Query().Get("status")
 	if status != "" && !validStatuses[status] {
-		return "", "", 0, 0, fmt.Errorf("invalid status")
+		return "", "", "", 0, 0, fmt.Errorf("invalid status")
+	}
+	// EPIC-057: ?type=jira filters to ginit_* actions; ?type=url filters to
+	// non-ginit actions. Empty means no filter.
+	itemType = r.URL.Query().Get("type")
+	if itemType != "" && itemType != "jira" && itemType != "url" {
+		return "", "", "", 0, 0, fmt.Errorf("invalid type: must be 'jira' or 'url'")
 	}
 	limit = 50
 	if l := r.URL.Query().Get("limit"); l != "" {
 		n, e := strconv.Atoi(l)
 		if e != nil || n <= 0 || n > 200 {
-			return "", "", 0, 0, fmt.Errorf("invalid limit")
+			return "", "", "", 0, 0, fmt.Errorf("invalid limit")
 		}
 		limit = n
 	}
 	if b := r.URL.Query().Get("before_id"); b != "" {
 		n, e := strconv.ParseInt(b, 10, 64)
 		if e != nil || n < 0 {
-			return "", "", 0, 0, fmt.Errorf("invalid before_id")
+			return "", "", "", 0, 0, fmt.Errorf("invalid before_id")
 		}
 		beforeID = n
 	}
@@ -581,7 +655,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, status, beforeID, limit, perr := parseListParams(r)
+	_, status, _, beforeID, limit, perr := parseListParams(r)
 	if perr != nil {
 		writeError(w, http.StatusBadRequest, perr.Error())
 		return
@@ -729,13 +803,13 @@ func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile, status, beforeID, limit, perr := parseListParams(r)
+	profile, status, itemType, beforeID, limit, perr := parseListParams(r)
 	if perr != nil {
 		writeError(w, http.StatusBadRequest, perr.Error())
 		return
 	}
 
-	items, err := s.queue.ListArchivedCursor(profile, status, beforeID, limit)
+	items, err := s.queue.ListArchivedCursorTyped(profile, status, itemType, beforeID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list archived: %v", err))
 		return

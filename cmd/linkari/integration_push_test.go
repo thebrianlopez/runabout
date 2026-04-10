@@ -127,6 +127,42 @@ func TestPushChainEndToEnd(t *testing.T) {
 	}
 }
 
+// EPIC-057 M4: auto-scored ginit rows must NOT produce push_outbox entries.
+// This preserves the dual-writer invariant (EPIC-051) — ginit rows bypass
+// the scoring pipeline entirely.
+func TestAutoScoreDoesNotWritePushOutbox(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	q, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+
+	req := &ShareRequest{
+		Action:  "ginit_eng",
+		Profile: "eng",
+		Type:    "text",
+		Text:    "PROJ-42",
+	}
+	_, err = q.EnqueueScored(req, "workspace_bootstrapped")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pushes, err := q.PendingPushes(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pushes) != 0 {
+		t.Errorf("auto-scored row should not produce push_outbox entries, got %d: %+v", len(pushes), pushes)
+	}
+}
+
 // repoRoot walks up from the cmd/linkari test cwd until it finds the
 // runabout go.mod, returning its directory.
 func repoRoot(t *testing.T) string {

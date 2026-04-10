@@ -63,10 +63,10 @@ func TestLoadConfig(t *testing.T) {
 	// EPIC-051 M5: LoadConfig now merges the user file on top of builtins
 	// by ID instead of replacing the action list wholesale. The test file
 	// overrides 3 builtins (uinit_eng, uinit_life, ginit) and adds 1 new
-	// action (clipboard), so the merged result contains all 8 builtins plus
-	// the 1 extra = 9 actions.
-	if len(cfg.Actions) != 9 {
-		t.Fatalf("expected 9 merged actions, got %d", len(cfg.Actions))
+	// action (clipboard), so the merged result contains all 15 builtins
+	// (8 original + 7 ginit_<profile> from EPIC-057) plus 1 extra = 16.
+	if len(cfg.Actions) != 16 {
+		t.Fatalf("expected 16 merged actions, got %d", len(cfg.Actions))
 	}
 	if cfg.DefaultArchiveThreshold != 80 {
 		t.Errorf("default_archive_threshold = %d, want 80", cfg.DefaultArchiveThreshold)
@@ -232,6 +232,53 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// EPIC-057 M1: ginit defaults and AutoScore field tests.
+
+func TestGinitDefaultsPresent(t *testing.T) {
+	cfg := builtinConfig()
+	found := map[string]bool{}
+	for _, a := range cfg.Actions {
+		if a.AutoScore {
+			found[a.ID] = true
+		}
+	}
+	for _, p := range sharedProfiles {
+		id := "ginit_" + p
+		if !found[id] {
+			t.Errorf("missing ginit default: %s", id)
+		}
+	}
+	if len(found) != len(sharedProfiles) {
+		t.Errorf("expected %d auto_score actions, got %d", len(sharedProfiles), len(found))
+	}
+}
+
+func TestAutoScoreFieldParsesFromYAML(t *testing.T) {
+	yamlStr := `
+actions:
+  - id: test_auto
+    kind: template
+    command_template: "echo"
+    auto_score: true
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auto.yaml")
+	os.WriteFile(path, []byte(yamlStr), 0o644)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range cfg.Actions {
+		if a.ID == "test_auto" {
+			if !a.AutoScore {
+				t.Error("auto_score should be true after YAML parse")
+			}
+			return
+		}
+	}
+	t.Error("test_auto action not found in merged config")
 }
 
 // EPIC-051 M4: per-profile throttle config tests.
