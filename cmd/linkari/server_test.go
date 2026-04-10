@@ -278,7 +278,9 @@ func TestNotifyWithVerdict(t *testing.T) {
 func TestNotifyBelowThreshold(t *testing.T) {
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, builtinConfig(), false)
-	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
+	// EPIC-059: /notify no longer early-returns on below-threshold scores,
+	// so it needs a queue to call enqueueDigestPush. Use newTestQueue.
+	srv := NewServer("test-token", router, newTestQueue(t), NewRingLog(10), false, nil)
 	mux := srv.Mux()
 
 	payload := notifyRequest{
@@ -304,9 +306,10 @@ func TestNotifyBelowThreshold(t *testing.T) {
 	if resp.Status != "ok" {
 		t.Errorf("expected status ok, got %q", resp.Status)
 	}
-	// Below threshold → message should indicate "logged only"
-	if resp.Message == "" {
-		t.Error("expected non-empty message")
+	// EPIC-059: below-threshold scores now proceed to push enqueue
+	// instead of returning "logged only".
+	if !strings.Contains(resp.Message, "push enqueued") {
+		t.Errorf("expected 'push enqueued' message, got %q", resp.Message)
 	}
 }
 

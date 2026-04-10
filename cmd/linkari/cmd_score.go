@@ -193,20 +193,21 @@ For batch evaluation across a fixture set, see EPIC-054 (planned).`,
 				return fmt.Errorf("score: %w", err)
 			}
 
-			// Auto-archive + digest push on threshold crossing. Mirrors
-			// handleQueueScore exactly so there is no drift.
+			// Auto-archive if score meets profile threshold.
 			threshold := archiveThreshold(item.Profile)
 			if threshold >= 0 && item.Score != nil && *item.Score >= threshold {
 				if archErr := q.Archive(item.ID); archErr == nil {
 					item.Status = "archived"
-					if !noPush {
-						// EPIC-051 M3: single sanctioned entry point.
-						resolvePushConfigOnce(q)
-						_, _ = q.EnqueueDigestIfDue(context.Background(),
-							item.Profile, *item.Score, item.Slug, item.Verdict, item.URL,
-							sc.GapSummary(3))
-					}
 				}
+			}
+
+			// EPIC-059: push is decoupled from archive gate — every scored
+			// item produces a push. EPIC-051 dual-writer invariant preserved.
+			if !noPush && item.Score != nil {
+				resolvePushConfigOnce(q)
+				_, _ = q.EnqueueDigestIfDue(context.Background(),
+					item.Profile, *item.Score, item.Slug, item.Verdict, item.URL,
+					sc.GapSummary(3))
 			}
 
 			enc := json.NewEncoder(cmd.OutOrStdout())
@@ -360,14 +361,19 @@ scores directly.`,
 				return fmt.Errorf("score: %w", err)
 			}
 
+			// Auto-archive if score meets profile threshold.
 			threshold := archiveThreshold(item.Profile)
 			if threshold >= 0 && item.Score != nil && *item.Score >= threshold {
 				if archErr := q.Archive(item.ID); archErr == nil {
 					item.Status = "archived"
-					resolvePushConfigOnce(q)
-					_, _ = q.EnqueueDigestIfDue(context.Background(),
-						item.Profile, *item.Score, item.Slug, item.Verdict, item.URL)
 				}
+			}
+
+			// EPIC-059: push decoupled from archive gate.
+			if item.Score != nil {
+				resolvePushConfigOnce(q)
+				_, _ = q.EnqueueDigestIfDue(context.Background(),
+					item.Profile, *item.Score, item.Slug, item.Verdict, item.URL)
 			}
 
 			enc := json.NewEncoder(cmd.OutOrStdout())
