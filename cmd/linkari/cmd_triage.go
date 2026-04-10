@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -129,43 +130,61 @@ the eval harness path).`,
 				return nil
 			}
 
-			// 4. Call Haiku — JSON-mode (EPIC-044 M1) or markdown (legacy).
+			// 4. Call Haiku via Evaluator interface (EPIC-058 M1).
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
 			}
 
-			var (
-				raw     string
-				res     TriageResult
-				verdict *TriageVerdict // populated only on the JSON path
-			)
+			var eval Evaluator
 			if useJSON {
-				v, _, jerr := haikuVerdictWithRepair(ctx, sysPrompt, content)
-				if jerr != nil {
-					return fmt.Errorf("haiku-json: %w", jerr)
-				}
-				verdict = &v
-				raw = v.RenderMarkdown()
-				res = TriageResult{
-					Score:       v.Score,
-					Verdict:     v.Verdict,
-					ActionItems: v.ActionItems,
-					Tags:        v.Tags,
-					RawMarkdown: raw,
-				}
+				eval = HaikuJSONEvaluator{}
 			} else {
-				rawMD, err := execHaiku(ctx, sysPrompt, content)
-				if err != nil {
-					return fmt.Errorf("haiku: %w", err)
+				eval = HaikuMarkdownEvaluator{}
+			}
+			sc, err := eval.Evaluate(ctx, content, sysPrompt)
+			if err != nil {
+				return err
+			}
+			sc.Profile = profile
+			sc.SourceType = "cli-triage"
+			sc.PromptVersion = promptVersionFromPath(tmplPath)
+
+			// EPIC-058 M3: confidence gate — check if score meets threshold
+			// for auto-launch. M4 wires the actual ginit launch.
+			if actionCfg := lookupGinitAction(profile); actionCfg != nil && CheckGate(sc, *actionCfg) {
+				if dryRun {
+					fmt.Fprintf(os.Stderr, "triage: gate passed (score=%d >= %d) — dry-run, skipping\n",
+						sc.Score, actionCfg.ConfidenceThreshold)
+				} else {
+					// EPIC-058 M4: auto-launch ginit when confidence gate passes.
+					autoLaunchGinit(url, profile, sc.Score)
 				}
-				parsed, err := parseTriageMarkdown(rawMD)
-				if err != nil {
-					return fmt.Errorf("parse triage: %w", err)
-				}
-				parsed.RawMarkdown = rawMD
-				raw = rawMD
-				res = parsed
+			} else if actionCfg != nil && actionCfg.ConfidenceThreshold > 0 {
+				slog.Info("confidence gate: below threshold",
+					"score", sc.Score, "threshold", actionCfg.ConfidenceThreshold, "gap_count", len(sc.Gaps))
+			}
+
+			// EPIC-058 M5: emit evaluator_scored event with prompt version tracking.
+			emitPushEvent("evaluator_scored", map[string]interface{}{
+				"url":               url,
+				"profile":           profile,
+				"score":             sc.Score,
+				"gap_count":         len(sc.Gaps),
+				"prompt_version":    sc.PromptVersion,
+				"evaluator_backend": sc.Backend,
+				"latency_ms":        sc.LatencyMs,
+				"source_type":       sc.SourceType,
+			})
+
+			// Back-compat: populate TriageResult for the persist path.
+			raw := sc.RawMarkdown
+			res := TriageResult{
+				Score:       sc.Score,
+				Verdict:     sc.Verdict,
+				ActionItems: sc.Gaps,
+				Tags:        sc.Tags,
+				RawMarkdown: raw,
 			}
 
 			if noPersist {
@@ -200,11 +219,11 @@ the eval harness path).`,
 			//    + rubric_scores. Existing readers (cmd_eval.go captureFromWorkspace)
 			//    decode by named field and ignore unknown keys.
 			var extras *sidecarExtras
-			if verdict != nil {
+			if len(sc.RubricScores) > 0 {
 				extras = &sidecarExtras{
 					SchemaVersion:  "triage_verdict_v1",
-					ProfileVersion: verdict.ProfileVersion,
-					RubricScores:   verdict.RubricScores,
+					ProfileVersion: sc.ProfileVersion,
+					RubricScores:   sc.RubricScores,
 				}
 			}
 			if err := writeScoreSidecar(workspace, res.Score, res.Verdict, slug, profile, url, extras); err != nil {
@@ -513,35 +532,36 @@ type triageScorer struct{}
 func (triageScorer) Name() string { return "triage-haiku" }
 
 func (triageScorer) Score(fix Fixture) (Golden, error) {
-	_, sysPrompt, err := loadProfileTemplate(fix.Profile)
+	tmplPath, sysPrompt, err := loadProfileTemplate(fix.Profile)
 	if err != nil {
 		return Golden{}, fmt.Errorf("load template: %w", err)
 	}
 	// Fixture content was already truncated at capture time, but apply the
 	// same truncation here so eval is robust against future fixture sources.
 	content := truncateRunes(fix.Content, contentTruncationRunes)
-	raw, err := execHaiku(context.Background(), sysPrompt, content)
-	if err != nil {
-		return Golden{}, err
-	}
-	res, err := parseTriageMarkdown(raw)
+
+	eval := HaikuMarkdownEvaluator{}
+	sc, err := eval.Evaluate(context.Background(), content, sysPrompt)
 	if err != nil {
 		// M6b: scorer brittleness fix. A malformed Haiku response (missing
 		// `## Score: N/100` line) no longer hard-errors the whole eval run.
 		// Return a Skip so the runner reports it and moves on.
-		return Golden{Skip: true, SkipReason: "parse_failed", RawMarkdown: raw}, nil
+		return Golden{Skip: true, SkipReason: "parse_failed", RawMarkdown: ""}, nil
 	}
 	// M6b: noise-gate skip. When Haiku emits a `Score: 0/100 — Skip (...)`
 	// response against a fixture whose golden is non-zero, that's not a
 	// regression — it's the profile's noise gate firing on stale or
 	// JavaScript-stripped content. Treat as skip, not fail.
-	if res.Score == 0 && fix.Golden.Score > 0 && isNoiseGateOutput(raw) {
-		return Golden{Skip: true, SkipReason: "noise_gate", RawMarkdown: raw}, nil
+	if sc.Score == 0 && fix.Golden.Score > 0 && isNoiseGateOutput(sc.RawMarkdown) {
+		return Golden{Skip: true, SkipReason: "noise_gate", RawMarkdown: sc.RawMarkdown}, nil
 	}
 	return Golden{
-		Score:       res.Score,
-		Verdict:     res.Verdict,
-		RawMarkdown: raw,
+		Score:         sc.Score,
+		Verdict:       sc.Verdict,
+		RawMarkdown:   sc.RawMarkdown,
+		Gaps:          sc.Gaps,
+		SourceType:    "eval-fixture",
+		PromptVersion: promptVersionFromPath(tmplPath),
 	}, nil
 }
 

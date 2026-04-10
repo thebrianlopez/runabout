@@ -127,7 +127,7 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 			})
 			continue
 		}
-		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL); err != nil {
+		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.GapSummary); err != nil {
 			attempts := p.Attempts + 1
 			if attempts >= pushMaxAttempts {
 				_ = s.queue.MarkPushDead(p.ID, err.Error())
@@ -218,7 +218,7 @@ func emitShareActionResolved(res ShareResolution, url string, queueID int64) {
 
 // sendOutboxFCM is the single production caller of the FCM HTTP v1 API.
 // Body construction mirrors the deleted sendFCMPush helper.
-func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url string) error {
+func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, gapSummary string) error {
 	tok, err := s.fcmTokenSource.Token()
 	if err != nil {
 		return fmt.Errorf("obtaining oauth2 token: %w", err)
@@ -247,10 +247,11 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url 
 				"body":  notifBody,
 			},
 			"data": map[string]string{
-				"slug":    slug,
-				"verdict": verdict,
-				"url":     url,
-				"score":   fmt.Sprintf("%d", score),
+				"slug":        slug,
+				"verdict":     verdict,
+				"url":         url,
+				"score":       fmt.Sprintf("%d", score),
+				"gap_summary": gapSummary,
 			},
 			"android": map[string]string{
 				"priority": "high",
