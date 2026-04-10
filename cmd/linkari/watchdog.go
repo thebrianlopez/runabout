@@ -330,7 +330,7 @@ func (w *RelayedWatchdog) alertOnVolume(timedOut []TimedOutRelayed, now time.Tim
 	// invariant scopes exclusively to kind='digest'. Alerts are exempt.
 	if w.queue != nil {
 		msg := "linkari: scoring pipeline stalled — see EPIC-055 for remediation"
-		_, err := w.queue.EnqueuePushWithProfile("alert", "ops", 0, "", msg, "")
+		_, err := w.queue.EnqueuePushWithProfile("alert", "ops", 0, "", msg, "", "")
 		if err != nil {
 			slog.Error("watchdog alert enqueue failed",
 				"event_type", "relayed_watchdog_alert_error",

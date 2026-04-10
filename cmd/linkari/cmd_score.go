@@ -43,6 +43,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -113,21 +114,53 @@ For batch evaluation across a fixture set, see EPIC-054 (planned).`,
 				return fmt.Errorf("empty content from %s", contentSourceLabel(contentFile))
 			}
 
-			// Call Haiku — same path as `linkari triage` (execHaiku is the
-			// test seam). No shadow pipeline.
+			// Call Haiku via Evaluator interface (EPIC-058 M2).
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			rawMD, err := execHaiku(ctx, sysPrompt, content)
+			eval := HaikuMarkdownEvaluator{}
+			sc, err := eval.Evaluate(ctx, content, sysPrompt)
 			if err != nil {
-				return fmt.Errorf("haiku: %w", err)
+				return err
 			}
-			res, err := parseTriageMarkdown(rawMD)
-			if err != nil {
-				return fmt.Errorf("parse triage: %w", err)
+			sc.SourceType = "cli-score"
+			sc.PromptVersion = promptVersionFromPath(promptSourcePath(promptSource))
+
+			// EPIC-058 M3: confidence gate.
+			if actionCfg := lookupGinitAction(profile); actionCfg != nil && CheckGate(sc, *actionCfg) {
+				if dryRun {
+					fmt.Fprintf(os.Stderr, "score: gate passed (score=%d >= %d) — dry-run, skipping\n",
+						sc.Score, actionCfg.ConfidenceThreshold)
+				} else {
+					// EPIC-058 M4: auto-launch ginit when confidence gate passes.
+					autoLaunchGinit(url, profile, sc.Score)
+				}
+			} else if actionCfg != nil && actionCfg.ConfidenceThreshold > 0 {
+				slog.Info("confidence gate: below threshold",
+					"score", sc.Score, "threshold", actionCfg.ConfidenceThreshold, "gap_count", len(sc.Gaps))
 			}
-			res.RawMarkdown = rawMD
+
+			// EPIC-058 M5: emit evaluator_scored event with prompt version tracking.
+			emitPushEvent("evaluator_scored", map[string]interface{}{
+				"url":               url,
+				"profile":           profile,
+				"score":             sc.Score,
+				"gap_count":         len(sc.Gaps),
+				"prompt_version":    sc.PromptVersion,
+				"evaluator_backend": sc.Backend,
+				"latency_ms":        sc.LatencyMs,
+				"source_type":       sc.SourceType,
+			})
+
+			// Back-compat: populate TriageResult for the persist path.
+			res := TriageResult{
+				Score:       sc.Score,
+				Verdict:     sc.Verdict,
+				ActionItems: sc.Gaps,
+				Tags:        sc.Tags,
+				RawMarkdown: sc.RawMarkdown,
+			}
 
 			slug := deriveSlugFromURL(url)
 
@@ -170,7 +203,8 @@ For batch evaluation across a fixture set, see EPIC-054 (planned).`,
 						// EPIC-051 M3: single sanctioned entry point.
 						resolvePushConfigOnce(q)
 						_, _ = q.EnqueueDigestIfDue(context.Background(),
-							item.Profile, *item.Score, item.Slug, item.Verdict, item.URL)
+							item.Profile, *item.Score, item.Slug, item.Verdict, item.URL,
+							sc.GapSummary(3))
 					}
 				}
 			}
@@ -232,6 +266,18 @@ func readScoreContent(path string, cmdIn io.Reader) (string, error) {
 		return "", fmt.Errorf("read content: %w", err)
 	}
 	return string(b), nil
+}
+
+// promptSourcePath extracts the file path from a prompt source label like
+// "profile:/path/to/eng.yaml" or "file:/path/to/custom.md". Returns empty
+// string for unrecognized formats.
+func promptSourcePath(source string) string {
+	for _, prefix := range []string{"profile:", "file:"} {
+		if strings.HasPrefix(source, prefix) {
+			return strings.TrimPrefix(source, prefix)
+		}
+	}
+	return ""
 }
 
 func contentSourceLabel(path string) string {

@@ -152,6 +152,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	// as push_outbox grows. Both statements are idempotent.
 	pushMigrations := []string{
 		"ALTER TABLE push_outbox ADD COLUMN profile TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE push_outbox ADD COLUMN gap_summary TEXT NOT NULL DEFAULT ''", // EPIC-058 M7
 	}
 	for _, m := range pushMigrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -620,24 +621,25 @@ type PushItem struct {
 	CreatedAt   int64
 	UpdatedAt   int64
 	LastError   string
+	GapSummary  string // EPIC-058 M7
 }
 
 // EnqueuePush inserts a pending row into push_outbox and returns its id.
 // Profile defaults to "" for legacy callers. Prefer EnqueuePushWithProfile
 // or EnqueueDigestIfDue for new code.
 func (q *Queue) EnqueuePush(kind string, score int, slug, verdict, url string) (int64, error) {
-	return q.EnqueuePushWithProfile(kind, "", score, slug, verdict, url)
+	return q.EnqueuePushWithProfile(kind, "", score, slug, verdict, url, "")
 }
 
 // EnqueuePushWithProfile is the profile-aware primitive used by
 // EnqueueDigestIfDue. Direct callers are discouraged outside the unified
 // helper — EPIC-051 M3 will consolidate call sites behind EnqueueDigestIfDue.
-func (q *Queue) EnqueuePushWithProfile(kind, profile string, score int, slug, verdict, url string) (int64, error) {
+func (q *Queue) EnqueuePushWithProfile(kind, profile string, score int, slug, verdict, url, gapSummary string) (int64, error) {
 	now := time.Now().Unix()
 	res, err := q.db.Exec(
-		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
-		score, slug, verdict, url, kind, profile, now, now, now,
+		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, gap_summary, status, attempts, next_attempt, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+		score, slug, verdict, url, kind, profile, gapSummary, now, now, now,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue push: %w", err)
@@ -666,7 +668,7 @@ type EnqueueDigestResult struct {
 //
 // EPIC-051 M2. See M1 decision in the epic Notes for the NotifyMinScore
 // rationale (Position B — honor as a uniform floor).
-func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score int, slug, verdict, url string) (EnqueueDigestResult, error) {
+func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score int, slug, verdict, url string, gapSummary ...string) (EnqueueDigestResult, error) {
 	cfg := q.PushConfig()
 
 	// Uniform min-score floor (M1 decision).
@@ -707,10 +709,14 @@ func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score in
 		}, nil
 	}
 
+	gs := ""
+	if len(gapSummary) > 0 {
+		gs = gapSummary[0]
+	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 'digest', ?, 'pending', 0, ?, ?, ?)`,
-		score, slug, verdict, url, profile, now, now, now,
+		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, gap_summary, status, attempts, next_attempt, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 'digest', ?, ?, 'pending', 0, ?, ?, ?)`,
+		score, slug, verdict, url, profile, gs, now, now, now,
 	)
 	if err != nil {
 		return EnqueueDigestResult{}, fmt.Errorf("insert digest: %w", err)
@@ -748,7 +754,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 		limit = 50
 	}
 	rows, err := q.db.Query(
-		`SELECT id, score, slug, verdict, url, kind, status, attempts, next_attempt, created_at, updated_at, last_error
+		`SELECT id, score, slug, verdict, url, kind, status, attempts, next_attempt, created_at, updated_at, last_error, gap_summary
 		 FROM push_outbox WHERE status='pending' AND next_attempt <= ? ORDER BY id ASC LIMIT ?`,
 		time.Now().Unix(), limit,
 	)
@@ -759,7 +765,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 	var items []PushItem
 	for rows.Next() {
 		var p PushItem
-		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError); err != nil {
+		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError, &p.GapSummary); err != nil {
 			return nil, err
 		}
 		items = append(items, p)

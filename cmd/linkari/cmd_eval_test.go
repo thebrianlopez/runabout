@@ -27,11 +27,13 @@ func TestRefreshGoldensRewritesAndAudits(t *testing.T) {
 
 	prev := refreshScorerFn
 	t.Cleanup(func() { refreshScorerFn = prev })
-	refreshScorerFn = func(ctx context.Context, profile, content string) (TriageVerdict, error) {
-		return TriageVerdict{
+	refreshScorerFn = func(ctx context.Context, profile, content string) (*Scorecard, error) {
+		return &Scorecard{
 			Score:        82,
 			Verdict:      "fresh",
 			RubricScores: map[string]int{"signal": 82},
+			RawMarkdown:  "## Score: 82/100\n\n## Verdict\nfresh\n",
+			Backend:      "test",
 		}, nil
 	}
 

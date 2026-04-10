@@ -180,8 +180,10 @@ type ActionConfig struct {
 	ArchiveThreshold int        `yaml:"archive_threshold"` // -1 = no auto-archive
 	ProfileMap       string     `yaml:"profile_map"`       // "prefix" = extract profile from id prefix (e.g. uinit_eng → eng)
 	Condition        string     `yaml:"condition,omitempty"` // "env:VAR=VALUE" — only register when condition met
-	InlineTriage     bool       `yaml:"inline_triage,omitempty"` // EPIC-043 M5: run command headlessly, skip tmux window (fire-and-forget)
-	AutoScore        bool       `yaml:"auto_score,omitempty"`    // EPIC-057: enqueue as scored immediately (skip watchdog)
+	InlineTriage        bool `yaml:"inline_triage,omitempty"`        // EPIC-043 M5: run command headlessly, skip tmux window (fire-and-forget)
+	AutoScore           bool `yaml:"auto_score,omitempty"`           // EPIC-057: enqueue as scored immediately (skip watchdog)
+	ConfidenceThreshold int  `yaml:"confidence_threshold,omitempty"` // EPIC-058 M3: minimum score to pass confidence gate (0 = no gate)
+	AutoLaunch          bool `yaml:"auto_launch,omitempty"`          // EPIC-058 M3: auto-launch ginit when gate passes (requires confidence_threshold > 0)
 
 	// Parsed fields (not in YAML)
 	compiledTemplate *template.Template
@@ -438,6 +440,11 @@ func (c *Config) validate() error {
 		default:
 			return fmt.Errorf("action %q: unknown kind %q", a.ID, a.Kind)
 		}
+
+		// EPIC-058 M3: auto_launch requires a positive confidence_threshold.
+		if a.AutoLaunch && a.ConfidenceThreshold <= 0 {
+			return fmt.Errorf("action %q: auto_launch requires confidence_threshold > 0", a.ID)
+		}
 	}
 	return nil
 }
@@ -611,6 +618,12 @@ func mergeActionShallow(base, user ActionConfig) ActionConfig {
 	}
 	if user.AutoScore {
 		out.AutoScore = true
+	}
+	if user.ConfidenceThreshold != 0 {
+		out.ConfidenceThreshold = user.ConfidenceThreshold
+	}
+	if user.AutoLaunch {
+		out.AutoLaunch = true
 	}
 	return out
 }
