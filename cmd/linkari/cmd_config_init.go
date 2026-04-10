@@ -73,6 +73,21 @@ const serverYAMLTemplate = `server:
   #     fashion: 6h
 
 
+  # --- Jira API (outbound) ---
+
+  # Credentials for outbound Jira REST API calls.
+  # All four fields below are sourced from the same SM secret with JSON key selectors.
+  # Break-glass: use literal values or LINKARI_JIRA_API_USERNAME / LINKARI_JIRA_API_PASSWORD /
+  #              LINKARI_JIRA_DOMAIN / LINKARI_PAGERDUTY_TOKEN env vars.
+  jira_api_username: secretsmanager://linkari/jira-webhook#JIRA_API_USERNAME
+  jira_api_password: secretsmanager://linkari/jira-webhook#JIRA_API_PASSWORD
+  jira_domain: secretsmanager://linkari/jira-webhook#JIRA_DOMAIN
+
+  # --- PagerDuty ---
+
+  # API token for PagerDuty integration.
+  pagerduty_token: secretsmanager://linkari/jira-webhook#PAGERDUTY_API_TOKEN
+
   # --- Networking ---
 
   # HTTP listen port (also: LINKARI_PORT env var).

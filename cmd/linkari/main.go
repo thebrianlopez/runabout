@@ -96,9 +96,13 @@ func main() {
 
 func serveCmd() *cobra.Command {
 	var (
-		port          int
-		token         string
-		jiraToken     string
+		port            int
+		token           string
+		jiraToken       string
+		jiraAPIUsername  string
+		jiraAPIPassword string
+		jiraDomain      string
+		pagerDutyToken  string
 		debug         bool
 		firebaseSA    string
 		queueDB       string
@@ -211,6 +215,17 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// flag > LINKARI_JIRA_TOKEN > server.yaml.jira_token > (empty = disabled)
 			jiraToken, _ = resolveField("jira_token", jiraToken, os.Getenv("LINKARI_JIRA_TOKEN"), "",
 				func(s *ServerConfig) string { return s.JiraToken })
+
+			// Outbound Jira API + PagerDuty credentials (linkari/jira-webhook secret).
+			// All optional — empty = integration disabled.
+			jiraAPIUsername, _ = resolveField("jira_api_username", "", os.Getenv("LINKARI_JIRA_API_USERNAME"), "",
+				func(s *ServerConfig) string { return s.JiraAPIUsername })
+			jiraAPIPassword, _ = resolveField("jira_api_password", "", os.Getenv("LINKARI_JIRA_API_PASSWORD"), "",
+				func(s *ServerConfig) string { return s.JiraAPIPassword })
+			jiraDomain, _ = resolveField("jira_domain", "", os.Getenv("LINKARI_JIRA_DOMAIN"), "",
+				func(s *ServerConfig) string { return s.JiraDomain })
+			pagerDutyToken, _ = resolveField("pagerduty_token", "", os.Getenv("LINKARI_PAGERDUTY_TOKEN"), "",
+				func(s *ServerConfig) string { return s.PagerDutyToken })
 
 			if envPort := os.Getenv("LINKARI_PORT"); envPort != "" && !cmd.Flags().Changed("port") {
 				fmt.Sscanf(envPort, "%d", &port)
@@ -508,6 +523,10 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 			srv := NewServer(token, router, queue, ring, debug, fcmTokenSource)
 			srv.jiraToken = jiraToken
+			srv.jiraAPIUsername = jiraAPIUsername
+			srv.jiraAPIPassword = jiraAPIPassword
+			srv.jiraDomain = jiraDomain
+			srv.pagerDutyToken = pagerDutyToken
 			srv.notifyMinScore = notifyMinScore
 			// EPIC-052: caller-wins by default; only true if operator opted
 			// in via `share.heuristic_override_enabled: true` in server.yaml.
