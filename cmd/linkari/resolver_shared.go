@@ -1,7 +1,8 @@
 // resolver_shared.go — side-effect-free secret resolution helper.
 //
-// resolveAllSecrets runs the EPIC-047 resolver pipeline for the four secret
-// fields (token, firebase_sa, tsnet_authkey, jira_token) without any side effects: no
+// resolveAllSecrets runs the EPIC-047 resolver pipeline for the eight secret
+// fields (token, firebase_sa, tsnet_authkey, jira_token, jira_api_username,
+// jira_api_password, jira_domain, pagerduty_token) without any side effects: no
 // materialization, no file writes, no listener binding. Used by both
 // `linkari doctor` (direct consumer) and available for future callers that
 // need resolved values before any server bring-up.
@@ -26,7 +27,8 @@ type SecretResolution struct {
 	Err   error
 }
 
-// resolveAllSecrets resolves token, firebase_sa, tsnet_authkey, and jira_token
+// resolveAllSecrets resolves token, firebase_sa, tsnet_authkey, jira_token,
+// jira_api_username, jira_api_password, jira_domain, and pagerduty_token
 // through the EPIC-047 resolver pipeline. Resolution order for each field:
 //
 //	env > server.yaml literal > server.yaml secretsmanager:// URI > (no default)
@@ -64,6 +66,26 @@ func resolveAllSecrets(ctx context.Context, r *secrets.Resolver, cfg *ServerConf
 			field:  "jira_token",
 			env:    os.Getenv("LINKARI_JIRA_TOKEN"),
 			yamlFn: func(s *ServerConfig) string { return s.JiraToken },
+		},
+		{
+			field:  "jira_api_username",
+			env:    os.Getenv("LINKARI_JIRA_API_USERNAME"),
+			yamlFn: func(s *ServerConfig) string { return s.JiraAPIUsername },
+		},
+		{
+			field:  "jira_api_password",
+			env:    os.Getenv("LINKARI_JIRA_API_PASSWORD"),
+			yamlFn: func(s *ServerConfig) string { return s.JiraAPIPassword },
+		},
+		{
+			field:  "jira_domain",
+			env:    os.Getenv("LINKARI_JIRA_DOMAIN"),
+			yamlFn: func(s *ServerConfig) string { return s.JiraDomain },
+		},
+		{
+			field:  "pagerduty_token",
+			env:    os.Getenv("LINKARI_PAGERDUTY_TOKEN"),
+			yamlFn: func(s *ServerConfig) string { return s.PagerDutyToken },
 		},
 	}
 
