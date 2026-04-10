@@ -54,6 +54,7 @@ Checks:
   token            — bearer token resolvable
   firebase_sa      — firebase service account resolvable
   tsnet_authkey    — tsnet auth key resolvable
+  jira_token       — Jira bearer token resolvable (optional)
   aws_identity     — AWS STS caller identity (only when SM URIs present)
   xdg_config_dir   — ~/.config/linkari/ exists and is writable
   xdg_cache_dir    — ~/.cache/linkari/ exists and is writable

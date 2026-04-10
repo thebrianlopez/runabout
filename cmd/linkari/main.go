@@ -98,6 +98,7 @@ func serveCmd() *cobra.Command {
 	var (
 		port          int
 		token         string
+		jiraToken     string
 		debug         bool
 		firebaseSA    string
 		queueDB       string
@@ -205,6 +206,11 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			if token == "" {
 				return fmt.Errorf("bearer token required: set --token, LINKARI_TOKEN, or server.yaml token")
 			}
+
+			// EPIC-057: jira_token — optional scoped bearer for ginit_* actions.
+			// flag > LINKARI_JIRA_TOKEN > server.yaml.jira_token > (empty = disabled)
+			jiraToken, _ = resolveField("jira_token", jiraToken, os.Getenv("LINKARI_JIRA_TOKEN"), "",
+				func(s *ServerConfig) string { return s.JiraToken })
 
 			if envPort := os.Getenv("LINKARI_PORT"); envPort != "" && !cmd.Flags().Changed("port") {
 				fmt.Sscanf(envPort, "%d", &port)
@@ -501,6 +507,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				)
 			}
 			srv := NewServer(token, router, queue, ring, debug, fcmTokenSource)
+			srv.jiraToken = jiraToken
 			srv.notifyMinScore = notifyMinScore
 			// EPIC-052: caller-wins by default; only true if operator opted
 			// in via `share.heuristic_override_enabled: true` in server.yaml.

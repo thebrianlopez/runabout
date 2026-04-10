@@ -18,6 +18,7 @@ func newDoctorCmdForTest(t *testing.T, tmpDir string, extraArgs []string) (*byte
 	t.Setenv("LINKARI_TOKEN", "")
 	t.Setenv("LINKARI_FIREBASE_SA", "")
 	t.Setenv("TS_AUTHKEY", "")
+	t.Setenv("LINKARI_JIRA_TOKEN", "")
 
 	cmd := doctorCmd()
 	var out bytes.Buffer
@@ -165,6 +166,7 @@ func TestDoctor_AllChecksPresent(t *testing.T) {
 		"  token: \"test-literal-token\"\n" +
 		"  firebase_sa: \"file://" + fakeSA + "\"\n" +
 		"  tsnet_authkey: \"tskey-test\"\n" +
+		"  jira_token: \"jira-test-token\"\n" +
 		"  log_file: \"" + filepath.Join(dir, "linkari.log") + "\"\n"
 	if err := os.WriteFile(yamlPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write server.yaml: %v", err)
@@ -186,7 +188,7 @@ func TestDoctor_AllChecksPresent(t *testing.T) {
 	}
 
 	required := []string{
-		"server_yaml", "token", "firebase_sa", "tsnet_authkey",
+		"server_yaml", "token", "firebase_sa", "tsnet_authkey", "jira_token",
 		"xdg_config_dir", "xdg_cache_dir", "xdg_state_dir",
 		"tsnet_state", "firebase_sa_cache", "log_file",
 	}

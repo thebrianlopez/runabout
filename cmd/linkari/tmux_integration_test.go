@@ -53,3 +53,41 @@ func TestNewWindow_PreservesSpaceInName(t *testing.T) {
 		t.Errorf("window name %q not found in session\ngot windows: %v", windowName, names)
 	}
 }
+
+// EPIC-057 M4: ginit_* action sends the validated Jira key to the tmux pane
+// via send-keys -l. This proves the command template renders correctly and
+// the literal text reaches tmux without shell re-interpretation.
+func TestGinitSendKeys_Integration(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not found")
+	}
+
+	session := fmt.Sprintf("linkari-ginit-test-%d", os.Getpid())
+	exactSession := "=" + session
+
+	t.Cleanup(func() {
+		_ = exec.Command("tmux", "kill-session", "-t", exactSession).Run()
+	})
+
+	// Create a session with cat so send-keys text is captured in the pane.
+	if err := exec.Command("tmux", "new-session", "-d", "-s", session, "cat").Run(); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// Send literal text via exec.Command (same argv as TmuxRunner.SendKeys).
+	exactTarget := "=" + session + ":0"
+	cmd := exec.Command("tmux", "send-keys", "-t", exactTarget, "-l", "ginit PERSONAL-123")
+	logTmuxExec(cmd)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("send-keys failed: %v: %s", err, string(out))
+	}
+
+	// Capture pane content and verify the literal text arrived.
+	out, err := exec.Command("tmux", "capture-pane", "-t", exactSession+":0", "-p").Output()
+	if err != nil {
+		t.Fatalf("capture-pane: %v", err)
+	}
+	if !strings.Contains(string(out), "ginit PERSONAL-123") {
+		t.Errorf("pane content missing 'ginit PERSONAL-123'\ngot: %s", string(out))
+	}
+}
