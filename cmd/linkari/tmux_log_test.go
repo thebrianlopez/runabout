@@ -115,6 +115,8 @@ func TestPosixJoin_RoundTrip(t *testing.T) {
 		{"tmux", "send-keys", "-t", "=linkari:0", "-l", `echo "quoted"`},
 		{"tmux", "send-keys", "-t", "=linkari:0", "-l", "has'squote"},
 		{"tmux", "set-option", "-p", "-t", "=linkari:{end}", "remain-on-exit", "failed"},
+		// EPIC-057 M4: hostile Jira summary with shell metachars, backticks, $, emoji, newline.
+		{"tmux", "send-keys", "-t", "=linkari:0", "-l", "ginit PROJ-42 # title: `rm -rf` $HOME \xf0\x9f\x94\xa5\ninjected"},
 	}
 
 	for _, argv := range cases {

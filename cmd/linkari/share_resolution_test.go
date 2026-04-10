@@ -10,7 +10,7 @@ import (
 
 func testCfgIndex() map[string]*ActionConfig {
 	profiles := []string{"eng", "life", "travel", "fashion", "music", "finance", "dining"}
-	idx := make(map[string]*ActionConfig, len(profiles))
+	idx := make(map[string]*ActionConfig, len(profiles)*2)
 	for _, p := range profiles {
 		id := "uinit_" + p
 		idx[id] = &ActionConfig{
@@ -18,6 +18,18 @@ func testCfgIndex() map[string]*ActionConfig {
 			Kind:       KindTemplate,
 			ProfileMap: "prefix",
 			Target:     "linkari:0",
+		}
+	}
+	// EPIC-057: ginit_* actions use the same profile prefix scheme.
+	for _, p := range profiles {
+		id := "ginit_" + p
+		idx[id] = &ActionConfig{
+			ID:              id,
+			Kind:            KindTemplate,
+			ProfileMap:      "prefix",
+			Target:          "linkari:0",
+			CommandTemplate: "ginit {{.Text}}",
+			AutoScore:       true,
 		}
 	}
 	return idx
@@ -39,6 +51,14 @@ func TestResolveShareAction_CallerWins(t *testing.T) {
 		{"uinit_music", "music"},
 		{"uinit_finance", "finance"},
 		{"uinit_dining", "dining"},
+		// EPIC-057: ginit_* actions also resolve via caller-wins Branch 4.
+		{"ginit_eng", "eng"},
+		{"ginit_life", "life"},
+		{"ginit_travel", "travel"},
+		{"ginit_fashion", "fashion"},
+		{"ginit_music", "music"},
+		{"ginit_finance", "finance"},
+		{"ginit_dining", "dining"},
 	}
 	for _, c := range cases {
 		req := &ShareRequest{Action: c.action, Profile: c.profile, Type: "url", URL: "https://example.com"}

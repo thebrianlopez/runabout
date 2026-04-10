@@ -1,7 +1,7 @@
 // resolver_shared.go — side-effect-free secret resolution helper.
 //
-// resolveAllSecrets runs the EPIC-047 resolver pipeline for the three secret
-// fields (token, firebase_sa, tsnet_authkey) without any side effects: no
+// resolveAllSecrets runs the EPIC-047 resolver pipeline for the four secret
+// fields (token, firebase_sa, tsnet_authkey, jira_token) without any side effects: no
 // materialization, no file writes, no listener binding. Used by both
 // `linkari doctor` (direct consumer) and available for future callers that
 // need resolved values before any server bring-up.
@@ -26,8 +26,8 @@ type SecretResolution struct {
 	Err   error
 }
 
-// resolveAllSecrets resolves token, firebase_sa, and tsnet_authkey through
-// the EPIC-047 resolver pipeline. Resolution order for each field:
+// resolveAllSecrets resolves token, firebase_sa, tsnet_authkey, and jira_token
+// through the EPIC-047 resolver pipeline. Resolution order for each field:
 //
 //	env > server.yaml literal > server.yaml secretsmanager:// URI > (no default)
 //
@@ -59,6 +59,11 @@ func resolveAllSecrets(ctx context.Context, r *secrets.Resolver, cfg *ServerConf
 			field:  "tsnet_authkey",
 			env:    os.Getenv("TS_AUTHKEY"),
 			yamlFn: func(s *ServerConfig) string { return s.TSNetAuthKey },
+		},
+		{
+			field:  "jira_token",
+			env:    os.Getenv("LINKARI_JIRA_TOKEN"),
+			yamlFn: func(s *ServerConfig) string { return s.JiraToken },
 		},
 	}
 

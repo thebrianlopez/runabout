@@ -158,6 +158,13 @@ func (r *Router) ResolveShare(req *ShareRequest, heuristicOverrideEnabled bool) 
 	return resolveShareAction(req, r.cfgIndex, heuristicOverrideEnabled)
 }
 
+// LookupAction returns the ActionConfig for a given action ID, or nil if not found.
+func (r *Router) LookupAction(actionID string) *ActionConfig {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfgIndex[actionID]
+}
+
 // ArchiveThreshold returns the archive threshold for a given action/profile
 // using this router's live actions config. Falls back to the package-level
 // `archiveThreshold` helper (also config-driven) when no in-memory action

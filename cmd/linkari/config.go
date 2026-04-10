@@ -180,6 +180,7 @@ type ActionConfig struct {
 	ProfileMap       string     `yaml:"profile_map"`       // "prefix" = extract profile from id prefix (e.g. uinit_eng → eng)
 	Condition        string     `yaml:"condition,omitempty"` // "env:VAR=VALUE" — only register when condition met
 	InlineTriage     bool       `yaml:"inline_triage,omitempty"` // EPIC-043 M5: run command headlessly, skip tmux window (fire-and-forget)
+	AutoScore        bool       `yaml:"auto_score,omitempty"`    // EPIC-057: enqueue as scored immediately (skip watchdog)
 
 	// Parsed fields (not in YAML)
 	compiledTemplate *template.Template
@@ -203,6 +204,7 @@ type Config struct {
 type ServerConfig struct {
 	Port           int    `yaml:"port"`
 	Token          string `yaml:"token"`           // discouraged: prefer LINKARI_TOKEN env
+	JiraToken      string `yaml:"jira_token"`      // EPIC-057: scoped bearer for ginit_* actions; secretsmanager:// URI or literal
 	QueueDB        string `yaml:"queue_db"`
 	FirebaseSA     string `yaml:"firebase_sa"`
 	LogFile        string `yaml:"log_file"`
@@ -602,6 +604,34 @@ func mergeActionShallow(base, user ActionConfig) ActionConfig {
 	if user.InlineTriage {
 		out.InlineTriage = true
 	}
+	if user.AutoScore {
+		out.AutoScore = true
+	}
+	return out
+}
+
+// sharedProfiles is the canonical profile list shared by uinit_* and ginit_*.
+// Keep in sync with ginit.fish's profile→component mapping.
+var sharedProfiles = []string{"eng", "life", "travel", "fashion", "music", "finance", "dining"}
+
+// ginitDefaults generates ginit_<profile> ActionConfig entries for all shared
+// profiles. These use KindTemplate with AutoScore=true so Jira-sourced rows
+// bypass the RelayedWatchdog (EPIC-057).
+func ginitDefaults() []ActionConfig {
+	out := make([]ActionConfig, len(sharedProfiles))
+	for i, p := range sharedProfiles {
+		out[i] = ActionConfig{
+			ID:              "ginit_" + p,
+			Label:           "Jira (" + p + ")",
+			Icon:            p,
+			Type:            "text",
+			Target:          "linkari:0",
+			Kind:            KindTemplate,
+			CommandTemplate: "ginit {{.Text}}",
+			ProfileMap:      "prefix",
+			AutoScore:       true,
+		}
+	}
 	return out
 }
 
@@ -637,6 +667,7 @@ func builtinConfig() *Config {
 				Condition: "env:ATLASSIAN_DOMAIN=grindr.atlassian.net"},
 		},
 	}
+	cfg.Actions = append(cfg.Actions, ginitDefaults()...)
 	// Compile templates/regexes.
 	cfg.validate()
 	return cfg

@@ -222,6 +222,29 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 	return id, nil
 }
 
+// EnqueueScored inserts a share request as pre-scored (status=scored, score=0).
+// Used by auto_score actions (EPIC-057 ginit_*) so the RelayedWatchdog never
+// sweeps these rows — they skip the pending→relayed→scored progression.
+func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := q.db.Exec(
+		`INSERT INTO queue (url, text, type, action, profile, status, score, verdict, queued_at, scored_at)
+		 VALUES (?, ?, ?, ?, ?, 'scored', 0, ?, ?, ?)`,
+		req.URL, req.Text, req.Type, req.Action, req.Profile, verdict, now, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("enqueue scored: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	slog.Debug("queue enqueued (auto-scored)",
+		"event_type", "queue_enqueue_scored",
+		"id", id,
+		"type", req.Type,
+		"verdict", verdict,
+	)
+	return id, nil
+}
+
 const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,'')"
 
 // Pending returns all items with status=pending, ordered by id ASC (FIFO).
@@ -426,6 +449,41 @@ func (q *Queue) ListArchivedCursor(profile, status string, beforeID int64, limit
 	if profile != "" {
 		sqlStr += " AND profile=?"
 		args = append(args, profile)
+	}
+	sqlStr += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+	return q.query(sqlStr, args...)
+}
+
+// ListArchivedCursorTyped extends ListArchivedCursor with a type filter.
+// itemType "jira" matches ginit_* actions; "url" matches non-ginit actions;
+// empty string disables the filter. No schema migration required — type is
+// synthesized from the action column prefix at query time (EPIC-057).
+func (q *Queue) ListArchivedCursorTyped(profile, status, itemType string, beforeID int64, limit int) ([]QueueItem, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if status == "" {
+		status = "archived"
+	}
+	if beforeID <= 0 {
+		beforeID = math.MaxInt64
+	}
+	sqlStr := "SELECT " + queueCols + " FROM queue WHERE id<?"
+	args := []any{beforeID}
+	if status != "all" {
+		sqlStr += " AND status=?"
+		args = append(args, status)
+	}
+	if profile != "" {
+		sqlStr += " AND profile=?"
+		args = append(args, profile)
+	}
+	switch itemType {
+	case "jira":
+		sqlStr += " AND action LIKE 'ginit_%'"
+	case "url":
+		sqlStr += " AND action NOT LIKE 'ginit_%'"
 	}
 	sqlStr += " ORDER BY id DESC LIMIT ?"
 	args = append(args, limit)
