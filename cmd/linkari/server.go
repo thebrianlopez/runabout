@@ -170,6 +170,9 @@ type Server struct {
 
 // NewServer creates a new Server with the given bearer token, router, and optional queue.
 func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug bool, fcmTS oauth2.TokenSource) *Server {
+	if router != nil && queue != nil {
+		router.SetQueue(queue)
+	}
 	return &Server{
 		token:          token,
 		router:         router,

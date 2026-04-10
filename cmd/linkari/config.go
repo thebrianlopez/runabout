@@ -184,6 +184,7 @@ type ActionConfig struct {
 	AutoScore           bool `yaml:"auto_score,omitempty"`           // EPIC-057: enqueue as scored immediately (skip watchdog)
 	ConfidenceThreshold int  `yaml:"confidence_threshold,omitempty"` // EPIC-058 M3: minimum score to pass confidence gate (0 = no gate)
 	AutoLaunch          bool `yaml:"auto_launch,omitempty"`          // EPIC-058 M3: auto-launch ginit when gate passes (requires confidence_threshold > 0)
+	ServerScore         bool `yaml:"server_score,omitempty"`         // EPIC-060: score uinit_* actions server-side via Jina+Haiku (no tmux window)
 
 	// Parsed fields (not in YAML)
 	compiledTemplate *template.Template
@@ -625,6 +626,9 @@ func mergeActionShallow(base, user ActionConfig) ActionConfig {
 	if user.AutoLaunch {
 		out.AutoLaunch = true
 	}
+	if user.ServerScore {
+		out.ServerScore = true
+	}
 	return out
 }
 
@@ -661,25 +665,25 @@ func builtinConfig() *Config {
 		Actions: []ActionConfig{
 			{ID: "uinit_eng", Label: "Linkari (Eng)", Icon: "eng", Type: "url", Target: "linkari:0", Kind: KindTemplate,
 				CommandTemplate: `uinit --auto-resume {{if and .Profile (ne .Profile "eng")}}--profile {{.Profile}} {{end}}{{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 80},
+				ProfileMap: "prefix", ArchiveThreshold: 80, ServerScore: true},
 			{ID: "uinit_life", Label: "Linkari (Life)", Icon: "life", Type: "url", Target: "linkari:0", Kind: KindTemplate,
 				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: -1},
+				ProfileMap: "prefix", ArchiveThreshold: -1, ServerScore: true},
 			{ID: "uinit_travel", Label: "Linkari (Travel)", Icon: "travel", Type: "url", Target: "linkari:0", Kind: KindTemplate,
 				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 80},
+				ProfileMap: "prefix", ArchiveThreshold: 80, ServerScore: true},
 			{ID: "uinit_fashion", Label: "Linkari (Fashion)", Icon: "fashion", Type: "url", Target: "linkari:0", Kind: KindTemplate,
 				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 80},
+				ProfileMap: "prefix", ArchiveThreshold: 80, ServerScore: true},
 			{ID: "uinit_music", Label: "Linkari (Music)", Icon: "music", Type: "url", Target: "linkari:0", Kind: KindTemplate,
 				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 80},
+				ProfileMap: "prefix", ArchiveThreshold: 80, ServerScore: true},
 			{ID: "uinit_finance", Label: "Linkari (Finance)", Icon: "finance", Type: "url", Target: "linkari:0", Kind: KindTemplate,
 				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 70},
+				ProfileMap: "prefix", ArchiveThreshold: 70, ServerScore: true},
 			{ID: "uinit_dining", Label: "Linkari (Dining)", Icon: "dining", Type: "url", Target: "linkari:0", Kind: KindTemplate,
 				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 70},
+				ProfileMap: "prefix", ArchiveThreshold: 70, ServerScore: true},
 			{ID: "ginit", Label: "ginit", Icon: "work", Type: "text", Target: "JIRA:0", Kind: KindRegex,
 				Pattern: `[A-Z][A-Z0-9]+-[0-9]+`, CommandTemplate: "ginit {{.Match}} --yolo",
 				Condition: "env:ATLASSIAN_DOMAIN=grindr.atlassian.net"},
