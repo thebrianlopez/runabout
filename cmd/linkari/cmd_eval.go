@@ -71,6 +71,10 @@ type Golden struct {
 	// Raw triage markdown — preserved so prompt-format regressions are
 	// debuggable even if the score happens to land within tolerance.
 	RawMarkdown string `json:"raw_markdown"`
+	// EPIC-058 M8: extended golden fields for regression coverage.
+	Gaps          []string `json:"gaps,omitempty"`
+	SourceType    string   `json:"source_type,omitempty"`
+	PromptVersion string   `json:"prompt_version,omitempty"`
 	// Skip signals that the scorer could not produce a comparable score
 	// this run (parse failure after repair, malformed verdict, noise-gate
 	// hit). The eval runner treats Skip as neither pass nor fail — it is
@@ -134,15 +138,20 @@ Default fixtures directory (both subcommands), in priority order:
 
 // refreshScorerFn is the indirection point tests stub for
 // `linkari eval refresh-goldens`. Production path loads the profile
-// manifest and calls the JSON Haiku contract (haikuVerdictWithRepair).
+// manifest and calls the JSON Haiku contract via Evaluator (EPIC-058 M2).
 // Tests swap in a deterministic fake.
-var refreshScorerFn = func(ctx context.Context, profile, content string) (TriageVerdict, error) {
+var refreshScorerFn = func(ctx context.Context, profile, content string) (*Scorecard, error) {
 	_, sysPrompt, err := loadProfileTemplate(profile)
 	if err != nil {
-		return TriageVerdict{}, fmt.Errorf("load template: %w", err)
+		return nil, fmt.Errorf("load template: %w", err)
 	}
-	v, _, err := haikuVerdictWithRepair(ctx, sysPrompt, truncateRunes(content, contentTruncationRunes))
-	return v, err
+	eval := HaikuJSONEvaluator{}
+	sc, err := eval.Evaluate(ctx, truncateRunes(content, contentTruncationRunes), sysPrompt)
+	if err != nil {
+		return nil, err
+	}
+	sc.SourceType = "eval-refresh"
+	return sc, nil
 }
 
 func evalRefreshGoldensCmd() *cobra.Command {
@@ -188,31 +197,29 @@ is bumped to the refresh timestamp.`,
 			}
 
 			type pending struct {
-				path     string
-				prior    int
-				fixture  Fixture
-				verdict  TriageVerdict
-				rendered string
+				path      string
+				prior     int
+				fixture   Fixture
+				scorecard *Scorecard
 			}
 			var refreshed []pending
 			for _, fix := range fixtures {
-				v, err := refreshScorerFn(ctx, fix.Profile, fix.Content)
+				sc, err := refreshScorerFn(ctx, fix.Profile, fix.Content)
 				if err != nil {
 					return fmt.Errorf("rescore %s: %w", fix.ID, err)
 				}
 				refreshed = append(refreshed, pending{
-					path:     filepath.Join(fixturesDir, fix.ID+".json"),
-					prior:    fix.Golden.Score,
-					fixture:  fix,
-					verdict:  v,
-					rendered: v.RenderMarkdown(),
+					path:      filepath.Join(fixturesDir, fix.ID+".json"),
+					prior:     fix.Golden.Score,
+					fixture:   fix,
+					scorecard: sc,
 				})
 			}
 
 			fmt.Fprintf(os.Stderr, "refresh-goldens: %d fixture(s) in %s\n", len(refreshed), fixturesDir)
 			for _, p := range refreshed {
-				delta := p.verdict.Score - p.prior
-				fmt.Fprintf(os.Stderr, "  %s  %d → %d  (Δ%+d)\n", p.fixture.ID, p.prior, p.verdict.Score, delta)
+				delta := p.scorecard.Score - p.prior
+				fmt.Fprintf(os.Stderr, "  %s  %d → %d  (Δ%+d)\n", p.fixture.ID, p.prior, p.scorecard.Score, delta)
 			}
 
 			if dryRun {
@@ -235,9 +242,9 @@ is bumped to the refresh timestamp.`,
 				out := p.fixture
 				out.CapturedAt = now
 				out.Golden = Golden{
-					Score:         p.verdict.Score,
-					Verdict:       p.verdict.Verdict,
-					RawMarkdown:   p.rendered,
+					Score:         p.scorecard.Score,
+					Verdict:       p.scorecard.Verdict,
+					RawMarkdown:   p.scorecard.RawMarkdown,
 					RefreshedFrom: &prior,
 				}
 				f, err := os.Create(p.path)
@@ -377,6 +384,10 @@ func evalRunCmd() *cobra.Command {
 						fix.ID, got.Score, fix.Golden.Score, delta, tolerance)
 					failures++
 					continue
+				}
+				// EPIC-058 M8: shape warnings for scorecard completeness.
+				if len(got.Gaps) == 0 && got.Score > 0 && !got.Skip {
+					fmt.Printf("WARN %s: no gaps in scorecard (score=%d)\n", fix.ID, got.Score)
 				}
 				if verbose {
 					fmt.Printf("OK   %s: score=%d golden=%d delta=±%d\n",
