@@ -260,17 +260,15 @@ func TestScoreURLAsync_NilQueueNoPanic(t *testing.T) {
 	// No panic — test completes normally.
 }
 
-// 7. Route() returns server-score sentinel for uinit_* actions.
-func TestRoute_UinitReturnsServerScoreSentinel(t *testing.T) {
+// 7. Route() returns server-score sentinel for uinit_auto.
+func TestRoute_UinitAutoReturnsServerScoreSentinel(t *testing.T) {
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, builtinConfig(), false)
-	// No queue — scoreURLAsync goroutine will silently skip persistence.
 
 	req := &ShareRequest{
-		Type:    "url",
-		Action:  "uinit_eng",
-		Profile: "eng",
-		URL:     "https://example.com",
+		Type:   "url",
+		Action: "uinit_auto",
+		URL:    "https://example.com",
 	}
 	msg, err := router.Route(req)
 	if err != nil {
@@ -281,46 +279,35 @@ func TestRoute_UinitReturnsServerScoreSentinel(t *testing.T) {
 	}
 }
 
-// 8. Route() does NOT set ServerScore path for ginit_* actions (EPIC-057
-//    invariant: ginit still uses tmux). Route will error because no tmux is
-//    running, but the error must NOT be the server-score sentinel.
-func TestRoute_GinitDoesNotUseServerScorePath(t *testing.T) {
+// 8. ginit_auto does NOT use ServerScore path (uses AutoScore/EnqueueScored).
+func TestRoute_GinitAutoDoesNotUseServerScorePath(t *testing.T) {
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, builtinConfig(), false)
 
-	// ginit_eng requires ATLASSIAN_DOMAIN to be present in builtinConfig — only
-	// assert the server-score path is NOT taken when the action is present.
-	ac := router.LookupAction("ginit_eng")
+	ac := router.LookupAction("ginit_auto")
 	if ac == nil {
-		t.Skip("ginit_eng not registered (ATLASSIAN_DOMAIN not set) — skipping path assertion")
+		t.Fatal("ginit_auto not found in builtinConfig")
 	}
 	if ac.ServerScore {
-		t.Errorf("ginit_eng.ServerScore = true, want false — ginit must not use server-side scoring path")
+		t.Errorf("ginit_auto.ServerScore = true, want false")
 	}
 	if !ac.AutoScore {
-		t.Errorf("ginit_eng.AutoScore = false, want true — ginit must use EnqueueScored path")
+		t.Errorf("ginit_auto.AutoScore = false, want true")
 	}
 }
 
-// 9. All 7 uinit_* actions in builtinConfig are ServerScore=true.
-func TestBuiltinConfig_AllUinitActionsAreServerScore(t *testing.T) {
+// 9. uinit_auto in builtinConfig is ServerScore=true.
+func TestBuiltinConfig_UinitAutoIsServerScore(t *testing.T) {
 	cfg := builtinConfig()
-	profiles := []string{"eng", "life", "travel", "fashion", "music", "finance", "dining"}
-	index := make(map[string]*ActionConfig, len(cfg.Actions))
-	for i := range cfg.Actions {
-		index[cfg.Actions[i].ID] = &cfg.Actions[i]
-	}
-	for _, p := range profiles {
-		id := "uinit_" + p
-		ac, ok := index[id]
-		if !ok {
-			t.Errorf("builtinConfig missing action %q", id)
-			continue
-		}
-		if !ac.ServerScore {
-			t.Errorf("action %q: ServerScore = false, want true (EPIC-060 M1)", id)
+	for _, a := range cfg.Actions {
+		if a.ID == "uinit_auto" {
+			if !a.ServerScore {
+				t.Errorf("uinit_auto.ServerScore = false, want true")
+			}
+			return
 		}
 	}
+	t.Error("uinit_auto not found in builtinConfig")
 }
 
 // 10. fetchJinaContent timeout: a server that hangs past the deadline returns
@@ -381,5 +368,156 @@ func TestUnsupportedPipelineRE(t *testing.T) {
 		if unsupportedPipelineRE.MatchString(u) {
 			t.Errorf("expected %q NOT to match unsupportedPipelineRE", u)
 		}
+	}
+}
+
+// EPIC-061 M3: classifyURLProfile heuristic tests.
+func TestClassifyURLProfile(t *testing.T) {
+	cases := []struct {
+		url     string
+		want    string
+		matched bool
+	}{
+		{"https://github.com/golang/go", "eng", true},
+		{"https://stackoverflow.com/q/123", "eng", true},
+		{"https://arxiv.org/abs/1706.03762", "eng", true},
+		{"https://www.booking.com/hotel/nyc", "travel", true},
+		{"https://www.airbnb.com/rooms/42", "travel", true},
+		{"https://open.spotify.com/track/abc", "music", true},
+		{"https://www.bloomberg.com/markets", "finance", true},
+		{"https://www.yelp.com/biz/restaurant", "dining", true},
+		{"https://www.zara.com/us/dress", "fashion", true},
+		{"https://www.tourismboard.bz/retire", "travel", true},  // new entry
+		{"https://retirement.gov/benefits", "life", true},        // new entry
+		{"https://www.example.com/unknown", "eng", false},        // fallback — not matched
+		{"https://www.reddit.com/r/golang", "eng", false},        // fallback
+	}
+	for _, c := range cases {
+		got, matched := classifyURLProfile(c.url)
+		if got != c.want {
+			t.Errorf("classifyURLProfile(%q) = %q, want %q", c.url, got, c.want)
+		}
+		if matched != c.matched {
+			t.Errorf("classifyURLProfile(%q) matched=%v, want %v", c.url, matched, c.matched)
+		}
+	}
+}
+
+// EPIC-061 M3: classificationPreamble format.
+func TestClassificationPreamble(t *testing.T) {
+	p := classificationPreamble("eng", "https://github.com/golang/go")
+	if !strings.Contains(p, "eng") || !strings.Contains(p, "github.com") {
+		t.Errorf("preamble should contain profile and URL: %q", p)
+	}
+}
+
+// EPIC-061 M3: scoreURLAsync auto-classifies empty profile (domain matched).
+func TestScoreURLAsync_AutoClassifiesEmptyProfile(t *testing.T) {
+	srv := jinaBodyServer(t, 200, "some engineering content about golang")
+	installJinaServer(t, srv)
+	isolateEventsDir(t)
+
+	eval := &stubEvaluator{score: 85, verdict: "good"}
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	// Enqueue a row first so ScoreByURL can find it.
+	_, err := q.Enqueue(&ShareRequest{
+		Action: "uinit_auto", Type: "url", URL: "https://github.com/golang/go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty profile → should auto-classify to "eng" from github.com (domain matched).
+	runScoreAsyncSync(t, "https://github.com/golang/go", "", q, eval)
+
+	// Score 85 triggers auto-archive. Check archived items.
+	items, err := q.List("archived", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) == 0 {
+		t.Fatal("expected archived item (score 85 >= threshold)")
+	}
+	if items[0].Profile != "eng" {
+		t.Errorf("profile = %q, want eng (auto-classified from github.com)", items[0].Profile)
+	}
+}
+
+// Content classification: when domain falls through, Haiku classifies content.
+func TestScoreURLAsync_ContentClassifiesFallbackProfile(t *testing.T) {
+	srv := jinaBodyServer(t, 200, "Belize tourism board retirement program — live abroad in paradise.")
+	installJinaServer(t, srv)
+	isolateEventsDir(t)
+
+	// Stub the content classifier to return "travel".
+	prev := execContentClassify
+	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+		return "travel", nil
+	}
+	t.Cleanup(func() { execContentClassify = prev })
+
+	eval := &stubEvaluator{score: 72, verdict: "interesting"}
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	_, err := q.Enqueue(&ShareRequest{
+		Action: "uinit_auto", Type: "url", URL: "https://belizean-programs.example.com/relocate",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty profile + unknown domain → domain falls through to eng, then content
+	// classifier overrides to "travel".
+	runScoreAsyncSync(t, "https://belizean-programs.example.com/relocate", "", q, eval)
+
+	items, err := q.List("", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, it := range items {
+		if strings.Contains(it.URL, "belizean") && it.Score != nil {
+			found = true
+			if it.Profile != "travel" {
+				t.Errorf("profile = %q, want travel (content-classified)", it.Profile)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a scored queue row for belizean-programs URL")
+	}
+}
+
+// classifyContentProfile unit tests.
+func TestClassifyContentProfile(t *testing.T) {
+	cases := []struct {
+		name     string
+		response string
+		err      error
+		want     string
+	}{
+		{"exact match", "travel", nil, "travel"},
+		{"with whitespace", "  dining\n", nil, "dining"},
+		{"uppercase", "FINANCE", nil, "finance"},
+		{"verbose response", "The best profile is travel for this content.", nil, "travel"},
+		{"unparseable", "I don't know what to say", nil, ""},
+		{"error from haiku", "", fmt.Errorf("timeout"), ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prev := execContentClassify
+			execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+				return c.response, c.err
+			}
+			t.Cleanup(func() { execContentClassify = prev })
+
+			got := classifyContentProfile(context.Background(), "some content")
+			if got != c.want {
+				t.Errorf("classifyContentProfile() = %q, want %q", got, c.want)
+			}
+		})
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -174,16 +175,20 @@ func (r *Router) LookupAction(actionID string) *ActionConfig {
 }
 
 // ArchiveThreshold returns the archive threshold for a given action/profile
-// using this router's live actions config. Falls back to the package-level
-// `archiveThreshold` helper (also config-driven) when no in-memory action
-// matches — this covers profiles not listed in actions.yaml but present in
-// the cached default config.
+// using this router's live actions config. With EPIC-061 auto-profile, the
+// single uinit_auto action's threshold applies to all profiles. Falls back
+// to the package-level archiveThreshold helper when no match is found.
 func (r *Router) ArchiveThreshold(profile string) int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	for _, a := range r.actionsCfg {
-		if a.ProfileMap == "prefix" {
+		switch a.ProfileMap {
+		case "auto":
+			if strings.HasPrefix(a.ID, "uinit_") && a.ArchiveThreshold != 0 {
+				return a.ArchiveThreshold
+			}
+		case "prefix":
 			suffix := strings.TrimPrefix(a.ID, "uinit_")
 			if suffix == profile {
 				return a.ArchiveThreshold
@@ -195,17 +200,16 @@ func (r *Router) ArchiveThreshold(profile string) int {
 
 // archiveThreshold returns the archive threshold for a profile using the
 // actions config loaded from ~/.config/linkari/actions.yaml (or the builtin
-// fallback). EPIC-043 M4: replaces the legacy hardcoded switch with a
-// config-driven lookup so thresholds are edited in one place — the YAML.
-// Unknown profiles fall back to the config's default_archive_threshold.
+// fallback). EPIC-061: checks uinit_auto (ProfileMap=auto) first, then
+// falls back to prefix-based lookup for user overrides, then default.
 func archiveThreshold(profile string) int {
 	cfg := loadArchiveThresholdConfig()
 	for i := range cfg.Actions {
 		a := &cfg.Actions[i]
-		if a.ProfileMap != "prefix" {
-			continue
+		if a.ProfileMap == "auto" && strings.HasPrefix(a.ID, "uinit_") && a.ArchiveThreshold != 0 {
+			return a.ArchiveThreshold
 		}
-		if strings.TrimPrefix(a.ID, "uinit_") == profile {
+		if a.ProfileMap == "prefix" && strings.TrimPrefix(a.ID, "uinit_") == profile {
 			return a.ArchiveThreshold
 		}
 	}
@@ -221,8 +225,7 @@ func archiveThreshold(profile string) int {
 // caller actually sent. Reason is empty when the resolved value matches the
 // received value (i.e. the caller-wins default held). Reason is non-empty
 // whenever the helper rewrote either field; the string names the code site
-// that made the override (e.g. "bare_uinit_pinned:uinit_eng",
-// "unknown_uinit_profile_pinned:uinit_eng").
+// that made the override (e.g. "jira_auto_route", "domain_heuristic").
 type ShareResolution struct {
 	ReceivedAction  string
 	ReceivedProfile string
@@ -231,17 +234,88 @@ type ShareResolution struct {
 	Reason          string
 }
 
+// jiraURLRE matches Jira-hosted issue URLs (atlassian.net/browse/KEY-123 or
+// jira.*/browse/KEY-123). Used by resolveShareAction for auto-routing
+// uinit_auto → ginit_auto on Jira URLs.
+var jiraURLRE = regexp.MustCompile(`(?i)(?:atlassian\.net|jira\.[^/]+)/browse/[A-Z][A-Z0-9]+-\d+`)
+
+// domainProfileMap maps URL domain substrings to profiles. Checked in order
+// by classifyURLProfile; first match wins. Extend this table when adding new
+// profile heuristics.
+var domainProfileMap = []struct {
+	substr  string
+	profile string
+}{
+	// eng
+	{"github.com", "eng"},
+	{"gitlab.com", "eng"},
+	{"stackoverflow.com", "eng"},
+	{"stackexchange.com", "eng"},
+	{"arxiv.org", "eng"},
+	{"hacker-news", "eng"},
+	{"news.ycombinator.com", "eng"},
+	{"dev.to", "eng"},
+	{"medium.com", "eng"},
+	// travel
+	{"booking.com", "travel"},
+	{"airbnb.com", "travel"},
+	{"tripadvisor.com", "travel"},
+	{"expedia.com", "travel"},
+	{"kayak.com", "travel"},
+	{"tourismboard", "travel"},
+	{"travel", "travel"},
+	// life
+	{"retirement", "life"},
+	// music
+	{"spotify.com", "music"},
+	{"soundcloud.com", "music"},
+	{"bandcamp.com", "music"},
+	{"music.apple.com", "music"},
+	// finance
+	{"bloomberg.com", "finance"},
+	{"reuters.com", "finance"},
+	{"wsj.com", "finance"},
+	{"finance.yahoo.com", "finance"},
+	{"cnbc.com", "finance"},
+	// dining
+	{"yelp.com", "dining"},
+	{"opentable.com", "dining"},
+	{"doordash.com", "dining"},
+	{"ubereats.com", "dining"},
+	{"grubhub.com", "dining"},
+	{"nytimes.com/section/food", "dining"},
+	// fashion
+	{"zara.com", "fashion"},
+	{"hm.com", "fashion"},
+	{"asos.com", "fashion"},
+	{"net-a-porter.com", "fashion"},
+	{"vogue.com", "fashion"},
+}
+
+// classifyURLProfile returns the heuristic profile for a URL based on domain
+// matching. The second return value indicates whether a positive domain match
+// was found. When matched is false the "eng" fallback is returned but should
+// not be treated as authoritative — callers may use content-based classification
+// to refine the profile.
+func classifyURLProfile(rawURL string) (string, bool) {
+	lower := strings.ToLower(rawURL)
+	for _, dm := range domainProfileMap {
+		if strings.Contains(lower, dm.substr) {
+			return dm.profile, true
+		}
+	}
+	return "eng", false // fallback — not a positive match
+}
+
 // resolveShareAction is the single chokepoint every queue-writing path goes
 // through to determine the final (action, profile) pair for a share request.
 // It enforces EPIC-052's caller-wins invariant: when received.Action is present
 // in cfgIndex, the received action is preserved verbatim. Unknown or missing
 // actions are returned as-is; Route fails fast on lookup miss.
 //
-// EPIC-060 M2: branches 1–3 (empty-action fallback, bare-"uinit" pin,
-// unknown-"uinit_<profile>" pin) removed. All uinit_* actions are now
-// registered in cfgIndex as ServerScore=true and always hit the caller-wins
-// branch directly. The three legacy fallback paths produced tmux-routable
-// action IDs; that routing no longer exists.
+// EPIC-061 M2: when heuristicOverrideEnabled is true and the action has
+// ProfileMap="auto", domain heuristics classify the URL into a profile and
+// Jira URLs are transparently rerouted from uinit_auto to ginit_auto.
 //
 // The helper is pure (no IO, no logging) so unit tests exercise it directly.
 func resolveShareAction(req *ShareRequest, cfgIndex map[string]*ActionConfig, heuristicOverrideEnabled bool) ShareResolution {
@@ -261,10 +335,30 @@ func resolveShareAction(req *ShareRequest, cfgIndex map[string]*ActionConfig, he
 				profile = parts[1]
 			}
 		}
+
+		// EPIC-061 M2: auto-profile heuristics for ProfileMap="auto".
+		if ac.ProfileMap == "auto" && heuristicOverrideEnabled {
+			// Jira URL auto-routing: uinit_auto → ginit_auto.
+			if actionID == "uinit_auto" && jiraURLRE.MatchString(req.URL) {
+				if _, hasGinit := cfgIndex["ginit_auto"]; hasGinit {
+					res.ResolvedAction = "ginit_auto"
+					res.ResolvedProfile = profile
+					res.Reason = "jira_auto_route"
+					return res
+				}
+			}
+			// Domain heuristic profile classification.
+			if profile == "" {
+				classified, matched := classifyURLProfile(req.URL)
+				profile = classified
+				if !matched {
+					res.Reason = "domain_fallback"
+				}
+			}
+		}
+
 		res.ResolvedAction = actionID
 		res.ResolvedProfile = profile
-		// heuristicOverrideEnabled is a no-op: no heuristic is registered today.
-		_ = heuristicOverrideEnabled
 		return res
 	}
 
@@ -348,7 +442,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	// Queue.ScoreByURL + EnqueueDigestIfDue. Returns immediately; verdict
 	// arrives via FCM push.
 	if ac.ServerScore {
-		go scoreURLAsync(req.URL, req.Profile, r.queue, HaikuMarkdownEvaluator{})
+		go scoreURLAsync(req.URL, req.Profile, r.queue, HaikuJSONEvaluator{})
 		return "Scoring — verdict via FCM", nil
 	}
 

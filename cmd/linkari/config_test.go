@@ -9,33 +9,11 @@ import (
 const testConfigYAML = `
 default_archive_threshold: 80
 actions:
-  - id: uinit_eng
-    label: "Linkari (Eng)"
-    icon: eng
-    type: url
-    target: "linkari:0"
-    kind: template
-    command_template: 'uinit --auto-resume {{if and .Profile (ne .Profile "eng")}}--profile {{.Profile}} {{end}}{{.URL}}'
-    profile_map: prefix
-    archive_threshold: 80
-  - id: uinit_life
-    label: "Linkari (Life)"
-    icon: life
-    type: url
-    target: "linkari:0"
-    kind: template
-    command_template: 'uinit --auto-resume --profile {{.Profile}} {{.URL}}'
-    profile_map: prefix
-    archive_threshold: -1
-  - id: ginit
-    label: ginit
-    icon: work
-    type: text
-    target: "JIRA:0"
-    kind: regex
-    pattern: '[A-Z][A-Z0-9]+-[0-9]+'
-    command_template: 'ginit {{.Match}} --yolo'
-    condition: "env:TEST_GINIT_ENABLED=1"
+  - id: uinit_auto
+    label: "Score (override)"
+    archive_threshold: 90
+  - id: ginit_auto
+    label: "Build (override)"
   - id: clipboard
     label: Clipboard
     icon: paste
@@ -60,13 +38,10 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// EPIC-051 M5: LoadConfig now merges the user file on top of builtins
-	// by ID instead of replacing the action list wholesale. The test file
-	// overrides 3 builtins (uinit_eng, uinit_life, ginit) and adds 1 new
-	// action (clipboard), so the merged result contains all 15 builtins
-	// (8 original + 7 ginit_<profile> from EPIC-057) plus 1 extra = 16.
-	if len(cfg.Actions) != 16 {
-		t.Fatalf("expected 16 merged actions, got %d", len(cfg.Actions))
+	// EPIC-061: builtins are uinit_auto + ginit_auto (2). User file overrides
+	// both and adds 1 extra (clipboard) → merged count = 3.
+	if len(cfg.Actions) != 3 {
+		t.Fatalf("expected 3 merged actions, got %d", len(cfg.Actions))
 	}
 	if cfg.DefaultArchiveThreshold != 80 {
 		t.Errorf("default_archive_threshold = %d, want 80", cfg.DefaultArchiveThreshold)
@@ -105,53 +80,48 @@ func TestLoadConfigValidation(t *testing.T) {
 }
 
 func TestActiveActionsWithCondition(t *testing.T) {
-	path := writeTestConfig(t)
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatal(err)
+	// Condition evaluation still works on user-supplied actions.
+	cfg := &Config{
+		Actions: []ActionConfig{
+			{ID: "cond_test", Kind: KindTemplate, CommandTemplate: "echo",
+				Condition: "env:TEST_COND=1"},
+			{ID: "always_on", Kind: KindTemplate, CommandTemplate: "echo"},
+		},
 	}
-
-	// ginit has condition env:TEST_GINIT_ENABLED=1.
+	cfg.validate()
 	active := cfg.ActiveActions()
 	for _, a := range active {
-		if a.ID == "ginit" {
-			t.Error("ginit should not be active without env var set")
+		if a.ID == "cond_test" {
+			t.Error("cond_test should not be active without env var set")
 		}
 	}
-
-	// Set the env var and check again.
-	t.Setenv("TEST_GINIT_ENABLED", "1")
+	t.Setenv("TEST_COND", "1")
 	active = cfg.ActiveActions()
 	found := false
 	for _, a := range active {
-		if a.ID == "ginit" {
+		if a.ID == "cond_test" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("ginit should be active with env var set")
+		t.Error("cond_test should be active with env var set")
 	}
 }
 
 func TestRenderCommand(t *testing.T) {
-	path := writeTestConfig(t)
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	cfg := builtinConfig()
 
 	tests := []struct {
 		actionID string
 		data     TemplateData
 		want     string
 	}{
-		{"uinit_eng", TemplateData{URL: "https://example.com", Profile: "eng"}, "uinit --auto-resume https://example.com"},
-		{"uinit_eng", TemplateData{URL: "https://example.com", Profile: "travel"}, "uinit --auto-resume --profile travel https://example.com"},
-		{"uinit_life", TemplateData{URL: "https://example.com", Profile: "life"}, "uinit --auto-resume --profile life https://example.com"},
+		{"uinit_auto", TemplateData{URL: "https://example.com", Profile: "eng"}, "uinit --auto-resume --profile eng https://example.com"},
+		{"ginit_auto", TemplateData{Text: "PROJ-123"}, "ginit PROJ-123"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.actionID+"_"+tt.data.Profile, func(t *testing.T) {
+		t.Run(tt.actionID, func(t *testing.T) {
 			var ac *ActionConfig
 			for i := range cfg.Actions {
 				if cfg.Actions[i].ID == tt.actionID {
@@ -174,23 +144,17 @@ func TestRenderCommand(t *testing.T) {
 }
 
 func TestRegexExtractMatch(t *testing.T) {
-	path := writeTestConfig(t)
-	t.Setenv("TEST_GINIT_ENABLED", "1")
-	cfg, err := LoadConfig(path)
-	if err != nil {
+	// Regex extraction is still exercised via a custom action (no builtin
+	// regex actions remain after EPIC-061).
+	ac := ActionConfig{
+		ID: "regex_test", Kind: KindRegex,
+		Pattern: `[A-Z][A-Z0-9]+-[0-9]+`, CommandTemplate: "echo {{.Match}}",
+	}
+	cfg := &Config{Actions: []ActionConfig{ac}}
+	if err := cfg.validate(); err != nil {
 		t.Fatal(err)
 	}
-
-	var ginit *ActionConfig
-	for i := range cfg.Actions {
-		if cfg.Actions[i].ID == "ginit" {
-			ginit = &cfg.Actions[i]
-			break
-		}
-	}
-	if ginit == nil {
-		t.Fatal("ginit action not found")
-	}
+	compiled := &cfg.Actions[0]
 
 	tests := []struct {
 		input string
@@ -201,7 +165,7 @@ func TestRegexExtractMatch(t *testing.T) {
 		{"no key here", ""},
 	}
 	for _, tt := range tests {
-		got := ginit.ExtractMatch(tt.input)
+		got := compiled.ExtractMatch(tt.input)
 		if got != tt.want {
 			t.Errorf("ExtractMatch(%q) = %q, want %q", tt.input, got, tt.want)
 		}
@@ -210,18 +174,22 @@ func TestRegexExtractMatch(t *testing.T) {
 
 func TestBuiltinConfig(t *testing.T) {
 	cfg := builtinConfig()
-	if len(cfg.Actions) < 7 {
-		t.Errorf("expected at least 7 builtin actions, got %d", len(cfg.Actions))
+	// EPIC-061: exactly 2 auto-profile actions.
+	if len(cfg.Actions) != 2 {
+		t.Errorf("expected 2 builtin actions, got %d", len(cfg.Actions))
 	}
-
-	// Verify all templates compiled.
+	ids := map[string]bool{}
 	for _, a := range cfg.Actions {
+		ids[a.ID] = true
 		if a.Kind == KindTemplate && a.compiledTemplate == nil {
 			t.Errorf("action %q: template not compiled", a.ID)
 		}
-		if a.Kind == KindRegex && a.compiledRegex == nil {
-			t.Errorf("action %q: regex not compiled", a.ID)
-		}
+	}
+	if !ids["uinit_auto"] {
+		t.Error("missing uinit_auto")
+	}
+	if !ids["ginit_auto"] {
+		t.Error("missing ginit_auto")
 	}
 }
 
@@ -234,24 +202,27 @@ func contains(s, substr string) bool {
 	return false
 }
 
-// EPIC-057 M1: ginit defaults and AutoScore field tests.
+// EPIC-061: ginit_auto has AutoScore=true; uinit_auto has ServerScore=true.
 
-func TestGinitDefaultsPresent(t *testing.T) {
+func TestBuiltinAutoScoreAndServerScore(t *testing.T) {
 	cfg := builtinConfig()
-	found := map[string]bool{}
 	for _, a := range cfg.Actions {
-		if a.AutoScore {
-			found[a.ID] = true
+		switch a.ID {
+		case "uinit_auto":
+			if !a.ServerScore {
+				t.Error("uinit_auto should have ServerScore=true")
+			}
+			if a.AutoScore {
+				t.Error("uinit_auto should not have AutoScore")
+			}
+		case "ginit_auto":
+			if !a.AutoScore {
+				t.Error("ginit_auto should have AutoScore=true")
+			}
+			if a.ServerScore {
+				t.Error("ginit_auto should not have ServerScore")
+			}
 		}
-	}
-	for _, p := range sharedProfiles {
-		id := "ginit_" + p
-		if !found[id] {
-			t.Errorf("missing ginit default: %s", id)
-		}
-	}
-	if len(found) != len(sharedProfiles) {
-		t.Errorf("expected %d auto_score actions, got %d", len(sharedProfiles), len(found))
 	}
 }
 
@@ -363,31 +334,24 @@ func TestMergeWithBuiltin_EmptyUser(t *testing.T) {
 func TestMergeWithBuiltin_PartialOverride(t *testing.T) {
 	user := &Config{
 		Actions: []ActionConfig{
-			{ID: "uinit_eng", ArchiveThreshold: 95},
-			{ID: "uinit_dining", ArchiveThreshold: -1},
+			{ID: "uinit_auto", ArchiveThreshold: 95},
 		},
 	}
 	merged, err := MergeWithBuiltin(builtinConfig(), user)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	var eng, dining *ActionConfig
+	var uinit *ActionConfig
 	for i := range merged.Actions {
-		switch merged.Actions[i].ID {
-		case "uinit_eng":
-			eng = &merged.Actions[i]
-		case "uinit_dining":
-			dining = &merged.Actions[i]
+		if merged.Actions[i].ID == "uinit_auto" {
+			uinit = &merged.Actions[i]
 		}
 	}
-	if eng == nil || eng.ArchiveThreshold != 95 {
-		t.Errorf("eng override: %+v", eng)
+	if uinit == nil || uinit.ArchiveThreshold != 95 {
+		t.Errorf("uinit_auto override: %+v", uinit)
 	}
-	if eng.CommandTemplate == "" {
-		t.Errorf("eng should retain builtin command template")
-	}
-	if dining == nil || dining.ArchiveThreshold != -1 {
-		t.Errorf("dining override: %+v", dining)
+	if uinit.CommandTemplate == "" {
+		t.Errorf("uinit_auto should retain builtin command template")
 	}
 }
 
@@ -416,25 +380,23 @@ func TestMergeWithBuiltin_AppendsExtras(t *testing.T) {
 func TestMergeWithBuiltin_ParityWithEPIC050(t *testing.T) {
 	// Empirical parity check: a user file that lists only ArchiveThreshold
 	// overrides produces the same archiveThreshold() values as hand-
-	// constructing the merged config. This mirrors the EPIC-050 diagnostic
-	// actions.yaml use case.
+	// constructing the merged config.
 	user := &Config{
 		Actions: []ActionConfig{
-			{ID: "uinit_eng", ArchiveThreshold: 85},
+			{ID: "uinit_auto", ArchiveThreshold: 85},
 		},
 	}
 	merged, err := MergeWithBuiltin(builtinConfig(), user)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	// The merged config should have exactly one eng action with threshold 85
-	// and all other builtin actions with their original thresholds.
 	for _, a := range merged.Actions {
-		if a.ID == "uinit_eng" && a.ArchiveThreshold != 85 {
-			t.Errorf("eng parity: %d", a.ArchiveThreshold)
+		if a.ID == "uinit_auto" && a.ArchiveThreshold != 85 {
+			t.Errorf("uinit_auto parity: %d", a.ArchiveThreshold)
 		}
-		if a.ID == "uinit_finance" && a.ArchiveThreshold != 70 {
-			t.Errorf("finance untouched parity: %d", a.ArchiveThreshold)
+		// ginit_auto should retain default (0) since user didn't override it.
+		if a.ID == "ginit_auto" && a.ArchiveThreshold != 0 {
+			t.Errorf("ginit_auto untouched parity: %d", a.ArchiveThreshold)
 		}
 	}
 }

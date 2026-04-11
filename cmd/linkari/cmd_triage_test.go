@@ -262,14 +262,19 @@ func TestAppendTriageToReadme(t *testing.T) {
 	}
 }
 
-// TestTriageCmd_DryRun exercises the full Cobra command path with --dry-run
-// so we never call out to the real claude CLI in tests.
+// TestTriageScorer_FakeHaiku exercises the triageScorer with a stubbed
+// execHaikuJSON so we never call out to the real claude CLI in tests.
 func TestTriageScorer_FakeHaiku(t *testing.T) {
-	// Stub execHaiku with a deterministic fake that returns a known triage.
-	orig := execHaiku
-	defer func() { execHaiku = orig }()
-	execHaiku = func(_ context.Context, _, _ string) (string, error) {
-		return fixtureCleanMarkdown, nil
+	orig := execHaikuJSON
+	defer func() { execHaikuJSON = orig }()
+	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+		v := TriageVerdict{
+			Score:        52,
+			Verdict:      "TurboQuant WASM test",
+			Tags:         "ai, quantization",
+			RubricScores: map[string]int{"test": 52},
+		}
+		return json.Marshal(v)
 	}
 	// Skip if eng template isn't on disk (CI / clean checkout).
 	if _, _, err := loadProfileTemplate("eng"); err != nil {

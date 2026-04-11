@@ -93,7 +93,7 @@ func TestProfileManifestRender(t *testing.T) {
 		"You are a **technical triage assistant**",
 		"## Noise Gate",
 		"If the content is < 200 characters",
-		"**Score: 0/100 — Skip (no extractable technical content)**",
+		"Verdict: Skip (no extractable technical content)",
 		"## My Context",
 		"## Output Format",
 		"## Verdict",

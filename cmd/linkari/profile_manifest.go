@@ -173,8 +173,9 @@ const systemPromptTemplate = `{{.PersonaIntro}}
 
 ## Noise Gate
 
-If the content is < {{.NoiseGate.MinChars}} characters, {{.NoiseGate.Condition}}, output:
-**Score: 0/100 — Skip ({{.NoiseGate.SkipLabel}})**
+If the content is < {{.NoiseGate.MinChars}} characters, {{.NoiseGate.Condition}}:
+- Score: 0/100
+- Verdict: Skip ({{.NoiseGate.SkipLabel}})
 Do not generate a full evaluation.
 
 {{.PersonaBody}}
