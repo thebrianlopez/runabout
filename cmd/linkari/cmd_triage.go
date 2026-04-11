@@ -64,7 +64,7 @@ func triageCmd() *cobra.Command {
 		contentFile string
 		dryRun      bool
 		noPersist   bool
-		useJSON     bool
+		useMarkdown bool
 	)
 
 	cmd := &cobra.Command{
@@ -137,10 +137,10 @@ the eval harness path).`,
 			}
 
 			var eval Evaluator
-			if useJSON {
-				eval = HaikuJSONEvaluator{}
-			} else {
+			if useMarkdown {
 				eval = HaikuMarkdownEvaluator{}
+			} else {
+				eval = HaikuJSONEvaluator{}
 			}
 			sc, err := eval.Evaluate(ctx, content, sysPrompt)
 			if err != nil {
@@ -257,7 +257,7 @@ the eval harness path).`,
 	cmd.Flags().StringVar(&contentFile, "content-file", "", "content file to score (default: <workspace>/README.md, '-' for stdin)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "assemble + dump prompt, skip Haiku call and persist")
 	cmd.Flags().BoolVar(&noPersist, "no-persist", false, "call Haiku + parse but skip queue write and sidecar (used by eval)")
-	cmd.Flags().BoolVar(&useJSON, "use-json", false, "EPIC-044 M1: use the typed TriageVerdict contract via `claude --json-schema` instead of regex-parsing markdown (per-profile staged rollout flag)")
+	cmd.Flags().BoolVar(&useMarkdown, "use-markdown", false, "fallback to legacy regex-parsed markdown evaluator instead of the default JSON evaluator")
 
 	return cmd
 }
@@ -320,25 +320,52 @@ func haikuEnv() []string {
 		}
 		filtered = append(filtered, kv)
 	}
+	// EPIC-062 M6: suppress CLAUDE.md injection in scoring calls to save ~5-8K tokens.
+	filtered = append(filtered, "CLAUDE_CODE_DISABLE_CLAUDE_MDS=1")
 	return filtered
 }
 
-// runClaudeHaiku shells out to the claude CLI for a single-turn Haiku call,
-// matching _uinit_profile_prompt.fish line 50-53:
+// writeSystemPromptFile writes the system prompt to a temp file and returns
+// the path. The caller must defer os.Remove on the returned path.
+// EPIC-062 M1: --system-prompt-file is used instead of inline --system-prompt.
+func writeSystemPromptFile(prompt string) (string, error) {
+	f, err := os.CreateTemp("", "linkari-sysprompt-*.txt")
+	if err != nil {
+		return "", fmt.Errorf("create system prompt file: %w", err)
+	}
+	if _, err := f.WriteString(prompt); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", fmt.Errorf("write system prompt file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("close system prompt file: %w", err)
+	}
+	return f.Name(), nil
+}
+
+// runClaudeHaiku shells out to the claude CLI for a single-turn Haiku call.
 //
-//	printf '%s' "$content" | env -u CLAUDECODE claude --print \
-//	    --model claude-haiku-4-5-20251001 --max-turns 1 --tools "" \
-//	    --system-prompt "$system_prompt"
-//
-// CLAUDECODE is unset to mirror fish (`env -u CLAUDECODE`) — claude CLI
-// behaves differently when invoked from inside Claude Code itself.
+// EPIC-062: --system-prompt-file replaces the entire default system prompt
+// (including dynamic sections like git status, working dir, memory), so no
+// additional flag is needed to suppress them. --effort low for faster inference,
+// --no-session-persistence to avoid writing session state to disk.
 func runClaudeHaiku(ctx context.Context, systemPrompt, content string) (string, error) {
+	spFile, err := writeSystemPromptFile(systemPrompt)
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(spFile)
+
 	cmd := exec.CommandContext(ctx, "claude",
 		"--print",
 		"--model", claudeModel,
 		"--max-turns", "1",
 		"--tools", "",
-		"--system-prompt", systemPrompt,
+		"--system-prompt-file", spFile,
+		"--effort", "low",
+		"--no-session-persistence",
 	)
 	cmd.Stdin = strings.NewReader(content)
 	cmd.Env = haikuEnv()
@@ -549,7 +576,7 @@ func (triageScorer) Score(fix Fixture) (Golden, error) {
 	// same truncation here so eval is robust against future fixture sources.
 	content := truncateRunes(fix.Content, contentTruncationRunes)
 
-	eval := HaikuMarkdownEvaluator{}
+	eval := HaikuJSONEvaluator{}
 	sc, err := eval.Evaluate(context.Background(), content, sysPrompt)
 	if err != nil {
 		// M6b: scorer brittleness fix. A malformed Haiku response (missing

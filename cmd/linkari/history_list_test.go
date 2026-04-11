@@ -55,7 +55,7 @@ func seedHistoryQueue(t *testing.T) (http.Handler, *Queue) {
 	// EPIC-057: 2 ginit-sourced scored rows for ?type= filter testing.
 	for i := 0; i < 2; i++ {
 		id, err := q.EnqueueScored(&ShareRequest{
-			Action:  "ginit_eng",
+			Action:  "ginit_auto",
 			Profile: "eng",
 			Type:    "text",
 			Text:    fmt.Sprintf("PROJ-%d", 100+i),
@@ -248,7 +248,7 @@ func TestArchiveTypeFilterJira(t *testing.T) {
 		t.Errorf("want 2 jira-scored rows, got %d", len(items))
 	}
 	for _, it := range items {
-		if it.Action != "ginit_eng" {
+		if it.Action != "ginit_auto" {
 			t.Errorf("type=jira leaked non-ginit row: action=%q", it.Action)
 		}
 	}
@@ -266,7 +266,7 @@ func TestArchiveTypeFilterURL(t *testing.T) {
 		t.Errorf("want 5 url-scored rows, got %d", len(items))
 	}
 	for _, it := range items {
-		if it.Action == "ginit_eng" {
+		if it.Action == "ginit_auto" {
 			t.Errorf("type=url should exclude ginit rows: %+v", it)
 		}
 	}

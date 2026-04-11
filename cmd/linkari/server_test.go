@@ -161,16 +161,10 @@ func TestActionsReturnsProfileTagged(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// Expect uinit_eng, uinit_life, uinit_travel, uinit_fashion, uinit_music, uinit_finance, uinit_dining.
-	// ginit is only present when ATLASSIAN_DOMAIN=grindr.atlassian.net.
+	// EPIC-061: expect exactly 2 auto-profile actions.
 	wantIDs := map[string]string{
-		"uinit_eng":     "eng",
-		"uinit_life":    "life",
-		"uinit_travel":  "travel",
-		"uinit_fashion": "fashion",
-		"uinit_music":   "music",
-		"uinit_finance": "finance",
-		"uinit_dining":  "dining",
+		"uinit_auto": "auto",
+		"ginit_auto": "work",
 	}
 	found := 0
 	for _, a := range actions {
@@ -179,34 +173,29 @@ func TestActionsReturnsProfileTagged(t *testing.T) {
 			if a.Icon != wantIcon {
 				t.Errorf("action %q: icon = %q, want %q", a.ID, a.Icon, wantIcon)
 			}
-			if a.Type != "url" {
-				t.Errorf("action %q: type = %q, want %q", a.ID, a.Type, "url")
-			}
 		}
 	}
 	if found != len(wantIDs) {
-		t.Errorf("found %d profile actions, want %d (actions: %+v)", found, len(wantIDs), actions)
+		t.Errorf("found %d actions, want %d (actions: %+v)", found, len(wantIDs), actions)
 	}
 }
 
-func TestProfileExtractionFromAction(t *testing.T) {
+func TestAutoProfileResolution(t *testing.T) {
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, builtinConfig(), false)
 
-	// Route a request with action "uinit_life" — should extract profile "life".
+	// Route uinit_auto — server-score path returns sentinel without tmux.
 	req := &ShareRequest{
 		Type:   "url",
-		Action: "uinit_life",
+		Action: "uinit_auto",
 		URL:    "https://example.com",
 	}
-
-	// Route will call URLHandler.Handle which calls tmux.NewWindow.
-	// We don't have a real tmux, so we expect an error from the tmux call,
-	// but we can verify the profile was extracted by checking req.Profile after routing.
-	router.Route(req)
-
-	if req.Profile != "life" {
-		t.Errorf("profile = %q, want %q", req.Profile, "life")
+	msg, err := router.Route(req)
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if !strings.Contains(msg, "Scoring") {
+		t.Errorf("expected server-score sentinel, got %q", msg)
 	}
 }
 
@@ -496,11 +485,11 @@ func TestProfileFieldInPayload(t *testing.T) {
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, builtinConfig(), false)
 
-	// Explicit profile in payload takes precedence — action extraction
+	// Explicit profile in payload takes precedence — auto-profile
 	// does not overwrite it.
 	req := &ShareRequest{
 		Type:    "url",
-		Action:  "uinit_eng",
+		Action:  "uinit_auto",
 		URL:     "https://example.com",
 		Profile: "finance",
 	}

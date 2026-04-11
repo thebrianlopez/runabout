@@ -127,7 +127,7 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 			})
 			continue
 		}
-		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.GapSummary); err != nil {
+		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary); err != nil {
 			attempts := p.Attempts + 1
 			if attempts >= pushMaxAttempts {
 				_ = s.queue.MarkPushDead(p.ID, err.Error())
@@ -189,11 +189,11 @@ func emitPushEvent(eventType string, meta map[string]interface{}) {
 //	{
 //	  "event": "share_action_resolved",
 //	  "ts": "<utc>",
-//	  "received_action":  "uinit_eng",
-//	  "received_profile": "eng",
-//	  "resolved_action":  "uinit_life",
-//	  "resolved_profile": "life",
-//	  "resolution_reason": "content_heuristic:lifestyle_domain",
+//	  "received_action":  "uinit_auto",
+//	  "received_profile": "",
+//	  "resolved_action":  "uinit_auto",
+//	  "resolved_profile": "travel",
+//	  "resolution_reason": "domain_heuristic",
 //	  "url": "https://example.com",
 //	  "queue_id": 276
 //	}
@@ -217,8 +217,9 @@ func emitShareActionResolved(res ShareResolution, url string, queueID int64) {
 // --- actual FCM delivery (concrete oauth2 signature) ---
 
 // sendOutboxFCM is the single production caller of the FCM HTTP v1 API.
-// Body construction mirrors the deleted sendFCMPush helper.
-func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, gapSummary string) error {
+// EPIC-061: profile parameter added to include auto-classified profile in
+// the FCM data payload so the Android client can display it.
+func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, profile, gapSummary string) error {
 	tok, err := s.fcmTokenSource.Token()
 	if err != nil {
 		return fmt.Errorf("obtaining oauth2 token: %w", err)
@@ -251,6 +252,7 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 				"verdict":     verdict,
 				"url":         url,
 				"score":       fmt.Sprintf("%d", score),
+				"profile":     profile,
 				"gap_summary": gapSummary,
 			},
 			"android": map[string]string{

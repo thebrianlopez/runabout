@@ -178,7 +178,7 @@ type ActionConfig struct {
 	CommandTemplate  string     `yaml:"command_template"` // Go text/template string
 	Pattern          string     `yaml:"pattern"`          // regex for kind=regex
 	ArchiveThreshold int        `yaml:"archive_threshold"` // -1 = no auto-archive
-	ProfileMap       string     `yaml:"profile_map"`       // "prefix" = extract profile from id prefix (e.g. uinit_eng → eng)
+	ProfileMap       string     `yaml:"profile_map"`       // "prefix" = extract from id prefix; "auto" = server-side heuristic (EPIC-061)
 	Condition        string     `yaml:"condition,omitempty"` // "env:VAR=VALUE" — only register when condition met
 	InlineTriage        bool `yaml:"inline_triage,omitempty"`        // EPIC-043 M5: run command headlessly, skip tmux window (fire-and-forget)
 	AutoScore           bool `yaml:"auto_score,omitempty"`           // EPIC-057: enqueue as scored immediately (skip watchdog)
@@ -632,64 +632,38 @@ func mergeActionShallow(base, user ActionConfig) ActionConfig {
 	return out
 }
 
-// sharedProfiles is the canonical profile list shared by uinit_* and ginit_*.
-// Keep in sync with ginit.fish's profile→component mapping.
-var sharedProfiles = []string{"eng", "life", "travel", "fashion", "music", "finance", "dining"}
-
-// ginitDefaults generates ginit_<profile> ActionConfig entries for all shared
-// profiles. These use KindTemplate with AutoScore=true so Jira-sourced rows
-// bypass the RelayedWatchdog (EPIC-057).
-func ginitDefaults() []ActionConfig {
-	out := make([]ActionConfig, len(sharedProfiles))
-	for i, p := range sharedProfiles {
-		out[i] = ActionConfig{
-			ID:              "ginit_" + p,
-			Label:           "Jira (" + p + ")",
-			Icon:            p,
-			Type:            "text",
-			Target:          "linkari:0",
-			Kind:            KindTemplate,
-			CommandTemplate: "ginit {{.Text}}",
-			ProfileMap:      "prefix",
-			AutoScore:       true,
-		}
-	}
-	return out
-}
-
-// builtinConfig returns the hardcoded default config matching the original Go structs.
-// Used as fallback when no actions.yaml exists.
+// builtinConfig returns the hardcoded default config with two auto-profile
+// actions: uinit_auto (score any URL server-side) and ginit_auto (build a
+// Jira workspace). Profile selection is deferred to server-side heuristics
+// in resolveShareAction (EPIC-061).
 func builtinConfig() *Config {
 	cfg := &Config{
 		DefaultArchiveThreshold: 80,
 		Actions: []ActionConfig{
-			{ID: "uinit_eng", Label: "Linkari (Eng)", Icon: "eng", Type: "url", Target: "linkari:0", Kind: KindTemplate,
-				CommandTemplate: `uinit --auto-resume {{if and .Profile (ne .Profile "eng")}}--profile {{.Profile}} {{end}}{{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 80, ServerScore: true},
-			{ID: "uinit_life", Label: "Linkari (Life)", Icon: "life", Type: "url", Target: "linkari:0", Kind: KindTemplate,
+			{
+				ID:              "uinit_auto",
+				Label:           "Score",
+				Icon:            "auto",
+				Type:            "url",
+				Target:          "linkari:0",
+				Kind:            KindTemplate,
 				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: -1, ServerScore: true},
-			{ID: "uinit_travel", Label: "Linkari (Travel)", Icon: "travel", Type: "url", Target: "linkari:0", Kind: KindTemplate,
-				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 80, ServerScore: true},
-			{ID: "uinit_fashion", Label: "Linkari (Fashion)", Icon: "fashion", Type: "url", Target: "linkari:0", Kind: KindTemplate,
-				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 80, ServerScore: true},
-			{ID: "uinit_music", Label: "Linkari (Music)", Icon: "music", Type: "url", Target: "linkari:0", Kind: KindTemplate,
-				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 80, ServerScore: true},
-			{ID: "uinit_finance", Label: "Linkari (Finance)", Icon: "finance", Type: "url", Target: "linkari:0", Kind: KindTemplate,
-				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 70, ServerScore: true},
-			{ID: "uinit_dining", Label: "Linkari (Dining)", Icon: "dining", Type: "url", Target: "linkari:0", Kind: KindTemplate,
-				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
-				ProfileMap: "prefix", ArchiveThreshold: 70, ServerScore: true},
-			{ID: "ginit", Label: "ginit", Icon: "work", Type: "text", Target: "JIRA:0", Kind: KindRegex,
-				Pattern: `[A-Z][A-Z0-9]+-[0-9]+`, CommandTemplate: "ginit {{.Match}} --yolo",
-				Condition: "env:ATLASSIAN_DOMAIN=grindr.atlassian.net"},
+				ProfileMap:      "auto",
+				ServerScore:     true,
+			},
+			{
+				ID:              "ginit_auto",
+				Label:           "Build",
+				Icon:            "work",
+				Type:            "text",
+				Target:          "linkari:0",
+				Kind:            KindTemplate,
+				CommandTemplate: "ginit {{.Text}}",
+				ProfileMap:      "auto",
+				AutoScore:       true,
+			},
 		},
 	}
-	cfg.Actions = append(cfg.Actions, ginitDefaults()...)
 	// Compile templates/regexes.
 	cfg.validate()
 	return cfg

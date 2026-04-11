@@ -528,11 +528,9 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			srv.jiraDomain = jiraDomain
 			srv.pagerDutyToken = pagerDutyToken
 			srv.notifyMinScore = notifyMinScore
-			// EPIC-052: caller-wins by default; only true if operator opted
-			// in via `share.heuristic_override_enabled: true` in server.yaml.
-			if serverFileCfg != nil {
-				srv.shareHeuristicOverride = serverFileCfg.Share.HeuristicOverrideEnabled
-			}
+			// EPIC-061: heuristic override is always on — auto-profile
+			// actions require domain heuristics for profile classification.
+			srv.shareHeuristicOverride = true
 
 			// EPIC-051 M3/M4: install the live push config on the queue so
 			// EnqueueDigestIfDue honors notify_min_score + per-profile

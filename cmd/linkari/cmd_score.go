@@ -119,7 +119,7 @@ For batch evaluation across a fixture set, see EPIC-054 (planned).`,
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			eval := HaikuMarkdownEvaluator{}
+			eval := HaikuJSONEvaluator{}
 			sc, err := eval.Evaluate(ctx, content, sysPrompt)
 			if err != nil {
 				return err

@@ -2,13 +2,15 @@ package main
 
 // EPIC-053 M3: tests for `linkari score` (prompt-iteration CLI).
 //
-// These tests stub execHaiku so no real `claude` invocation is made. The
-// stubbed Haiku returns a canned markdown response that parseTriageMarkdown
-// converts into a TriageResult with a fixed Score/Verdict.
+// These tests stub execHaikuJSON so no real `claude` invocation is made. The
+// stubbed Haiku returns a canned JSON verdict that the HaikuJSONEvaluator
+// parses into a Scorecard with a fixed Score/Verdict.
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +18,7 @@ import (
 	"testing"
 )
 
-// stubHaiku installs a canned execHaiku stub for the duration of the test.
+// stubHaiku installs a canned execHaikuJSON stub for the duration of the test.
 // lastPrompt captures the system prompt used on the most recent call so tests
 // can assert --prompt-file overrides flow through end-to-end.
 type haikuCall struct {
@@ -26,14 +28,23 @@ type haikuCall struct {
 
 func stubHaiku(t *testing.T, score int, verdict string) *atomic.Pointer[haikuCall] {
 	t.Helper()
-	orig := execHaiku
+	orig := execHaikuJSON
 	var last atomic.Pointer[haikuCall]
-	execHaiku = func(ctx context.Context, systemPrompt, content string) (string, error) {
+	execHaikuJSON = func(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
 		last.Store(&haikuCall{prompt: systemPrompt, content: content})
-		md := "## Score: " + itoa(score) + "/100\n\n## Verdict\n" + verdict + "\n\nTags: cli, test\n"
-		return md, nil
+		v := TriageVerdict{
+			Score:        score,
+			Verdict:      verdict,
+			Tags:         "cli, test",
+			RubricScores: map[string]int{"test": score},
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("stub marshal: %w", err)
+		}
+		return b, nil
 	}
-	t.Cleanup(func() { execHaiku = orig })
+	t.Cleanup(func() { execHaikuJSON = orig })
 	return &last
 }
 

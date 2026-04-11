@@ -87,12 +87,39 @@ func TestRenderMarkdown_Snapshot(t *testing.T) {
 	}
 }
 
+func TestTriageVerdict_UnmarshalJSON_NestedObjects(t *testing.T) {
+	// Haiku sometimes returns rubric_scores as {"Novelty": {"score": 15, "rationale": "..."}}
+	// instead of flat integers. The custom UnmarshalJSON must coerce both forms.
+	raw := `{
+		"score": 52,
+		"verdict": "test",
+		"rubric_scores": {
+			"Novelty": {"score": 15, "rationale": "interesting"},
+			"Learnability": 10,
+			"Career Leverage": {"score": 5}
+		}
+	}`
+	var v TriageVerdict
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if v.RubricScores["Novelty"] != 15 {
+		t.Errorf("Novelty = %d, want 15", v.RubricScores["Novelty"])
+	}
+	if v.RubricScores["Learnability"] != 10 {
+		t.Errorf("Learnability = %d, want 10", v.RubricScores["Learnability"])
+	}
+	if v.RubricScores["Career Leverage"] != 5 {
+		t.Errorf("Career Leverage = %d, want 5", v.RubricScores["Career Leverage"])
+	}
+}
+
 func TestParseHaikuEnvelope_Bare(t *testing.T) {
 	b, err := json.Marshal(canonicalVerdict)
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := parseHaikuEnvelope(b)
+	v, _, err := parseHaikuEnvelope(b)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -110,7 +137,7 @@ func TestParseHaikuEnvelope_StringResult(t *testing.T) {
 		"result":   string(inner),
 	}
 	b, _ := json.Marshal(env)
-	v, err := parseHaikuEnvelope(b)
+	v, _, err := parseHaikuEnvelope(b)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -127,7 +154,7 @@ func TestParseHaikuEnvelope_ObjectResult(t *testing.T) {
 		"result":   inner,
 	}
 	b, _ := json.Marshal(env)
-	v, err := parseHaikuEnvelope(b)
+	v, _, err := parseHaikuEnvelope(b)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -145,7 +172,7 @@ func TestParseHaikuEnvelope_StripsCodeFence(t *testing.T) {
 		"result":   fenced,
 	}
 	b, _ := json.Marshal(env)
-	v, err := parseHaikuEnvelope(b)
+	v, _, err := parseHaikuEnvelope(b)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -154,9 +181,46 @@ func TestParseHaikuEnvelope_StripsCodeFence(t *testing.T) {
 	}
 }
 
+func TestParseHaikuEnvelope_ExtractsMeta(t *testing.T) {
+	inner, _ := json.Marshal(canonicalVerdict)
+	env := map[string]any{
+		"type":           "result",
+		"is_error":       false,
+		"result":         string(inner),
+		"total_cost_usd": 0.00123,
+		"usage": map[string]int{
+			"input_tokens":  500,
+			"output_tokens": 100,
+		},
+	}
+	b, _ := json.Marshal(env)
+	v, meta, err := parseHaikuEnvelope(b)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if v.Score != 52 {
+		t.Errorf("score = %d", v.Score)
+	}
+	if meta == nil {
+		t.Fatal("meta is nil")
+	}
+	if meta.CostUSD != 0.00123 {
+		t.Errorf("cost = %f, want 0.00123", meta.CostUSD)
+	}
+	if meta.Usage == nil {
+		t.Fatal("usage is nil")
+	}
+	if meta.Usage.InputTokens != 500 {
+		t.Errorf("input_tokens = %d, want 500", meta.Usage.InputTokens)
+	}
+	if meta.Usage.OutputTokens != 100 {
+		t.Errorf("output_tokens = %d, want 100", meta.Usage.OutputTokens)
+	}
+}
+
 func TestParseHaikuEnvelope_ErrorEnvelope(t *testing.T) {
 	b := []byte(`{"type":"result","subtype":"error","is_error":true,"result":""}`)
-	if _, err := parseHaikuEnvelope(b); err == nil {
+	if _, _, err := parseHaikuEnvelope(b); err == nil {
 		t.Fatal("expected error")
 	}
 }
