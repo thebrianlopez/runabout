@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+// TokenUsage tracks per-call token consumption from the claude CLI JSON envelope.
+// EPIC-062 M2: parsed from the --output-format json response metadata.
+type TokenUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
 // Scorecard is the unified output of any Evaluate() call. It replaces the
 // split between TriageResult (markdown path) and TriageVerdict (JSON path)
 // with a single struct that both paths populate.
@@ -33,6 +40,8 @@ type Scorecard struct {
 	LatencyMs      int64          `json:"latency_ms,omitempty"`
 	PromptVersion  string         `json:"prompt_version,omitempty"` // git SHA of template file
 	SourceType     string         `json:"source_type,omitempty"`    // "cli-triage", "cli-score", "eval-refresh", "eval-fixture"
+	CostUSD        float64        `json:"cost_usd,omitempty"`       // EPIC-062 M2: per-call cost from JSON envelope
+	Usage          *TokenUsage    `json:"usage,omitempty"`           // EPIC-062 M2: per-call token usage
 }
 
 // Evaluator is the backend-agnostic scoring contract. All content
@@ -82,12 +91,12 @@ func (HaikuJSONEvaluator) Name() string { return "claude-haiku-json" }
 
 func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate string) (*Scorecard, error) {
 	start := time.Now()
-	v, _, err := haikuVerdictWithRepair(ctx, promptTemplate, content)
+	v, meta, err := haikuVerdictWithRepair(ctx, promptTemplate, content)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		return nil, fmt.Errorf("haiku-json: %w", err)
 	}
-	return &Scorecard{
+	sc := &Scorecard{
 		Score:          v.Score,
 		Verdict:        v.Verdict,
 		Gaps:           v.ActionItems,
@@ -98,7 +107,30 @@ func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate 
 		ProfileVersion: v.ProfileVersion,
 		Backend:        "claude-haiku-json",
 		LatencyMs:      latency,
-	}, nil
+	}
+	if meta != nil {
+		sc.CostUSD = meta.CostUSD
+		sc.Usage = meta.Usage
+		slog.Info("evaluator: token usage",
+			"backend", "claude-haiku-json",
+			"cost_usd", meta.CostUSD,
+			"input_tokens", tokenCount(meta.Usage, true),
+			"output_tokens", tokenCount(meta.Usage, false),
+			"latency_ms", latency,
+		)
+	}
+	return sc, nil
+}
+
+// tokenCount safely extracts input or output token count from a TokenUsage pointer.
+func tokenCount(u *TokenUsage, input bool) int {
+	if u == nil {
+		return 0
+	}
+	if input {
+		return u.InputTokens
+	}
+	return u.OutputTokens
 }
 
 // GapSummary returns a short human-readable summary of the scorecard's gaps
@@ -128,17 +160,16 @@ func CheckGate(sc *Scorecard, cfg ActionConfig) bool {
 	return sc.Score >= cfg.ConfidenceThreshold
 }
 
-// lookupGinitAction loads the config and returns the ginit_<profile> action
+// lookupGinitAction loads the config and returns the ginit_auto action
 // if it exists and has a confidence threshold configured. Returns nil if
 // the action doesn't exist or the config can't be loaded.
-func lookupGinitAction(profile string) *ActionConfig {
+func lookupGinitAction(_ string) *ActionConfig {
 	cfg, err := LoadConfig("")
 	if err != nil {
 		return nil
 	}
-	actionID := "ginit_" + profile
 	for i := range cfg.Actions {
-		if cfg.Actions[i].ID == actionID {
+		if cfg.Actions[i].ID == "ginit_auto" {
 			return &cfg.Actions[i]
 		}
 	}

@@ -47,10 +47,10 @@ func TestScopedAuthMatrix(t *testing.T) {
 		wantOK  bool
 		wantKind string
 	}{
-		{"mobile-secret", "uinit_eng", true, "mobile"},
-		{"mobile-secret", "ginit_eng", false, "mobile"},
-		{"jira-secret", "uinit_eng", false, "jira"},
-		{"jira-secret", "ginit_eng", true, "jira"},
+		{"mobile-secret", "uinit_auto", true, "mobile"},
+		{"mobile-secret", "ginit_auto", false, "mobile"},
+		{"jira-secret", "uinit_auto", false, "jira"},
+		{"jira-secret", "ginit_auto", true, "jira"},
 	}
 	for _, c := range cases {
 		kind, ok := srv.checkScopedAuth(c.bearer, c.action)
@@ -71,7 +71,7 @@ func TestAutoScoreEnqueuePath(t *testing.T) {
 	defer q.Close()
 
 	req := &ShareRequest{
-		Action:  "ginit_eng",
+		Action:  "ginit_auto",
 		Profile: "eng",
 		Type:    "text",
 		Text:    "PROJ-42",
@@ -95,8 +95,8 @@ func TestAutoScoreEnqueuePath(t *testing.T) {
 	if items[0].Verdict != "workspace_bootstrapped" {
 		t.Errorf("verdict = %q, want workspace_bootstrapped", items[0].Verdict)
 	}
-	if items[0].Action != "ginit_eng" {
-		t.Errorf("action = %q, want ginit_eng", items[0].Action)
+	if items[0].Action != "ginit_auto" {
+		t.Errorf("action = %q, want ginit_auto", items[0].Action)
 	}
 
 	// Verify it does NOT appear in pending (watchdog won't sweep it).

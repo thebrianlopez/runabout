@@ -144,7 +144,7 @@ func TestAutoScoreDoesNotWritePushOutbox(t *testing.T) {
 	defer q.Close()
 
 	req := &ShareRequest{
-		Action:  "ginit_eng",
+		Action:  "ginit_auto",
 		Profile: "eng",
 		Type:    "text",
 		Text:    "PROJ-42",

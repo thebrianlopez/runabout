@@ -24,6 +24,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -44,6 +45,42 @@ type TriageVerdict struct {
 	ProfileVersion int            `json:"profile_version,omitempty"`
 }
 
+// UnmarshalJSON handles model non-compliance where rubric_scores values may
+// arrive as nested objects {"score": 15, "rationale": "..."} instead of flat
+// integers. Coerces both forms into the canonical map[string]int.
+func (v *TriageVerdict) UnmarshalJSON(data []byte) error {
+	// Alias avoids infinite recursion on json.Unmarshal.
+	type Alias TriageVerdict
+	var raw struct {
+		Alias
+		RubricScoresRaw map[string]json.RawMessage `json:"rubric_scores"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*v = TriageVerdict(raw.Alias)
+	v.RubricScores = make(map[string]int, len(raw.RubricScoresRaw))
+	for axis, val := range raw.RubricScoresRaw {
+		val = bytes.TrimSpace(val)
+		// Try plain int first.
+		var n int
+		if err := json.Unmarshal(val, &n); err == nil {
+			v.RubricScores[axis] = n
+			continue
+		}
+		// Try object with "score" field.
+		var obj struct {
+			Score int `json:"score"`
+		}
+		if err := json.Unmarshal(val, &obj); err == nil {
+			v.RubricScores[axis] = obj.Score
+			continue
+		}
+		return fmt.Errorf("rubric_scores[%q]: cannot coerce %s to int", axis, truncateForErr(val))
+	}
+	return nil
+}
+
 // validate is a defense-in-depth pass on top of the CLI's --json-schema
 // validator. The CLI reference describes --json-schema as "validated JSON
 // output matching a JSON Schema" but does not specify whether the validator
@@ -57,7 +94,7 @@ func (v TriageVerdict) validate() error {
 	if strings.TrimSpace(v.Verdict) == "" {
 		return fmt.Errorf("empty verdict")
 	}
-	if len(v.RubricScores) == 0 {
+	if len(v.RubricScores) == 0 && v.Score > 0 {
 		return fmt.Errorf("rubric_scores missing")
 	}
 	for axis, score := range v.RubricScores {
@@ -106,9 +143,23 @@ var execHaikuJSON = runClaudeHaikuJSON
 // runClaudeHaiku but adds `--output-format json --json-schema <schema>` so
 // the CLI returns a result envelope containing schema-validated JSON.
 //
+// EPIC-062: --system-prompt-file replaces the entire default system prompt
+// (including dynamic sections), so no additional flag is needed to suppress
+// them. --effort low, --no-session-persistence.
+//
 // Returns the raw stdout bytes (the envelope) so the caller can decide
 // whether to parse it directly or run a repair turn.
 func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
+	systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching the provided schema." +
+		" This applies to ALL cases including noise-gated/skip content." +
+		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
+		" Never output markdown formatting like **Score:** — always use the JSON schema."
+	spFile, err := writeSystemPromptFile(systemPrompt)
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(spFile)
+
 	cmd := exec.CommandContext(ctx, "claude",
 		"--print",
 		"--model", claudeModel,
@@ -116,13 +167,12 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 		"--tools", "",
 		"--output-format", "json",
 		"--json-schema", schema,
-		"--system-prompt", systemPrompt,
+		"--system-prompt-file", spFile,
+		"--effort", "low",
+		"--no-session-persistence",
 	)
 	cmd.Stdin = strings.NewReader(content)
-
-	// Mirror fish `env -u CLAUDECODE` (cmd_triage.go runClaudeHaiku).
-	env := haikuEnv()
-	cmd.Env = env
+	cmd.Env = haikuEnv()
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -137,41 +187,58 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 	return out, nil
 }
 
+// envelopeMeta holds the token usage and cost metadata extracted from the
+// claude --output-format json envelope. EPIC-062 M2.
+type envelopeMeta struct {
+	CostUSD      float64    `json:"total_cost_usd"`
+	Usage        *TokenUsage `json:"-"`
+}
+
 // parseHaikuEnvelope unwraps a `claude --output-format json` payload into
-// a TriageVerdict. The envelope shape ships nested:
+// a TriageVerdict and envelope metadata (token usage + cost).
 //
-//	{"type":"result", "result":"<json-string-or-object>", "is_error":false, ...}
+// The envelope shape ships nested:
+//
+//	{"type":"result", "result":"<json-string-or-object>", "is_error":false,
+//	 "total_cost_usd":0.001, "usage":{"input_tokens":500,"output_tokens":100}, ...}
 //
 // Some claude versions return `result` as a JSON-encoded string, others as
 // a raw object. Both forms are accepted. As a courtesy fallback the parser
 // also accepts the bare TriageVerdict directly (so unit tests can pass a
 // raw verdict without constructing the envelope).
-func parseHaikuEnvelope(stdout []byte) (TriageVerdict, error) {
+func parseHaikuEnvelope(stdout []byte) (TriageVerdict, *envelopeMeta, error) {
 	stdout = bytes.TrimSpace(stdout)
 	if len(stdout) == 0 {
-		return TriageVerdict{}, fmt.Errorf("empty envelope")
+		return TriageVerdict{}, nil, fmt.Errorf("empty envelope")
 	}
 
 	// Bare verdict shortcut (test/dev path).
 	var bare TriageVerdict
 	if err := json.Unmarshal(stdout, &bare); err == nil && len(bare.RubricScores) > 0 {
-		return bare, bare.validate()
+		return bare, nil, bare.validate()
 	}
 
 	var env struct {
-		Type    string          `json:"type"`
-		Subtype string          `json:"subtype"`
-		Result  json.RawMessage `json:"result"`
-		IsError bool            `json:"is_error"`
+		Type         string          `json:"type"`
+		Subtype      string          `json:"subtype"`
+		Result       json.RawMessage `json:"result"`
+		IsError      bool            `json:"is_error"`
+		TotalCostUSD float64         `json:"total_cost_usd"`
+		Usage        *TokenUsage     `json:"usage"`
 	}
 	if err := json.Unmarshal(stdout, &env); err != nil {
-		return TriageVerdict{}, fmt.Errorf("envelope decode: %w", err)
+		return TriageVerdict{}, nil, fmt.Errorf("envelope decode: %w", err)
 	}
 	if env.IsError {
-		return TriageVerdict{}, fmt.Errorf("claude error envelope (subtype=%s)", env.Subtype)
+		return TriageVerdict{}, nil, fmt.Errorf("claude error envelope (subtype=%s)", env.Subtype)
 	}
 	if len(env.Result) == 0 {
-		return TriageVerdict{}, fmt.Errorf("envelope has empty result")
+		return TriageVerdict{}, nil, fmt.Errorf("envelope has empty result")
+	}
+
+	meta := &envelopeMeta{
+		CostUSD: env.TotalCostUSD,
+		Usage:   env.Usage,
 	}
 
 	raw := bytes.TrimSpace(env.Result)
@@ -179,7 +246,7 @@ func parseHaikuEnvelope(stdout []byte) (TriageVerdict, error) {
 	if raw[0] == '"' {
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
-			return TriageVerdict{}, fmt.Errorf("envelope result string: %w", err)
+			return TriageVerdict{}, meta, fmt.Errorf("envelope result string: %w", err)
 		}
 		raw = bytes.TrimSpace([]byte(s))
 		// Strip ```json fences if Haiku wrapped it.
@@ -188,12 +255,12 @@ func parseHaikuEnvelope(stdout []byte) (TriageVerdict, error) {
 
 	var v TriageVerdict
 	if err := json.Unmarshal(raw, &v); err != nil {
-		return TriageVerdict{}, fmt.Errorf("verdict decode: %w (body=%s)", err, truncateForErr(raw))
+		return TriageVerdict{}, meta, fmt.Errorf("verdict decode: %w (body=%s)", err, truncateForErr(raw))
 	}
 	if err := v.validate(); err != nil {
-		return TriageVerdict{}, fmt.Errorf("verdict validate: %w", err)
+		return TriageVerdict{}, meta, fmt.Errorf("verdict validate: %w", err)
 	}
-	return v, nil
+	return v, meta, nil
 }
 
 // stripCodeFence trims a leading ```json / trailing ``` fence pair, if present.
@@ -222,16 +289,16 @@ func truncateForErr(b []byte) string {
 
 // haikuVerdictWithRepair calls the JSON Haiku path and, on parse/validate
 // failure, retries exactly once with the prior error pasted into the system
-// prompt. Returns the validated verdict plus the raw envelope bytes from
-// whichever turn succeeded (the second turn overwrites the first on repair).
-func haikuVerdictWithRepair(ctx context.Context, sysPrompt, content string) (TriageVerdict, []byte, error) {
+// prompt. Returns the validated verdict, envelope metadata (token usage/cost),
+// and the raw envelope bytes from whichever turn succeeded.
+func haikuVerdictWithRepair(ctx context.Context, sysPrompt, content string) (TriageVerdict, *envelopeMeta, error) {
 	stdout, err := execHaikuJSON(ctx, sysPrompt, content, triageVerdictSchema)
 	if err != nil {
 		return TriageVerdict{}, nil, err
 	}
-	v, perr := parseHaikuEnvelope(stdout)
+	v, meta, perr := parseHaikuEnvelope(stdout)
 	if perr == nil {
-		return v, stdout, nil
+		return v, meta, nil
 	}
 
 	repairPrompt := sysPrompt +
@@ -242,9 +309,9 @@ func haikuVerdictWithRepair(ctx context.Context, sysPrompt, content string) (Tri
 	if err != nil {
 		return TriageVerdict{}, nil, fmt.Errorf("repair haiku: %w (orig parse: %v)", err, perr)
 	}
-	v2, perr2 := parseHaikuEnvelope(stdout2)
+	v2, meta2, perr2 := parseHaikuEnvelope(stdout2)
 	if perr2 != nil {
 		return TriageVerdict{}, nil, fmt.Errorf("repair parse: %w (orig: %v)", perr2, perr)
 	}
-	return v2, stdout2, nil
+	return v2, meta2, nil
 }

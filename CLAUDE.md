@@ -1,11 +1,11 @@
 # Runabout
 
-Go devtools monorepo — six CLI tools for shell optimization and personal workflows.
+Go devtools monorepo — nine CLI tools for shell optimization and personal workflows.
 
 ## Module
 
 - Root module: `github.com/blo-grindr/runabout`
-- Go: 1.25
+- Go: 1.25+ (go.work: 1.26.1, linkari module: 1.26.1)
 - Core dependency: `github.com/spf13/cobra`
 
 ## Architecture

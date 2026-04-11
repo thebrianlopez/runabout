@@ -1,7 +1,7 @@
 # runabout
 
 [![CI](https://github.com/blo-grindr/runabout/actions/workflows/test.yml/badge.svg)](https://github.com/blo-grindr/runabout/actions/workflows/test.yml)
-[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev)
 ![Tools](https://img.shields.io/badge/tools-9_CLIs-blue)
 
 Go devtools monorepo — nine CLI tools for shell optimization and personal workflows.
@@ -13,20 +13,12 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 - **shellprof** — fish shell function profiler with call graphs
 - **hookval** — validate Claude hook signal contract against schema
 - **effiscore** — Anthropic API efficiency scoring via Datadog metrics
-- **linkari** — Android share → tmux webhook bridge
+- **linkari** — Android share → tmux webhook bridge with AI-powered triage scoring
 - **wasend** — send WhatsApp messages from the command line
 - **fetchpage** — headless webpage fetcher via Playwright
 - **protonexport** — export ProtonMail conversations to markdown
 
-## Status
-
-All 9 tools build and pass tests on Go 1.26. wasend Cloud API support planned, pending permanent access token.
-
-- `linkari` expanded — 7 share profiles, SQLite queue/replay, scoring/archiving pipeline, digest endpoint, Tailscale Funnel (`--tsnet`), TLS support, JSONL observability
-- `effiscore` added: Anthropic API efficiency scoring via DD Metrics API — 5 weighted dimensions, composite score with tier classification
-- `mdq list` extended with `--group-by dir`, `--exclude`, and glob guard (`--headings` hint)
-
-**Last Updated:** 2026-04-08
+**Last Updated:** 2026-04-11
 
 ## Install
 
@@ -147,7 +139,7 @@ Five dimensions: Cache Hit Rate, Cache Reuse Factor, I/O Ratio, Token Savings, M
 
 ## linkari
 
-Webhook service that bridges Android share actions to tmux sessions. Receives `POST /share` from Android (HTTP Shortcuts or standalone APK), validates and routes payloads to tmux via a local HTTP server or Tailscale Funnel.
+Webhook service that bridges Android share actions to tmux sessions with AI-powered content triage. Receives `POST /share` from Android (HTTP Shortcuts or standalone APK), validates and routes payloads to tmux via a local HTTP server or Tailscale Funnel. Shared URLs are scored by an LLM triage pipeline (Haiku) using per-profile prompt manifests, with auto-archiving and FCM push notifications for high-value content.
 
 **First run (fresh host):**
 
@@ -180,9 +172,9 @@ linkari serve --tsnet --tsnet-authkey $TS_AUTHKEY --token $LINKARI_TOKEN \
   --firebase-sa ~/.config/linkari/firebase-sa.json --notify-min-score 10 --debug
 ```
 
-If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `linkari serve` automatically falls back to local-only mode with a WARN log.
+If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `linkari serve` automatically falls back to local-only mode with a WARN log. Config is hot-reloadable via SIGHUP (actions, archive thresholds, push config, watchdog tuning).
 
-**Actions:** `text` (paste into existing pane), `url` (opens new tmux window via `uinit` with profile), `ginit` (parses Jira key, opens `ginit <KEY>`). Seven URL profiles: eng, life, travel, fashion, music, finance, dining. URL windows use `remain-on-exit failed` — auto-close on success, stay open on error.
+**Actions:** `text` (paste into existing pane), `url` (opens new tmux window via `uinit` with profile), `ginit` (parses Jira key, opens `ginit <KEY>`). Seven URL profiles: eng, life, travel, fashion, music, finance, dining. URL windows use `remain-on-exit failed` — auto-close on success, stay open on error. Domain heuristics auto-classify URLs into profiles (e.g. github.com → eng, booking.com → travel).
 
 **Endpoints:**
 
@@ -196,19 +188,39 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 | `/digest` | GET | Recent scored items (last 24h) |
 | `/notify` | POST | Score callback → FCM push when above threshold |
 | `/register` | POST | Register FCM device token for push notifications |
+| `/search` | POST | Full-text search over scored queue items |
+| `/push/test` | POST | Test FCM push delivery |
 | `/healthz` | GET | Health check (local only) |
 | `/logs` | GET | Last 100 log lines (local only) |
 | `/logs/stream` | GET | SSE realtime log stream (local only) |
 
 All endpoints except `/healthz`, `/logs`, and `/logs/stream` require bearer token auth. Rate limited to 30 req/min per IP.
 
-**Queue & replay:** Every share is persisted to SQLite before routing. If tmux is unavailable, the request returns `"queued"` and a background goroutine replays pending items every 30s when tmux comes back.
+**Queue & replay:** Every share is persisted to SQLite before routing. If tmux is unavailable, the request returns `"queued"` and a background goroutine replays pending items every 30s when tmux comes back. A `RelayedWatchdog` marks rows stuck in `relayed` status past a configurable max age as `failed` with `scoring_timeout`.
 
-**Scoring & archiving:** `POST /queue/{id}/score` accepts a score (0-100), tags, and slug. Items auto-archive when score meets the profile threshold (80 default, 70 for finance/dining, disabled for life). Archived high-score items trigger an FCM digest push at most once per hour.
+**Scoring & archiving:** `POST /queue/{id}/score` accepts a score (0-100), tags, and slug. Items auto-archive when score meets the profile threshold (80 default, 70 for finance/dining, disabled for life). Archived high-score items trigger an FCM digest push at most once per hour (configurable per-profile throttle via `server.yaml`).
 
-**Prompt iteration (`linkari score`):** Dedicated CLI entrypoint for re-running the scoring pipeline against a single URL without touching the `/share` path, score cache, or tmux. Supports `--prompt-file` to swap in a candidate system prompt, `--no-push` to suppress the FCM digest, and `--dry-run` to skip DB writes entirely. Reuses `Queue.ScoreByURL` + `EnqueueDigestIfDue` verbatim — same dual-writer invariant as `/queue/{id}/score` (EPIC-053). For batch evaluation across a fixture corpus, see EPIC-054 (planned).
+**CLI subcommands:**
 
-**Observability:** JSONL event logging to `~/.config/linkari/linkari_events.jsonl` — emits `linkari_share` and `linkari_digest` events with profile, domain, duration, and status.
+| Subcommand | Description |
+|------------|-------------|
+| `serve` | Start the webhook HTTP server (local + optional Tailscale Funnel) |
+| `config init` | Scaffold `~/.config/linkari/server.yaml` |
+| `doctor` | Validate secrets and directories without booting |
+| `score <url>` | Run the triage scoring pipeline against a single URL |
+| `score-write` | Write a pre-computed score directly (legacy/scripting) |
+| `triage <url>` | Run profile-aware LLM triage (Haiku) and persist the verdict |
+| `eval capture` | Snapshot triage inputs+outputs into a fixture JSON |
+| `eval run` | Replay fixtures against the scorer; exit non-zero on regression |
+| `profile lint` | Validate profile YAML manifests against the v1 schema |
+| `search <query>` | Full-text search over scored queue items |
+| `backfill [dir]` | Ingest existing `_score.json` files into the queue database |
+| `digest` | List recent scored items (CLI equivalent of `GET /digest`) |
+| `completion` | Generate shell completions (fish/bash/zsh/powershell) |
+
+**Triage pipeline:** `linkari triage` loads a per-profile YAML manifest from `docs/prompts/profiles/`, renders a system prompt via `text/template`, shells out to the `claude` CLI for a single-turn Haiku call, parses the returned markdown verdict, and persists the score through `Queue.ScoreByURL`. The eval harness (`linkari eval`) supports capture/replay of fixture corpora for regression testing across prompt iterations.
+
+**Observability:** JSONL event logging to `~/.config/linkari/linkari_events.jsonl` — emits `linkari_share`, `linkari_digest`, and `share_scoring_timeout` events with profile, domain, duration, and status. Structured logging via slog with configurable format (`text`/`json`) and level.
 
 ## wasend
 
@@ -268,9 +280,12 @@ make install  # go install → ~/go/bin
 make core     # builds mdq, perfgate, shellprof, hookval, effiscore
 make clean    # removes bin/
 go test ./... # run root module tests
+cd cmd/linkari && go test ./...    # linkari (separate module)
+cd cmd/wasend && go test ./...     # wasend (separate module)
+cd cmd/protonexport && go test ./... # protonexport (separate module)
 ```
 
-Version, commit, and build date are injected at build time via ldflags.
+Version, commit, and build date are injected at build time via ldflags. The Go workspace (`go.work`) ties the root module to four separate-module satellites: linkari, fetchpage, wasend, and protonexport.
 
 ## Telemetry
 
@@ -281,13 +296,13 @@ This telemetry feeds topology consumers like `agrad` (graduation signals) and `a
 ## Layout
 
 ```
-cmd/mdq/              # mdq entry point
-cmd/perfgate/         # perfgate entry point
-cmd/shellprof/        # shellprof entry point
-cmd/hookval/          # hookval entry point
-cmd/effiscore/        # effiscore entry point
+cmd/mdq/              # mdq entry point (root module)
+cmd/perfgate/         # perfgate entry point (root module)
+cmd/shellprof/        # shellprof entry point (root module)
+cmd/hookval/          # hookval entry point (root module)
+cmd/effiscore/        # effiscore entry point (root module)
 cmd/fetchpage/        # fetchpage entry point (separate module)
-cmd/linkari/          # linkari entry point (separate module)
+cmd/linkari/          # linkari entry point (separate module, ~60 files)
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
 internal/mdq/         # markdown parser, query engine, output formatting
