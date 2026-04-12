@@ -257,8 +257,9 @@ type ServerConfig struct {
 	FfmpegPath   string `yaml:"ffmpeg_path,omitempty"`   // path to ffmpeg binary (default: ffmpeg on PATH)
 
 	// EPIC-001: Google Sign-In config.
-	GoogleClientID string `yaml:"google_client_id"` // secretsmanager:// URI or literal; resolved via resolveField pipeline
-	SessionTTLDays int    `yaml:"session_ttl_days"` // session token TTL in days (default 90)
+	GoogleClientID string   `yaml:"google_client_id"` // secretsmanager:// URI or literal; resolved via resolveField pipeline
+	SessionTTLDays int      `yaml:"session_ttl_days"` // session token TTL in days (default 90)
+	InviteCodes    []string `yaml:"invite_codes"`     // static invite codes seeded into DB at startup
 }
 
 // ShareConfig controls how share requests map their received action/profile to

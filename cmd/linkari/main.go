@@ -541,6 +541,16 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// actions require domain heuristics for profile classification.
 			srv.shareHeuristicOverride = true
 
+			// EPIC-001: seed static invite codes from server.yaml.
+			if serverFileCfg != nil && len(serverFileCfg.InviteCodes) > 0 && queue != nil {
+				n, err := queue.SeedInviteCodes(serverFileCfg.InviteCodes)
+				if err != nil {
+					slog.Error("seed invite codes", "error", err)
+				} else if n > 0 {
+					slog.Info("seeded invite codes", "new", n, "total", len(serverFileCfg.InviteCodes))
+				}
+			}
+
 			// EPIC-001: wire Google Sign-In verifier when client ID is configured.
 			if googleClientID != "" {
 				srv.googleVerifier = NewGoogleTokenVerifier(googleClientID)
