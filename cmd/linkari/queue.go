@@ -1029,6 +1029,28 @@ func (q *Queue) CreateInviteCode() (string, error) {
 	return code, nil
 }
 
+// SeedInviteCodes inserts static invite codes (from server.yaml) into the DB,
+// skipping any that already exist. Returns the count of newly inserted codes.
+func (q *Queue) SeedInviteCodes(codes []string) (int, error) {
+	var seeded int
+	now := time.Now().Unix()
+	for _, code := range codes {
+		if code == "" {
+			continue
+		}
+		res, err := q.db.Exec(
+			`INSERT OR IGNORE INTO invite_codes (code, created_at) VALUES (?, ?)`,
+			code, now,
+		)
+		if err != nil {
+			return seeded, fmt.Errorf("seed invite code %q: %w", code, err)
+		}
+		n, _ := res.RowsAffected()
+		seeded += int(n)
+	}
+	return seeded, nil
+}
+
 // generateInviteCode returns a cryptographically random 8-char alphanumeric string.
 func generateInviteCode() string {
 	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
