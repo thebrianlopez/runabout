@@ -89,6 +89,22 @@ go.work               # Go workspace: root + cmd/protonexport + cmd/wasend
 - All core tools call `telemetry.Instrument`/`Emit` around `rootCmd.Execute()`
 - Satellite tools use local `instrument`/`emit` (same pattern, unexported)
 
+## Observation Emission
+
+When completing work in this repo, emit Type 3 observation dispatches to `~/code/personal/linkari-workspace/.claude-dispatch/` for cross-cutting concerns the workspace coordinator should know about. Write observations when you notice issues during normal work — not as a dedicated investigation step.
+
+**Categories to watch for:**
+- `versioning` — Go version skew across modules, missing git tags, inconsistent toolchain directives
+- `dependency` — divergent dependency versions across satellite modules, stale transitive deps
+- `drift` — CLAUDE.md claims that don't match code reality, stale invariant documentation
+- `hygiene` — large uncommitted changesets, dead code accumulation, test coverage gaps
+
+**Emission target:** Always write to `~/code/personal/linkari-workspace/.claude-dispatch/` (the workspace agent's CWD), not this repo's `.claude-dispatch/`.
+
+**File naming:** `obs_runabout_<short_id>.json`
+
+**Schema:** See Type 3 in `~/.claude/rules/dispatch-system.md`.
+
 ## Auto-Dispatch (Epic Coordination)
 
 **On every session start and first prompt**, check for pending dispatch signals:

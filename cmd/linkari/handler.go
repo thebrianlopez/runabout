@@ -72,13 +72,14 @@ type Action struct {
 
 // Router dispatches share requests to the appropriate handler based on payload type.
 type Router struct {
-	tmux       *TmuxRunner
-	actions    []Action
-	actionsCfg []ActionConfig
-	cfgIndex   map[string]*ActionConfig
-	debug      bool
-	mu         sync.RWMutex
-	queue      *Queue // EPIC-060: for server-side scoring goroutine
+	tmux         *TmuxRunner
+	actions      []Action
+	actionsCfg   []ActionConfig
+	cfgIndex     map[string]*ActionConfig
+	debug        bool
+	mu           sync.RWMutex
+	queue        *Queue
+	whisperModel string // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
 }
 
 // SetQueue wires the queue for server-side uinit_* scoring (EPIC-060 M1).
@@ -86,6 +87,13 @@ type Router struct {
 func (r *Router) SetQueue(q *Queue) {
 	r.mu.Lock()
 	r.queue = q
+	r.mu.Unlock()
+}
+
+// SetWhisperModel sets the whisper model path for audio transcription (EPIC-067).
+func (r *Router) SetWhisperModel(path string) {
+	r.mu.Lock()
+	r.whisperModel = path
 	r.mu.Unlock()
 }
 
@@ -434,6 +442,12 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	command, err := ac.RenderCommand(data)
 	if err != nil {
 		return "", err
+	}
+
+	// EPIC-067: audio shares branch to scoreAudioAsync instead of scoreURLAsync.
+	if ac.ServerScore && req.Type == "audio" {
+		go scoreAudioAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, HaikuJSONEvaluator{}, r.whisperModel)
+		return "Transcribing — verdict via FCM", nil
 	}
 
 	// EPIC-060 M1: server_score=true runs the full scoring pipeline entirely

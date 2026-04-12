@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,6 +25,9 @@ import (
 
 // maxPayloadSize limits request body to 64KB.
 const maxPayloadSize = 64 * 1024
+
+// maxAudioSize limits multipart audio uploads to 200MB.
+const maxAudioSize = 200 << 20
 
 // registerFaultEnv is the env var that, when set to a 5xx status code,
 // causes POST /register to short-circuit with that status before touching
@@ -61,6 +67,10 @@ type ShareRequest struct {
 	Enter    bool   `json:"enter"`
 	Profile  string `json:"profile,omitempty"`
 	FCMToken string `json:"fcm_token,omitempty"`
+
+	// Internal fields — not serialized from JSON.
+	AudioPath  string `json:"-"` // EPIC-067: temp file path for uploaded audio
+	QueueRowID int64  `json:"-"` // EPIC-067: queue row ID for audio scoring (no URL to match on)
 }
 
 // ShareResponse is the structured JSON response.
@@ -164,6 +174,10 @@ type Server struct {
 	// EPIC-052: share action resolution policy. Default false (caller-wins).
 	// Populated from ServerConfig.Share.HeuristicOverrideEnabled at boot.
 	shareHeuristicOverride bool
+
+	// EPIC-001: Google Sign-In support.
+	googleVerifier *GoogleTokenVerifier // nil when Google Sign-In is not configured
+	sessionTTLDays int                  // session token TTL; 0 = use default (90 days)
 	// EPIC-051 M3: lastDigestPush deleted — throttle state lives in SQL via
 	// Queue.EnqueueDigestIfDue. Do not re-add in-memory throttle state here.
 }
@@ -188,6 +202,23 @@ func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug 
 // SetTsnetAddr records the tsnet Funnel address for health reporting.
 func (s *Server) SetTsnetAddr(addr string) {
 	s.tsnetAddr = addr
+}
+
+// authenticateRequest checks if the request carries a valid bearer token.
+// Accepts the operator token (s.token) OR a valid session token (EPIC-001).
+// Returns true if authenticated. Does NOT check action-scoped restrictions
+// (use checkScopedAuth for that).
+func (s *Server) authenticateRequest(r *http.Request) bool {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return false
+	}
+	bearer := strings.TrimPrefix(auth, "Bearer ")
+	if bearer == s.token {
+		return true
+	}
+	_, ok := s.checkSessionAuth(bearer)
+	return ok
 }
 
 // corsMiddleware adds CORS headers to all responses and handles preflight OPTIONS requests.
@@ -298,6 +329,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/archive", s.handleArchive)
 	mux.HandleFunc("/digest", s.handleDigest)
 	mux.HandleFunc("POST /search", s.handleSearch)
+	// EPIC-001: auth endpoints.
+	mux.HandleFunc("POST /auth/google", s.handleAuthGoogle)
+	mux.HandleFunc("POST /auth/invite", s.handleAuthInvite)
+	mux.HandleFunc("POST /admin/invite", s.handleAdminInvite)
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
@@ -306,9 +341,8 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auth — same bearer token as /share
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+	// Auth — operator token or session token (EPIC-001).
+	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -326,9 +360,8 @@ func (s *Server) handleActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auth — same bearer token as /share
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+	// Auth — operator token or session token (EPIC-001).
+	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -347,17 +380,19 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auth via query param (?token=...) since browsers can't set headers on EventSource.
+	// EPIC-001: also accepts session tokens via Authorization header.
 	token := r.URL.Query().Get("token")
 	if token == "" {
-		// Also accept Authorization header for curl usage.
 		auth := r.Header.Get("Authorization")
 		if strings.HasPrefix(auth, "Bearer ") {
 			token = strings.TrimPrefix(auth, "Bearer ")
 		}
 	}
 	if token != s.token {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
+		if _, ok := s.checkSessionAuth(token); !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 	}
 
 	flusher, ok := w.(http.Flusher)
@@ -430,7 +465,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 var jiraKeyRegex = regexp.MustCompile(`^[A-Z][A-Z0-9_]+-\d+$`)
 
 // checkScopedAuth verifies that the bearer token is authorized for the resolved
-// action. Returns (tokenKind, allowed). Token kinds: "mobile", "jira", "unknown".
+// action. Returns (tokenKind, allowed). Token kinds: "mobile", "jira", "session", "unknown".
+// EPIC-001: session tokens are accepted with the same restrictions as mobile
+// (allowed for everything except ginit_*).
 func (s *Server) checkScopedAuth(bearer, actionID string) (kind string, allowed bool) {
 	isGinit := strings.HasPrefix(actionID, "ginit_")
 	switch {
@@ -441,6 +478,10 @@ func (s *Server) checkScopedAuth(bearer, actionID string) (kind string, allowed 
 		// Jira token: allowed only for ginit_*.
 		return "jira", isGinit
 	default:
+		// EPIC-001: check session token as fallback.
+		if _, ok := s.checkSessionAuth(bearer); ok {
+			return "session", !isGinit
+		}
 		return "unknown", false
 	}
 }
@@ -453,10 +494,17 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auth: accept either the mobile/Chrome token or the Jira-scoped token.
+	// Auth: accept mobile/Chrome token, Jira-scoped token, or session token (EPIC-001).
 	auth := r.Header.Get("Authorization")
 	bearer := strings.TrimPrefix(auth, "Bearer ")
-	if !strings.HasPrefix(auth, "Bearer ") || (bearer != s.token && (s.jiraToken == "" || bearer != s.jiraToken)) {
+	if !strings.HasPrefix(auth, "Bearer ") {
+		slog.DebugContext(ctx, "share rejected: auth failed", "has_header", auth != "")
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	isMobileOrJira := bearer == s.token || (s.jiraToken != "" && bearer == s.jiraToken)
+	_, isSession := s.checkSessionAuth(bearer)
+	if !isMobileOrJira && !isSession {
 		slog.DebugContext(ctx, "share rejected: auth failed", "has_header", auth != "")
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -473,24 +521,108 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse
-	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
+	// Parse — branch on Content-Type: multipart/form-data (EPIC-067 audio)
+	// vs application/json (existing path).
 	var req ShareRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		slog.DebugContext(ctx, "share rejected: JSON decode error", "error", err)
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
-		return
-	}
-	slog.DebugContext(ctx, "share parsed",
-		"type", req.Type, "action", req.Action, "profile", req.Profile,
-		"target", req.Target, "enter", req.Enter,
-		"text_len", len(req.Text), "url_len", len(req.URL), "title", req.Title,
-	)
-	if s.debug {
-		if raw, err := json.MarshalIndent(req, "", "  "); err == nil {
-			slog.DebugContext(ctx, "share payload (debug)", "body", string(raw))
+	ct := r.Header.Get("Content-Type")
+	mediaType, _, _ := mime.ParseMediaType(ct)
+
+	if mediaType == "multipart/form-data" {
+		// EPIC-067: streaming multipart — 200MB limit applied on r.Body so
+		// the audio part streams directly to disk via io.Copy (~36KB RAM per
+		// request instead of buffering the whole file in memory).
+		r.Body = http.MaxBytesReader(w, r.Body, maxAudioSize)
+		_, params, _ := mime.ParseMediaType(ct)
+		boundary := params["boundary"]
+		if boundary == "" {
+			writeError(w, http.StatusBadRequest, "missing multipart boundary")
+			return
+		}
+		mr := multipart.NewReader(r.Body, boundary)
+		req.Type = "audio"
+
+		var audioWritten int64
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				slog.DebugContext(ctx, "share rejected: multipart read error", "error", err)
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid multipart: %v", err))
+				return
+			}
+			switch part.FormName() {
+			case "action":
+				b, _ := io.ReadAll(io.LimitReader(part, 1024))
+				req.Action = string(b)
+			case "fcm_token":
+				b, _ := io.ReadAll(io.LimitReader(part, 4096))
+				req.FCMToken = string(b)
+			case "audio":
+				ext := filepath.Ext(part.FileName())
+				if ext == "" {
+					ext = ".m4a"
+				}
+				tmp, err := os.CreateTemp("", "linkari-audio-*"+ext)
+				if err != nil {
+					slog.ErrorContext(ctx, "share rejected: create temp file failed", "error", err)
+					writeError(w, http.StatusInternalServerError, "internal error")
+					return
+				}
+				audioWritten, err = io.Copy(tmp, part)
+				tmp.Close()
+				if err != nil {
+					os.Remove(tmp.Name())
+					slog.ErrorContext(ctx, "share rejected: write temp file failed", "error", err)
+					// MaxBytesReader returns a specific error on overflow.
+					writeError(w, http.StatusRequestEntityTooLarge, "audio file too large")
+					return
+				}
+				req.AudioPath = tmp.Name()
+			default:
+				// Drain unknown parts.
+				io.Copy(io.Discard, part)
+			}
+			part.Close()
+		}
+
+		if req.AudioPath == "" {
+			slog.DebugContext(ctx, "share rejected: no audio file part")
+			writeError(w, http.StatusBadRequest, "audio file part required")
+			return
+		}
+		slog.DebugContext(ctx, "share parsed (multipart audio)",
+			"action", req.Action, "audio_size", audioWritten, "temp_path", req.AudioPath,
+		)
+	} else {
+		// Existing JSON path.
+		r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			slog.DebugContext(ctx, "share rejected: JSON decode error", "error", err)
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+			return
+		}
+		slog.DebugContext(ctx, "share parsed",
+			"type", req.Type, "action", req.Action, "profile", req.Profile,
+			"target", req.Target, "enter", req.Enter,
+			"text_len", len(req.Text), "url_len", len(req.URL), "title", req.Title,
+		)
+		if s.debug {
+			if raw, err := json.MarshalIndent(req, "", "  "); err == nil {
+				slog.DebugContext(ctx, "share payload (debug)", "body", string(raw))
+			}
 		}
 	}
+
+	// EPIC-067: if we have a temp audio file and exit before scoreAudioAsync
+	// takes ownership, clean it up. The flag is cleared after successful routing.
+	audioCleanup := req.AudioPath
+	defer func() {
+		if audioCleanup != "" {
+			os.Remove(audioCleanup)
+		}
+	}()
 
 	shareStart := time.Now()
 
@@ -562,6 +694,9 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// EPIC-067: thread queue row ID for audio scoring (no URL to match on).
+	req.QueueRowID = queueID
+
 	// Route
 	result, err := s.router.Route(&req)
 	if err != nil {
@@ -592,6 +727,9 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	// EPIC-067: scoreAudioAsync now owns the temp file — disarm cleanup.
+	audioCleanup = ""
 
 	// Mark as relayed immediately since routing succeeded.
 	// Uses the exact enqueued ID to prevent replay goroutine from re-processing.
@@ -656,8 +794,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -691,8 +828,7 @@ type scoreRequest struct {
 }
 
 func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -806,8 +942,7 @@ func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -837,8 +972,7 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -870,8 +1004,7 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -921,8 +1054,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auth — same bearer token as other endpoints.
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -996,8 +1128,7 @@ func (s *Server) handleTestPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -1091,8 +1222,7 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auth
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
+	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -1195,8 +1325,19 @@ func validateRequest(req *ShareRequest) error {
 		if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
 			return fmt.Errorf("url must start with http:// or https://")
 		}
+	case "audio":
+		if req.AudioPath == "" {
+			return fmt.Errorf("audio file required for type=audio")
+		}
+		fi, err := os.Stat(req.AudioPath)
+		if err != nil {
+			return fmt.Errorf("audio file not accessible: %w", err)
+		}
+		if fi.Size() > maxAudioSize {
+			return fmt.Errorf("audio file too large: %d bytes (max %d)", fi.Size(), maxAudioSize)
+		}
 	default:
-		return fmt.Errorf("unsupported type %q (expected text or url)", req.Type)
+		return fmt.Errorf("unsupported type %q (expected text, url, or audio)", req.Type)
 	}
 	return nil
 }
