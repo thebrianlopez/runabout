@@ -521,6 +521,15 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					"var", registerFaultEnv, "status_code", code,
 				)
 			}
+			// EPIC-067: wire whisper model path for audio transcription.
+			if router != nil && cfg != nil {
+				router.SetWhisperModel(cfg.Server.WhisperModel)
+			}
+			// EPIC-001: resolve google_client_id for Google Sign-In.
+			var googleClientID string
+			googleClientID, _ = resolveField("google_client_id", "", os.Getenv("LINKARI_GOOGLE_CLIENT_ID"), "",
+				func(s *ServerConfig) string { return s.GoogleClientID })
+
 			srv := NewServer(token, router, queue, ring, debug, fcmTokenSource)
 			srv.jiraToken = jiraToken
 			srv.jiraAPIUsername = jiraAPIUsername
@@ -531,6 +540,15 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// EPIC-061: heuristic override is always on — auto-profile
 			// actions require domain heuristics for profile classification.
 			srv.shareHeuristicOverride = true
+
+			// EPIC-001: wire Google Sign-In verifier when client ID is configured.
+			if googleClientID != "" {
+				srv.googleVerifier = NewGoogleTokenVerifier(googleClientID)
+				slog.Info("google sign-in enabled", "client_id_len", len(googleClientID))
+			}
+			if serverFileCfg != nil && serverFileCfg.SessionTTLDays > 0 {
+				srv.sessionTTLDays = serverFileCfg.SessionTTLDays
+			}
 
 			// EPIC-051 M3/M4: install the live push config on the queue so
 			// EnqueueDigestIfDue honors notify_min_score + per-profile

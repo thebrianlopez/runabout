@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	crand "crypto/rand"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -42,6 +43,7 @@ type QueueItem struct {
 	ArchivedAt string `json:"archived_at,omitempty"`
 	Verdict    string `json:"verdict,omitempty"`
 	Slug       string `json:"slug,omitempty"`
+	Progress   string `json:"progress,omitempty"`
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -112,6 +114,8 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		// EPIC-054 M3: error_reason column for relayed-state watchdog and
 		// other failure classifiers. Nullable, empty string on legacy rows.
 		"ALTER TABLE queue ADD COLUMN error_reason TEXT DEFAULT ''",
+		// EPIC-067 200MB: progress column for long-running audio transcription.
+		"ALTER TABLE queue ADD COLUMN progress TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -162,6 +166,45 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		db.Close()
 		return nil, fmt.Errorf("create push_outbox kind/profile index: %w", err)
 	}
+
+	// EPIC-001: auth tables — users, invite_codes, sessions.
+	const authSchema = `
+		CREATE TABLE IF NOT EXISTS users (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			google_sub TEXT NOT NULL UNIQUE,
+			email      TEXT NOT NULL DEFAULT '',
+			name       TEXT NOT NULL DEFAULT '',
+			active     INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS invite_codes (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			code       TEXT NOT NULL UNIQUE,
+			used       INTEGER NOT NULL DEFAULT 0,
+			used_by    TEXT DEFAULT NULL,
+			used_at    INTEGER DEFAULT NULL,
+			created_at INTEGER NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS sessions (
+			token      TEXT PRIMARY KEY,
+			user_id    INTEGER NOT NULL REFERENCES users(id),
+			google_sub TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+	`
+	if _, err := db.Exec(authSchema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create auth tables: %w", err)
+	}
+
+	// EPIC-001: add user_id column to devices for session association.
+	db.Exec("ALTER TABLE devices ADD COLUMN user_id INTEGER DEFAULT NULL")
 
 	// FTS5 full-text search index over queue content.
 	const fts5Setup = `
@@ -246,7 +289,7 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,'')"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,'')"
 
 // Pending returns all items with status=pending, ordered by id ASC (FIFO).
 func (q *Queue) Pending() ([]QueueItem, error) {
@@ -284,6 +327,20 @@ func (q *Queue) MarkRelayed(id int64) error {
 // MarkFailed updates an item to status=failed.
 func (q *Queue) MarkFailed(id int64) error {
 	_, err := q.db.Exec("UPDATE queue SET status='failed' WHERE id=?", id)
+	return err
+}
+
+// SetText updates the text column for a queue row. Used by scoreAudioAsync
+// to backfill the whisper transcript after transcription completes (EPIC-067).
+func (q *Queue) SetText(id int64, text string) error {
+	_, err := q.db.Exec("UPDATE queue SET text=? WHERE id=?", text, id)
+	return err
+}
+
+// SetProgress updates the progress column for a queue row. Used by
+// scoreAudioAsync to report chunk transcription progress (EPIC-067 200MB).
+func (q *Queue) SetProgress(id int64, progress string) error {
+	_, err := q.db.Exec("UPDATE queue SET progress=? WHERE id=?", progress, id)
 	return err
 }
 
@@ -854,6 +911,137 @@ func (q *Queue) GetDeviceToken() (string, error) {
 	return token, nil
 }
 
+// AuthUser represents a row in the users table.
+type AuthUser struct {
+	ID        int64
+	GoogleSub string
+	Email     string
+	Name      string
+	Active    bool
+}
+
+// LookupUserBySub finds a user by their Google sub claim. Returns nil if not found.
+func (q *Queue) LookupUserBySub(googleSub string) (*AuthUser, error) {
+	row := q.db.QueryRow(
+		`SELECT id, google_sub, email, name, active FROM users WHERE google_sub = ?`,
+		googleSub,
+	)
+	var u AuthUser
+	var active int
+	err := row.Scan(&u.ID, &u.GoogleSub, &u.Email, &u.Name, &active)
+	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("lookup user: %w", err)
+	}
+	u.Active = active != 0
+	return &u, nil
+}
+
+// LookupSession validates a session token and returns the user ID.
+// Returns an error if the token is not found or expired.
+func (q *Queue) LookupSession(token string) (int64, error) {
+	now := time.Now().Unix()
+	var userID int64
+	err := q.db.QueryRow(
+		`SELECT user_id FROM sessions WHERE token = ? AND expires_at > ?`,
+		token, now,
+	).Scan(&userID)
+	if err != nil {
+		return 0, fmt.Errorf("lookup session: %w", err)
+	}
+	return userID, nil
+}
+
+// InsertSession stores a new session token.
+func (q *Queue) InsertSession(token string, userID int64, googleSub string, expiresAt time.Time) error {
+	now := time.Now().Unix()
+	_, err := q.db.Exec(
+		`INSERT INTO sessions (token, user_id, google_sub, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
+		token, userID, googleSub, now, expiresAt.Unix(),
+	)
+	if err != nil {
+		return fmt.Errorf("insert session: %w", err)
+	}
+	return nil
+}
+
+// RedeemInvite atomically validates an invite code, creates a user, and marks
+// the code as used. Returns the new user's ID.
+func (q *Queue) RedeemInvite(code, googleSub, email, name string) (int64, error) {
+	tx, err := q.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Check invite code exists and is unused.
+	var codeID int64
+	var used int
+	err = tx.QueryRow(
+		`SELECT id, used FROM invite_codes WHERE code = ?`, code,
+	).Scan(&codeID, &used)
+	if err != nil {
+		return 0, fmt.Errorf("invalid invite code")
+	}
+	if used != 0 {
+		return 0, fmt.Errorf("invite code already used")
+	}
+
+	// Create the user.
+	now := time.Now().Unix()
+	res, err := tx.Exec(
+		`INSERT INTO users (google_sub, email, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		googleSub, email, name, now, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("create user: %w", err)
+	}
+	userID, _ := res.LastInsertId()
+
+	// Mark code as used.
+	_, err = tx.Exec(
+		`UPDATE invite_codes SET used = 1, used_by = ?, used_at = ? WHERE id = ?`,
+		googleSub, now, codeID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("mark invite used: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	return userID, nil
+}
+
+// CreateInviteCode generates and stores a new 8-character alphanumeric invite code.
+func (q *Queue) CreateInviteCode() (string, error) {
+	code := generateInviteCode()
+	now := time.Now().Unix()
+	_, err := q.db.Exec(
+		`INSERT INTO invite_codes (code, created_at) VALUES (?, ?)`,
+		code, now,
+	)
+	if err != nil {
+		return "", fmt.Errorf("create invite code: %w", err)
+	}
+	return code, nil
+}
+
+// generateInviteCode returns a cryptographically random 8-char alphanumeric string.
+func generateInviteCode() string {
+	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, 8)
+	// Use crypto/rand for unguessable codes.
+	randBytes := make([]byte, 8)
+	crand.Read(randBytes)
+	for i := range b {
+		b[i] = charset[int(randBytes[i])%len(charset)]
+	}
+	return string(b)
+}
+
 func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 	rows, err := q.db.Query(sqlStr, args...)
 	if err != nil {
@@ -865,7 +1053,7 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 	for rows.Next() {
 		var it QueueItem
 		var score int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug); err != nil {
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress); err != nil {
 			return nil, err
 		}
 		if score != 0 {

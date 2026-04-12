@@ -8,11 +8,15 @@ package main
 // uinit_* actions by this milestone).
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -57,6 +61,103 @@ func fetchJinaContent(ctx context.Context, rawURL string) (string, error) {
 	}
 	return string(b), nil
 }
+
+// defaultWhisperModel returns the default whisper model path.
+func defaultWhisperModel() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "whisper", "ggml-large-v3-turbo.bin")
+}
+
+// execFfmpegConvert is the function var for converting audio files via ffmpeg.
+// Tests override this to avoid real ffmpeg invocation.
+var execFfmpegConvert = runFfmpegConvert
+
+// runFfmpegConvert invokes ffmpeg to convert an audio file to 16kHz mono WAV.
+func runFfmpegConvert(ctx context.Context, inputPath, outputPath string) error {
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-i", inputPath,
+		"-ar", "16000",
+		"-ac", "1",
+		"-y",
+		outputPath,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg: %w (stderr: %s)", err, stderr.String())
+	}
+	return nil
+}
+
+// execWhisper is the function var for running whisper-cli. Tests override this
+// to avoid real transcription. Same pattern as execHaiku.
+var execWhisper = runWhisperCLI
+
+// runWhisperCLI invokes whisper-cli to transcribe a WAV file. Returns the
+// transcript text. The model path is resolved from server config or default.
+func runWhisperCLI(ctx context.Context, wavPath, modelPath string) (string, error) {
+	if modelPath == "" {
+		modelPath = defaultWhisperModel()
+	}
+	cmd := exec.CommandContext(ctx, "whisper-cli",
+		"--model", modelPath,
+		"--file", wavPath,
+		"--no-timestamps",
+		"--output-txt",
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("whisper-cli: %w (stderr: %s)", err, stderr.String())
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// execFfmpegSegment is the function var for segmenting a WAV file into chunks.
+// Tests override this to avoid real ffmpeg invocation.
+var execFfmpegSegment = runFfmpegSegment
+
+// runFfmpegSegment invokes ffmpeg to split a WAV file into fixed-duration
+// chunks using the segment muxer. Returns paths of the produced chunk files.
+func runFfmpegSegment(ctx context.Context, wavPath string, segmentSecs int) ([]string, error) {
+	dir := filepath.Dir(wavPath)
+	base := strings.TrimSuffix(filepath.Base(wavPath), filepath.Ext(wavPath))
+	pattern := filepath.Join(dir, base+"_chunk_%03d.wav")
+
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-i", wavPath,
+		"-f", "segment",
+		"-segment_time", fmt.Sprintf("%d", segmentSecs),
+		"-c", "copy",
+		pattern,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg segment: %w (stderr: %s)", err, stderr.String())
+	}
+
+	// Glob for produced chunks — ffmpeg names them sequentially.
+	chunks, err := filepath.Glob(filepath.Join(dir, base+"_chunk_*.wav"))
+	if err != nil {
+		return nil, fmt.Errorf("glob chunks: %w", err)
+	}
+	if len(chunks) == 0 {
+		return nil, fmt.Errorf("ffmpeg segment produced no chunks")
+	}
+	// filepath.Glob returns sorted results, which matches segment order.
+	return chunks, nil
+}
+
+// audioChunkSeconds is the segment duration for chunked whisper transcription.
+// 10 minutes keeps whisper RAM at ~340MB per chunk instead of ~900MB monolithic.
+const audioChunkSeconds = 600
+
+// audioChunkSizeThreshold is the WAV file size above which we chunk. Files
+// under this size are transcribed in a single whisper pass. 50MB WAV ≈ 26 min
+// at 16kHz mono — a reasonable breakpoint where whisper memory becomes a concern.
+const audioChunkSizeThreshold = 50 << 20
 
 // classificationPreamble returns a preamble to prepend to the evaluator
 // prompt when the profile was auto-classified from a URL. This tells the
@@ -276,4 +377,260 @@ func classifyContentProfile(ctx context.Context, content string) string {
 	}
 	slog.Warn("content classify: unparseable response", "raw", out)
 	return ""
+}
+
+// scoreAudioAsync runs the voice note transcription and scoring pipeline.
+// Must be launched as a goroutine from handleTemplate. Owns a 1800s context
+// independent of the HTTP request to accommodate 200MB uploads.
+//
+// Pipeline: ffmpeg m4a→wav → [segment if large] → whisper transcribe →
+// backfill queue text → auto-classify profile → loadProfileTemplate →
+// eval.Evaluate (Haiku) → UpdateScore → archive → EnqueueDigestIfDue (FCM push).
+//
+// EPIC-067 M3 + 200MB expansion: mirrors scoreURLAsync structure with:
+//   - content comes from whisper transcript, not Jina fetch
+//   - queue lookup is by row ID, not by URL (audio rows have no URL)
+//   - temp files (m4a + wav + chunks) are cleaned up via defer
+//   - large files are segmented into 10-min chunks for whisper
+func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, eval Evaluator, whisperModel string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Second)
+	defer cancel()
+	defer os.Remove(audioPath) // temp m4a cleanup
+
+	slog.Info("score_audio: start",
+		"event_type", "score_audio_start",
+		"row_id", rowID,
+		"audio_path", audioPath,
+	)
+
+	if q != nil {
+		q.SetProgress(rowID, "converting")
+	}
+
+	// Step 1: ffmpeg convert m4a → wav (16kHz mono for whisper).
+	// 60s timeout for 200MB conversions (up from 30s).
+	wavPath := audioPath + ".wav"
+	defer os.Remove(wavPath) // temp wav cleanup
+
+	ffmpegCtx, ffmpegCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer ffmpegCancel()
+	if err := execFfmpegConvert(ffmpegCtx, audioPath, wavPath); err != nil {
+		slog.Warn("score_audio: ffmpeg failed",
+			"event_type", "score_audio_ffmpeg_error",
+			"row_id", rowID,
+			"error", err,
+		)
+		if q != nil {
+			q.MarkFailedWithReason(rowID, "ffmpeg_failed")
+		}
+		return
+	}
+
+	// Step 2: whisper transcribe — chunk if WAV is large enough.
+	var transcript string
+	wavInfo, err := os.Stat(wavPath)
+	if err != nil {
+		slog.Warn("score_audio: stat wav failed", "row_id", rowID, "error", err)
+		if q != nil {
+			q.MarkFailedWithReason(rowID, "wav_stat_failed")
+		}
+		return
+	}
+
+	if wavInfo.Size() > audioChunkSizeThreshold {
+		// Large file — segment into chunks and transcribe sequentially.
+		if q != nil {
+			q.SetProgress(rowID, "segmenting")
+		}
+
+		segCtx, segCancel := context.WithTimeout(ctx, 30*time.Second)
+		chunks, err := execFfmpegSegment(segCtx, wavPath, audioChunkSeconds)
+		segCancel()
+		if err != nil {
+			slog.Warn("score_audio: segment failed",
+				"event_type", "score_audio_segment_error",
+				"row_id", rowID,
+				"error", err,
+			)
+			if q != nil {
+				q.MarkFailedWithReason(rowID, "segment_failed")
+			}
+			return
+		}
+		// Clean up chunk files on exit.
+		defer func() {
+			for _, c := range chunks {
+				os.Remove(c)
+			}
+		}()
+
+		var parts []string
+		for i, chunk := range chunks {
+			if q != nil {
+				q.SetProgress(rowID, fmt.Sprintf("transcribing %d/%d", i+1, len(chunks)))
+			}
+			slog.Info("score_audio: transcribing chunk",
+				"row_id", rowID,
+				"chunk", i+1,
+				"total", len(chunks),
+			)
+			part, err := execWhisper(ctx, chunk, whisperModel)
+			if err != nil {
+				slog.Warn("score_audio: whisper chunk failed",
+					"event_type", "score_audio_whisper_error",
+					"row_id", rowID,
+					"chunk", i+1,
+					"error", err,
+				)
+				if q != nil {
+					q.MarkFailedWithReason(rowID, fmt.Sprintf("transcription_failed_chunk_%d", i+1))
+				}
+				return
+			}
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				parts = append(parts, trimmed)
+			}
+		}
+		transcript = strings.Join(parts, "\n\n")
+	} else {
+		// Small file — single-pass transcription.
+		if q != nil {
+			q.SetProgress(rowID, "transcribing 1/1")
+		}
+		transcript, err = execWhisper(ctx, wavPath, whisperModel)
+		if err != nil {
+			slog.Warn("score_audio: whisper failed",
+				"event_type", "score_audio_whisper_error",
+				"row_id", rowID,
+				"error", err,
+			)
+			if q != nil {
+				q.MarkFailedWithReason(rowID, "transcription_failed")
+			}
+			return
+		}
+	}
+
+	transcript = strings.TrimSpace(transcript)
+	if transcript == "" {
+		slog.Warn("score_audio: empty transcript",
+			"event_type", "score_audio_empty_transcript",
+			"row_id", rowID,
+		)
+		if q != nil {
+			q.MarkFailedWithReason(rowID, "empty_transcript")
+		}
+		return
+	}
+
+	slog.Info("score_audio: transcribed",
+		"event_type", "score_audio_transcribed",
+		"row_id", rowID,
+		"transcript_len", len(transcript),
+	)
+
+	// Step 3: backfill transcript into queue row.
+	if q != nil {
+		if err := q.SetText(rowID, transcript); err != nil {
+			slog.Warn("score_audio: SetText failed", "row_id", rowID, "error", err)
+		}
+	}
+
+	// Step 4: auto-classify profile from content when empty.
+	autoClassified := false
+	if profile == "" {
+		classified := classifyContentProfile(ctx, transcript)
+		if classified != "" {
+			profile = classified
+		} else {
+			profile = "eng" // fallback
+		}
+		autoClassified = true
+	}
+
+	// Step 5: load profile template.
+	_, sysPrompt, err := loadProfileTemplate(profile)
+	if err != nil {
+		slog.Warn("score_audio: load template failed",
+			"event_type", "score_audio_template_error",
+			"row_id", rowID,
+			"profile", profile,
+			"error", err,
+		)
+		if q != nil {
+			q.MarkFailedWithReason(rowID, "template_load_failed")
+		}
+		return
+	}
+
+	if autoClassified {
+		sysPrompt = fmt.Sprintf(
+			"[Auto-classified profile: %s (from voice note transcript)]\n"+
+				"Score this content using the %s profile rubric.\n\n",
+			profile, profile,
+		) + sysPrompt
+	}
+
+	// Step 6: evaluate via Haiku.
+	if q != nil {
+		q.SetProgress(rowID, "evaluating")
+	}
+	content := truncateRunes(transcript, contentTruncationRunes)
+	sc, err := eval.Evaluate(ctx, content, sysPrompt)
+	if err != nil {
+		slog.Warn("score_audio: evaluate failed",
+			"event_type", "score_audio_eval_error",
+			"row_id", rowID,
+			"profile", profile,
+			"error", err,
+		)
+		if q != nil {
+			q.MarkFailedWithReason(rowID, "evaluation_failed")
+		}
+		return
+	}
+	sc.Profile = profile
+	sc.SourceType = "server-audio"
+
+	slog.Info("score_audio: evaluated",
+		"event_type", "score_audio_evaluated",
+		"row_id", rowID,
+		"profile", profile,
+		"score", sc.Score,
+		"verdict", sc.Verdict,
+		"latency_ms", sc.LatencyMs,
+	)
+
+	// Step 7: persist score.
+	if q == nil {
+		return
+	}
+	slug := fmt.Sprintf("vnote-%d", rowID)
+	if err := q.UpdateScore(rowID, sc.Score, sc.Tags, sc.Verdict, slug); err != nil {
+		slog.Warn("score_audio: UpdateScore failed",
+			"event_type", "score_audio_queue_error",
+			"row_id", rowID,
+			"error", err,
+		)
+		return
+	}
+
+	// Step 8: auto-archive when score meets profile threshold.
+	threshold := archiveThreshold(profile)
+	if threshold >= 0 && sc.Score >= threshold {
+		q.Archive(rowID)
+	}
+
+	// Step 9: FCM push via the dual-writer invariant (EPIC-051).
+	resolvePushConfigOnce(q)
+	_, _ = q.EnqueueDigestIfDue(context.Background(),
+		profile, sc.Score, slug, sc.Verdict, "",
+		sc.GapSummary(3))
+
+	slog.Info("score_audio: complete",
+		"event_type", "score_audio_complete",
+		"row_id", rowID,
+		"profile", profile,
+		"score", sc.Score,
+	)
 }

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -167,7 +168,27 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
-			// --- Check 9: tsnet state directory ---
+			// --- Check 9: whisper-cli and model (EPIC-067) ---
+			{
+				if _, err := exec.LookPath("whisper-cli"); err != nil {
+					addCheck(warnCheck("whisper_cli", "whisper-cli not found on PATH — voice note transcription will fail"))
+				} else {
+					addCheck(okCheck("whisper_cli", "whisper-cli found on PATH"))
+				}
+
+				whisperModel := defaultWhisperModel()
+				if serverCfg != nil && serverCfg.WhisperModel != "" {
+					whisperModel = serverCfg.WhisperModel
+				}
+				if _, err := os.Stat(whisperModel); err != nil {
+					addCheck(warnCheck("whisper_model",
+						fmt.Sprintf("model not found at %s — download ggml-large-v3-turbo.bin for voice note transcription", whisperModel)))
+				} else {
+					addCheck(okCheck("whisper_model", whisperModel))
+				}
+			}
+
+			// --- Check 10: tsnet state directory ---
 			{
 				var tsnetStateDir string
 				if serverCfg != nil && serverCfg.TsnetStateDir != "" {
