@@ -1,6 +1,6 @@
 module github.com/blo-grindr/runabout/cmd/fetchpage
 
-go 1.25.0
+go 1.26.1
 
 require (
 	github.com/playwright-community/playwright-go v0.5001.0
