@@ -56,7 +56,9 @@ func (s ServerConfig) IsZero() bool {
 		s.JiraAPIUsername == "" && s.JiraAPIPassword == "" && s.JiraDomain == "" && s.PagerDutyToken == "" &&
 		len(s.Push.DigestThrottle) == 0 && s.Push.DigestThrottleDefault.D == 0 &&
 		s.RelayedWatchdogInterval.D == 0 && s.RelayedWatchdogMaxAge.D == 0 &&
-		!s.Share.HeuristicOverrideEnabled
+		!s.Share.HeuristicOverrideEnabled &&
+		s.WhisperModel == "" && s.FfmpegPath == "" &&
+		s.GoogleClientID == "" && s.SessionTTLDays == 0
 }
 
 // RelayedWatchdogConfig is the resolved runtime view of the watchdog knobs,
@@ -249,6 +251,14 @@ type ServerConfig struct {
 	// the invariant check in resolveShareAction refuses to override a
 	// non-empty received_action unless Share.HeuristicOverrideEnabled is true.
 	Share ShareConfig `yaml:"share"`
+
+	// EPIC-067: voice note transcription config.
+	WhisperModel string `yaml:"whisper_model,omitempty"` // path to ggml model file (default: ~/.local/share/whisper/ggml-large-v3-turbo.bin)
+	FfmpegPath   string `yaml:"ffmpeg_path,omitempty"`   // path to ffmpeg binary (default: ffmpeg on PATH)
+
+	// EPIC-001: Google Sign-In config.
+	GoogleClientID string `yaml:"google_client_id"` // secretsmanager:// URI or literal; resolved via resolveField pipeline
+	SessionTTLDays int    `yaml:"session_ttl_days"` // session token TTL in days (default 90)
 }
 
 // ShareConfig controls how share requests map their received action/profile to
@@ -648,6 +658,17 @@ func builtinConfig() *Config {
 				Target:          "linkari:0",
 				Kind:            KindTemplate,
 				CommandTemplate: `uinit --auto-resume --profile {{.Profile}} {{.URL}}`,
+				ProfileMap:      "auto",
+				ServerScore:     true,
+			},
+			{
+				ID:              "vnote_auto",
+				Label:           "Transcribe",
+				Icon:            "mic",
+				Type:            "audio",
+				Target:          "linkari:0",
+				Kind:            KindTemplate,
+				CommandTemplate: "echo vnote", // stub — never rendered when ServerScore=true
 				ProfileMap:      "auto",
 				ServerScore:     true,
 			},
