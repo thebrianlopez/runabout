@@ -37,6 +37,64 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestHealthzWithDB(t *testing.T) {
+	tmux := &TmuxRunner{}
+	router := NewRouterFromConfig(tmux, builtinConfig(), false)
+	q := newTestQueue(t)
+	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
+	mux := srv.Mux()
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Errorf("status = %q, want ok", body["status"])
+	}
+	if body["db"] != "ok" {
+		t.Errorf("db = %q, want ok", body["db"])
+	}
+}
+
+func TestHealthzDegradedDB(t *testing.T) {
+	// Simulate mid-session DB failure by closing the connection after init.
+	tmux := &TmuxRunner{}
+	router := NewRouterFromConfig(tmux, builtinConfig(), false)
+	q := newTestQueue(t)
+	q.Close() // close the underlying connection; Ping will now fail
+
+	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
+	mux := srv.Mux()
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["status"] != "degraded" {
+		t.Errorf("status = %q, want degraded", body["status"])
+	}
+	if body["db"] != "error" {
+		t.Errorf("db = %q, want error", body["db"])
+	}
+	if _, ok := body["db_error"]; !ok {
+		t.Error("expected db_error field in degraded response")
+	}
+}
+
 func TestShareUnauthorized(t *testing.T) {
 	srv := NewServer("secret", nil, nil, NewRingLog(10), false, nil)
 	mux := srv.Mux()

@@ -56,6 +56,7 @@ func (s ServerConfig) IsZero() bool {
 		s.JiraAPIUsername == "" && s.JiraAPIPassword == "" && s.JiraDomain == "" && s.PagerDutyToken == "" &&
 		len(s.Push.DigestThrottle) == 0 && s.Push.DigestThrottleDefault.D == 0 &&
 		s.RelayedWatchdogInterval.D == 0 && s.RelayedWatchdogMaxAge.D == 0 &&
+		s.SnapshotInterval.D == 0 && s.SnapshotPath == "" &&
 		!s.Share.HeuristicOverrideEnabled &&
 		s.WhisperModel == "" && s.FfmpegPath == "" &&
 		s.GoogleClientID == "" && s.SessionTTLDays == 0
@@ -127,6 +128,24 @@ func (s *ServerConfig) RelayedWatchdog() RelayedWatchdogCfg {
 		AlertThreshold: s.RelayedWatchdogAlertThreshold,
 		AlertWindow:    alertWindow,
 	}
+}
+
+// SnapshotConfig returns the interval and destination path for the snapshot
+// worker. Defaults: 1h interval, <queue_db_path>.bak. A negative interval
+// disables the worker (returns interval=0, destPath="").
+func (s *ServerConfig) SnapshotConfig(queueDBPath string) (interval time.Duration, destPath string) {
+	iv := s.SnapshotInterval.Duration()
+	if iv < 0 {
+		return 0, ""
+	}
+	if iv == 0 {
+		iv = time.Hour
+	}
+	destPath = s.SnapshotPath
+	if destPath == "" {
+		destPath = queueDBPath + ".bak"
+	}
+	return iv, destPath
 }
 
 // PushConfig derives a *PushConfig from the ServerConfig fields relevant to
@@ -246,6 +265,12 @@ type ServerConfig struct {
 	RelayedWatchdogUrlWorkDir     string   `yaml:"relayed_watchdog_url_work_dir"`
 	RelayedWatchdogAlertThreshold int      `yaml:"relayed_watchdog_alert_threshold"`
 	RelayedWatchdogAlertWindow    Duration `yaml:"relayed_watchdog_alert_window"`
+
+	// Periodic VACUUM INTO snapshot. SnapshotInterval defaults to 1h; a
+	// negative value disables the worker. SnapshotPath defaults to
+	// <queue_db>.bak — a single rotating file so disk usage is bounded.
+	SnapshotInterval Duration `yaml:"snapshot_interval"`
+	SnapshotPath     string   `yaml:"snapshot_path"`
 
 	// EPIC-052: share action resolution policy. Default is caller-wins —
 	// the invariant check in resolveShareAction refuses to override a

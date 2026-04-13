@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,6 +19,56 @@ func newTestQueue(t *testing.T) *Queue {
 	}
 	t.Cleanup(func() { q.Close() })
 	return q
+}
+
+// TestNewQueueCorruptDB verifies that NewQueue returns a descriptive error
+// rather than silently continuing when the SQLite file is corrupt.
+// Regression guard for the 2026-04-13 incident (SQLITE_CORRUPT 11) where
+// corruption was only surfaced during "seed invite codes" and the server
+// accepted traffic with all DB-backed endpoints returning 500.
+func TestNewQueueCorruptDB(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "corrupt.db")
+	// Write garbage bytes that look nothing like a valid SQLite database.
+	if err := os.WriteFile(dbPath, []byte("this is not a sqlite database\x00\xff\xfe"), 0o600); err != nil {
+		t.Fatalf("write corrupt db: %v", err)
+	}
+	_, err := NewQueue(dbPath, false)
+	if err == nil {
+		t.Fatal("expected error for corrupt database, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "corrupt") && !strings.Contains(msg, "integrity") && !strings.Contains(msg, "malformed") {
+		t.Errorf("error message %q should mention corruption or integrity", msg)
+	}
+}
+
+func TestQueueSnapshot(t *testing.T) {
+	q := newTestQueue(t)
+
+	// Enqueue a row so the snapshot is non-trivial.
+	if _, err := q.Enqueue(&ShareRequest{Type: "url", URL: "https://snap.test"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	destPath := filepath.Join(t.TempDir(), "queue.db.bak")
+	if err := q.Snapshot(destPath); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	// Open the snapshot and verify the row is present.
+	snap, err := NewQueue(destPath, false)
+	if err != nil {
+		t.Fatalf("open snapshot: %v", err)
+	}
+	defer snap.Close()
+
+	items, err := snap.Pending()
+	if err != nil {
+		t.Fatalf("snapshot Pending: %v", err)
+	}
+	if len(items) != 1 || items[0].URL != "https://snap.test" {
+		t.Errorf("snapshot contents unexpected: %+v", items)
+	}
 }
 
 func TestQueueEnqueueAndPending(t *testing.T) {
