@@ -2,12 +2,11 @@
 /docs
 /dev-docs
 output
-workctl
 
 # Compiled binaries
 /bin/workctl
 /bin/ghwatch
-/cmd/workctl/workctl
+/workctl
 *.exe
 *.exe~
 *.dll
