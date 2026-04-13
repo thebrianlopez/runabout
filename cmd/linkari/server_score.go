@@ -379,20 +379,19 @@ func classifyContentProfile(ctx context.Context, content string) string {
 	return ""
 }
 
-// scoreAudioAsync runs the voice note transcription and scoring pipeline.
+// scoreAudioAsync runs the voice note transcription and synopsis pipeline.
 // Must be launched as a goroutine from handleTemplate. Owns a 1800s context
 // independent of the HTTP request to accommodate 200MB uploads.
 //
-// Pipeline: ffmpeg m4a→wav → [segment if large] → whisper transcribe →
-// backfill queue text → auto-classify profile → loadProfileTemplate →
-// eval.Evaluate (Haiku) → UpdateScore → archive → EnqueueDigestIfDue (FCM push).
+// EPIC-071 M2: replaced eval.Evaluate (JSON scorecard) with execHaiku
+// (plain text synopsis) using the vnote_synopsis prompt template. Audio
+// shares no longer produce a numeric score — they produce a 1-2 sentence
+// synopsis pushed via FCM with content_type=voice_note.
 //
-// EPIC-067 M3 + 200MB expansion: mirrors scoreURLAsync structure with:
-//   - content comes from whisper transcript, not Jina fetch
-//   - queue lookup is by row ID, not by URL (audio rows have no URL)
-//   - temp files (m4a + wav + chunks) are cleaned up via defer
-//   - large files are segmented into 10-min chunks for whisper
-func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, eval Evaluator, whisperModel string) {
+// Pipeline: ffmpeg m4a→wav → [segment if large] → whisper transcribe →
+// backfill queue text → save transcript file → loadProfileTemplate("vnote_synopsis") →
+// execHaiku (plain text) → UpdateScore → EnqueueDigestIfDue (FCM push).
+func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, originalFilename string, whisperModel string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Second)
 	defer cancel()
 	defer os.Remove(audioPath) // temp m4a cleanup
@@ -401,6 +400,7 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, ev
 		"event_type", "score_audio_start",
 		"row_id", rowID,
 		"audio_path", audioPath,
+		"original_filename", originalFilename,
 	)
 
 	if q != nil {
@@ -536,25 +536,33 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, ev
 		}
 	}
 
-	// Step 4: auto-classify profile from content when empty.
-	autoClassified := false
+	// Step 4: save transcript file to docs/transcripts/ (EPIC-071 M2).
 	if profile == "" {
-		classified := classifyContentProfile(ctx, transcript)
-		if classified != "" {
-			profile = classified
-		} else {
-			profile = "eng" // fallback
-		}
-		autoClassified = true
+		profile = "voice"
+	}
+	txPath, err := saveTranscriptFile(rowID, profile, originalFilename, transcript)
+	if err != nil {
+		slog.Warn("score_audio: save transcript failed",
+			"row_id", rowID,
+			"error", err,
+		)
+		// Non-fatal — continue to synopsis generation.
+	} else {
+		slog.Info("score_audio: transcript saved",
+			"event_type", "score_audio_transcript_saved",
+			"row_id", rowID,
+			"path", txPath,
+		)
 	}
 
-	// Step 5: load profile template.
-	_, sysPrompt, err := loadProfileTemplate(profile)
+	// Step 5: load vnote_synopsis template and generate synopsis via Haiku.
+	// EPIC-071 M2: uses execHaiku directly for plain text output instead of
+	// eval.Evaluate which expects TriageVerdict JSON.
+	_, sysPrompt, err := loadProfileTemplate("vnote_synopsis")
 	if err != nil {
-		slog.Warn("score_audio: load template failed",
+		slog.Warn("score_audio: load vnote_synopsis template failed",
 			"event_type", "score_audio_template_error",
 			"row_id", rowID,
-			"profile", profile,
 			"error", err,
 		)
 		if q != nil {
@@ -563,50 +571,40 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, ev
 		return
 	}
 
-	if autoClassified {
-		sysPrompt = fmt.Sprintf(
-			"[Auto-classified profile: %s (from voice note transcript)]\n"+
-				"Score this content using the %s profile rubric.\n\n",
-			profile, profile,
-		) + sysPrompt
+	// Replace {{transcript}} placeholder with actual transcript in the prompt.
+	sysPrompt = strings.Replace(sysPrompt, "{{transcript}}", transcript, 1)
+
+	if q != nil {
+		q.SetProgress(rowID, "summarizing")
 	}
 
-	// Step 6: evaluate via Haiku.
-	if q != nil {
-		q.SetProgress(rowID, "evaluating")
-	}
-	content := truncateRunes(transcript, contentTruncationRunes)
-	sc, err := eval.Evaluate(ctx, content, sysPrompt)
+	synopsis, err := execHaiku(ctx, sysPrompt, transcript)
 	if err != nil {
-		slog.Warn("score_audio: evaluate failed",
-			"event_type", "score_audio_eval_error",
+		slog.Warn("score_audio: synopsis failed",
+			"event_type", "score_audio_synopsis_error",
 			"row_id", rowID,
-			"profile", profile,
 			"error", err,
 		)
 		if q != nil {
-			q.MarkFailedWithReason(rowID, "evaluation_failed")
+			q.MarkFailedWithReason(rowID, "synopsis_failed")
 		}
 		return
 	}
-	sc.Profile = profile
-	sc.SourceType = "server-audio"
+	synopsis = strings.TrimSpace(synopsis)
 
-	slog.Info("score_audio: evaluated",
-		"event_type", "score_audio_evaluated",
+	slog.Info("score_audio: synopsis generated",
+		"event_type", "score_audio_synopsis",
 		"row_id", rowID,
-		"profile", profile,
-		"score", sc.Score,
-		"verdict", sc.Verdict,
-		"latency_ms", sc.LatencyMs,
+		"synopsis_len", len(synopsis),
+		"synopsis", synopsis,
 	)
 
-	// Step 7: persist score.
+	// Step 6: persist — score=100 ensures push delivery past any min-score floor.
 	if q == nil {
 		return
 	}
 	slug := fmt.Sprintf("vnote-%d", rowID)
-	if err := q.UpdateScore(rowID, sc.Score, sc.Tags, sc.Verdict, slug); err != nil {
+	if err := q.UpdateScore(rowID, 100, "", synopsis, slug); err != nil {
 		slog.Warn("score_audio: UpdateScore failed",
 			"event_type", "score_audio_queue_error",
 			"row_id", rowID,
@@ -615,22 +613,71 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, ev
 		return
 	}
 
-	// Step 8: auto-archive when score meets profile threshold.
-	threshold := archiveThreshold(profile)
-	if threshold >= 0 && sc.Score >= threshold {
-		q.Archive(rowID)
-	}
+	// Step 7: auto-archive voice notes (always — no threshold gating).
+	q.Archive(rowID)
 
-	// Step 9: FCM push via the dual-writer invariant (EPIC-051).
+	// Step 8: FCM push via the dual-writer invariant (EPIC-051).
+	// score=100 bypasses NotifyMinScore floor. content_type="voice_note"
+	// tells the Android client to render synopsis instead of score.
 	resolvePushConfigOnce(q)
 	_, _ = q.EnqueueDigestIfDue(context.Background(),
-		profile, sc.Score, slug, sc.Verdict, "",
-		sc.GapSummary(3))
+		profile, 100, slug, synopsis, "", "", "voice_note")
 
 	slog.Info("score_audio: complete",
 		"event_type", "score_audio_complete",
 		"row_id", rowID,
 		"profile", profile,
-		"score", sc.Score,
+		"synopsis", synopsis,
 	)
+}
+
+// transcriptDir is the directory where voice note transcripts are saved.
+// Resolved relative to the user's docs/transcripts/ path.
+var transcriptDir = func() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "code", "personal", "docs", "transcripts")
+}()
+
+// saveTranscriptFile writes a voice note transcript to docs/transcripts/ with
+// YAML frontmatter containing metadata. Returns the written file path or error.
+// EPIC-071 M2.
+func saveTranscriptFile(rowID int64, profile, originalFilename, transcript string) (string, error) {
+	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
+		return "", fmt.Errorf("create transcript dir: %w", err)
+	}
+
+	now := time.Now().UTC()
+	date := now.Format("20060102")
+	ts := now.Format("20060102T150405Z")
+
+	// Sanitize original filename for use in the path.
+	safeName := strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
+			return '_'
+		}
+		return r
+	}, originalFilename)
+	if safeName == "" {
+		safeName = "untitled"
+	}
+	// Strip extension — the file is always .md.
+	safeName = strings.TrimSuffix(safeName, filepath.Ext(safeName))
+
+	filename := fmt.Sprintf("%s_%d_%s.md", date, rowID, safeName)
+	path := filepath.Join(transcriptDir, filename)
+
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "---\n")
+	fmt.Fprintf(&buf, "timestamp: %q\n", ts)
+	fmt.Fprintf(&buf, "row_id: %d\n", rowID)
+	fmt.Fprintf(&buf, "profile: %q\n", profile)
+	fmt.Fprintf(&buf, "original_filename: %q\n", originalFilename)
+	fmt.Fprintf(&buf, "---\n\n")
+	buf.WriteString(transcript)
+	buf.WriteString("\n")
+
+	if err := os.WriteFile(path, []byte(buf.String()), 0o644); err != nil {
+		return "", fmt.Errorf("write transcript: %w", err)
+	}
+	return path, nil
 }

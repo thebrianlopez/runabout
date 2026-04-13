@@ -444,10 +444,10 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		return "", err
 	}
 
-	// EPIC-067: audio shares branch to scoreAudioAsync instead of scoreURLAsync.
+	// EPIC-071: audio shares branch to scoreAudioAsync synopsis pipeline.
 	if ac.ServerScore && req.Type == "audio" {
-		go scoreAudioAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, HaikuJSONEvaluator{}, r.whisperModel)
-		return "Transcribing — verdict via FCM", nil
+		go scoreAudioAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel)
+		return "Transcribing — synopsis via FCM", nil
 	}
 
 	// EPIC-060 M1: server_score=true runs the full scoring pipeline entirely

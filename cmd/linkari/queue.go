@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -44,6 +45,11 @@ type QueueItem struct {
 	Verdict    string `json:"verdict,omitempty"`
 	Slug       string `json:"slug,omitempty"`
 	Progress   string `json:"progress,omitempty"`
+	SkipReason string `json:"skip_reason,omitempty"`
+	Outcome    string `json:"outcome,omitempty"`
+	OutcomeAt  string `json:"outcome_at,omitempty"`
+	Feedback   string `json:"feedback,omitempty"`
+	FeedbackAt string `json:"feedback_at,omitempty"`
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -116,6 +122,15 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE queue ADD COLUMN error_reason TEXT DEFAULT ''",
 		// EPIC-067 200MB: progress column for long-running audio transcription.
 		"ALTER TABLE queue ADD COLUMN progress TEXT DEFAULT ''",
+		// EPIC-070 M1: outcome tracking columns.
+		"ALTER TABLE queue ADD COLUMN outcome TEXT DEFAULT NULL",
+		"ALTER TABLE queue ADD COLUMN outcome_at TEXT DEFAULT NULL",
+		// EPIC-070 M2: score feedback columns.
+		"ALTER TABLE queue ADD COLUMN feedback TEXT DEFAULT NULL",
+		"ALTER TABLE queue ADD COLUMN feedback_at TEXT DEFAULT NULL",
+		// EPIC-070 M4: indexes for filtered archive queries.
+		"CREATE INDEX IF NOT EXISTS idx_queue_status_score ON queue(status, score)",
+		"CREATE INDEX IF NOT EXISTS idx_queue_status_scored_at ON queue(status, scored_at)",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -156,7 +171,8 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	// as push_outbox grows. Both statements are idempotent.
 	pushMigrations := []string{
 		"ALTER TABLE push_outbox ADD COLUMN profile TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE push_outbox ADD COLUMN gap_summary TEXT NOT NULL DEFAULT ''", // EPIC-058 M7
+		"ALTER TABLE push_outbox ADD COLUMN gap_summary TEXT NOT NULL DEFAULT ''",    // EPIC-058 M7
+		"ALTER TABLE push_outbox ADD COLUMN content_type TEXT NOT NULL DEFAULT ''", // EPIC-071 M3
 	}
 	for _, m := range pushMigrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -289,7 +305,7 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,'')"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,'')"
 
 // Pending returns all items with status=pending, ordered by id ASC (FIFO).
 func (q *Queue) Pending() ([]QueueItem, error) {
@@ -479,6 +495,73 @@ func (q *Queue) Archive(id int64) error {
 	return err
 }
 
+// validOutcomes enumerates accepted outcome values for POST /queue/{id}/outcome.
+var validOutcomes = map[string]bool{"acted": true, "ignored": true, "deferred": true}
+
+// validFeedbacks enumerates accepted feedback values for POST /queue/{id}/feedback.
+var validFeedbacks = map[string]bool{"accurate": true, "too_high": true, "too_low": true}
+
+// UpdateOutcome sets the outcome and outcome_at on a queue item.
+func (q *Queue) UpdateOutcome(id int64, outcome string) error {
+	if !validOutcomes[outcome] {
+		return fmt.Errorf("invalid outcome %q: must be acted, ignored, or deferred", outcome)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := q.db.Exec("UPDATE queue SET outcome=?, outcome_at=? WHERE id=?", outcome, now, id)
+	return err
+}
+
+// UpdateFeedback sets the feedback and feedback_at on a queue item.
+func (q *Queue) UpdateFeedback(id int64, feedback string) error {
+	if !validFeedbacks[feedback] {
+		return fmt.Errorf("invalid feedback %q: must be accurate, too_high, or too_low", feedback)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := q.db.Exec("UPDATE queue SET feedback=?, feedback_at=? WHERE id=?", feedback, now, id)
+	return err
+}
+
+// ProfileStat holds aggregate scoring/feedback stats for a single profile.
+type ProfileStat struct {
+	Profile       string `json:"profile"`
+	Count         int    `json:"count"`
+	AvgScore      float64 `json:"avg_score"`
+	AccurateCount int    `json:"accurate_count"`
+	TooHighCount  int    `json:"too_high_count"`
+	TooLowCount   int    `json:"too_low_count"`
+	FeedbackCount int    `json:"feedback_count"`
+}
+
+// ProfileStats returns aggregate scoring and feedback stats, optionally filtered by profile.
+func (q *Queue) ProfileStats(profile string) ([]ProfileStat, error) {
+	sqlStr := `SELECT profile, COUNT(*), COALESCE(AVG(score),0),
+		SUM(CASE WHEN feedback='accurate' THEN 1 ELSE 0 END),
+		SUM(CASE WHEN feedback='too_high' THEN 1 ELSE 0 END),
+		SUM(CASE WHEN feedback='too_low' THEN 1 ELSE 0 END),
+		SUM(CASE WHEN feedback!='' AND feedback IS NOT NULL THEN 1 ELSE 0 END)
+		FROM queue WHERE status IN ('scored','archived')`
+	args := []any{}
+	if profile != "" {
+		sqlStr += " AND profile=?"
+		args = append(args, profile)
+	}
+	sqlStr += " GROUP BY profile"
+	rows, err := q.db.Query(sqlStr, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var stats []ProfileStat
+	for rows.Next() {
+		var s ProfileStat
+		if err := rows.Scan(&s.Profile, &s.Count, &s.AvgScore, &s.AccurateCount, &s.TooHighCount, &s.TooLowCount, &s.FeedbackCount); err != nil {
+			return nil, err
+		}
+		stats = append(stats, s)
+	}
+	return stats, rows.Err()
+}
+
 // ListArchived returns archived items, optionally filtered by profile.
 // Back-compat wrapper; new callers should prefer ListArchivedCursor.
 func (q *Queue) ListArchived(profile string, limit int) ([]QueueItem, error) {
@@ -513,11 +596,20 @@ func (q *Queue) ListArchivedCursor(profile, status string, beforeID int64, limit
 	return q.query(sqlStr, args...)
 }
 
-// ListArchivedCursorTyped extends ListArchivedCursor with a type filter.
+// ArchiveFilter holds optional score/date range filters for archive queries (EPIC-070 M4).
+type ArchiveFilter struct {
+	ScoreMin *int
+	ScoreMax *int
+	Since    string // RFC3339
+	Until    string // RFC3339
+}
+
+// ListArchivedCursorTyped extends ListArchivedCursor with type and score/date filters.
 // itemType "jira" matches ginit_* actions; "url" matches non-ginit actions;
 // empty string disables the filter. No schema migration required — type is
 // synthesized from the action column prefix at query time (EPIC-057).
-func (q *Queue) ListArchivedCursorTyped(profile, status, itemType string, beforeID int64, limit int) ([]QueueItem, error) {
+// filter may be nil to skip score/date filtering (EPIC-070 M4).
+func (q *Queue) ListArchivedCursorTyped(profile, status, itemType string, beforeID int64, limit int, filter *ArchiveFilter) ([]QueueItem, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -542,6 +634,24 @@ func (q *Queue) ListArchivedCursorTyped(profile, status, itemType string, before
 		sqlStr += " AND action LIKE 'ginit_%'"
 	case "url":
 		sqlStr += " AND action NOT LIKE 'ginit_%'"
+	}
+	if filter != nil {
+		if filter.ScoreMin != nil {
+			sqlStr += " AND score >= ?"
+			args = append(args, *filter.ScoreMin)
+		}
+		if filter.ScoreMax != nil {
+			sqlStr += " AND score <= ?"
+			args = append(args, *filter.ScoreMax)
+		}
+		if filter.Since != "" {
+			sqlStr += " AND scored_at >= ?"
+			args = append(args, filter.Since)
+		}
+		if filter.Until != "" {
+			sqlStr += " AND scored_at <= ?"
+			args = append(args, filter.Until)
+		}
 	}
 	sqlStr += " ORDER BY id DESC LIMIT ?"
 	args = append(args, limit)
@@ -680,6 +790,7 @@ type PushItem struct {
 	UpdatedAt   int64
 	LastError   string
 	GapSummary  string // EPIC-058 M7
+	ContentType string // EPIC-071 M3: "voice_note" for audio shares
 }
 
 // EnqueuePush inserts a pending row into push_outbox and returns its id.
@@ -771,10 +882,14 @@ func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score in
 	if len(gapSummary) > 0 {
 		gs = gapSummary[0]
 	}
+	ct := ""
+	if len(gapSummary) > 1 {
+		ct = gapSummary[1] // EPIC-071 M3: optional content_type (e.g. "voice_note")
+	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, gap_summary, status, attempts, next_attempt, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 'digest', ?, ?, 'pending', 0, ?, ?, ?)`,
-		score, slug, verdict, url, profile, gs, now, now, now,
+		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, gap_summary, content_type, status, attempts, next_attempt, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 'digest', ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+		score, slug, verdict, url, profile, gs, ct, now, now, now,
 	)
 	if err != nil {
 		return EnqueueDigestResult{}, fmt.Errorf("insert digest: %w", err)
@@ -812,7 +927,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 		limit = 50
 	}
 	rows, err := q.db.Query(
-		`SELECT id, score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at, last_error, gap_summary
+		`SELECT id, score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at, last_error, gap_summary, content_type
 		 FROM push_outbox WHERE status='pending' AND next_attempt <= ? ORDER BY id ASC LIMIT ?`,
 		time.Now().Unix(), limit,
 	)
@@ -823,7 +938,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 	var items []PushItem
 	for rows.Next() {
 		var p PushItem
-		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Profile, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError, &p.GapSummary); err != nil {
+		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Profile, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError, &p.GapSummary, &p.ContentType); err != nil {
 			return nil, err
 		}
 		items = append(items, p)
@@ -1064,6 +1179,33 @@ func generateInviteCode() string {
 	return string(b)
 }
 
+// classifySkipReason derives a machine-readable skip tag from score + verdict.
+// Returns "" for scored items (score > 0) or items with no verdict.
+func classifySkipReason(score int, verdict string) string {
+	if score > 0 || verdict == "" {
+		return ""
+	}
+	v := strings.ToLower(verdict)
+	switch {
+	case strings.Contains(v, "paywall"):
+		return "paywalled"
+	case strings.Contains(v, "no content") || strings.Contains(v, "empty") || strings.Contains(v, "no meaningful content"):
+		return "no_content"
+	case strings.Contains(v, "not technical") || strings.Contains(v, "non-technical"):
+		return "not_technical"
+	case strings.Contains(v, "song") || strings.Contains(v, "lyrics"):
+		return "song_lyrics"
+	case strings.Contains(v, "duplicate"):
+		return "duplicate"
+	case strings.Contains(v, "login") || strings.Contains(v, "sign in") || strings.Contains(v, "authentication required"):
+		return "login_required"
+	case strings.Contains(v, "404") || strings.Contains(v, "not found"):
+		return "not_found"
+	default:
+		return "skipped"
+	}
+}
+
 func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 	rows, err := q.db.Query(sqlStr, args...)
 	if err != nil {
@@ -1075,12 +1217,13 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 	for rows.Next() {
 		var it QueueItem
 		var score int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress); err != nil {
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt); err != nil {
 			return nil, err
 		}
 		if score != 0 {
 			it.Score = &score
 		}
+		it.SkipReason = classifySkipReason(score, it.Verdict)
 		items = append(items, it)
 	}
 	return items, rows.Err()

@@ -465,3 +465,219 @@ func TestEnqueueDigestIfDue_PerProfileOverride(t *testing.T) {
 }
 
 func testCtx() context.Context { return context.Background() }
+
+func TestClassifySkipReason(t *testing.T) {
+	tests := []struct {
+		score   int
+		verdict string
+		want    string
+	}{
+		{85, "Great technical article", ""},
+		{0, "", ""},
+		{0, "Paywalled content behind login", "paywalled"},
+		{0, "No content available on this page", "no_content"},
+		{0, "Empty page with no meaningful content", "no_content"},
+		{0, "Not technical — lifestyle blog post", "not_technical"},
+		{0, "Non-technical entertainment content", "not_technical"},
+		{0, "Song lyrics for popular track", "song_lyrics"},
+		{0, "Duplicate of previously scored URL", "duplicate"},
+		{0, "Login required to view this page", "login_required"},
+		{0, "Authentication required", "login_required"},
+		{0, "404 page not found", "not_found"},
+		{0, "Generic low quality content", "skipped"},
+	}
+	for _, tt := range tests {
+		got := classifySkipReason(tt.score, tt.verdict)
+		if got != tt.want {
+			t.Errorf("classifySkipReason(%d, %q) = %q, want %q", tt.score, tt.verdict, got, tt.want)
+		}
+	}
+}
+
+func TestSkipReasonInArchiveResponse(t *testing.T) {
+	q := newTestQueue(t)
+	id, err := q.Enqueue(&ShareRequest{URL: "https://example.com/paywalled", Type: "url", Profile: "eng"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.UpdateScore(id, 0, "", "Paywalled content behind subscription", "slug"); err != nil {
+		t.Fatal(err)
+	}
+	items, err := q.ListArchived("", 10)
+	// score=0 items are "scored" not "archived", use List instead
+	scored, err := q.List("scored", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = items
+	if len(scored) == 0 {
+		t.Fatal("expected scored items")
+	}
+	found := false
+	for _, it := range scored {
+		if it.URL == "https://example.com/paywalled" {
+			found = true
+			if it.SkipReason != "paywalled" {
+				t.Errorf("skip_reason = %q, want %q", it.SkipReason, "paywalled")
+			}
+		}
+	}
+	if !found {
+		t.Error("paywalled item not found in scored list")
+	}
+}
+
+// --- EPIC-070 tests ---
+
+func TestUpdateOutcome(t *testing.T) {
+	q := newTestQueue(t)
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://outcome.test"})
+	q.UpdateScore(id, 80, "go", "good article", "slug-1")
+
+	if err := q.UpdateOutcome(id, "acted"); err != nil {
+		t.Fatalf("UpdateOutcome: %v", err)
+	}
+
+	item, err := q.GetByID(id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if item.Outcome != "acted" {
+		t.Errorf("outcome = %q, want %q", item.Outcome, "acted")
+	}
+	if item.OutcomeAt == "" {
+		t.Error("outcome_at should be set")
+	}
+}
+
+func TestUpdateOutcomeValidation(t *testing.T) {
+	q := newTestQueue(t)
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://outcome-val.test"})
+
+	if err := q.UpdateOutcome(id, "invalid"); err == nil {
+		t.Error("expected error for invalid outcome")
+	}
+	if err := q.UpdateOutcome(id, ""); err == nil {
+		t.Error("expected error for empty outcome")
+	}
+}
+
+func TestUpdateFeedback(t *testing.T) {
+	q := newTestQueue(t)
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://feedback.test"})
+	q.UpdateScore(id, 75, "go", "decent", "slug-2")
+
+	if err := q.UpdateFeedback(id, "too_high"); err != nil {
+		t.Fatalf("UpdateFeedback: %v", err)
+	}
+
+	item, err := q.GetByID(id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if item.Feedback != "too_high" {
+		t.Errorf("feedback = %q, want %q", item.Feedback, "too_high")
+	}
+	if item.FeedbackAt == "" {
+		t.Error("feedback_at should be set")
+	}
+}
+
+func TestUpdateFeedbackValidation(t *testing.T) {
+	q := newTestQueue(t)
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://feedback-val.test"})
+
+	if err := q.UpdateFeedback(id, "wrong"); err == nil {
+		t.Error("expected error for invalid feedback")
+	}
+}
+
+func TestProfileStats(t *testing.T) {
+	q := newTestQueue(t)
+
+	// Seed items across two profiles.
+	for i, u := range []string{"https://a.test", "https://b.test", "https://c.test"} {
+		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: u, Profile: "work"})
+		q.UpdateScore(id, 60+i*10, "go", "v", fmt.Sprintf("slug-%d", i))
+		q.Archive(id)
+	}
+	id4, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://d.test", Profile: "life"})
+	q.UpdateScore(id4, 90, "go", "great", "slug-d")
+	q.Archive(id4)
+
+	// Add feedback to some items.
+	q.UpdateFeedback(1, "accurate")
+	q.UpdateFeedback(2, "too_high")
+
+	stats, err := q.ProfileStats("")
+	if err != nil {
+		t.Fatalf("ProfileStats: %v", err)
+	}
+	if len(stats) != 2 {
+		t.Fatalf("expected 2 profiles, got %d", len(stats))
+	}
+
+	// Test single profile filter.
+	stats, err = q.ProfileStats("work")
+	if err != nil {
+		t.Fatalf("ProfileStats(work): %v", err)
+	}
+	if len(stats) != 1 {
+		t.Fatalf("expected 1 profile, got %d", len(stats))
+	}
+	if stats[0].Count != 3 {
+		t.Errorf("count = %d, want 3", stats[0].Count)
+	}
+	if stats[0].FeedbackCount != 2 {
+		t.Errorf("feedback_count = %d, want 2", stats[0].FeedbackCount)
+	}
+}
+
+func TestListArchivedFiltered(t *testing.T) {
+	q := newTestQueue(t)
+
+	// Seed items with varied scores.
+	for i, u := range []string{"https://f1.test", "https://f2.test", "https://f3.test"} {
+		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: u, Profile: "work"})
+		q.UpdateScore(id, 50+i*20, "go", "v", fmt.Sprintf("s-%d", i)) // 50, 70, 90
+		q.Archive(id)
+	}
+
+	// Filter: score_min=60 → should return items with score 70 and 90.
+	min := 60
+	items, err := q.ListArchivedCursorTyped("", "", "", 0, 50, &ArchiveFilter{ScoreMin: &min})
+	if err != nil {
+		t.Fatalf("ListArchivedCursorTyped: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items with score>=60, got %d", len(items))
+	}
+
+	// Filter: score_max=60 → should return item with score 50.
+	max := 60
+	items, err = q.ListArchivedCursorTyped("", "", "", 0, 50, &ArchiveFilter{ScoreMax: &max})
+	if err != nil {
+		t.Fatalf("ListArchivedCursorTyped: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item with score<=60, got %d", len(items))
+	}
+
+	// Filter: since (future date) → should return 0.
+	items, err = q.ListArchivedCursorTyped("", "", "", 0, 50, &ArchiveFilter{Since: "2099-01-01T00:00:00Z"})
+	if err != nil {
+		t.Fatalf("ListArchivedCursorTyped since: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected 0 items since future, got %d", len(items))
+	}
+
+	// No filter → all 3.
+	items, err = q.ListArchivedCursorTyped("", "", "", 0, 50, nil)
+	if err != nil {
+		t.Fatalf("ListArchivedCursorTyped nil filter: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items with no filter, got %d", len(items))
+	}
+}

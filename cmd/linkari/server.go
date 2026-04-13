@@ -69,8 +69,9 @@ type ShareRequest struct {
 	FCMToken string `json:"fcm_token,omitempty"`
 
 	// Internal fields — not serialized from JSON.
-	AudioPath  string `json:"-"` // EPIC-067: temp file path for uploaded audio
-	QueueRowID int64  `json:"-"` // EPIC-067: queue row ID for audio scoring (no URL to match on)
+	AudioPath        string `json:"-"` // EPIC-067: temp file path for uploaded audio
+	QueueRowID       int64  `json:"-"` // EPIC-067: queue row ID for audio scoring (no URL to match on)
+	OriginalFilename string `json:"-"` // EPIC-071: original filename from multipart upload
 }
 
 // ShareResponse is the structured JSON response.
@@ -326,6 +327,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /push/test", s.handleTestPush)
 	mux.HandleFunc("/queue", s.handleQueue)
 	mux.HandleFunc("POST /queue/{id}/score", s.handleQueueScore)
+	mux.HandleFunc("POST /queue/{id}/outcome", s.handleQueueOutcome)
+	mux.HandleFunc("POST /queue/{id}/feedback", s.handleQueueFeedback)
+	mux.HandleFunc("GET /profiles/stats", s.handleProfileStats)
 	mux.HandleFunc("/archive", s.handleArchive)
 	mux.HandleFunc("/digest", s.handleDigest)
 	mux.HandleFunc("POST /search", s.handleSearch)
@@ -560,6 +564,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 				b, _ := io.ReadAll(io.LimitReader(part, 4096))
 				req.FCMToken = string(b)
 			case "audio":
+				req.OriginalFilename = part.FileName() // EPIC-071: preserve original filename
 				ext := filepath.Ext(part.FileName())
 				if ext == "" {
 					ext = ".m4a"
@@ -758,32 +763,68 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 // parseListParams extracts and validates the shared list query params used by
 // /archive and /queue: profile, status, before_id, limit, type. Returns a
 // 400-ready error describing the first invalid field.
-func parseListParams(r *http.Request) (profile, status, itemType string, beforeID int64, limit int, err error) {
+func parseListParams(r *http.Request) (profile, status, itemType string, beforeID int64, limit int, filter *ArchiveFilter, err error) {
 	profile = r.URL.Query().Get("profile")
 	status = r.URL.Query().Get("status")
 	if status != "" && !validStatuses[status] {
-		return "", "", "", 0, 0, fmt.Errorf("invalid status")
+		return "", "", "", 0, 0, nil, fmt.Errorf("invalid status")
 	}
 	// EPIC-057: ?type=jira filters to ginit_* actions; ?type=url filters to
 	// non-ginit actions. Empty means no filter.
 	itemType = r.URL.Query().Get("type")
 	if itemType != "" && itemType != "jira" && itemType != "url" {
-		return "", "", "", 0, 0, fmt.Errorf("invalid type: must be 'jira' or 'url'")
+		return "", "", "", 0, 0, nil, fmt.Errorf("invalid type: must be 'jira' or 'url'")
 	}
 	limit = 50
 	if l := r.URL.Query().Get("limit"); l != "" {
 		n, e := strconv.Atoi(l)
 		if e != nil || n <= 0 || n > 200 {
-			return "", "", "", 0, 0, fmt.Errorf("invalid limit")
+			return "", "", "", 0, 0, nil, fmt.Errorf("invalid limit")
 		}
 		limit = n
 	}
 	if b := r.URL.Query().Get("before_id"); b != "" {
 		n, e := strconv.ParseInt(b, 10, 64)
 		if e != nil || n < 0 {
-			return "", "", "", 0, 0, fmt.Errorf("invalid before_id")
+			return "", "", "", 0, 0, nil, fmt.Errorf("invalid before_id")
 		}
 		beforeID = n
+	}
+	// EPIC-070 M4: score and date range filters.
+	var f ArchiveFilter
+	hasFilter := false
+	if s := r.URL.Query().Get("score_min"); s != "" {
+		n, e := strconv.Atoi(s)
+		if e != nil {
+			return "", "", "", 0, 0, nil, fmt.Errorf("invalid score_min")
+		}
+		f.ScoreMin = &n
+		hasFilter = true
+	}
+	if s := r.URL.Query().Get("score_max"); s != "" {
+		n, e := strconv.Atoi(s)
+		if e != nil {
+			return "", "", "", 0, 0, nil, fmt.Errorf("invalid score_max")
+		}
+		f.ScoreMax = &n
+		hasFilter = true
+	}
+	if s := r.URL.Query().Get("since"); s != "" {
+		if _, e := time.Parse(time.RFC3339, s); e != nil {
+			return "", "", "", 0, 0, nil, fmt.Errorf("invalid since: must be RFC3339")
+		}
+		f.Since = s
+		hasFilter = true
+	}
+	if s := r.URL.Query().Get("until"); s != "" {
+		if _, e := time.Parse(time.RFC3339, s); e != nil {
+			return "", "", "", 0, 0, nil, fmt.Errorf("invalid until: must be RFC3339")
+		}
+		f.Until = s
+		hasFilter = true
+	}
+	if hasFilter {
+		filter = &f
 	}
 	return
 }
@@ -804,7 +845,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, status, _, beforeID, limit, perr := parseListParams(r)
+	_, status, _, beforeID, limit, _, perr := parseListParams(r)
 	if perr != nil {
 		writeError(w, http.StatusBadRequest, perr.Error())
 		return
@@ -896,6 +937,126 @@ func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(item)
 }
 
+// handleQueueOutcome handles POST /queue/{id}/outcome (EPIC-070 M1).
+func (s *Server) handleQueueOutcome(w http.ResponseWriter, r *http.Request) {
+	if !s.authenticateRequest(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.queue == nil {
+		writeError(w, http.StatusServiceUnavailable, "queue not configured")
+		return
+	}
+
+	idStr := r.PathValue("id")
+	var id int64
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid queue item ID")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
+	var req struct {
+		Outcome string `json:"outcome"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	if err := s.queue.UpdateOutcome(id, req.Outcome); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("update outcome: %v", err))
+		return
+	}
+
+	item, err := s.queue.GetByID(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("get item: %v", err))
+		return
+	}
+
+	slog.InfoContext(r.Context(), "outcome",
+		"event_type", "outcome_recorded",
+		"id", id,
+		"outcome", req.Outcome,
+		"profile", item.Profile,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(item)
+}
+
+// handleQueueFeedback handles POST /queue/{id}/feedback (EPIC-070 M2).
+func (s *Server) handleQueueFeedback(w http.ResponseWriter, r *http.Request) {
+	if !s.authenticateRequest(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.queue == nil {
+		writeError(w, http.StatusServiceUnavailable, "queue not configured")
+		return
+	}
+
+	idStr := r.PathValue("id")
+	var id int64
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid queue item ID")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
+	var req struct {
+		Feedback string `json:"feedback"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	if err := s.queue.UpdateFeedback(id, req.Feedback); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("update feedback: %v", err))
+		return
+	}
+
+	item, err := s.queue.GetByID(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("get item: %v", err))
+		return
+	}
+
+	slog.InfoContext(r.Context(), "feedback",
+		"event_type", "feedback_recorded",
+		"id", id,
+		"feedback", req.Feedback,
+		"profile", item.Profile,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(item)
+}
+
+// handleProfileStats handles GET /profiles/stats (EPIC-070 M2).
+func (s *Server) handleProfileStats(w http.ResponseWriter, r *http.Request) {
+	if !s.authenticateRequest(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.queue == nil {
+		writeError(w, http.StatusServiceUnavailable, "queue not configured")
+		return
+	}
+
+	profile := r.URL.Query().Get("profile")
+	stats, err := s.queue.ProfileStats(profile)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("profile stats: %v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
 // enqueueDigestPush is a thin server-side wrapper around
 // Queue.EnqueueDigestIfDue that emits the matching observability events.
 // EPIC-051 M3 replaces the deleted maybeDigestPush helper. The helper itself
@@ -951,13 +1112,13 @@ func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile, status, itemType, beforeID, limit, perr := parseListParams(r)
+	profile, status, itemType, beforeID, limit, filter, perr := parseListParams(r)
 	if perr != nil {
 		writeError(w, http.StatusBadRequest, perr.Error())
 		return
 	}
 
-	items, err := s.queue.ListArchivedCursorTyped(profile, status, itemType, beforeID, limit)
+	items, err := s.queue.ListArchivedCursorTyped(profile, status, itemType, beforeID, limit, filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list archived: %v", err))
 		return
@@ -1167,7 +1328,7 @@ func (s *Server) handleTestPush(w http.ResponseWriter, r *http.Request) {
 		testURL     = "https://linkari.test/ping"
 	)
 
-	if err := sendOutboxFCM(s, deviceToken, testScore, testSlug, testVerdict, testURL, "", ""); err != nil {
+	if err := sendOutboxFCM(s, deviceToken, testScore, testSlug, testVerdict, testURL, "", "", ""); err != nil {
 		slog.WarnContext(ctx, "test push: FCM send failed", "error", err)
 		emitPushEvent("push_test_failed", map[string]interface{}{
 			"reason":    "fcm_send_failed",
