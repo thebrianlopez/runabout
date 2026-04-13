@@ -280,4 +280,48 @@ func TestArchiveTypeFilterInvalid(t *testing.T) {
 	}
 }
 
+func TestArchiveSkipReasonInResponse(t *testing.T) {
+	q := newTestQueue(t)
+	// Insert a skipped item (score=0) with a classifiable verdict.
+	id, err := q.Enqueue(&ShareRequest{URL: "https://paywall.example.com", Type: "url", Profile: "eng"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.UpdateScore(id, 0, "", "Paywalled article behind subscription", "slug"); err != nil {
+		t.Fatal(err)
+	}
+	// Insert a scored item (score > 0) — should have no skip_reason.
+	id2, err := q.Enqueue(&ShareRequest{URL: "https://good.example.com", Type: "url", Profile: "eng"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.UpdateScore(id2, 85, "go", "Excellent Go article", "slug2"); err != nil {
+		t.Fatal(err)
+	}
+
+	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
+	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
+
+	w := doGet(t, srv.Mux(), "/archive?status=scored&limit=10", "test-token")
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	items := decodeItems(t, w)
+	if len(items) != 2 {
+		t.Fatalf("want 2 items, got %d", len(items))
+	}
+	for _, it := range items {
+		if it.URL == "https://paywall.example.com" {
+			if it.SkipReason != "paywalled" {
+				t.Errorf("skip_reason = %q, want %q", it.SkipReason, "paywalled")
+			}
+		}
+		if it.URL == "https://good.example.com" {
+			if it.SkipReason != "" {
+				t.Errorf("scored item should have empty skip_reason, got %q", it.SkipReason)
+			}
+		}
+	}
+}
+
 var _ = fmt.Sprintf
