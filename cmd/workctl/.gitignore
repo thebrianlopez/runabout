@@ -1,0 +1,50 @@
+# Documentation (if not tracking in git)
+/docs
+/dev-docs
+output
+workctl
+
+# Compiled binaries
+/bin/workctl
+/bin/ghwatch
+/cmd/workctl/workctl
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build artifacts
+/archive/script
+/archive/weekly-summary
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Debug logs
+debug.log
+
+# Legacy CSV output files (root directory)
+output_*.csv
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Go workspace file
+go.work
+.claude/
+
+# Downloaded Confluence articles (from get_confluence_article)
+week*_template.json
+Week_*.md

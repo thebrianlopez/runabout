@@ -6,4 +6,5 @@ use (
 	./cmd/linkari
 	./cmd/protonexport
 	./cmd/wasend
+	./cmd/workctl
 )

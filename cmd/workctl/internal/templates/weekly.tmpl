@@ -1,0 +1,175 @@
+# Career Growth Insights
+
+**Generated:** {{ .Generated }}
+**Period:** {{ .Period }}
+
+---
+
+## Overview
+
+| Metric | Count |
+|--------|------:|
+| Jira Issues | {{ .TotalIssues }} |
+| Confluence Articles | {{ .TotalArticles }} |
+| GitHub Activities | {{ .TotalActivities }} |
+{{ if .Themes }}
+## Work Themes
+
+| Theme | Count | % |
+|-------|------:|---:|
+{{ range .Themes -}}
+| {{ .Name }} | {{ .Count }} | {{ .Pct }} |
+{{ end }}{{ end -}}
+{{ if .Velocity }}
+## Monthly Velocity
+
+| Month | Created | Closed | Net |
+|-------|--------:|-------:|----:|
+{{ range .Velocity -}}
+| {{ .Month }} | {{ .Created }} | {{ .Closed }} | {{ .Net }} |
+{{ end }}{{ end -}}
+{{ if or .Projects .Spaces .Repos }}
+## Focus Distribution
+{{ if .Projects }}
+### Projects
+
+| Name | Count | % |
+|------|------:|---:|
+{{ range .Projects -}}
+| {{ .Name }} | {{ .Count }} | {{ .Pct }} |
+{{ end }}{{ end -}}
+{{ if .Spaces }}
+### Confluence Spaces
+
+| Name | Count | % |
+|------|------:|---:|
+{{ range .Spaces -}}
+| {{ .Name }} | {{ .Count }} | {{ .Pct }} |
+{{ end }}{{ end -}}
+{{ if .Repos }}
+### Repositories
+
+| Name | Count | % |
+|------|------:|---:|
+{{ range .Repos -}}
+| {{ .Name }} | {{ .Count }} | {{ .Pct }} |
+{{ end }}{{ end }}{{ end -}}
+{{ if .Collab.HasContent }}
+## Collaboration Signals
+
+| Signal | Value |
+|--------|------:|
+| PR Reviews | {{ .Collab.PRReviews }} |
+| Issue Comments | {{ .Collab.IssueComments }} |
+| Unique Repos | {{ .Collab.UniqueRepos }} |
+| Cross-Team Issues | {{ .Collab.CrossTeamIssues }} |
+{{ end -}}
+{{ if .Ownership.HasContent }}
+## Ownership Signals
+
+| Signal | Value |
+|--------|------:|
+| Issues Closed | {{ .Ownership.IssuesClosed }} |
+| High-Priority Closed | {{ .Ownership.HighPriorityClosed }} |
+| Incident Ratio | {{ .Ownership.IncidentRatioPct }} |
+{{ end -}}
+{{ if .ShellActivity }}
+## Shell Activity
+
+| Metric | Value |
+|--------|------:|
+| Total Commands | {{ .ShellActivity.TotalCommands }} |
+| Days Active | {{ .ShellActivity.DaysActive }} |
+| Infra Commands | {{ .ShellActivity.InfraCommands }} ({{ .ShellActivity.InfraRatioPct }}) |
+| Deploy Commands | {{ .ShellActivity.DeployCommands }} |{{ if .ShellActivity.PeakHour }}
+| Peak Hour | {{ .ShellActivity.PeakHour }} |{{ end }}
+{{ if .ShellActivity.Categories }}
+### Command Categories
+
+| Category | Count | % |
+|----------|------:|---:|
+{{ range .ShellActivity.Categories -}}
+| {{ .Name }} | {{ .Count }} | {{ .Pct }} |
+{{ end }}{{ end -}}
+{{ if .ShellActivity.TopTools }}
+### Top Tools
+
+| Tool | Count | % |
+|------|------:|---:|
+{{ range .ShellActivity.TopTools -}}
+| {{ .Name }} | {{ .Count }} | {{ .Pct }} |
+{{ end }}{{ end -}}
+{{ end -}}
+{{ if .AIActivity }}
+## AI-Assisted Work
+
+| Metric | Value |
+|--------|------:|
+| Sessions | {{ .AIActivity.TotalSessions }} |
+| Messages | {{ .AIActivity.TotalMessages }} |
+| Tool Calls | {{ .AIActivity.TotalToolCalls }} |
+| Tokens Used | {{ .AIActivity.TotalTokens }} |
+| Days Active | {{ .AIActivity.DaysActive }} |
+| Human Commands | {{ .AIActivity.HumanCommands }} |
+| Agent Commands | {{ .AIActivity.AgentCommands }} |
+{{ if .AIActivity.HasEventSignals -}}
+| Event Sessions | {{ .AIActivity.EventSessions }} |
+| Avg Session Duration | {{ .AIActivity.AvgSessionDurationMin }} min |
+| Est. Cost | {{ .AIActivity.TotalCostUSD }} |
+| Graduation Candidates | {{ .AIActivity.GraduationCandidates }} |
+{{ end -}}
+{{ if .AIActivity.LayerBreakdown }}
+### Activity by Layer
+
+| Layer | Events | % |
+|-------|-------:|---:|
+{{ range .AIActivity.LayerBreakdown -}}
+| {{ .Name }} | {{ .Count }} | {{ .Pct }} |
+{{ end }}{{ end -}}
+{{ if .AIActivity.ToolDistribution }}
+### Tool Distribution
+
+| Tool | Calls | % |
+|------|------:|---:|
+{{ range .AIActivity.ToolDistribution -}}
+| {{ .Name }} | {{ .Count }} | {{ .Pct }} |
+{{ end }}{{ end -}}
+{{ if .AIActivity.AgentProjects }}
+### Agent Projects
+
+| Project | Commands |
+|---------|----------:|
+{{ range .AIActivity.AgentProjects -}}
+| {{ .Name }} | {{ .Count }} |
+{{ end }}{{ end -}}
+{{ end -}}
+{{ if .Sessions }}
+## Session Analysis
+
+| Metric | Value |
+|--------|------:|
+| Unique Sessions | {{ .Sessions.TotalSessions }} |
+| Multi-Project Sessions | {{ .Sessions.MultiProjectCount }} |
+| Avg Events/Session | {{ .Sessions.AvgEventsPerSession }} |
+| Avg Tools/Session | {{ .Sessions.AvgToolsPerSession }} |
+| Avg Duration | {{ .Sessions.AvgDurationMin }} min |
+| Longest Session | {{ .Sessions.LongestSessionMin }} min |
+{{ if .Sessions.ProjectSessions }}
+### Sessions by Project
+
+| Project | Sessions | % |
+|---------|----------:|---:|
+{{ range .Sessions.ProjectSessions -}}
+| {{ .Name }} | {{ .Count }} | {{ .Pct }} |
+{{ end }}{{ end -}}
+{{ end -}}
+{{ if .Topology }}
+## Topology Signals
+
+| Metric | Value |
+|--------|------:|
+| Graduation Density | {{ .Topology.GraduationDensityPct }} |
+| Tool Sessions | {{ .Topology.ToolSessions }} |
+| Inference-Only Sessions | {{ .Topology.InferenceSessions }} |
+| Anti-Pattern Rate | {{ .Topology.AntiPatternRatePct }} |
+{{ end -}}

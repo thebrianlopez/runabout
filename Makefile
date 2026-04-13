@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval effiscore
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := fetchpage protonexport linkari wasend
+SEPARATE := fetchpage protonexport linkari wasend workctl ghwatch
 
 ALL := $(CORE) $(SEPARATE)
 
@@ -132,3 +132,19 @@ wasend:
 install-wasend:
 	@echo "Installing wasend → $(INSTALL_DIR)/wasend"
 	@cd cmd/wasend && go install $(LDFLAGS) .
+
+workctl:
+	@echo "Building workctl..."
+	@cd cmd/workctl && go build $(LDFLAGS) -o ../../bin/workctl ./cmd/workctl
+
+install-workctl:
+	@echo "Installing workctl → $(INSTALL_DIR)/workctl"
+	@cd cmd/workctl && go install $(LDFLAGS) ./cmd/workctl
+
+ghwatch:
+	@echo "Building ghwatch..."
+	@cd cmd/workctl && go build $(LDFLAGS) -o ../../bin/ghwatch ./cmd/ghwatch
+
+install-ghwatch:
+	@echo "Installing ghwatch → $(INSTALL_DIR)/ghwatch"
+	@cd cmd/workctl && go install $(LDFLAGS) ./cmd/ghwatch
