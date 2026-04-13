@@ -440,8 +440,26 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	fcmToken := s.GetFCMToken()
 	actions := s.router.Actions()
 
+	// Probe the DB so corruption or mid-session failures surface here
+	// rather than as 500s on /archive or /digest (2026-04-13 incident).
+	dbStatus := "ok"
+	var dbError string
+	if s.queue != nil {
+		if err := s.queue.Ping(); err != nil {
+			dbStatus = "error"
+			dbError = err.Error()
+		}
+	}
+
+	status := "ok"
+	code := http.StatusOK
+	if dbStatus != "ok" {
+		status = "degraded"
+		code = http.StatusServiceUnavailable
+	}
+
 	health := map[string]interface{}{
-		"status":         "ok",
+		"status":         status,
 		"timestamp":      time.Now().UTC().Format(time.RFC3339),
 		"uptime":         uptime,
 		"actions":        len(actions),
@@ -450,9 +468,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"tsnet_enabled":  s.tsnetAddr != "",
 		"tsnet_addr":     s.tsnetAddr,
 		"debug":          s.debug,
+		"db":             dbStatus,
+	}
+	if dbError != "" {
+		health["db_error"] = dbError
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(health)
 }
 

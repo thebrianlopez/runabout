@@ -1,10 +1,10 @@
 # runabout
 
 [![CI](https://github.com/blo-grindr/runabout/actions/workflows/test.yml/badge.svg)](https://github.com/blo-grindr/runabout/actions/workflows/test.yml)
-[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev)
-![Tools](https://img.shields.io/badge/tools-9_CLIs-blue)
+[![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://go.dev)
+![Tools](https://img.shields.io/badge/tools-11_CLIs-blue)
 
-Go devtools monorepo — nine CLI tools for shell optimization and personal workflows.
+Go devtools monorepo — eleven CLI tools for shell optimization and personal workflows.
 
 These tools occupy the **Go CLI layer** of an [automation knowledge topology](https://github.com/blo-grindr/infra-knowledge) — they represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
 
@@ -17,8 +17,10 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 - **wasend** — send WhatsApp messages from the command line
 - **fetchpage** — headless webpage fetcher via Playwright
 - **protonexport** — export ProtonMail conversations to markdown
+- **workctl** — fetch and export Atlassian & GitHub work data (weekly/quarterly summaries, career reports)
+- **ghwatch** — stream GitHub repository activity to the terminal (push, PRs, workflow runs)
 
-**Last Updated:** 2026-04-11
+**Last Updated:** 2026-04-13
 
 ## Install
 
@@ -272,10 +274,38 @@ fetchpage https://example.com --channel chromium
 
 Requires one-time Playwright setup: `make setup-fetchpage`.
 
+## workctl
+
+Fetch and export Atlassian & GitHub work data. Reads Jira, Confluence, and GitHub to produce weekly/quarterly summaries, performance reviews, career progression reports, and trend analysis. Config lives in `~/.config/workctl/config.yaml`; cache is SQLite (optionally encrypted via `WORKCTL_CACHE_PASSPHRASE`).
+
+```bash
+workctl init                        # scaffold config
+workctl weekly                      # weekly work summary
+workctl quarterly                   # quarterly summary
+workctl review                      # performance review generation
+workctl insights                    # work insights across sources
+workctl career                      # career progression analysis
+workctl trends                      # trend analysis
+workctl cache --refresh             # force cache refresh
+```
+
+## ghwatch
+
+Stream GitHub repository activity to the terminal. Polls push events, pull requests, and workflow runs at a configurable interval; deduplicates across restarts via a local state file. Outputs human-readable text or JSONL.
+
+```bash
+ghwatch --repo owner/repo                          # watch all event types (30s interval)
+ghwatch --repo owner/repo --events push,pr         # filter event types
+ghwatch --repo owner/repo --interval 60s --json    # JSONL output
+ghwatch --repo owner/repo --since 4h               # lookback window on first run
+```
+
+Requires `$GITHUB_TOKEN` or `--token`.
+
 ## Build
 
 ```bash
-make build    # builds all 9 binaries to bin/
+make build    # builds all 11 binaries to bin/
 make install  # go install → ~/go/bin
 make core     # builds mdq, perfgate, shellprof, hookval, effiscore
 make clean    # removes bin/
@@ -283,9 +313,10 @@ go test ./... # run root module tests
 cd cmd/linkari && go test ./...    # linkari (separate module)
 cd cmd/wasend && go test ./...     # wasend (separate module)
 cd cmd/protonexport && go test ./... # protonexport (separate module)
+cd cmd/workctl && go test ./...    # workctl + ghwatch (separate module)
 ```
 
-Version, commit, and build date are injected at build time via ldflags. The Go workspace (`go.work`) ties the root module to four separate-module satellites: linkari, fetchpage, wasend, and protonexport.
+Version, commit, and build date are injected at build time via ldflags. The Go workspace (`go.work`) ties the root module to five separate-module satellites: linkari, fetchpage, wasend, protonexport, and workctl.
 
 ## Telemetry
 
@@ -305,6 +336,10 @@ cmd/fetchpage/        # fetchpage entry point (separate module)
 cmd/linkari/          # linkari entry point (separate module, ~60 files)
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
+cmd/workctl/          # workctl module root (separate module)
+  cmd/workctl/        # workctl binary entry point
+  cmd/ghwatch/        # ghwatch binary entry point (shares workctl go.mod)
+  internal/           # workctl + ghwatch shared internals
 internal/mdq/         # markdown parser, query engine, output formatting
 internal/perfgate/    # benchmark runner, statistics, gating logic
 internal/shellprof/   # fish instrumentation, profiling, call graph

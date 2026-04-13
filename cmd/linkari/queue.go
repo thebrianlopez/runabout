@@ -87,10 +87,36 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		return nil, fmt.Errorf("open queue db: %w", err)
 	}
 
+	// Integrity check before any schema work — catches SQLITE_CORRUPT (11) that
+	// would otherwise surface as non-fatal errors during later startup steps
+	// (e.g. seed invite codes) and leave all DB-backed endpoints returning 500.
+	// Returns an error so the caller (serve command) treats this as fatal and
+	// halts rather than accepting traffic with a broken database.
+	var integrityResult string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&integrityResult); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("queue.db integrity check: %w", err)
+	}
+	if integrityResult != "ok" {
+		db.Close()
+		return nil, fmt.Errorf("queue.db is corrupt (%s) — recover with: sqlite3 ~/.config/linkari/queue.db \".recover\" | sqlite3 ~/.config/linkari/queue_recovered.db && mv queue.db queue.db.bak && mv queue_recovered.db queue.db", integrityResult)
+	}
+
 	// WAL mode for concurrent reads during replay.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
+	}
+
+	// FULL synchronous mode: fsync after every WAL write. Slightly slower
+	// than the WAL default (NORMAL) but eliminates the corruption window on
+	// unclean shutdown (lid-close, OOM kill, force-quit). WAL+NORMAL is safe
+	// for data durability but can leave queue.db-wal in a state SQLite cannot
+	// recover — the 2026-04-13 SQLITE_CORRUPT (11) incident occurred with WAL
+	// on and synchronous at its default.
+	if _, err := db.Exec("PRAGMA synchronous=FULL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set synchronous mode: %w", err)
 	}
 
 	const schema = `CREATE TABLE IF NOT EXISTS queue (
@@ -690,6 +716,26 @@ func (q *Queue) Prune() error {
 // Close closes the database connection.
 func (q *Queue) Close() error {
 	return q.db.Close()
+}
+
+// Snapshot writes a clean, defragmented copy of the database to destPath using
+// VACUUM INTO. The destination is overwritten if it already exists. Intended
+// for periodic point-in-time backups — if queue.db becomes corrupt, the last
+// snapshot is the recovery baseline before attempting sqlite3 .recover.
+func (q *Queue) Snapshot(destPath string) error {
+	_, err := q.db.Exec("VACUUM INTO ?", destPath)
+	if err != nil {
+		return fmt.Errorf("snapshot to %s: %w", destPath, err)
+	}
+	return nil
+}
+
+// Ping checks that the database is reachable and structurally sound.
+// Used by /healthz to surface mid-session DB failures before clients
+// discover them as 500s on /archive or /digest.
+func (q *Queue) Ping() error {
+	var n int
+	return q.db.QueryRow("SELECT COUNT(*) FROM queue LIMIT 1").Scan(&n)
 }
 
 // initFTS5 rebuilds the FTS5 index from the content table.

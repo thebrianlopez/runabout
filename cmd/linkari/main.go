@@ -611,6 +611,19 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				go relayedWatchdog.Run(cmd.Context())
 			}
 
+			// Periodic VACUUM INTO snapshot — point-in-time recovery baseline
+			// if queue.db becomes corrupt (2026-04-13 incident). Defaults to
+			// 1h interval writing <queue_db>.bak; configurable via server.yaml.
+			if queue != nil {
+				sc := &ServerConfig{}
+				if serverFileCfg != nil {
+					sc = serverFileCfg
+				}
+				snapInterval, snapPath := sc.SnapshotConfig(queueDB)
+				snapWorker := NewSnapshotWorker(queue, snapInterval, snapPath)
+				go snapWorker.Run(cmd.Context())
+			}
+
 			httpServer := &http.Server{
 				Addr:         fmt.Sprintf(":%d", port),
 				Handler:      srv.Mux(),
