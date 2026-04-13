@@ -127,7 +127,7 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 			})
 			continue
 		}
-		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary); err != nil {
+		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary, p.ContentType); err != nil {
 			attempts := p.Attempts + 1
 			if attempts >= pushMaxAttempts {
 				_ = s.queue.MarkPushDead(p.ID, err.Error())
@@ -219,25 +219,32 @@ func emitShareActionResolved(res ShareResolution, url string, queueID int64) {
 // sendOutboxFCM is the single production caller of the FCM HTTP v1 API.
 // EPIC-061: profile parameter added to include auto-classified profile in
 // the FCM data payload so the Android client can display it.
-func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, profile, gapSummary string) error {
+// EPIC-071 M3: contentType parameter added — "voice_note" triggers a
+// different notification title/body and includes content_type in the data map.
+func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, profile, gapSummary, contentType string) error {
 	tok, err := s.fcmTokenSource.Token()
 	if err != nil {
 		return fmt.Errorf("obtaining oauth2 token: %w", err)
 	}
 
-	notifBody := slug
-	if verdict != "" {
-		notifBody = firstSentence(verdict, 120)
-	}
-
-	var title string
-	switch {
-	case score >= 70:
-		title = fmt.Sprintf("Worth reading — %d/100", score)
-	case score >= 40:
-		title = fmt.Sprintf("Maybe — %d/100", score)
-	default:
-		title = fmt.Sprintf("Skip it — %d/100", score)
+	var title, notifBody string
+	if contentType == "voice_note" {
+		// EPIC-071 M3: voice notes get a synopsis-oriented notification.
+		title = "Voice note transcribed"
+		notifBody = verdict // synopsis is already ≤280 chars from prompt constraint
+	} else {
+		notifBody = slug
+		if verdict != "" {
+			notifBody = firstSentence(verdict, 120)
+		}
+		switch {
+		case score >= 70:
+			title = fmt.Sprintf("Worth reading — %d/100", score)
+		case score >= 40:
+			title = fmt.Sprintf("Maybe — %d/100", score)
+		default:
+			title = fmt.Sprintf("Skip it — %d/100", score)
+		}
 	}
 
 	payload := map[string]interface{}{
@@ -248,12 +255,13 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 				"body":  notifBody,
 			},
 			"data": map[string]string{
-				"slug":        slug,
-				"verdict":     verdict,
-				"url":         url,
-				"score":       fmt.Sprintf("%d", score),
-				"profile":     profile,
-				"gap_summary": gapSummary,
+				"slug":         slug,
+				"verdict":      verdict,
+				"url":          url,
+				"score":        fmt.Sprintf("%d", score),
+				"profile":      profile,
+				"gap_summary":  gapSummary,
+				"content_type": contentType,
 			},
 			"android": map[string]string{
 				"priority": "high",

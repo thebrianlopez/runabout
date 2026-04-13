@@ -99,39 +99,62 @@ func installWhisperStub(t *testing.T, transcript string, err error) {
 
 // --- helper: run scoreAudioAsync synchronously ------------------------------
 
-func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID int64, eval Evaluator) {
+// installHaikuSynopsisStub stubs execHaiku to return a fixed synopsis and
+// signals done on the first call. Also creates a temporary vnote_synopsis.md
+// template so loadProfileTemplate("vnote_synopsis") succeeds.
+func installHaikuSynopsisStub(t *testing.T, synopsis string) chan struct{} {
 	t.Helper()
 	done := make(chan struct{})
-	wrapped := &onceDoneEval{inner: eval, done: done}
-	go scoreAudioAsync(audioPath, profile, q, rowID, wrapped, "")
+	var once int32
+	prev := execHaiku
+	execHaiku = func(_ context.Context, _, _ string) (string, error) {
+		if atomic.CompareAndSwapInt32(&once, 0, 1) {
+			close(done)
+		}
+		return synopsis, nil
+	}
+	t.Cleanup(func() { execHaiku = prev })
+
+	// Create temp vnote_synopsis template so loadProfileTemplate finds it.
+	dir := filepath.Join(t.TempDir(), "docs", "prompts", "profiles")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "vnote_synopsis.md"), []byte("Summarize this voice note transcript.\n\n{{transcript}}"), 0o644)
+	t.Setenv("ORG_PATH", filepath.Join(t.TempDir()))
+
+	// Override transcript dir to temp.
+	prevDir := transcriptDir
+	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
+	t.Cleanup(func() { transcriptDir = prevDir })
+
+	return done
+}
+
+func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID int64, done chan struct{}) {
+	t.Helper()
+	go scoreAudioAsync(audioPath, profile, q, rowID, "test.m4a", "")
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Log("runScoreAudioSync: timed out waiting (eval never called)")
+		t.Log("runScoreAudioSync: timed out waiting (haiku never called)")
 	}
 	time.Sleep(50 * time.Millisecond)
 }
 
-func runScoreAudioSkip(t *testing.T, audioPath, profile string, q *Queue, rowID int64, eval Evaluator) {
+func runScoreAudioSkip(t *testing.T, audioPath, profile string, q *Queue, rowID int64) {
 	t.Helper()
-	go scoreAudioAsync(audioPath, profile, q, rowID, eval, "")
+	go scoreAudioAsync(audioPath, profile, q, rowID, "test.m4a", "")
 	time.Sleep(300 * time.Millisecond)
 }
 
 // --- Tests -------------------------------------------------------------------
 
-// 1. Happy path: whisper returns transcript, eval scores it, queue row updated.
+// 1. Happy path: whisper returns transcript, Haiku returns synopsis, queue row updated.
 func TestScoreAudioAsync_HappyPath(t *testing.T) {
 	isolateEventsDir(t)
 	installFfmpegStub(t)
 	installWhisperStub(t, "This is a voice memo about machine learning transformers and attention mechanisms.", nil)
 
-	// Stub content classify to avoid Haiku call.
-	prevClassify := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
-		return "eng", nil
-	}
-	t.Cleanup(func() { execContentClassify = prevClassify })
+	done := installHaikuSynopsisStub(t, "Speaker discusses ML transformer architecture and attention mechanisms.")
 
 	q := newTestQueue(t)
 
@@ -146,14 +169,9 @@ func TestScoreAudioAsync_HappyPath(t *testing.T) {
 	}
 	q.MarkRelayed(id)
 
-	eval := &stubEvaluator{score: 75, verdict: "Good voice note"}
-	runScoreAudioSync(t, audioFile, "eng", q, id, eval)
+	runScoreAudioSync(t, audioFile, "eng", q, id, done)
 
-	if atomic.LoadInt32(&eval.calls) != 1 {
-		t.Errorf("eval.calls = %d, want 1", atomic.LoadInt32(&eval.calls))
-	}
-
-	// Check queue row is scored with transcript backfilled.
+	// Check queue row is scored with transcript backfilled and score=100.
 	items, err := q.List("", 20)
 	if err != nil {
 		t.Fatalf("list: %v", err)
@@ -165,8 +183,8 @@ func TestScoreAudioAsync_HappyPath(t *testing.T) {
 			if it.Status != "scored" && it.Status != "archived" {
 				t.Errorf("status = %q, want scored or archived", it.Status)
 			}
-			if it.Score == nil || *it.Score != 75 {
-				t.Errorf("score = %v, want 75", it.Score)
+			if it.Score == nil || *it.Score != 100 {
+				t.Errorf("score = %v, want 100 (synopsis always 100)", it.Score)
 			}
 			if it.Text == "" {
 				t.Errorf("text not backfilled")
@@ -191,12 +209,7 @@ func TestScoreAudioAsync_WhisperFailure(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "audio", Action: "vnote_auto"})
 	q.MarkRelayed(id)
 
-	eval := &stubEvaluator{score: 50, verdict: "test"}
-	runScoreAudioSkip(t, audioFile, "eng", q, id, eval)
-
-	if atomic.LoadInt32(&eval.calls) != 0 {
-		t.Errorf("eval called %d times, want 0 after whisper failure", atomic.LoadInt32(&eval.calls))
-	}
+	runScoreAudioSkip(t, audioFile, "eng", q, id)
 
 	items, _ := q.List("", 20)
 	for _, it := range items {
@@ -219,12 +232,7 @@ func TestScoreAudioAsync_EmptyTranscript(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "audio", Action: "vnote_auto"})
 	q.MarkRelayed(id)
 
-	eval := &stubEvaluator{score: 50, verdict: "test"}
-	runScoreAudioSkip(t, audioFile, "eng", q, id, eval)
-
-	if atomic.LoadInt32(&eval.calls) != 0 {
-		t.Errorf("eval called %d times, want 0 for empty transcript", atomic.LoadInt32(&eval.calls))
-	}
+	runScoreAudioSkip(t, audioFile, "eng", q, id)
 }
 
 // 4. validateRequest — audio type.
@@ -281,13 +289,7 @@ func TestHandleShare_MultipartAudio(t *testing.T) {
 	isolateEventsDir(t)
 	installFfmpegStub(t)
 	installWhisperStub(t, "test transcript", nil)
-
-	// Stub content classify.
-	prevClassify := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
-		return "eng", nil
-	}
-	t.Cleanup(func() { execContentClassify = prevClassify })
+	installHaikuSynopsisStub(t, "Test synopsis for multipart.")
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
@@ -354,11 +356,7 @@ func TestScoreAudioAsync_Chunked(t *testing.T) {
 		"Third chunk about attention.",
 	})
 
-	prevClassify := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
-		return "eng", nil
-	}
-	t.Cleanup(func() { execContentClassify = prevClassify })
+	done := installHaikuSynopsisStub(t, "Speaker discusses ML across three chunks.")
 
 	q := newTestQueue(t)
 	audioFile := filepath.Join(t.TempDir(), "large.m4a")
@@ -370,12 +368,7 @@ func TestScoreAudioAsync_Chunked(t *testing.T) {
 	}
 	q.MarkRelayed(id)
 
-	eval := &stubEvaluator{score: 85, verdict: "Great chunked voice note"}
-	runScoreAudioSync(t, audioFile, "", q, id, eval)
-
-	if atomic.LoadInt32(&eval.calls) != 1 {
-		t.Errorf("eval.calls = %d, want 1", atomic.LoadInt32(&eval.calls))
-	}
+	runScoreAudioSync(t, audioFile, "", q, id, done)
 
 	items, _ := q.List("", 20)
 	for _, it := range items {
@@ -383,8 +376,8 @@ func TestScoreAudioAsync_Chunked(t *testing.T) {
 			if it.Status != "scored" && it.Status != "archived" {
 				t.Errorf("status = %q, want scored or archived", it.Status)
 			}
-			if it.Score == nil || *it.Score != 85 {
-				t.Errorf("score = %v, want 85", it.Score)
+			if it.Score == nil || *it.Score != 100 {
+				t.Errorf("score = %v, want 100", it.Score)
 			}
 			// Transcript should contain all three chunks concatenated.
 			if !strings.Contains(it.Text, "First chunk") || !strings.Contains(it.Text, "Third chunk") {
@@ -402,19 +395,14 @@ func TestScoreAudioAsync_ProgressUpdates(t *testing.T) {
 	installFfmpegStubLargeWav(t)
 	installSegmentStub(t, 2)
 
-	// Capture progress updates via whisper stub.
-	var progressLog []string
+	// Whisper stub for chunk transcription.
 	prevWhisper := execWhisper
 	execWhisper = func(_ context.Context, _, _ string) (string, error) {
 		return "chunk text", nil
 	}
 	t.Cleanup(func() { execWhisper = prevWhisper })
 
-	prevClassify := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
-		return "eng", nil
-	}
-	t.Cleanup(func() { execContentClassify = prevClassify })
+	done := installHaikuSynopsisStub(t, "Progress test synopsis.")
 
 	q := newTestQueue(t)
 	audioFile := filepath.Join(t.TempDir(), "progress.m4a")
@@ -423,13 +411,7 @@ func TestScoreAudioAsync_ProgressUpdates(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "audio", Action: "vnote_auto"})
 	q.MarkRelayed(id)
 
-	eval := &stubEvaluator{score: 70, verdict: "ok"}
-	runScoreAudioSync(t, audioFile, "", q, id, eval)
-
-	// After completion, progress should be cleared (row moves to scored).
-	// But during execution, SetProgress was called. We verify the method works
-	// by checking that a direct SetProgress + read round-trips.
-	_ = progressLog // we tested SetProgress works in test #10 below
+	runScoreAudioSync(t, audioFile, "", q, id, done)
 
 	item, err := q.GetByID(id)
 	if err != nil {
