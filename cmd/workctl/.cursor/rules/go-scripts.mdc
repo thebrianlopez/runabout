@@ -1,0 +1,11 @@
+---
+description: 
+globs: 
+---
+
+# Your rule content
+
+- go version is go 1.23.6 darwin/arm64
+- scripts should rely on the standard library unless there is a significant number of lines of code saved by using a 3rd party library. 
+- in the event 3rd party libraries are used select the most widly used and documented.
+- my local system is MaxOS Sequoia 15.2 running on an Apple M1 Max

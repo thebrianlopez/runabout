@@ -1,0 +1,13 @@
+# Growth Delta Report
+
+**Generated:** {{ .Generated }}
+**Previous Period:** {{ .PreviousPeriod }}
+**Current Period:** {{ .CurrentPeriod }}
+
+---
+
+| Metric | Previous | Current | Delta | % Change | Trend |
+|--------|--------:|--------:|------:|---------:|:-----:|
+{{ range .Items -}}
+| {{ .Metric }} | {{ .Previous }} | {{ .Current }} | {{ .Delta }} | {{ .PctDelta }} | {{ .Trend }} |
+{{ end -}}

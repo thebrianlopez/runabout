@@ -1,0 +1,47 @@
+{
+  "size": 2,
+  "results": [
+    {
+      "content": {
+        "id": "100001",
+        "title": "Architecture Decision Records",
+        "space": {"key": "ENG", "name": "Engineering"},
+        "body": {
+          "storage": {"value": "<h1>ADR Template</h1><p>Status: Accepted</p>"}
+        },
+        "history": {
+          "createdBy": {
+            "accountId": "user-001",
+            "displayName": "Alice Smith",
+            "email": "alice@example.com"
+          },
+          "createdDate": "2025-05-01T10:00:00.000Z",
+          "lastUpdated": {
+            "by": {
+              "accountId": "user-002",
+              "displayName": "Bob Jones"
+            },
+            "when": "2025-06-15T14:00:00.000Z"
+          }
+        }
+      }
+    },
+    {
+      "content": {
+        "id": "100002",
+        "title": "Runbook: Incident Response",
+        "space": {"key": "OPS", "name": "Operations"},
+        "body": {
+          "storage": {"value": "<p>Step 1: Triage. Step 2: Mitigate.</p>"}
+        },
+        "history": {
+          "createdBy": {
+            "accountId": "user-003",
+            "displayName": "Carol Davis"
+          },
+          "createdDate": "2025-03-01T08:00:00.000Z"
+        }
+      }
+    }
+  ]
+}

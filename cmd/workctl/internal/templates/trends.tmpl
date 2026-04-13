@@ -1,0 +1,22 @@
+# Work Trends Report
+
+**Generated:** {{ .Generated }}
+**Period Size:** {{ .PeriodSize }}
+
+---
+
+## Signal Overview
+
+| Metric |{{ range .Periods }} {{ . }} |{{ end }} Trend |
+|--------|{{ range .Periods }}-------:|{{ end }}:------:|
+{{ range .Metrics -}}
+| {{ .Name }} |{{ range .Values }} {{ . }} |{{ end }} {{ .Trend }} |
+{{ end -}}
+{{ if .TrackRows }}
+## Career Track Scores
+
+| Track |{{ range .Periods }} {{ . }} |{{ end }} Trend |
+|-------|{{ range .Periods }}-------:|{{ end }}:------:|
+{{ range .TrackRows -}}
+| {{ .Track }} |{{ range .Scores }} {{ . }} |{{ end }} {{ .Trend }} |
+{{ end }}{{ end -}}
