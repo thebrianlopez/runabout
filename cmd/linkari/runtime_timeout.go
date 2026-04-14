@@ -79,7 +79,8 @@ func (r *ContainerRuntime) Ping(ctx context.Context) error {
 // NewExecutionRuntimeWithPing constructs the appropriate ExecutionRuntime for
 // the given SandboxConfig, probing the CRI socket when sandbox.enabled is true.
 //
-// If the probe succeeds, a ContainerRuntime is returned.
+// If the probe succeeds, a HybridRuntime is returned (ffmpeg and whisper
+// sandboxed via ContainerRuntime; claude CLI always local — see HybridRuntime).
 // If the probe fails, NewExecutionRuntimeWithPing logs "runtime_unavailable" and
 // falls back to LocalRuntime so callers continue to work without container deps.
 // When sandbox.enabled is false, LocalRuntime is returned without any probe.
@@ -100,5 +101,5 @@ func NewExecutionRuntimeWithPing(ctx context.Context, cfg SandboxConfig) Executi
 		"event_type", "runtime_ready",
 		"socket", cfg.runtimeSocket(),
 	)
-	return cr
+	return &HybridRuntime{container: cr}
 }

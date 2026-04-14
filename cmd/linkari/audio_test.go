@@ -116,10 +116,13 @@ func installHaikuSynopsisStub(t *testing.T, synopsis string) chan struct{} {
 	t.Cleanup(func() { execHaiku = prev })
 
 	// Create temp vnote_synopsis template so loadProfileTemplate finds it.
-	dir := filepath.Join(t.TempDir(), "docs", "prompts", "profiles")
+	// Use a single base dir for both the template and ORG_PATH to ensure
+	// the env var points to the same tree where the file was written.
+	base := t.TempDir()
+	dir := filepath.Join(base, "docs", "prompts", "profiles")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "vnote_synopsis.md"), []byte("Summarize this voice note transcript.\n\n{{transcript}}"), 0o644)
-	t.Setenv("ORG_PATH", filepath.Join(t.TempDir()))
+	t.Setenv("ORG_PATH", base)
 
 	// Override transcript dir to temp.
 	prevDir := transcriptDir
