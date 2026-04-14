@@ -15,7 +15,9 @@ ALL := $(CORE) $(SEPARATE)
 # Container image config (EPIC-038 M9)
 IMAGE_REGISTRY ?= ghcr.io/blo-grindr/linkari
 LIMA_VM        ?= lima-gvisor
-LIMA_SOCKET    ?= /var/run/lima/$(LIMA_VM)/containerd.sock
+# Lima stores VM state under ~/.lima/<name>/; portForwards exposes the
+# containerd socket at {{.Dir}}/containerd.sock → ~/.lima/<name>/containerd.sock.
+LIMA_SOCKET    ?= $(HOME)/.lima/$(LIMA_VM)/containerd.sock
 
 .PHONY: all core build clean install test linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage \
 	container-build container-push lima-start lima-test \
@@ -158,23 +160,32 @@ install-ghwatch:
 
 # ─── Container image targets (EPIC-038 M9) ─────────────────────────────────
 
-# Build all three sandbox container images.
-# Requires Docker or nerdctl on PATH. IMAGE_REGISTRY can be overridden:
+# Build container images for the local native platform only (fast, for dev iteration).
+# Requires Docker on PATH. IMAGE_REGISTRY can be overridden:
 #   make container-build IMAGE_REGISTRY=myregistry.io/linkari
 container-build:
-	@echo "Building container images (registry=$(IMAGE_REGISTRY))..."
+	@echo "Building container images for native platform (registry=$(IMAGE_REGISTRY))..."
 	@docker build -f container/Dockerfile.ffmpeg -t $(IMAGE_REGISTRY)/ffmpeg:latest container/
 	@docker build -f container/Dockerfile.whisper -t $(IMAGE_REGISTRY)/whisper:latest container/
-	@docker build -f container/Dockerfile.claude-sandbox -t $(IMAGE_REGISTRY)/claude-sandbox:latest container/
-	@echo "✅ All container images built"
+	@docker build -f container/Dockerfile.claude-sandbox \
+		--build-arg CLAUDE_BIN_PATH="$(shell which claude)" \
+		-t $(IMAGE_REGISTRY)/claude-sandbox:latest container/
+	@echo "✅ Container images built (native platform)"
 
-# Push container images to the registry. Requires docker login first.
-container-push: container-build
-	@echo "Pushing container images to $(IMAGE_REGISTRY)..."
-	@docker push $(IMAGE_REGISTRY)/ffmpeg:latest
-	@docker push $(IMAGE_REGISTRY)/whisper:latest
-	@docker push $(IMAGE_REGISTRY)/claude-sandbox:latest
-	@echo "✅ All container images pushed"
+# Push multi-arch (linux/amd64 + linux/arm64) images to the registry.
+# Requires: docker buildx with a builder that supports multi-arch (docker buildx create --use).
+# Images are pushed directly — docker load does not support multi-arch manifests.
+#   make container-push IMAGE_REGISTRY=myregistry.io/linkari
+container-push:
+	@echo "Building and pushing multi-arch container images (registry=$(IMAGE_REGISTRY))..."
+	@docker buildx build --platform linux/amd64,linux/arm64 --push \
+		-f container/Dockerfile.ffmpeg -t $(IMAGE_REGISTRY)/ffmpeg:latest container/
+	@docker buildx build --platform linux/amd64,linux/arm64 --push \
+		-f container/Dockerfile.whisper -t $(IMAGE_REGISTRY)/whisper:latest container/
+	@docker buildx build --platform linux/amd64,linux/arm64 --push \
+		--build-arg CLAUDE_BIN_PATH="$(shell which claude)" \
+		-f container/Dockerfile.claude-sandbox -t $(IMAGE_REGISTRY)/claude-sandbox:latest container/
+	@echo "✅ Multi-arch container images pushed to $(IMAGE_REGISTRY)"
 
 # Start the Lima gVisor VM. First run takes ~5 minutes (Ubuntu + gVisor download).
 # Uses infra/lima-gvisor.yaml for VM configuration.

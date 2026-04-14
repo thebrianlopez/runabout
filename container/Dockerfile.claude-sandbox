@@ -1,17 +1,33 @@
-# EPIC-038 M2: claude CLI sandbox image
+# ARCHIVED — DO NOT BUILD OR DEPLOY
 #
+# This Dockerfile is intentionally non-operational. It is kept for historical
+# reference but must not be used. See the architectural note below.
+#
+# --- Architectural finding (EPIC-038 OAuth2 review) ---
+#
+# The claude CLI authenticates via OAuth2 session tokens stored in ~/.claude/.
+# To run the CLI inside a container, ~/.claude/ would need to be bind-mounted
+# into the container, concentrating long-lived credential material inside the
+# container boundary. Any image escape, snapshot leak, or containerd storage
+# compromise would expose those tokens.
+#
+# Additionally, the primary threat model for claude invocations is prompt
+# injection — a language-layer attack where adversarial content in the model's
+# input or output causes unintended behaviour. gVisor's value is syscall
+# interposition. It cannot detect or prevent a model from exfiltrating context
+# in natural-language output. The sandbox boundary provides no mitigation for
+# prompt injection; it only adds container lifecycle latency and CRI complexity.
+#
+# Decision: InvokeClaudeSubprocess is routed through LocalRuntime unconditionally
+# via HybridRuntime in runtime.go. The claude CLI runs as a local subprocess,
+# with its existing ~/.claude/ credential store intact. ffmpeg and whisper
+# continue to run in gVisor containers (no credential exposure, syscall attack
+# surface reduction is meaningful for binary media processing).
+#
+# --- Original intent (EPIC-038 M2) ---
 # Alpine image with the claude CLI binary (Claude Code CLI).
-# Claude requires outbound HTTPS to api.anthropic.com — this is the only
-# container in the sandbox suite with NetworkPolicy=host.
-#
-# API key is injected at runtime via ANTHROPIC_API_KEY; never baked in.
-# The claude binary is copied from the build host's PATH via a build-arg
-# so we do not bundle the installer script into the image.
-#
-# Build (on a host with claude installed):
-#   CLAUDE_BIN=$(which claude) docker build \
-#     --build-arg CLAUDE_BIN_PATH="${CLAUDE_BIN}" \
-#     -f container/Dockerfile.claude-sandbox -t linkari/claude-sandbox:latest .
+# Claude requires outbound HTTPS to api.anthropic.com — NetworkPolicy=host.
+# API key injected at runtime via ANTHROPIC_API_KEY; never baked in.
 
 FROM alpine:3.21 AS base
 

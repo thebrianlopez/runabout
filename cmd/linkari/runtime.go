@@ -1,18 +1,23 @@
 package main
 
-// EPIC-038 M1: ExecutionRuntime abstraction for subprocess isolation.
+// EPIC-038 M1 + OAuth2 fix: ExecutionRuntime abstraction for subprocess isolation.
 //
 // Defines the interface that all subprocess invocations (ffmpeg, whisper-cli,
-// claude CLI) converge on. Two implementations ship in M1:
+// claude CLI) converge on. Three implementations exist:
 //
 //   - LocalRuntime: delegates to the existing runFfmpegConvert, runWhisperCLI,
 //     and runClaudeHaiku function vars — zero behavioral change for the common case.
-//   - ContainerRuntime: stub; returns ErrContainerUnavailable until M4 wires
-//     the real CRI client and container lifecycle.
+//   - ContainerRuntime: gVisor-sandboxed implementation for ffmpeg and whisper.
+//   - HybridRuntime: routes ffmpeg and whisper through ContainerRuntime but
+//     always routes InvokeClaudeSubprocess through LocalRuntime. See HybridRuntime
+//     godoc for the OAuth2 rationale.
 //
 // NewExecutionRuntime is the factory. It reads SandboxConfig and routes to
-// ContainerRuntime when sandbox.enabled is true, otherwise LocalRuntime.
+// HybridRuntime when sandbox.enabled is true, otherwise LocalRuntime.
 // M6 adds runtime.Ping() + graceful fallback on top of this seam.
+//
+// NOTE: claude CLI is always executed via LocalRuntime regardless of sandbox.enabled.
+// See HybridRuntime for the architectural rationale.
 
 import (
 	"context"
@@ -50,6 +55,10 @@ type ExecutionRuntime interface {
 // SandboxConfig is the YAML-deserialisable block that controls the container
 // runtime. It lives under the `sandbox:` key in server.yaml.
 //
+// When sandbox.enabled is true, ffmpeg and whisper invocations are routed through
+// ContainerRuntime (gVisor sandbox). The claude CLI is always routed through
+// LocalRuntime regardless of this setting — see HybridRuntime for the rationale.
+//
 // Example server.yaml fragment:
 //
 //	sandbox:
@@ -59,7 +68,8 @@ type ExecutionRuntime interface {
 //	  memory_limit_mb: 2048
 //	  cpu_limit_cores: 2.0
 type SandboxConfig struct {
-	// Enabled routes all subprocess invocations through ContainerRuntime.
+	// Enabled routes ffmpeg and whisper invocations through ContainerRuntime.
+	// InvokeClaudeSubprocess always runs locally (see HybridRuntime).
 	// When false (default), LocalRuntime is used and no container deps are required.
 	Enabled bool `yaml:"enabled"`
 
@@ -81,6 +91,9 @@ type SandboxConfig struct {
 }
 
 // runtimeSocket returns the effective CRI socket path.
+// For Lima: set runtime_socket in server.yaml to ~/.lima/lima-gvisor/containerd.sock
+// (the socket forwarded by lima-gvisor.yaml's portForwards block).
+// The default /run/containerd/containerd.sock is only reachable from inside the VM.
 func (s SandboxConfig) runtimeSocket() string {
 	if s.RuntimeSocket != "" {
 		return s.RuntimeSocket
@@ -89,11 +102,11 @@ func (s SandboxConfig) runtimeSocket() string {
 }
 
 // NewExecutionRuntime returns the appropriate ExecutionRuntime for the given
-// SandboxConfig. Routes to ContainerRuntime when sandbox.enabled is true,
-// otherwise LocalRuntime (zero overhead, existing behaviour).
+// SandboxConfig. Routes to HybridRuntime when sandbox.enabled is true
+// (ffmpeg and whisper sandboxed; claude always local), otherwise LocalRuntime.
 func NewExecutionRuntime(cfg SandboxConfig) ExecutionRuntime {
 	if cfg.Enabled {
-		return &ContainerRuntime{cfg: cfg}
+		return &HybridRuntime{container: &ContainerRuntime{cfg: cfg}}
 	}
 	return &LocalRuntime{}
 }
@@ -116,6 +129,45 @@ func (LocalRuntime) InvokeWhisperTranscribe(ctx context.Context, wavPath, modelP
 
 func (LocalRuntime) InvokeClaudeSubprocess(ctx context.Context, systemPrompt, content string) (string, error) {
 	return execHaiku(ctx, systemPrompt, content)
+}
+
+// ─── HybridRuntime ────────────────────────────────────────────────────────────
+
+// HybridRuntime routes ffmpeg and whisper through ContainerRuntime (gVisor
+// sandbox) but always routes InvokeClaudeSubprocess through LocalRuntime.
+//
+// Why claude CLI is always local:
+//
+//  1. OAuth2 session tokens: The claude CLI authenticates via OAuth2 session
+//     tokens stored in ~/.claude/. Mounting that directory into a container
+//     concentrates credential risk in the container image layer — any escape
+//     or image leak would expose long-lived auth material.
+//
+//  2. Prompt injection is not a syscall problem: gVisor's value is syscall
+//     interposition. It cannot prevent a model from exfiltrating context in
+//     its natural-language output, which is the actual threat surface for
+//     claude invocations. A gVisor boundary provides no meaningful mitigation
+//     for prompt-injection attacks — it only adds latency and complexity.
+//
+// The HybridRuntime is returned by NewExecutionRuntime and
+// NewExecutionRuntimeWithPing when sandbox.enabled is true.
+type HybridRuntime struct {
+	container *ContainerRuntime
+	local     LocalRuntime
+}
+
+func (h *HybridRuntime) InvokeFFmpeg(ctx context.Context, inputPath, outputPath string) error {
+	return h.container.InvokeFFmpeg(ctx, inputPath, outputPath)
+}
+
+func (h *HybridRuntime) InvokeWhisperTranscribe(ctx context.Context, wavPath, modelPath string) (string, error) {
+	return h.container.InvokeWhisperTranscribe(ctx, wavPath, modelPath)
+}
+
+// InvokeClaudeSubprocess always delegates to LocalRuntime.
+// See HybridRuntime godoc for the OAuth2 + prompt-injection rationale.
+func (h *HybridRuntime) InvokeClaudeSubprocess(ctx context.Context, systemPrompt, content string) (string, error) {
+	return h.local.InvokeClaudeSubprocess(ctx, systemPrompt, content)
 }
 
 // ─── ContainerRuntime ─────────────────────────────────────────────────────────
