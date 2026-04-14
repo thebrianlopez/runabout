@@ -185,7 +185,7 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 	cmd := exec.CommandContext(ctx, "claude",
 		"--print",
 		"--model", claudeModel,
-		"--max-turns", "1",
+		"--max-turns", "3", // --output-format json + --json-schema uses internal tool-call turns to enforce schema; 1 is insufficient
 		"--tools", "",
 		"--output-format", "json",
 		"--json-schema", schema,
