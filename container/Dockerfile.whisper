@@ -1,0 +1,52 @@
+# EPIC-038 M2: whisper-cli sandbox image
+#
+# Alpine image with whisper-cli (whisper.cpp) and the ggml-large-v3-turbo model.
+# Model is baked into the image for offline operation; the model path is exposed
+# via the WHISPER_MODEL env var for ContainerRuntime.InvokeWhisperTranscribe.
+#
+# Build: docker build -f container/Dockerfile.whisper -t linkari/whisper:latest .
+# Note: build pulls ~1.5GB ggml model. Cache layers aggressively in CI.
+
+FROM alpine:3.21 AS builder
+
+RUN apk add --no-cache \
+    build-base \
+    cmake \
+    git \
+    curl \
+    sdl2-dev
+
+# Pin whisper.cpp to a known-good tag.
+ARG WHISPER_TAG=v1.7.4
+RUN git clone --depth=1 --branch "${WHISPER_TAG}" https://github.com/ggerganov/whisper.cpp /build/whisper.cpp
+
+WORKDIR /build/whisper.cpp
+RUN cmake -B build -DWHISPER_BUILD_EXAMPLES=ON -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --target whisper-cli -j"$(nproc)" \
+    && cp build/bin/whisper-cli /usr/local/bin/whisper-cli \
+    && chmod 755 /usr/local/bin/whisper-cli
+
+# Download ggml model during build. Bake into image for reproducible offline use.
+# Override WHISPER_MODEL_URL to substitute a smaller model for CI builds.
+ARG WHISPER_MODEL_URL=https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+RUN mkdir -p /models \
+    && curl -fsSL -o /models/ggml-large-v3-turbo.bin "${WHISPER_MODEL_URL}"
+
+FROM alpine:3.21
+
+RUN apk add --no-cache libstdc++ libgomp
+
+COPY --from=builder /usr/local/bin/whisper-cli /usr/local/bin/whisper-cli
+COPY --from=builder /models /models
+
+# I/O volume: ContainerRuntime mounts WAV input here.
+RUN mkdir -p /linkari/io
+VOLUME ["/linkari/io"]
+
+# Path to the baked-in model; overridable via WHISPER_MODEL at runtime.
+ENV WHISPER_MODEL=/models/ggml-large-v3-turbo.bin
+
+RUN addgroup -g 1000 linkari && adduser -u 1000 -G linkari -s /bin/sh -D linkari
+USER linkari
+
+ENTRYPOINT ["/usr/local/bin/whisper-cli"]

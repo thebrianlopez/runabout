@@ -1,0 +1,98 @@
+# EPIC-038 M3: Lima VM configuration for gVisor dev runtime on macOS
+#
+# Boots an Ubuntu 24.04 VM via Virtualization.framework with:
+#   - containerd 1.7+ pre-installed
+#   - gVisor runsc installed at /opt/gvisor/runsc
+#   - Shared I/O tmpfs at /tmp/linkari-io (bind-mounted from host)
+#
+# Usage:
+#   limactl start infra/lima-gvisor.yaml
+#   limactl shell lima-gvisor
+#
+# Verify gVisor works:
+#   docker --context lima-gvisor run --runtime=runsc alpine uname -r
+#
+# Requires Lima ≥ 0.21 (Apple Virtualization.framework support).
+
+vmType: vz                 # Apple Virtualization.framework — faster than QEMU
+rosetta:
+  enabled: false           # Not needed; gVisor is Linux-native
+arch: x86_64               # gVisor runsc is x86_64 only on macOS (no ARM build)
+
+cpus: 4
+memory: "8GiB"
+disk: "30GiB"
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: x86_64
+
+mounts:
+  # Host ~/tmp/linkari-io is shared into the VM at /tmp/linkari-io.
+  # ContainerRuntime mounts per-invocation subdirs from here.
+  - location: "~/tmp/linkari-io"
+    mountPoint: "/tmp/linkari-io"
+    writable: true
+
+networks:
+  - lima: user-v2            # NAT — containers can reach api.anthropic.com
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -euo pipefail
+
+      # ── containerd ──────────────────────────────────────────────────────────
+      apt-get update -qq
+      apt-get install -y -qq containerd ca-certificates curl gnupg
+
+      mkdir -p /etc/containerd
+      containerd config default > /etc/containerd/config.toml
+
+      # ── gVisor runsc ────────────────────────────────────────────────────────
+      ARCH=$(uname -m)
+      GVISOR_VERSION=20240305.0
+      GVISOR_URL="https://storage.googleapis.com/gvisor/releases/release/${GVISOR_VERSION}/${ARCH}/runsc"
+      mkdir -p /opt/gvisor
+      curl -fsSL -o /opt/gvisor/runsc "${GVISOR_URL}"
+      chmod 755 /opt/gvisor/runsc
+
+      # Register runsc as a containerd runtime.
+      cat >> /etc/containerd/config.toml <<'EOF'
+
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
+        runtime_type = "io.containerd.runsc.v1"
+
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc.options]
+        TypeUrl = "io.containerd.runsc.v1.options"
+        BinaryName = "/opt/gvisor/runsc"
+      EOF
+
+      systemctl restart containerd
+      systemctl enable containerd
+
+      # ── I/O tmpfs ───────────────────────────────────────────────────────────
+      mkdir -p /tmp/linkari-io
+      chmod 1777 /tmp/linkari-io
+
+      # ── nerdctl (containerd CLI) ─────────────────────────────────────────────
+      NERDCTL_VERSION=1.7.7
+      curl -fsSL "https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-${NERDCTL_VERSION}-linux-amd64.tar.gz" \
+        | tar -xz -C /usr/local/bin nerdctl
+      chmod 755 /usr/local/bin/nerdctl
+
+  - mode: user
+    script: |
+      #!/bin/bash
+      # Smoke-test: verify runsc is reachable and containerd is running.
+      /opt/gvisor/runsc --version
+      systemctl is-active containerd
+
+probes:
+  - description: "containerd is active"
+    script: systemctl is-active containerd
+    hint: "containerd did not start — check `limactl shell lima-gvisor systemctl status containerd`"
+  - description: "runsc is executable"
+    script: /opt/gvisor/runsc --version
+    hint: "gVisor runsc not installed — check provision logs"
