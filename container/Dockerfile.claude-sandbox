@@ -1,0 +1,48 @@
+# EPIC-038 M2: claude CLI sandbox image
+#
+# Alpine image with the claude CLI binary (Claude Code CLI).
+# Claude requires outbound HTTPS to api.anthropic.com — this is the only
+# container in the sandbox suite with NetworkPolicy=host.
+#
+# API key is injected at runtime via ANTHROPIC_API_KEY; never baked in.
+# The claude binary is copied from the build host's PATH via a build-arg
+# so we do not bundle the installer script into the image.
+#
+# Build (on a host with claude installed):
+#   CLAUDE_BIN=$(which claude) docker build \
+#     --build-arg CLAUDE_BIN_PATH="${CLAUDE_BIN}" \
+#     -f container/Dockerfile.claude-sandbox -t linkari/claude-sandbox:latest .
+
+FROM alpine:3.21 AS base
+
+# The claude CLI binary is a self-contained Node.js bundle — no Node runtime
+# needed after bundling. Copy from host path supplied at build time.
+ARG CLAUDE_BIN_PATH
+COPY "${CLAUDE_BIN_PATH}" /usr/local/bin/claude
+RUN chmod 755 /usr/local/bin/claude
+
+FROM alpine:3.21
+
+# glibc compat shim — the claude CLI bundle expects glibc on Linux.
+RUN apk add --no-cache libc6-compat
+
+COPY --from=base /usr/local/bin/claude /usr/local/bin/claude
+
+# I/O: system prompt file is mounted read-only at /linkari/io/system_prompt.txt;
+# content (stdin) is piped to the container's stdin by ContainerRuntime.
+RUN mkdir -p /linkari/io
+VOLUME ["/linkari/io"]
+
+# API key must be set at container start — fail fast if absent.
+# ContainerRuntime.InvokeClaudeSubprocess resolves ANTHROPIC_API_KEY from
+# the host environment and forwards it as a container env var.
+ENV ANTHROPIC_API_KEY=""
+
+# Session persistence is disabled: each container invocation is stateless.
+# --no-session-persistence prevents writes to ~/.claude/ inside the container.
+ENV CLAUDE_NO_SESSION_PERSISTENCE=1
+
+RUN addgroup -g 1000 linkari && adduser -u 1000 -G linkari -s /bin/sh -D linkari
+USER linkari
+
+ENTRYPOINT ["/usr/local/bin/claude"]

@@ -1,0 +1,16 @@
+# EPIC-038 M2: shared .dockerignore for all container/ Dockerfiles
+#
+# Exclude everything from the build context by default, then allowlist
+# exactly what each image needs. This keeps build contexts minimal and
+# prevents source code, secrets, or model files from leaking into layers.
+
+# Exclude everything
+**
+
+# Allow: nothing from the root context by default.
+# Each Dockerfile uses ARG-based COPY or multi-stage FROM scratch patterns
+# that do not rely on the build context beyond this file.
+#
+# Exception: Dockerfile.claude-sandbox uses COPY "${CLAUDE_BIN_PATH}" which
+# is an absolute host path resolved at build time — the build context is unused
+# for the binary itself. The ADD context exclusion above still applies.

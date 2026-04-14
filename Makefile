@@ -12,7 +12,14 @@ SEPARATE := fetchpage protonexport linkari wasend workctl ghwatch
 
 ALL := $(CORE) $(SEPARATE)
 
-.PHONY: all core build clean install test linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage $(ALL)
+# Container image config (EPIC-038 M9)
+IMAGE_REGISTRY ?= ghcr.io/blo-grindr/linkari
+LIMA_VM        ?= lima-gvisor
+LIMA_SOCKET    ?= /var/run/lima/$(LIMA_VM)/containerd.sock
+
+.PHONY: all core build clean install test linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage \
+	container-build container-push lima-start lima-test \
+	$(ALL)
 
 # --- Aggregate targets ---
 
@@ -148,3 +155,55 @@ ghwatch:
 install-ghwatch:
 	@echo "Installing ghwatch → $(INSTALL_DIR)/ghwatch"
 	@cd cmd/workctl && go install $(LDFLAGS) ./cmd/ghwatch
+
+# ─── Container image targets (EPIC-038 M9) ─────────────────────────────────
+
+# Build all three sandbox container images.
+# Requires Docker or nerdctl on PATH. IMAGE_REGISTRY can be overridden:
+#   make container-build IMAGE_REGISTRY=myregistry.io/linkari
+container-build:
+	@echo "Building container images (registry=$(IMAGE_REGISTRY))..."
+	@docker build -f container/Dockerfile.ffmpeg -t $(IMAGE_REGISTRY)/ffmpeg:latest container/
+	@docker build -f container/Dockerfile.whisper -t $(IMAGE_REGISTRY)/whisper:latest container/
+	@docker build -f container/Dockerfile.claude-sandbox -t $(IMAGE_REGISTRY)/claude-sandbox:latest container/
+	@echo "✅ All container images built"
+
+# Push container images to the registry. Requires docker login first.
+container-push: container-build
+	@echo "Pushing container images to $(IMAGE_REGISTRY)..."
+	@docker push $(IMAGE_REGISTRY)/ffmpeg:latest
+	@docker push $(IMAGE_REGISTRY)/whisper:latest
+	@docker push $(IMAGE_REGISTRY)/claude-sandbox:latest
+	@echo "✅ All container images pushed"
+
+# Start the Lima gVisor VM. First run takes ~5 minutes (Ubuntu + gVisor download).
+# Uses infra/lima-gvisor.yaml for VM configuration.
+lima-start:
+	@echo "Starting Lima VM '$(LIMA_VM)'..."
+	@limactl start infra/lima-gvisor.yaml --name $(LIMA_VM) || limactl start $(LIMA_VM)
+	@echo "Waiting for containerd socket..."
+	@limactl shell $(LIMA_VM) -- bash -c 'for i in $$(seq 30); do systemctl is-active containerd >/dev/null 2>&1 && break; sleep 2; done'
+	@echo "✅ Lima VM '$(LIMA_VM)' running with gVisor"
+	@limactl shell $(LIMA_VM) -- /opt/gvisor/runsc --version
+
+# Run a smoke test inside the Lima VM: start a gVisor container and verify it runs.
+# Skips automatically when the Lima socket is absent (CI without Lima installed).
+lima-test:
+	@if ! limactl list 2>/dev/null | grep -q $(LIMA_VM); then \
+		echo "⚠️  Lima VM '$(LIMA_VM)' not running — skipping lima-test"; \
+		exit 0; \
+	fi
+	@echo "Running gVisor smoke test inside $(LIMA_VM)..."
+	@limactl shell $(LIMA_VM) -- sudo nerdctl run --rm \
+		--snapshotter=overlayfs \
+		--runtime=runsc \
+		alpine sh -c 'echo "gVisor OK: $$(uname -r)"'
+	@echo "✅ gVisor smoke test passed"
+
+# Run integration tests (requires Lima VM running with containers loaded).
+# Use: make integration-test
+integration-test: lima-test
+	@echo "Running integration tests against Lima VM..."
+	@cd cmd/linkari && LINKARI_RUNTIME_SOCKET=$(LIMA_SOCKET) \
+		go test -v -tags=integration -run TestContainer ./...
+	@echo "✅ Integration tests passed"

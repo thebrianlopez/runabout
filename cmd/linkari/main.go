@@ -526,6 +526,15 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			if router != nil && cfg != nil {
 				router.SetWhisperModel(cfg.Server.WhisperModel)
 			}
+
+			// EPIC-038 M6: probe container runtime at startup; fall back to local
+			// exec if the CRI socket is unreachable. SandboxConfig is zero-valued
+			// (Enabled: false) when not configured, so LocalRuntime is the default.
+			var sandboxCfg SandboxConfig
+			if serverFileCfg != nil {
+				sandboxCfg = serverFileCfg.Sandbox
+			}
+			_ = NewExecutionRuntimeWithPing(cmd.Context(), sandboxCfg)
 			// EPIC-001: resolve google_client_id for Google Sign-In.
 			var googleClientID string
 			googleClientID, _ = resolveField("google_client_id", "", os.Getenv("LINKARI_GOOGLE_CLIENT_ID"), "",
