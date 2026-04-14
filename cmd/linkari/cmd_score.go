@@ -188,9 +188,14 @@ For batch evaluation across a fixture set, see EPIC-054 (planned).`,
 			}
 			defer q.Close()
 
-			item, _, err := q.ScoreByURL(url, res.Score, res.Verdict, res.Tags, profile, slug)
+			item, _, err := q.ScoreByURL(url, res.Score, res.Verdict, res.Tags, profile, slug, sc.RubricScores)
 			if err != nil {
 				return fmt.Errorf("score: %w", err)
+			}
+
+			// EPIC-072 M5: persist topic tags from scoring.
+			if len(sc.TopicTags) > 0 {
+				_ = q.SetTopicTags(item.ID, sc.TopicTags)
 			}
 
 			// Auto-archive if score meets profile threshold.

@@ -733,3 +733,365 @@ func TestListArchivedFiltered(t *testing.T) {
 		t.Fatalf("expected 3 items with no filter, got %d", len(items))
 	}
 }
+
+// EPIC-072 M1 tests
+
+func TestGetBySlug(t *testing.T) {
+	q := newTestQueue(t)
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://slug-test.com/article"})
+	q.UpdateScore(id, 80, "go,test", "good article", "slug-test-com-article")
+
+	item, err := q.GetBySlug("slug-test-com-article")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	if item.ID != id {
+		t.Errorf("GetBySlug ID = %d, want %d", item.ID, id)
+	}
+	if item.Slug != "slug-test-com-article" {
+		t.Errorf("slug = %q, want %q", item.Slug, "slug-test-com-article")
+	}
+}
+
+func TestGetBySlugNotFound(t *testing.T) {
+	q := newTestQueue(t)
+	_, err := q.GetBySlug("nonexistent-slug")
+	if err == nil {
+		t.Error("expected error for nonexistent slug")
+	}
+}
+
+func TestGetBySlugReturnsMostRecent(t *testing.T) {
+	q := newTestQueue(t)
+	id1, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://dup.com/a"})
+	q.UpdateScore(id1, 50, "go", "ok", "dup-slug")
+	id2, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://dup.com/b"})
+	q.UpdateScore(id2, 90, "go", "great", "dup-slug")
+
+	item, err := q.GetBySlug("dup-slug")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	if item.ID != id2 {
+		t.Errorf("GetBySlug should return most recent (id=%d), got id=%d", id2, item.ID)
+	}
+}
+
+func TestFeedbackAndroidVocabulary(t *testing.T) {
+	q := newTestQueue(t)
+
+	tests := []struct {
+		input    string
+		wantDB   string
+		wantErr  bool
+	}{
+		{"accurate", "accurate", false},
+		{"too_high", "too_high", false},
+		{"too_low", "too_low", false},
+		{"positive", "accurate", false},
+		{"negative", "too_low", false},
+		{"invalid", "", true},
+		{"", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: fmt.Sprintf("https://vocab-%s.test", tt.input)})
+			q.UpdateScore(id, 70, "go", "test", fmt.Sprintf("vocab-%s", tt.input))
+
+			err := q.UpdateFeedback(id, tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UpdateFeedback(%q): %v", tt.input, err)
+			}
+			item, _ := q.GetByID(id)
+			if item.Feedback != tt.wantDB {
+				t.Errorf("feedback = %q, want %q (input was %q)", item.Feedback, tt.wantDB, tt.input)
+			}
+		})
+	}
+}
+
+func TestNormalizeFeedback(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{"positive", "accurate", false},
+		{"negative", "too_low", false},
+		{"accurate", "accurate", false},
+		{"too_high", "too_high", false},
+		{"too_low", "too_low", false},
+		{"garbage", "", true},
+	}
+	for _, tt := range tests {
+		got, err := normalizeFeedback(tt.input)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("normalizeFeedback(%q): expected error", tt.input)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("normalizeFeedback(%q): %v", tt.input, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("normalizeFeedback(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// EPIC-072 M2 tests
+
+func TestEnqueueWithTitle(t *testing.T) {
+	q := newTestQueue(t)
+	id, err := q.Enqueue(&ShareRequest{Type: "url", URL: "https://title.test", Title: "My Article Title"})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	item, err := q.GetByID(id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if item.Title != "My Article Title" {
+		t.Errorf("title = %q, want %q", item.Title, "My Article Title")
+	}
+}
+
+func TestUpdateScoreWithRubric(t *testing.T) {
+	q := newTestQueue(t)
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://rubric.test"})
+
+	rubric := map[string]int{"Novelty": 80, "Depth": 60, "Relevance": 90}
+	if err := q.UpdateScore(id, 77, "go", "good", "rubric-slug", rubric); err != nil {
+		t.Fatalf("UpdateScore with rubric: %v", err)
+	}
+
+	item, err := q.GetByID(id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if item.RubricScores == "" {
+		t.Fatal("rubric_scores should be set")
+	}
+	if !strings.Contains(item.RubricScores, "Novelty") {
+		t.Errorf("rubric_scores should contain Novelty, got %q", item.RubricScores)
+	}
+}
+
+func TestScoreByURLWithRubric(t *testing.T) {
+	q := newTestQueue(t)
+	rubric := map[string]int{"Signal": 85, "Actionability": 70}
+	item, inserted, err := q.ScoreByURL("https://rubric-url.test", 78, "verdict", "go", "eng", "rubric-url-slug", rubric)
+	if err != nil {
+		t.Fatalf("ScoreByURL: %v", err)
+	}
+	if !inserted {
+		t.Error("expected insert")
+	}
+	if item.RubricScores == "" {
+		t.Fatal("rubric_scores should be set on insert path")
+	}
+	if !strings.Contains(item.RubricScores, "Signal") {
+		t.Errorf("rubric_scores should contain Signal, got %q", item.RubricScores)
+	}
+}
+
+func TestProfileStatsRubricAverages(t *testing.T) {
+	q := newTestQueue(t)
+
+	// Create 3 items with rubric scores.
+	for i, rubric := range []map[string]int{
+		{"Novelty": 80, "Depth": 60},
+		{"Novelty": 90, "Depth": 40},
+		{"Novelty": 70, "Depth": 80},
+	} {
+		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: fmt.Sprintf("https://rubric-avg-%d.test", i), Profile: "eng"})
+		q.UpdateScore(id, 70+i*5, "go", "v", fmt.Sprintf("slug-%d", i), rubric)
+	}
+
+	stats, err := q.ProfileStats("eng")
+	if err != nil {
+		t.Fatalf("ProfileStats: %v", err)
+	}
+	if len(stats) != 1 {
+		t.Fatalf("expected 1 profile stat, got %d", len(stats))
+	}
+	s := stats[0]
+	if s.RubricAverages == nil {
+		t.Fatal("rubric_averages should be set")
+	}
+	// Novelty: (80+90+70)/3 = 80
+	if avg, ok := s.RubricAverages["Novelty"]; !ok || avg != 80 {
+		t.Errorf("Novelty avg = %.1f, want 80.0", avg)
+	}
+	// Depth: (60+40+80)/3 = 60
+	if avg, ok := s.RubricAverages["Depth"]; !ok || avg != 60 {
+		t.Errorf("Depth avg = %.1f, want 60.0", avg)
+	}
+}
+
+func TestUpdateScoreWithoutRubric(t *testing.T) {
+	q := newTestQueue(t)
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://norubric.test"})
+
+	// Call without rubric (backward compat).
+	if err := q.UpdateScore(id, 50, "go", "ok", "no-rubric-slug"); err != nil {
+		t.Fatalf("UpdateScore without rubric: %v", err)
+	}
+	item, _ := q.GetByID(id)
+	if item.RubricScores != "" {
+		t.Errorf("rubric_scores should be empty, got %q", item.RubricScores)
+	}
+}
+
+// EPIC-072 M4 tests
+
+func TestDriftDetection(t *testing.T) {
+	q := newTestQueue(t)
+
+	// Create items with outcomes: acted items score higher than ignored.
+	for i := 0; i < 5; i++ {
+		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: fmt.Sprintf("https://acted-%d.test", i), Profile: "eng"})
+		q.UpdateScore(id, 80+i, "go", "v", fmt.Sprintf("acted-%d", i))
+		q.UpdateOutcome(id, "acted")
+	}
+	for i := 0; i < 5; i++ {
+		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: fmt.Sprintf("https://ignored-%d.test", i), Profile: "eng"})
+		q.UpdateScore(id, 40+i, "go", "v", fmt.Sprintf("ignored-%d", i))
+		q.UpdateOutcome(id, "ignored")
+	}
+
+	stats, err := q.ProfileStats("eng")
+	if err != nil {
+		t.Fatalf("ProfileStats: %v", err)
+	}
+	if len(stats) != 1 {
+		t.Fatalf("expected 1 stat, got %d", len(stats))
+	}
+	s := stats[0]
+
+	if s.AvgScoreActed == nil {
+		t.Fatal("avg_score_acted should be set")
+	}
+	if s.AvgScoreIgnored == nil {
+		t.Fatal("avg_score_ignored should be set")
+	}
+	if s.DriftScore == nil {
+		t.Fatal("drift_score should be set")
+	}
+
+	// Acted avg: (80+81+82+83+84)/5=82, Ignored avg: (40+41+42+43+44)/5=42, Drift: 40
+	if *s.DriftScore < 39 || *s.DriftScore > 41 {
+		t.Errorf("drift_score = %.1f, expected ~40", *s.DriftScore)
+	}
+	if s.CalibrationRecommendation != "high_drift_recalibrate_rubric" {
+		t.Errorf("recommendation = %q, want high_drift_recalibrate_rubric", s.CalibrationRecommendation)
+	}
+}
+
+func TestDriftDetectionNoOutcomes(t *testing.T) {
+	q := newTestQueue(t)
+
+	// Items with no outcomes — drift should be nil.
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://no-outcome.test", Profile: "eng"})
+	q.UpdateScore(id, 70, "go", "v", "no-outcome-slug")
+
+	stats, err := q.ProfileStats("eng")
+	if err != nil {
+		t.Fatalf("ProfileStats: %v", err)
+	}
+	s := stats[0]
+	if s.DriftScore != nil {
+		t.Error("drift_score should be nil when no outcomes exist")
+	}
+	if s.CalibrationRecommendation != "" {
+		t.Error("recommendation should be empty when no outcomes exist")
+	}
+}
+
+// EPIC-072 M5 tests
+
+func TestSetTopicTags(t *testing.T) {
+	q := newTestQueue(t)
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://tags.test"})
+	q.UpdateScore(id, 80, "go", "good", "tags-slug")
+
+	tags := []string{"go", "testing", "ci-cd"}
+	if err := q.SetTopicTags(id, tags); err != nil {
+		t.Fatalf("SetTopicTags: %v", err)
+	}
+
+	item, err := q.GetByID(id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if item.TopicTags == "" {
+		t.Fatal("topic_tags should be set")
+	}
+	if !strings.Contains(item.TopicTags, "go") || !strings.Contains(item.TopicTags, "testing") {
+		t.Errorf("topic_tags = %q, expected to contain go and testing", item.TopicTags)
+	}
+}
+
+func TestSetTopicTagsEmpty(t *testing.T) {
+	q := newTestQueue(t)
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://empty-tags.test"})
+	q.UpdateScore(id, 80, "go", "good", "empty-tags-slug")
+
+	// Empty slice should be a no-op.
+	if err := q.SetTopicTags(id, nil); err != nil {
+		t.Fatalf("SetTopicTags nil: %v", err)
+	}
+	item, _ := q.GetByID(id)
+	if item.TopicTags != "" {
+		t.Errorf("topic_tags should be empty, got %q", item.TopicTags)
+	}
+}
+
+func TestNormalizeTopicTags(t *testing.T) {
+	tests := []struct {
+		input []string
+		want  []string
+	}{
+		{[]string{"Go", "  Testing ", "go", "CI-CD"}, []string{"go", "testing", "ci-cd"}},
+		{[]string{"", " ", "valid"}, []string{"valid"}},
+		{nil, []string{}},
+		{[]string{"a", "b", "a", "c", "b"}, []string{"a", "b", "c"}},
+	}
+	for _, tt := range tests {
+		got := normalizeTopicTags(tt.input)
+		if len(got) != len(tt.want) {
+			t.Errorf("normalizeTopicTags(%v) = %v, want %v", tt.input, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("normalizeTopicTags(%v)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
+func TestFTS5SearchWithTopicTags(t *testing.T) {
+	q := newTestQueue(t)
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://fts-tags.test", Profile: "eng"})
+	q.UpdateScore(id, 85, "go", "great article about kubernetes", "fts-tags-slug")
+	q.SetTopicTags(id, []string{"kubernetes", "devops", "cloud"})
+
+	// FTS5 should find the item via topic_tags content.
+	items, err := q.SearchFTS5("kubernetes", "", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS5: %v", err)
+	}
+	if len(items) == 0 {
+		t.Error("expected FTS5 to find item via topic_tags")
+	}
+}
