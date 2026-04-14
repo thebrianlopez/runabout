@@ -71,6 +71,43 @@ func TestQueueSnapshot(t *testing.T) {
 	}
 }
 
+func TestQueueSnapshotOverwrite(t *testing.T) {
+	q := newTestQueue(t)
+
+	if _, err := q.Enqueue(&ShareRequest{Type: "url", URL: "https://first.test"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	destPath := filepath.Join(t.TempDir(), "queue.db.bak")
+
+	// First snapshot creates the file.
+	if err := q.Snapshot(destPath); err != nil {
+		t.Fatalf("Snapshot 1: %v", err)
+	}
+
+	// Enqueue a second row and snapshot again — must not fail on existing file.
+	if _, err := q.Enqueue(&ShareRequest{Type: "url", URL: "https://second.test"}); err != nil {
+		t.Fatalf("Enqueue 2: %v", err)
+	}
+	if err := q.Snapshot(destPath); err != nil {
+		t.Fatalf("Snapshot 2 (overwrite): %v", err)
+	}
+
+	snap, err := NewQueue(destPath, false)
+	if err != nil {
+		t.Fatalf("open snapshot: %v", err)
+	}
+	defer snap.Close()
+
+	items, err := snap.Pending()
+	if err != nil {
+		t.Fatalf("snapshot Pending: %v", err)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 rows in overwritten snapshot, got %d", len(items))
+	}
+}
+
 func TestQueueEnqueueAndPending(t *testing.T) {
 	q := newTestQueue(t)
 
