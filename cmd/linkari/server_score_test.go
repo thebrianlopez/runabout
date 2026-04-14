@@ -521,3 +521,25 @@ func TestClassifyContentProfile(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeTranscriptFilename(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Voice 260413_160545.m4a", "Voice_260413_160545.m4a"},
+		{"hello world.m4a", "hello_world.m4a"},
+		{"café  résumé.m4a", "caf_r_sum_.m4a"},
+		{"normal_file.m4a", "normal_file.m4a"},
+		{"lots   of   spaces", "lots_of_spaces"},
+		{"", ""},
+		{"日本語ファイル.m4a", ".m4a"},
+		{"file/with:bad*chars?.m4a", "file_with_bad_chars_.m4a"},
+	}
+	for _, tt := range tests {
+		got := sanitizeTranscriptFilename(tt.input)
+		if got != tt.want {
+			t.Errorf("sanitizeTranscriptFilename(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}

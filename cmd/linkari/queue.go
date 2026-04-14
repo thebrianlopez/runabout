@@ -4,6 +4,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -46,10 +47,15 @@ type QueueItem struct {
 	Slug       string `json:"slug,omitempty"`
 	Progress   string `json:"progress,omitempty"`
 	SkipReason string `json:"skip_reason,omitempty"`
-	Outcome    string `json:"outcome,omitempty"`
-	OutcomeAt  string `json:"outcome_at,omitempty"`
-	Feedback   string `json:"feedback,omitempty"`
-	FeedbackAt string `json:"feedback_at,omitempty"`
+	Outcome      string `json:"outcome,omitempty"`
+	OutcomeAt    string `json:"outcome_at,omitempty"`
+	Feedback     string `json:"feedback,omitempty"`
+	FeedbackAt   string `json:"feedback_at,omitempty"`
+	Title        string `json:"title,omitempty"`
+	RubricScores string `json:"rubric_scores,omitempty"`
+	TopicTags    string `json:"topic_tags,omitempty"`
+	ClusterID    *int64 `json:"cluster_id,omitempty"`
+	ActionRoute  string `json:"action_route,omitempty"`
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -157,10 +163,29 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		// EPIC-070 M4: indexes for filtered archive queries.
 		"CREATE INDEX IF NOT EXISTS idx_queue_status_score ON queue(status, score)",
 		"CREATE INDEX IF NOT EXISTS idx_queue_status_scored_at ON queue(status, scored_at)",
+		// EPIC-072 M2: rubric_scores + title columns.
+		"ALTER TABLE queue ADD COLUMN title TEXT DEFAULT ''",
+		"ALTER TABLE queue ADD COLUMN rubric_scores TEXT DEFAULT ''",
+		// EPIC-072 M5: topic tags for clustering.
+		"ALTER TABLE queue ADD COLUMN topic_tags TEXT DEFAULT ''",
+		// EPIC-072 M6: cluster_id FK on queue.
+		"ALTER TABLE queue ADD COLUMN cluster_id INTEGER DEFAULT NULL",
+		// EPIC-072 M9: action_route column.
+		"ALTER TABLE queue ADD COLUMN action_route TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
 	}
+
+	// EPIC-072 M6: clusters table.
+	db.Exec(`CREATE TABLE IF NOT EXISTS clusters (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		profile    TEXT NOT NULL DEFAULT '',
+		theme      TEXT NOT NULL DEFAULT '',
+		synthesis  TEXT DEFAULT '',
+		formed_at  TEXT NOT NULL,
+		item_count INTEGER NOT NULL DEFAULT 0
+	)`)
 
 	// EPIC-045 M1: push_outbox and devices tables.
 	const pushSchema = `
@@ -199,6 +224,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE push_outbox ADD COLUMN profile TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE push_outbox ADD COLUMN gap_summary TEXT NOT NULL DEFAULT ''",    // EPIC-058 M7
 		"ALTER TABLE push_outbox ADD COLUMN content_type TEXT NOT NULL DEFAULT ''", // EPIC-071 M3
+		"ALTER TABLE push_outbox ADD COLUMN action_route TEXT NOT NULL DEFAULT ''", // EPIC-072 M9
 	}
 	for _, m := range pushMigrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -249,25 +275,41 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	db.Exec("ALTER TABLE devices ADD COLUMN user_id INTEGER DEFAULT NULL")
 
 	// FTS5 full-text search index over queue content.
+	// EPIC-072 M5: includes topic_tags column. Version sentinel triggers drop+recreate
+	// when upgrading from the v1 schema (which lacked topic_tags).
+	const fts5Version = 2 // bump to force rebuild when columns change
+	var currentFTS5Version int
+	db.QueryRow("SELECT COALESCE(MAX(version),0) FROM (SELECT 0 AS version UNION ALL SELECT version FROM fts5_version)").Scan(&currentFTS5Version)
+	if currentFTS5Version < fts5Version {
+		// Drop old FTS5 objects (idempotent — ignore errors if they don't exist).
+		db.Exec("DROP TRIGGER IF EXISTS queue_fts_insert")
+		db.Exec("DROP TRIGGER IF EXISTS queue_fts_update")
+		db.Exec("DROP TRIGGER IF EXISTS queue_fts_delete")
+		db.Exec("DROP TABLE IF EXISTS queue_fts")
+	}
+	db.Exec("CREATE TABLE IF NOT EXISTS fts5_version (version INTEGER)")
+	db.Exec("DELETE FROM fts5_version")
+	db.Exec("INSERT INTO fts5_version (version) VALUES (?)", fts5Version)
+
 	const fts5Setup = `
 		CREATE VIRTUAL TABLE IF NOT EXISTS queue_fts
-			USING fts5(url, tags, profile, verdict, content='queue', content_rowid='id');
+			USING fts5(url, tags, profile, verdict, topic_tags, content='queue', content_rowid='id');
 
 		CREATE TRIGGER IF NOT EXISTS queue_fts_insert AFTER INSERT ON queue BEGIN
-			INSERT INTO queue_fts(rowid, url, tags, profile, verdict)
-			VALUES (new.id, new.url, COALESCE(new.tags,''), COALESCE(new.profile,''), COALESCE(new.verdict,''));
+			INSERT INTO queue_fts(rowid, url, tags, profile, verdict, topic_tags)
+			VALUES (new.id, new.url, COALESCE(new.tags,''), COALESCE(new.profile,''), COALESCE(new.verdict,''), COALESCE(new.topic_tags,''));
 		END;
 
 		CREATE TRIGGER IF NOT EXISTS queue_fts_update AFTER UPDATE ON queue BEGIN
-			INSERT INTO queue_fts(queue_fts, rowid, url, tags, profile, verdict)
-			VALUES ('delete', old.id, old.url, COALESCE(old.tags,''), COALESCE(old.profile,''), COALESCE(old.verdict,''));
-			INSERT INTO queue_fts(rowid, url, tags, profile, verdict)
-			VALUES (new.id, new.url, COALESCE(new.tags,''), COALESCE(new.profile,''), COALESCE(new.verdict,''));
+			INSERT INTO queue_fts(queue_fts, rowid, url, tags, profile, verdict, topic_tags)
+			VALUES ('delete', old.id, old.url, COALESCE(old.tags,''), COALESCE(old.profile,''), COALESCE(old.verdict,''), COALESCE(old.topic_tags,''));
+			INSERT INTO queue_fts(rowid, url, tags, profile, verdict, topic_tags)
+			VALUES (new.id, new.url, COALESCE(new.tags,''), COALESCE(new.profile,''), COALESCE(new.verdict,''), COALESCE(new.topic_tags,''));
 		END;
 
 		CREATE TRIGGER IF NOT EXISTS queue_fts_delete AFTER DELETE ON queue BEGIN
-			INSERT INTO queue_fts(queue_fts, rowid, url, tags, profile, verdict)
-			VALUES ('delete', old.id, old.url, COALESCE(old.tags,''), COALESCE(old.profile,''), COALESCE(old.verdict,''));
+			INSERT INTO queue_fts(queue_fts, rowid, url, tags, profile, verdict, topic_tags)
+			VALUES ('delete', old.id, old.url, COALESCE(old.tags,''), COALESCE(old.profile,''), COALESCE(old.verdict,''), COALESCE(old.topic_tags,''));
 		END;
 	`
 	if _, err := db.Exec(fts5Setup); err != nil {
@@ -292,9 +334,9 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, queued_at)
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
-		req.URL, req.Text, req.Type, req.Action, req.Profile, now,
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+		req.URL, req.Text, req.Type, req.Action, req.Profile, now, req.Title,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue: %w", err)
@@ -314,9 +356,9 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, score, verdict, queued_at, scored_at)
-		 VALUES (?, ?, ?, ?, ?, 'scored', 0, ?, ?, ?)`,
-		req.URL, req.Text, req.Type, req.Action, req.Profile, verdict, now, now,
+		`INSERT INTO queue (url, text, type, action, profile, status, score, verdict, queued_at, scored_at, title)
+		 VALUES (?, ?, ?, ?, ?, 'scored', 0, ?, ?, ?, ?)`,
+		req.URL, req.Text, req.Type, req.Action, req.Profile, verdict, now, now, req.Title,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue scored: %w", err)
@@ -331,7 +373,7 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,'')"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,'')"
 
 // Pending returns all items with status=pending, ordered by id ASC (FIFO).
 func (q *Queue) Pending() ([]QueueItem, error) {
@@ -458,12 +500,18 @@ func (q *Queue) MarkRelayedTimedOut(ids []int64) error {
 // Returns (true, nil) when the row was rescued; (false, nil) when the row was
 // already scored or not found (lost the race — safe to ignore).
 // EPIC-055 M1.
-func (q *Queue) IngestScoreIfRelayed(id int64, score int, tags, verdict, slug string) (bool, error) {
+func (q *Queue) IngestScoreIfRelayed(id int64, score int, tags, verdict, slug string, rubricScores ...map[string]int) (bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
+	rubricJSON := ""
+	if len(rubricScores) > 0 && rubricScores[0] != nil {
+		if b, err := json.Marshal(rubricScores[0]); err == nil {
+			rubricJSON = string(b)
+		}
+	}
 	res, err := q.db.Exec(
-		`UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?
+		`UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=?
 		 WHERE id=? AND status='relayed'`,
-		score, tags, verdict, slug, now, id,
+		score, tags, verdict, slug, now, rubricJSON, id,
 	)
 	if err != nil {
 		return false, fmt.Errorf("ingest score if relayed id=%d: %w", id, err)
@@ -502,12 +550,37 @@ func (q *Queue) SweepRelayedTimeouts(now time.Time, maxAge time.Duration) ([]Tim
 }
 
 // UpdateScore sets the score, tags, verdict, and slug on a queue item, promoting to 'scored' status.
-func (q *Queue) UpdateScore(id int64, score int, tags, verdict, slug string) error {
+func (q *Queue) UpdateScore(id int64, score int, tags, verdict, slug string, rubricScores ...map[string]int) error {
 	now := time.Now().UTC().Format(time.RFC3339)
+	rubricJSON := ""
+	if len(rubricScores) > 0 && rubricScores[0] != nil {
+		if b, err := json.Marshal(rubricScores[0]); err == nil {
+			rubricJSON = string(b)
+		}
+	}
 	_, err := q.db.Exec(
-		"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=? WHERE id=?",
-		score, tags, verdict, slug, now, id,
+		"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=? WHERE id=?",
+		score, tags, verdict, slug, now, rubricJSON, id,
 	)
+	return err
+}
+
+// SetActionRoute persists the action_route on a queue item (EPIC-072 M9).
+func (q *Queue) SetActionRoute(id int64, route string) error {
+	_, err := q.db.Exec("UPDATE queue SET action_route=? WHERE id=?", route, id)
+	return err
+}
+
+// SetTopicTags persists topic_tags (JSON array) on a queue item (EPIC-072 M5).
+func (q *Queue) SetTopicTags(id int64, topicTags []string) error {
+	if len(topicTags) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(topicTags)
+	if err != nil {
+		return err
+	}
+	_, err = q.db.Exec("UPDATE queue SET topic_tags=? WHERE id=?", string(b), id)
 	return err
 }
 
@@ -527,6 +600,23 @@ var validOutcomes = map[string]bool{"acted": true, "ignored": true, "deferred": 
 // validFeedbacks enumerates accepted feedback values for POST /queue/{id}/feedback.
 var validFeedbacks = map[string]bool{"accurate": true, "too_high": true, "too_low": true}
 
+// feedbackAliases maps Android-native vocabulary to canonical feedback values (EPIC-072 M1).
+var feedbackAliases = map[string]string{
+	"positive": "accurate",
+	"negative": "too_low",
+}
+
+// normalizeFeedback maps aliases to canonical values and validates.
+func normalizeFeedback(feedback string) (string, error) {
+	if canonical, ok := feedbackAliases[feedback]; ok {
+		feedback = canonical
+	}
+	if !validFeedbacks[feedback] {
+		return "", fmt.Errorf("invalid feedback %q: must be accurate, too_high, too_low, positive, or negative", feedback)
+	}
+	return feedback, nil
+}
+
 // UpdateOutcome sets the outcome and outcome_at on a queue item.
 func (q *Queue) UpdateOutcome(id int64, outcome string) error {
 	if !validOutcomes[outcome] {
@@ -538,24 +628,32 @@ func (q *Queue) UpdateOutcome(id int64, outcome string) error {
 }
 
 // UpdateFeedback sets the feedback and feedback_at on a queue item.
+// Accepts both canonical values (accurate, too_high, too_low) and Android aliases (positive, negative).
 func (q *Queue) UpdateFeedback(id int64, feedback string) error {
-	if !validFeedbacks[feedback] {
-		return fmt.Errorf("invalid feedback %q: must be accurate, too_high, or too_low", feedback)
+	normalized, err := normalizeFeedback(feedback)
+	if err != nil {
+		return err
 	}
+	feedback = normalized
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := q.db.Exec("UPDATE queue SET feedback=?, feedback_at=? WHERE id=?", feedback, now, id)
+	_, err = q.db.Exec("UPDATE queue SET feedback=?, feedback_at=? WHERE id=?", feedback, now, id)
 	return err
 }
 
 // ProfileStat holds aggregate scoring/feedback stats for a single profile.
 type ProfileStat struct {
-	Profile       string `json:"profile"`
-	Count         int    `json:"count"`
-	AvgScore      float64 `json:"avg_score"`
-	AccurateCount int    `json:"accurate_count"`
-	TooHighCount  int    `json:"too_high_count"`
-	TooLowCount   int    `json:"too_low_count"`
-	FeedbackCount int    `json:"feedback_count"`
+	Profile                  string             `json:"profile"`
+	Count                    int                `json:"count"`
+	AvgScore                 float64            `json:"avg_score"`
+	AccurateCount            int                `json:"accurate_count"`
+	TooHighCount             int                `json:"too_high_count"`
+	TooLowCount              int                `json:"too_low_count"`
+	FeedbackCount            int                `json:"feedback_count"`
+	RubricAverages           map[string]float64 `json:"rubric_averages,omitempty"`
+	AvgScoreActed            *float64           `json:"avg_score_acted,omitempty"`
+	AvgScoreIgnored          *float64           `json:"avg_score_ignored,omitempty"`
+	DriftScore               *float64           `json:"drift_score,omitempty"`
+	CalibrationRecommendation string            `json:"calibration_recommendation,omitempty"`
 }
 
 // ProfileStats returns aggregate scoring and feedback stats, optionally filtered by profile.
@@ -585,7 +683,92 @@ func (q *Queue) ProfileStats(profile string) ([]ProfileStat, error) {
 		}
 		stats = append(stats, s)
 	}
-	return stats, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Compute per-axis rubric averages (EPIC-072 M2) and drift scores (EPIC-072 M4).
+	for i := range stats {
+		avgs, err := q.rubricAverages(stats[i].Profile)
+		if err != nil {
+			slog.Warn("rubric averages failed", "profile", stats[i].Profile, "error", err)
+		} else if len(avgs) > 0 {
+			stats[i].RubricAverages = avgs
+		}
+
+		q.computeDrift(&stats[i])
+	}
+	return stats, nil
+}
+
+// computeDrift calculates score-vs-outcome drift for a profile (EPIC-072 M4).
+func (q *Queue) computeDrift(s *ProfileStat) {
+	var avgActed, avgIgnored sql.NullFloat64
+	_ = q.db.QueryRow(
+		"SELECT AVG(score) FROM queue WHERE profile=? AND status IN ('scored','archived') AND outcome='acted'",
+		s.Profile,
+	).Scan(&avgActed)
+	_ = q.db.QueryRow(
+		"SELECT AVG(score) FROM queue WHERE profile=? AND status IN ('scored','archived') AND outcome='ignored'",
+		s.Profile,
+	).Scan(&avgIgnored)
+
+	if avgActed.Valid {
+		s.AvgScoreActed = &avgActed.Float64
+	}
+	if avgIgnored.Valid {
+		s.AvgScoreIgnored = &avgIgnored.Float64
+	}
+
+	if avgActed.Valid && avgIgnored.Valid {
+		drift := math.Abs(avgActed.Float64 - avgIgnored.Float64)
+		s.DriftScore = &drift
+		if drift < 10 {
+			s.CalibrationRecommendation = "low_drift_well_calibrated"
+		} else if drift < 25 {
+			s.CalibrationRecommendation = "moderate_drift_review_thresholds"
+		} else {
+			s.CalibrationRecommendation = "high_drift_recalibrate_rubric"
+		}
+	}
+}
+
+// rubricAverages computes per-axis average rubric scores for a profile.
+func (q *Queue) rubricAverages(profile string) (map[string]float64, error) {
+	rows, err := q.db.Query(
+		"SELECT rubric_scores FROM queue WHERE profile=? AND status IN ('scored','archived') AND rubric_scores!=''",
+		profile,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	sums := map[string]float64{}
+	counts := map[string]int{}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var rubric map[string]int
+		if err := json.Unmarshal([]byte(raw), &rubric); err != nil {
+			continue
+		}
+		for axis, score := range rubric {
+			sums[axis] += float64(score)
+			counts[axis]++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	avgs := make(map[string]float64, len(sums))
+	for axis, sum := range sums {
+		avgs[axis] = sum / float64(counts[axis])
+	}
+	return avgs, nil
 }
 
 // ListArchived returns archived items, optionally filtered by profile.
@@ -624,10 +807,11 @@ func (q *Queue) ListArchivedCursor(profile, status string, beforeID int64, limit
 
 // ArchiveFilter holds optional score/date range filters for archive queries (EPIC-070 M4).
 type ArchiveFilter struct {
-	ScoreMin *int
-	ScoreMax *int
-	Since    string // RFC3339
-	Until    string // RFC3339
+	ScoreMin  *int
+	ScoreMax  *int
+	Since     string // RFC3339
+	Until     string // RFC3339
+	ClusterID *int64 // EPIC-072 M7
 }
 
 // ListArchivedCursorTyped extends ListArchivedCursor with type and score/date filters.
@@ -678,6 +862,10 @@ func (q *Queue) ListArchivedCursorTyped(profile, status, itemType string, before
 			sqlStr += " AND scored_at <= ?"
 			args = append(args, filter.Until)
 		}
+		if filter.ClusterID != nil {
+			sqlStr += " AND cluster_id = ?"
+			args = append(args, *filter.ClusterID)
+		}
 	}
 	sqlStr += " ORDER BY id DESC LIMIT ?"
 	args = append(args, limit)
@@ -700,6 +888,18 @@ func (q *Queue) GetByID(id int64) (*QueueItem, error) {
 	}
 	if len(items) == 0 {
 		return nil, fmt.Errorf("queue item %d not found", id)
+	}
+	return &items[0], nil
+}
+
+// GetBySlug returns the most recent queue item matching slug.
+func (q *Queue) GetBySlug(slug string) (*QueueItem, error) {
+	items, err := q.query("SELECT "+queueCols+" FROM queue WHERE slug=? ORDER BY id DESC LIMIT 1", slug)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("queue item with slug %q not found", slug)
 	}
 	return &items[0], nil
 }
@@ -750,8 +950,14 @@ func (q *Queue) initFTS5() error {
 // ScoreByURL finds a relayed item by URL and updates it to scored, or inserts
 // a new scored row if no relayed item exists. Returns the item and whether it
 // was an insert (true) or update (false).
-func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug string) (*QueueItem, bool, error) {
+func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug string, rubricScores ...map[string]int) (*QueueItem, bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
+	rubricJSON := ""
+	if len(rubricScores) > 0 && rubricScores[0] != nil {
+		if b, err := json.Marshal(rubricScores[0]); err == nil {
+			rubricJSON = string(b)
+		}
+	}
 
 	// Check for already-scored/archived item to prevent duplicates on re-run.
 	existing, err := q.query(
@@ -777,8 +983,8 @@ func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug s
 	if len(relayed) > 0 {
 		id := relayed[0].ID
 		_, err = q.db.Exec(
-			"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=? WHERE id=?",
-			score, tags, verdict, slug, now, id,
+			"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=? WHERE id=?",
+			score, tags, verdict, slug, now, rubricJSON, id,
 		)
 		if err != nil {
 			return nil, false, fmt.Errorf("ScoreByURL update: %w", err)
@@ -789,9 +995,9 @@ func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug s
 
 	// INSERT path — CLI-originated score with no prior relayed row.
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, scored_at, score, tags, verdict, slug)
-		 VALUES (?, '', 'url', '', ?, 'scored', ?, ?, ?, ?, ?, ?)`,
-		url, profile, now, now, score, tags, verdict, slug,
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, scored_at, score, tags, verdict, slug, rubric_scores)
+		 VALUES (?, '', 'url', '', ?, 'scored', ?, ?, ?, ?, ?, ?, ?)`,
+		url, profile, now, now, score, tags, verdict, slug, rubricJSON,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("ScoreByURL insert: %w", err)
@@ -1263,7 +1469,7 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 	for rows.Next() {
 		var it QueueItem
 		var score int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt); err != nil {
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute); err != nil {
 			return nil, err
 		}
 		if score != 0 {

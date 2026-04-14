@@ -285,6 +285,14 @@ type ServerConfig struct {
 	GoogleClientID string   `yaml:"google_client_id"` // secretsmanager:// URI or literal; resolved via resolveField pipeline
 	SessionTTLDays int      `yaml:"session_ttl_days"` // session token TTL in days (default 90)
 	InviteCodes    []string `yaml:"invite_codes"`     // static invite codes seeded into DB at startup
+
+	// EPIC-072 M6: cluster detection config.
+	ClusterThreshold float64 `yaml:"cluster_threshold"` // Jaccard threshold (default 0.4)
+	ClusterMinItems  int     `yaml:"cluster_min_items"`  // minimum items to form cluster (default 3)
+
+	// EPIC-072 M9/M11: action routing config.
+	ActionRouteThreshold int    `yaml:"action_route_threshold"` // score threshold for action routes (default 80)
+	ResearchDigestPath   string `yaml:"research_digest_path"`   // path for research digest append (M11)
 }
 
 // ShareConfig controls how share requests map their received action/profile to

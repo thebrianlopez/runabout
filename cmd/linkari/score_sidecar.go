@@ -12,13 +12,14 @@ import (
 // pipeline. Defined here so both cmd_backfill.go and the watchdog rescue path
 // share a single source of truth for the on-disk format.
 type scoreJSON struct {
-	Score    int    `json:"score"`
-	Verdict  string `json:"verdict"`
-	Slug     string `json:"slug"`
-	Profile  string `json:"profile"`
-	URL      string `json:"url"`
-	ScoredAt string `json:"scored_at"`
-	Tags     string `json:"tags,omitempty"`
+	Score     int      `json:"score"`
+	Verdict   string   `json:"verdict"`
+	Slug      string   `json:"slug"`
+	Profile   string   `json:"profile"`
+	URL       string   `json:"url"`
+	ScoredAt  string   `json:"scored_at"`
+	Tags      string   `json:"tags,omitempty"`
+	TopicTags []string `json:"topic_tags,omitempty"`
 }
 
 // scoreIndexKey is the composite key for the on-disk index, honoring the
