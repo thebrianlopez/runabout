@@ -20,7 +20,7 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 - **workctl** — fetch and export Atlassian & GitHub work data (weekly/quarterly summaries, career reports)
 - **ghwatch** — stream GitHub repository activity to the terminal (push, PRs, workflow runs)
 
-**Last Updated:** 2026-04-13
+**Last Updated:** 2026-04-14
 
 ## Install
 
@@ -186,17 +186,29 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 | `/actions` | GET | Action registry for dynamic Android intents |
 | `/queue` | GET | List queued items (filter by `?status=`) |
 | `/queue/{id}/score` | POST | Score a queued item; auto-archives above profile threshold |
+| `/queue/{id}/outcome` | POST | Record user outcome (opened, saved, dismissed) for a scored item |
+| `/queue/{id}/feedback` | POST | Submit feedback (thumbs up/down, correction) on a scored item |
+| `/queue/slug/{slug}/feedback` | POST | Feedback by workspace slug (convenience alias) |
+| `/queue/slug/{slug}/outcome` | POST | Outcome by workspace slug (convenience alias) |
+| `/profiles/stats` | GET | Per-profile scoring statistics and feedback summary |
 | `/archive` | GET | List archived items (filter by `?profile=`) |
 | `/digest` | GET | Recent scored items (last 24h) |
 | `/notify` | POST | Score callback → FCM push when above threshold |
 | `/register` | POST | Register FCM device token for push notifications |
 | `/search` | POST | Full-text search over scored queue items |
 | `/push/test` | POST | Test FCM push delivery |
-| `/healthz` | GET | Health check (local only) |
+| `/auth/google` | POST | Google ID token verification for mobile clients |
+| `/auth/invite` | POST | Redeem invite code to create a user account |
+| `/admin/invite` | POST | Generate invite codes (operator bearer token required) |
+| `/healthz` | GET | Health check with DB status (local only) |
 | `/logs` | GET | Last 100 log lines (local only) |
 | `/logs/stream` | GET | SSE realtime log stream (local only) |
 
-All endpoints except `/healthz`, `/logs`, and `/logs/stream` require bearer token auth. Rate limited to 30 req/min per IP.
+All endpoints except `/healthz`, `/logs`, `/logs/stream`, and `/auth/*` require bearer token auth (or Google ID token for authenticated users). Rate limited to 30 req/min per IP.
+
+**Adaptive assistant (EPIC-072):** Feedback and outcome signals flow back from the client via `/queue/{id}/feedback` and `/queue/{id}/outcome` (or by slug). A tag-based clustering engine (Jaccard similarity on `topic_tags`) detects content themes across scored items. When a scored item meets the profile threshold, action routing dispatches it to either Jira ticket drafting or research digest append. Per-profile statistics are available via `GET /profiles/stats`.
+
+**Auth:** Google Sign-In (ID token verification against Google JWKS) for mobile clients. Invite-code flow for onboarding new users; operator bearer token generates codes via `POST /admin/invite`.
 
 **Queue & replay:** Every share is persisted to SQLite before routing. If tmux is unavailable, the request returns `"queued"` and a background goroutine replays pending items every 30s when tmux comes back. A `RelayedWatchdog` marks rows stuck in `relayed` status past a configurable max age as `failed` with `scoring_timeout`.
 
@@ -214,9 +226,11 @@ All endpoints except `/healthz`, `/logs`, and `/logs/stream` require bearer toke
 | `triage <url>` | Run profile-aware LLM triage (Haiku) and persist the verdict |
 | `eval capture` | Snapshot triage inputs+outputs into a fixture JSON |
 | `eval run` | Replay fixtures against the scorer; exit non-zero on regression |
+| `eval refresh-goldens` | Re-score fixture goldens against current prompt manifests |
 | `profile lint` | Validate profile YAML manifests against the v1 schema |
 | `search <query>` | Full-text search over scored queue items |
 | `backfill [dir]` | Ingest existing `_score.json` files into the queue database |
+| `tag-backfill` | Re-process scored items missing topic tags through tag extraction |
 | `digest` | List recent scored items (CLI equivalent of `GET /digest`) |
 | `completion` | Generate shell completions (fish/bash/zsh/powershell) |
 
@@ -333,7 +347,7 @@ cmd/shellprof/        # shellprof entry point (root module)
 cmd/hookval/          # hookval entry point (root module)
 cmd/effiscore/        # effiscore entry point (root module)
 cmd/fetchpage/        # fetchpage entry point (separate module)
-cmd/linkari/          # linkari entry point (separate module, ~60 files)
+cmd/linkari/          # linkari entry point (separate module, ~70 files)
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
 cmd/workctl/          # workctl module root (separate module)
