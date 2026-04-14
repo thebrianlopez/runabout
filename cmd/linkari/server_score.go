@@ -303,7 +303,7 @@ func scoreURLAsync(rawURL, profile string, q *Queue, eval Evaluator) {
 		return
 	}
 	slug := deriveSlugFromURL(rawURL)
-	item, _, err := q.ScoreByURL(rawURL, sc.Score, sc.Verdict, sc.Tags, profile, slug)
+	item, _, err := q.ScoreByURL(rawURL, sc.Score, sc.Verdict, sc.Tags, profile, slug, sc.RubricScores)
 	if err != nil {
 		slog.Warn("server_score: ScoreByURL failed",
 			"event_type", "server_score_queue_error",
@@ -314,12 +314,29 @@ func scoreURLAsync(rawURL, profile string, q *Queue, eval Evaluator) {
 		return
 	}
 
+	// EPIC-072 M5: persist topic tags from scoring.
+	if len(sc.TopicTags) > 0 {
+		if tagErr := q.SetTopicTags(item.ID, sc.TopicTags); tagErr != nil {
+			slog.Warn("server_score: SetTopicTags failed", "id", item.ID, "error", tagErr)
+		}
+	}
+
 	// Auto-archive when score meets profile threshold (mirrors cmd_score path).
 	threshold := archiveThreshold(profile)
 	if threshold >= 0 && item.Score != nil && *item.Score >= threshold {
 		if archErr := q.Archive(item.ID); archErr == nil {
 			item.Status = "archived"
 		}
+	}
+
+	// EPIC-072 M6: trigger cluster detection after scoring (background goroutine).
+	if len(sc.TopicTags) > 0 && profile != "" {
+		go detectClusters(context.Background(), q, profile, 0, 0)
+	}
+
+	// EPIC-072 M9: action route dispatch post-scoring.
+	if item.Score != nil {
+		dispatchActionRoute(context.Background(), sc, profile, rawURL, q, item.ID, 0)
 	}
 
 	// FCM push via the dual-writer invariant (EPIC-051). Every scored row
@@ -650,13 +667,10 @@ func saveTranscriptFile(rowID int64, profile, originalFilename, transcript strin
 	date := now.Format("20060102")
 	ts := now.Format("20060102T150405Z")
 
-	// Sanitize original filename for use in the path.
-	safeName := strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
-			return '_'
-		}
-		return r
-	}, originalFilename)
+	// Sanitize original filename for use in the path — replace spaces,
+	// non-ASCII, and filesystem-illegal characters with underscores,
+	// then collapse repeated underscores.
+	safeName := sanitizeTranscriptFilename(originalFilename)
 	if safeName == "" {
 		safeName = "untitled"
 	}
@@ -680,4 +694,19 @@ func saveTranscriptFile(rowID int64, profile, originalFilename, transcript strin
 		return "", fmt.Errorf("write transcript: %w", err)
 	}
 	return path, nil
+}
+
+// sanitizeFilenameRE matches any character that is not alphanumeric, underscore, or dot.
+var sanitizeFilenameRE = regexp.MustCompile(`[^A-Za-z0-9_.]`)
+
+// collapseUnderscoresRE matches two or more consecutive underscores.
+var collapseUnderscoresRE = regexp.MustCompile(`_{2,}`)
+
+// sanitizeTranscriptFilename replaces spaces, non-ASCII, and filesystem-illegal
+// characters with underscores, then collapses repeated underscores.
+func sanitizeTranscriptFilename(name string) string {
+	name = sanitizeFilenameRE.ReplaceAllString(name, "_")
+	name = collapseUnderscoresRE.ReplaceAllString(name, "_")
+	name = strings.Trim(name, "_")
+	return name
 }

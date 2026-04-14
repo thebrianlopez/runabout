@@ -218,6 +218,8 @@ One-line: {{.VerdictPrompt}}
 - {{.}}
 {{- end}}
 
+Emit 2-10 lowercase topic tags in the topic_tags array. Use stable vocabulary (e.g. "llm", "infra", "career", "go", "security"). Tags should capture the core topics for clustering related shares.
+
 Be concise. Output markdown. No preamble.
 `
 

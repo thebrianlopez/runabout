@@ -202,9 +202,13 @@ the eval harness path).`,
 			}
 			defer q.Close()
 
-			item, _, err := q.ScoreByURL(url, res.Score, res.Verdict, res.Tags, profile, slug)
+			item, _, err := q.ScoreByURL(url, res.Score, res.Verdict, res.Tags, profile, slug, sc.RubricScores)
 			if err != nil {
 				return fmt.Errorf("score: %w", err)
+			}
+			// EPIC-072 M5: persist topic tags from scoring.
+			if len(sc.TopicTags) > 0 {
+				_ = q.SetTopicTags(item.ID, sc.TopicTags)
 			}
 			// Auto-archive if score meets profile threshold (mirrors cmd_score.go).
 			threshold := archiveThreshold(item.Profile)
@@ -228,11 +232,12 @@ the eval harness path).`,
 			//    + rubric_scores. Existing readers (cmd_eval.go captureFromWorkspace)
 			//    decode by named field and ignore unknown keys.
 			var extras *sidecarExtras
-			if len(sc.RubricScores) > 0 {
+			if len(sc.RubricScores) > 0 || len(sc.TopicTags) > 0 {
 				extras = &sidecarExtras{
 					SchemaVersion:  "triage_verdict_v1",
 					ProfileVersion: sc.ProfileVersion,
 					RubricScores:   sc.RubricScores,
+					TopicTags:      sc.TopicTags,
 				}
 			}
 			if err := writeScoreSidecar(workspace, res.Score, res.Verdict, slug, profile, url, extras); err != nil {
@@ -500,6 +505,7 @@ type sidecarExtras struct {
 	SchemaVersion  string         `json:"schema_version,omitempty"`
 	ProfileVersion int            `json:"profile_version,omitempty"`
 	RubricScores   map[string]int `json:"rubric_scores,omitempty"`
+	TopicTags      []string       `json:"topic_tags,omitempty"`
 }
 
 // writeScoreSidecar writes _score.json with byte-equivalent shape to fish

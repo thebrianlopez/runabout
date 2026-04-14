@@ -32,6 +32,8 @@ type Scorecard struct {
 	Verdict        string         `json:"verdict"`
 	Gaps           []string       `json:"gaps,omitempty"`           // specific missing elements needed to reach threshold
 	Tags           string         `json:"tags,omitempty"`
+	TopicTags      []string       `json:"topic_tags,omitempty"`
+	ActionRoute    string         `json:"action_route,omitempty"`
 	RubricScores   map[string]int `json:"rubric_scores,omitempty"`
 	RawMarkdown    string         `json:"raw_markdown,omitempty"`
 	Profile        string         `json:"profile,omitempty"`
@@ -101,6 +103,7 @@ func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate 
 		Verdict:        v.Verdict,
 		Gaps:           v.ActionItems,
 		Tags:           v.Tags,
+		TopicTags:      v.TopicTags,
 		RubricScores:   v.RubricScores,
 		RawMarkdown:    v.RenderMarkdown(),
 		Profile:        v.Profile,

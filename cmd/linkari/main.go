@@ -78,6 +78,7 @@ func main() {
 	rootCmd.AddCommand(scoreWriteCmd())
 	rootCmd.AddCommand(searchCmd())
 	rootCmd.AddCommand(backfillCmd())
+	rootCmd.AddCommand(tagBackfillCmd())
 	rootCmd.AddCommand(digestCmd())
 	rootCmd.AddCommand(evalCmd())
 	rootCmd.AddCommand(triageCmd())

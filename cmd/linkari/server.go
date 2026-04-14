@@ -329,6 +329,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /queue/{id}/score", s.handleQueueScore)
 	mux.HandleFunc("POST /queue/{id}/outcome", s.handleQueueOutcome)
 	mux.HandleFunc("POST /queue/{id}/feedback", s.handleQueueFeedback)
+	mux.HandleFunc("POST /queue/slug/{slug}/feedback", s.handleQueueFeedbackBySlug)
+	mux.HandleFunc("POST /queue/slug/{slug}/outcome", s.handleQueueOutcomeBySlug)
 	mux.HandleFunc("GET /profiles/stats", s.handleProfileStats)
 	mux.HandleFunc("/archive", s.handleArchive)
 	mux.HandleFunc("/digest", s.handleDigest)
@@ -846,6 +848,15 @@ func parseListParams(r *http.Request) (profile, status, itemType string, beforeI
 		f.Until = s
 		hasFilter = true
 	}
+	// EPIC-072 M7: cluster_id filter.
+	if s := r.URL.Query().Get("cluster_id"); s != "" {
+		n, e := strconv.ParseInt(s, 10, 64)
+		if e != nil {
+			return "", "", "", 0, 0, nil, fmt.Errorf("invalid cluster_id")
+		}
+		f.ClusterID = &n
+		hasFilter = true
+	}
 	if hasFilter {
 		filter = &f
 	}
@@ -885,10 +896,11 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 type scoreRequest struct {
-	Score   int    `json:"score"`
-	Slug    string `json:"slug"`
-	Tags    string `json:"tags"`
-	Verdict string `json:"verdict"`
+	Score        int            `json:"score"`
+	Slug         string         `json:"slug"`
+	Tags         string         `json:"tags"`
+	Verdict      string         `json:"verdict"`
+	RubricScores map[string]int `json:"rubric_scores,omitempty"`
 }
 
 func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
@@ -917,7 +929,7 @@ func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.queue.UpdateScore(id, req.Score, req.Tags, req.Verdict, req.Slug); err != nil {
+	if err := s.queue.UpdateScore(id, req.Score, req.Tags, req.Verdict, req.Slug, req.RubricScores); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("update score: %v", err))
 		return
 	}
@@ -1058,6 +1070,105 @@ func (s *Server) handleQueueFeedback(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(item)
 }
 
+// resolveSlugToID looks up a queue item by slug and returns its ID (EPIC-072 M1).
+func (s *Server) resolveSlugToID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	if !s.authenticateRequest(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return 0, false
+	}
+	if s.queue == nil {
+		writeError(w, http.StatusServiceUnavailable, "queue not configured")
+		return 0, false
+	}
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "empty slug")
+		return 0, false
+	}
+	item, err := s.queue.GetBySlug(slug)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("slug lookup: %v", err))
+		return 0, false
+	}
+	return item.ID, true
+}
+
+// handleQueueFeedbackBySlug handles POST /queue/slug/{slug}/feedback (EPIC-072 M1).
+func (s *Server) handleQueueFeedbackBySlug(w http.ResponseWriter, r *http.Request) {
+	id, ok := s.resolveSlugToID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
+	var req struct {
+		Feedback string `json:"feedback"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	if err := s.queue.UpdateFeedback(id, req.Feedback); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("update feedback: %v", err))
+		return
+	}
+
+	item, err := s.queue.GetByID(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("get item: %v", err))
+		return
+	}
+
+	slog.InfoContext(r.Context(), "feedback",
+		"event_type", "feedback_recorded",
+		"id", id,
+		"feedback", req.Feedback,
+		"profile", item.Profile,
+		"via", "slug",
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(item)
+}
+
+// handleQueueOutcomeBySlug handles POST /queue/slug/{slug}/outcome (EPIC-072 M1).
+func (s *Server) handleQueueOutcomeBySlug(w http.ResponseWriter, r *http.Request) {
+	id, ok := s.resolveSlugToID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
+	var req struct {
+		Outcome string `json:"outcome"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	if err := s.queue.UpdateOutcome(id, req.Outcome); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("update outcome: %v", err))
+		return
+	}
+
+	item, err := s.queue.GetByID(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("get item: %v", err))
+		return
+	}
+
+	slog.InfoContext(r.Context(), "outcome",
+		"event_type", "outcome_recorded",
+		"id", id,
+		"outcome", req.Outcome,
+		"profile", item.Profile,
+		"via", "slug",
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(item)
+}
+
 // handleProfileStats handles GET /profiles/stats (EPIC-070 M2).
 func (s *Server) handleProfileStats(w http.ResponseWriter, r *http.Request) {
 	if !s.authenticateRequest(r) {
@@ -1184,6 +1295,37 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	s.emitDigestEvent(profile, len(items), digestStart)
 
 	w.Header().Set("Content-Type", "application/json")
+
+	// EPIC-072 M7: cluster-aware digest response gated by ?clusters=1.
+	if r.URL.Query().Get("clusters") == "1" {
+		clusters, cerr := s.queue.ListClusters(profile)
+		if cerr != nil {
+			slog.Warn("digest clusters failed", "error", cerr)
+		}
+		// Enrich clusters with tag intersection.
+		var enriched []ClusterGroup
+		for _, c := range clusters {
+			cItems, _ := s.queue.GetClusterItems(c.ID)
+			if len(cItems) > 0 {
+				c.Tags = parseTags(cItems[0].TopicTags)
+				for _, ci := range cItems[1:] {
+					c.Tags = tagIntersection(c.Tags, parseTags(ci.TopicTags))
+				}
+				c.ItemIDs = make([]int64, len(cItems))
+				for i, ci := range cItems {
+					c.ItemIDs[i] = ci.ID
+				}
+			}
+			enriched = append(enriched, c)
+		}
+		type DigestResponse struct {
+			Items    []QueueItem    `json:"items"`
+			Clusters []ClusterGroup `json:"clusters,omitempty"`
+		}
+		json.NewEncoder(w).Encode(DigestResponse{Items: items, Clusters: enriched})
+		return
+	}
+
 	json.NewEncoder(w).Encode(items)
 }
 

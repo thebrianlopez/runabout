@@ -11,10 +11,11 @@ import (
 
 func digestCmd() *cobra.Command {
 	var (
-		queueDB string
-		profile string
-		limit   int
-		since   string
+		queueDB  string
+		profile  string
+		limit    int
+		since    string
+		clusters bool
 	)
 
 	cmd := &cobra.Command{
@@ -51,6 +52,20 @@ func digestCmd() *cobra.Command {
 
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
+
+			// EPIC-072 M7: cluster-aware output.
+			if clusters {
+				clusterList, cerr := q.ListClusters(profile)
+				if cerr != nil {
+					return fmt.Errorf("list clusters: %w", cerr)
+				}
+				type DigestResponse struct {
+					Items    []QueueItem    `json:"items"`
+					Clusters []ClusterGroup `json:"clusters,omitempty"`
+				}
+				return enc.Encode(DigestResponse{Items: items, Clusters: clusterList})
+			}
+
 			return enc.Encode(items)
 		},
 	}
@@ -59,6 +74,7 @@ func digestCmd() *cobra.Command {
 	cmd.Flags().StringVar(&profile, "profile", "", "filter by profile")
 	cmd.Flags().IntVar(&limit, "limit", 20, "max results")
 	cmd.Flags().StringVar(&since, "since", "24h", "time window as Go duration (e.g. 48h, 168h)")
+	cmd.Flags().BoolVar(&clusters, "clusters", false, "include cluster groupings in output (EPIC-072 M7)")
 
 	return cmd
 }

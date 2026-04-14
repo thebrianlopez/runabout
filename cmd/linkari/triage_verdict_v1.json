@@ -26,6 +26,17 @@
       "type": "string",
       "description": "Comma-separated tag list."
     },
+    "topic_tags": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "maxItems": 10,
+      "description": "2-10 lowercase topic keyword tags for clustering."
+    },
+    "action_route": {
+      "type": "string",
+      "enum": ["draft_jira_ticket", "append_research_digest", ""],
+      "description": "Optional action route for high-confidence scores."
+    },
     "rubric_scores": {
       "type": "object",
       "description": "Per-axis scores keyed by axis name from the profile manifest.",

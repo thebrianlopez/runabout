@@ -24,6 +24,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sort"
@@ -40,6 +41,8 @@ type TriageVerdict struct {
 	Verdict        string         `json:"verdict"`
 	ActionItems    []string       `json:"action_items,omitempty"`
 	Tags           string         `json:"tags,omitempty"`
+	TopicTags      []string       `json:"topic_tags,omitempty"`
+	ActionRoute    string         `json:"action_route,omitempty"`
 	RubricScores   map[string]int `json:"rubric_scores"`
 	Profile        string         `json:"profile,omitempty"`
 	ProfileVersion int            `json:"profile_version,omitempty"`
@@ -81,6 +84,21 @@ func (v *TriageVerdict) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// normalizeTopicTags lowercases, trims, and deduplicates topic tags (EPIC-072 M5).
+func normalizeTopicTags(tags []string) []string {
+	seen := make(map[string]bool, len(tags))
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
 // validate is a defense-in-depth pass on top of the CLI's --json-schema
 // validator. The CLI reference describes --json-schema as "validated JSON
 // output matching a JSON Schema" but does not specify whether the validator
@@ -101,6 +119,10 @@ func (v TriageVerdict) validate() error {
 		if score < 0 || score > 100 {
 			return fmt.Errorf("rubric_scores[%q] = %d out of [0,100]", axis, score)
 		}
+	}
+	// EPIC-072 M5: warn-log when score>0 has empty topic_tags, but don't reject.
+	if v.Score > 0 && len(v.TopicTags) == 0 {
+		slog.Warn("topic_tags empty for scored item", "score", v.Score)
 	}
 	return nil
 }
@@ -215,6 +237,7 @@ func parseHaikuEnvelope(stdout []byte) (TriageVerdict, *envelopeMeta, error) {
 	// Bare verdict shortcut (test/dev path).
 	var bare TriageVerdict
 	if err := json.Unmarshal(stdout, &bare); err == nil && len(bare.RubricScores) > 0 {
+		bare.TopicTags = normalizeTopicTags(bare.TopicTags)
 		return bare, nil, bare.validate()
 	}
 
@@ -257,6 +280,7 @@ func parseHaikuEnvelope(stdout []byte) (TriageVerdict, *envelopeMeta, error) {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return TriageVerdict{}, meta, fmt.Errorf("verdict decode: %w (body=%s)", err, truncateForErr(raw))
 	}
+	v.TopicTags = normalizeTopicTags(v.TopicTags)
 	if err := v.validate(); err != nil {
 		return TriageVerdict{}, meta, fmt.Errorf("verdict validate: %w", err)
 	}
