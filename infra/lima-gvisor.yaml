@@ -2,30 +2,29 @@
 #
 # Boots an Ubuntu 24.04 VM via Virtualization.framework with:
 #   - containerd 1.7+ pre-installed
-#   - gVisor runsc installed at /opt/gvisor/runsc
+#   - gVisor runsc + containerd-shim-runsc-v1 installed at /opt/gvisor/
 #   - Shared I/O tmpfs at /tmp/linkari-io (bind-mounted from host)
+#   - containerd UNIX socket forwarded to ~/.lima/lima-gvisor/containerd.sock
 #
 # Usage:
 #   limactl start infra/lima-gvisor.yaml
 #   limactl shell lima-gvisor
 #
-# Verify gVisor works:
-#   docker --context lima-gvisor run --runtime=runsc alpine uname -r
+# After VM start, set in server.yaml:
+#   sandbox.runtime_socket: ~/.lima/lima-gvisor/containerd.sock
 #
 # Requires Lima ≥ 0.21 (Apple Virtualization.framework support).
 
-vmType: vz                 # Apple Virtualization.framework — faster than QEMU
-rosetta:
-  enabled: false           # Not needed; gVisor is Linux-native
-arch: x86_64               # gVisor runsc is x86_64 only on macOS (no ARM build)
+vmType: vz                 # Apple Virtualization.framework — native ARM64, full performance
+arch: aarch64              # Native on Apple Silicon; vz requires native arch (no cross-arch)
 
 cpus: 4
 memory: "8GiB"
 disk: "30GiB"
 
 images:
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
-    arch: x86_64
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: aarch64
 
 mounts:
   # Host ~/tmp/linkari-io is shared into the VM at /tmp/linkari-io.
@@ -33,6 +32,13 @@ mounts:
   - location: "~/tmp/linkari-io"
     mountPoint: "/tmp/linkari-io"
     writable: true
+
+# Forward the guest containerd UNIX socket to the host so the linkari Go
+# binary (running on macOS) can reach containerd without SSH tunnelling.
+# {{.Dir}} expands to ~/.lima/lima-gvisor/ at VM start time.
+portForwards:
+  - guestSocket: "/run/containerd/containerd.sock"
+    hostSocket: "{{.Dir}}/containerd.sock"
 
 networks:
   - lima: user-v2            # NAT — containers can reach api.anthropic.com
@@ -50,13 +56,21 @@ provision:
       mkdir -p /etc/containerd
       containerd config default > /etc/containerd/config.toml
 
-      # ── gVisor runsc ────────────────────────────────────────────────────────
-      ARCH=$(uname -m)
+      # ── gVisor runsc + containerd shim ──────────────────────────────────────
+      ARCH=$(uname -m)   # aarch64 on Apple Silicon
       GVISOR_VERSION=20240305.0
-      GVISOR_URL="https://storage.googleapis.com/gvisor/releases/release/${GVISOR_VERSION}/${ARCH}/runsc"
+      GVISOR_BASE="https://storage.googleapis.com/gvisor/releases/release/${GVISOR_VERSION}/${ARCH}"
       mkdir -p /opt/gvisor
-      curl -fsSL -o /opt/gvisor/runsc "${GVISOR_URL}"
+
+      # runsc: the gVisor sandbox binary.
+      curl -fsSL -o /opt/gvisor/runsc "${GVISOR_BASE}/runsc"
       chmod 755 /opt/gvisor/runsc
+
+      # containerd-shim-runsc-v1: containerd invokes this shim to start gVisor tasks.
+      # Must be discoverable in PATH; /usr/local/sbin is on containerd's default search.
+      curl -fsSL -o /usr/local/sbin/containerd-shim-runsc-v1 \
+        "${GVISOR_BASE}/containerd-shim-runsc-v1"
+      chmod 755 /usr/local/sbin/containerd-shim-runsc-v1
 
       # Register runsc as a containerd runtime.
       cat >> /etc/containerd/config.toml <<'EOF'
@@ -78,7 +92,9 @@ provision:
 
       # ── nerdctl (containerd CLI) ─────────────────────────────────────────────
       NERDCTL_VERSION=1.7.7
-      curl -fsSL "https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-${NERDCTL_VERSION}-linux-amd64.tar.gz" \
+      # Normalize uname -m → Go/GitHub release arch name (aarch64 → arm64).
+      NERDCTL_ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/amd64/')
+      curl -fsSL "https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-${NERDCTL_VERSION}-linux-${NERDCTL_ARCH}.tar.gz" \
         | tar -xz -C /usr/local/bin nerdctl
       chmod 755 /usr/local/bin/nerdctl
 
@@ -87,6 +103,7 @@ provision:
       #!/bin/bash
       # Smoke-test: verify runsc is reachable and containerd is running.
       /opt/gvisor/runsc --version
+      /usr/local/sbin/containerd-shim-runsc-v1 -version
       systemctl is-active containerd
 
 probes:
@@ -96,3 +113,6 @@ probes:
   - description: "runsc is executable"
     script: /opt/gvisor/runsc --version
     hint: "gVisor runsc not installed — check provision logs"
+  - description: "containerd-shim-runsc-v1 is installed"
+    script: /usr/local/sbin/containerd-shim-runsc-v1 -version
+    hint: "gVisor shim not installed — check provision logs (GVISOR_BASE URL)"
