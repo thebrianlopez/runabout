@@ -1,0 +1,36 @@
+# EPIC-038 M2: ffmpeg sandbox image
+#
+# Minimal Alpine image with static ffmpeg from johnvansickle.com.
+# Used by ContainerRuntime.InvokeFFmpeg to convert audio to 16kHz mono WAV
+# with zero host filesystem exposure (input/output via /linkari/io volume).
+#
+# Build: docker build -f container/Dockerfile.ffmpeg -t linkari/ffmpeg:latest .
+# Runtime: gVisor runsc via containerd RuntimeClass
+
+FROM alpine:3.21 AS base
+
+# Install curl for binary download; removed in final layer.
+RUN apk add --no-cache curl xz
+
+# Static ffmpeg build — avoids Alpine's packaged ffmpeg pulling in many codecs.
+# Pin to a specific build hash in production; latest is fine for dev.
+ARG FFMPEG_URL=https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+RUN curl -fsSL "${FFMPEG_URL}" | tar -xJ --strip-components=1 -C /usr/local/bin ffmpeg-*/ffmpeg \
+    && chmod 755 /usr/local/bin/ffmpeg
+
+FROM alpine:3.21
+
+COPY --from=base /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+
+# Linkari mounts audio I/O here. ContainerRuntime resolves input/output
+# paths to /linkari/io/<filename> before invoking the container.
+RUN mkdir -p /linkari/io
+VOLUME ["/linkari/io"]
+
+# Drop to non-root. UID 1000 matches the host user in Lima VMs by default.
+RUN addgroup -g 1000 linkari && adduser -u 1000 -G linkari -s /bin/sh -D linkari
+USER linkari
+
+# ffmpeg converts input to 16kHz mono WAV. Arguments are injected by
+# ContainerRuntime.InvokeFFmpeg — do not hardcode paths here.
+ENTRYPOINT ["/usr/local/bin/ffmpeg"]

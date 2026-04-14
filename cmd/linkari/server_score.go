@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"errors"
 	"regexp"
 	"strings"
 	"time"
@@ -432,11 +433,24 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, or
 	ffmpegCtx, ffmpegCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer ffmpegCancel()
 	if err := execFfmpegConvert(ffmpegCtx, audioPath, wavPath); err != nil {
-		slog.Warn("score_audio: ffmpeg failed",
-			"event_type", "score_audio_ffmpeg_error",
-			"row_id", rowID,
-			"error", err,
-		)
+		if errors.Is(err, ErrContainerOOM) {
+			audioInfo, _ := os.Stat(audioPath)
+			var actualMB float64
+			if audioInfo != nil {
+				actualMB = float64(audioInfo.Size()) / (1 << 20)
+			}
+			slog.Warn("score_audio: OOM killed during ffmpeg",
+				"event_type", "score_audio_oom",
+				"row_id", rowID,
+				"actual_file_size_mb", actualMB,
+			)
+		} else {
+			slog.Warn("score_audio: ffmpeg failed",
+				"event_type", "score_audio_ffmpeg_error",
+				"row_id", rowID,
+				"error", err,
+			)
+		}
 		if q != nil {
 			q.MarkFailedWithReason(rowID, "ffmpeg_failed")
 		}
@@ -493,12 +507,26 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, or
 			)
 			part, err := execWhisper(ctx, chunk, whisperModel)
 			if err != nil {
-				slog.Warn("score_audio: whisper chunk failed",
-					"event_type", "score_audio_whisper_error",
-					"row_id", rowID,
-					"chunk", i+1,
-					"error", err,
-				)
+				if errors.Is(err, ErrContainerOOM) {
+					wavChunkInfo, _ := os.Stat(chunk)
+					var actualMB float64
+					if wavChunkInfo != nil {
+						actualMB = float64(wavChunkInfo.Size()) / (1 << 20)
+					}
+					slog.Warn("score_audio: OOM killed during whisper chunk",
+						"event_type", "score_audio_oom",
+						"row_id", rowID,
+						"chunk", i+1,
+						"actual_file_size_mb", actualMB,
+					)
+				} else {
+					slog.Warn("score_audio: whisper chunk failed",
+						"event_type", "score_audio_whisper_error",
+						"row_id", rowID,
+						"chunk", i+1,
+						"error", err,
+					)
+				}
 				if q != nil {
 					q.MarkFailedWithReason(rowID, fmt.Sprintf("transcription_failed_chunk_%d", i+1))
 				}
@@ -516,11 +544,23 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, or
 		}
 		transcript, err = execWhisper(ctx, wavPath, whisperModel)
 		if err != nil {
-			slog.Warn("score_audio: whisper failed",
-				"event_type", "score_audio_whisper_error",
-				"row_id", rowID,
-				"error", err,
-			)
+			if errors.Is(err, ErrContainerOOM) {
+				var actualMB float64
+				if wavInfo != nil {
+					actualMB = float64(wavInfo.Size()) / (1 << 20)
+				}
+				slog.Warn("score_audio: OOM killed during whisper",
+					"event_type", "score_audio_oom",
+					"row_id", rowID,
+					"actual_file_size_mb", actualMB,
+				)
+			} else {
+				slog.Warn("score_audio: whisper failed",
+					"event_type", "score_audio_whisper_error",
+					"row_id", rowID,
+					"error", err,
+				)
+			}
 			if q != nil {
 				q.MarkFailedWithReason(rowID, "transcription_failed")
 			}

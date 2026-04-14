@@ -59,7 +59,8 @@ func (s ServerConfig) IsZero() bool {
 		s.SnapshotInterval.D == 0 && s.SnapshotPath == "" &&
 		!s.Share.HeuristicOverrideEnabled &&
 		s.WhisperModel == "" && s.FfmpegPath == "" &&
-		s.GoogleClientID == "" && s.SessionTTLDays == 0
+		s.GoogleClientID == "" && s.SessionTTLDays == 0 &&
+		!s.Sandbox.Enabled
 }
 
 // RelayedWatchdogConfig is the resolved runtime view of the watchdog knobs,
@@ -293,6 +294,10 @@ type ServerConfig struct {
 	// EPIC-072 M9/M11: action routing config.
 	ActionRouteThreshold int    `yaml:"action_route_threshold"` // score threshold for action routes (default 80)
 	ResearchDigestPath   string `yaml:"research_digest_path"`   // path for research digest append (M11)
+
+	// EPIC-038 M1: gVisor sandbox config. When Sandbox.Enabled is true, all
+	// ffmpeg/whisper/claude subprocess calls are routed through ContainerRuntime.
+	Sandbox SandboxConfig `yaml:"sandbox"`
 }
 
 // ShareConfig controls how share requests map their received action/profile to
