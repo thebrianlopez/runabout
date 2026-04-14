@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -919,10 +920,14 @@ func (q *Queue) Close() error {
 }
 
 // Snapshot writes a clean, defragmented copy of the database to destPath using
-// VACUUM INTO. The destination is overwritten if it already exists. Intended
-// for periodic point-in-time backups — if queue.db becomes corrupt, the last
-// snapshot is the recovery baseline before attempting sqlite3 .recover.
+// VACUUM INTO. The destination file is removed first because VACUUM INTO refuses
+// to overwrite an existing file. Intended for periodic point-in-time backups —
+// if queue.db becomes corrupt, the last snapshot is the recovery baseline before
+// attempting sqlite3 .recover.
 func (q *Queue) Snapshot(destPath string) error {
+	if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("snapshot remove old %s: %w", destPath, err)
+	}
 	_, err := q.db.Exec("VACUUM INTO ?", destPath)
 	if err != nil {
 		return fmt.Errorf("snapshot to %s: %w", destPath, err)
