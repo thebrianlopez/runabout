@@ -68,6 +68,18 @@ type ShareRequest struct {
 	Profile  string `json:"profile,omitempty"`
 	FCMToken string `json:"fcm_token,omitempty"`
 
+	// EPIC-038 M3: Intent metadata fields from Android share intent.
+	MimeType       string `json:"mime_type,omitempty"`
+	CallingPackage string `json:"calling_package,omitempty"`
+	AppCategory    int    `json:"app_category,omitempty"`
+	IsScreenshot   bool   `json:"is_screenshot,omitempty"`
+	ExtraSubject   string `json:"extra_subject,omitempty"`
+	ExtraText      string `json:"extra_text,omitempty"`
+	FileSize       int64  `json:"file_size,omitempty"`
+	DateAdded      string `json:"date_added,omitempty"`
+	RelativePath   string `json:"relative_path,omitempty"`
+	Filename       string `json:"filename,omitempty"`
+
 	// Internal fields — not serialized from JSON.
 	AudioPath        string `json:"-"` // EPIC-067: temp file path for uploaded audio
 	QueueRowID       int64  `json:"-"` // EPIC-067: queue row ID for audio scoring (no URL to match on)
@@ -176,6 +188,9 @@ type Server struct {
 	// Populated from ServerConfig.Share.HeuristicOverrideEnabled at boot.
 	shareHeuristicOverride bool
 
+	// EPIC-073: shield middleware for funnel client identity enforcement.
+	shield *Shield // nil when shield is not configured
+
 	// EPIC-001: Google Sign-In support.
 	googleVerifier *GoogleTokenVerifier // nil when Google Sign-In is not configured
 	sessionTTLDays int                  // session token TTL; 0 = use default (90 days)
@@ -198,6 +213,12 @@ func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug 
 		startAt:        time.Now(),
 		fcmTokenSource: fcmTS,
 	}
+}
+
+// SetShield installs (or replaces) the shield middleware on the server.
+// NewServer signature is frozen (G-15); use this setter instead.
+func (s *Server) SetShield(shield *Shield) {
+	s.shield = shield
 }
 
 // SetTsnetAddr records the tsnet Funnel address for health reporting.
@@ -227,7 +248,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Linkari-Client")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -248,10 +269,15 @@ func (s *Server) Mux() http.Handler {
 
 // FunnelMux returns a restricted mux for the public Funnel listener.
 // Local-only endpoints (/healthz, /logs, /logs/stream) are excluded.
+// Middleware chain: traceMiddleware → corsMiddleware → shieldMiddleware → mux
 func (s *Server) FunnelMux() http.Handler {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
-	return traceMiddleware(corsMiddleware(mux))
+	var handler http.Handler = mux
+	if s.shield != nil {
+		handler = s.shield.Middleware(handler)
+	}
+	return traceMiddleware(corsMiddleware(handler))
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the status code for
@@ -568,7 +594,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		mr := multipart.NewReader(r.Body, boundary)
-		req.Type = "audio"
+		req.Type = "audio" // default; overridden below if mime_type is sent (EPIC-038)
 
 		var audioWritten int64
 		for {
@@ -588,13 +614,54 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			case "fcm_token":
 				b, _ := io.ReadAll(io.LimitReader(part, 4096))
 				req.FCMToken = string(b)
-			case "audio":
+			case "profile":
+				b, _ := io.ReadAll(io.LimitReader(part, 256))
+				req.Profile = string(b)
+			// EPIC-038 M3: intent metadata fields.
+			case "mime_type":
+				b, _ := io.ReadAll(io.LimitReader(part, 256))
+				req.MimeType = string(b)
+			case "calling_package":
+				b, _ := io.ReadAll(io.LimitReader(part, 512))
+				req.CallingPackage = string(b)
+			case "app_category":
+				b, _ := io.ReadAll(io.LimitReader(part, 16))
+				if n, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
+					req.AppCategory = n
+				}
+			case "is_screenshot":
+				b, _ := io.ReadAll(io.LimitReader(part, 8))
+				req.IsScreenshot = strings.TrimSpace(string(b)) == "true" || strings.TrimSpace(string(b)) == "1"
+			case "extra_subject":
+				b, _ := io.ReadAll(io.LimitReader(part, 4096))
+				req.ExtraSubject = string(b)
+			case "extra_text":
+				b, _ := io.ReadAll(io.LimitReader(part, 4096))
+				req.ExtraText = string(b)
+			case "file_size":
+				b, _ := io.ReadAll(io.LimitReader(part, 32))
+				if n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil {
+					req.FileSize = n
+				}
+			case "date_added":
+				b, _ := io.ReadAll(io.LimitReader(part, 64))
+				req.DateAdded = string(b)
+			case "relative_path":
+				b, _ := io.ReadAll(io.LimitReader(part, 1024))
+				req.RelativePath = string(b)
+			case "filename":
+				b, _ := io.ReadAll(io.LimitReader(part, 1024))
+				req.Filename = string(b)
+			case "type":
+				b, _ := io.ReadAll(io.LimitReader(part, 64))
+				req.Type = string(b)
+			case "audio", "file":
 				req.OriginalFilename = part.FileName() // EPIC-071: preserve original filename
 				ext := filepath.Ext(part.FileName())
 				if ext == "" {
 					ext = ".m4a"
 				}
-				tmp, err := os.CreateTemp("", "linkari-audio-*"+ext)
+				tmp, err := os.CreateTemp("", "linkari-file-*"+ext)
 				if err != nil {
 					slog.ErrorContext(ctx, "share rejected: create temp file failed", "error", err)
 					writeError(w, http.StatusInternalServerError, "internal error")
@@ -606,7 +673,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 					os.Remove(tmp.Name())
 					slog.ErrorContext(ctx, "share rejected: write temp file failed", "error", err)
 					// MaxBytesReader returns a specific error on overflow.
-					writeError(w, http.StatusRequestEntityTooLarge, "audio file too large")
+					writeError(w, http.StatusRequestEntityTooLarge, "file too large")
 					return
 				}
 				req.AudioPath = tmp.Name()
@@ -618,12 +685,33 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if req.AudioPath == "" {
-			slog.DebugContext(ctx, "share rejected: no audio file part")
-			writeError(w, http.StatusBadRequest, "audio file part required")
+			slog.DebugContext(ctx, "share rejected: no file part")
+			writeError(w, http.StatusBadRequest, "file part required")
 			return
 		}
-		slog.DebugContext(ctx, "share parsed (multipart audio)",
-			"action", req.Action, "audio_size", audioWritten, "temp_path", req.AudioPath,
+
+		// EPIC-038 M3: derive req.Type from the MIME type sent by Android.
+		if req.MimeType != "" {
+			switch {
+			case strings.HasPrefix(req.MimeType, "audio/"):
+				req.Type = "audio"
+			case strings.HasPrefix(req.MimeType, "image/"):
+				req.Type = "image"
+			case req.MimeType == "application/pdf":
+				req.Type = "document"
+			}
+		}
+
+		// EPIC-038 M3: populate Filename from multipart header if not sent
+		// as a dedicated form field.
+		if req.Filename == "" && req.OriginalFilename != "" {
+			req.Filename = req.OriginalFilename
+		}
+
+		slog.DebugContext(ctx, "share parsed (multipart)",
+			"type", req.Type, "action", req.Action, "audio_size", audioWritten,
+			"temp_path", req.AudioPath, "mime_type", req.MimeType,
+			"calling_package", req.CallingPackage, "profile", req.Profile,
 		)
 	} else {
 		// Existing JSON path.
@@ -1651,19 +1739,19 @@ func validateRequest(req *ShareRequest) error {
 		if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
 			return fmt.Errorf("url must start with http:// or https://")
 		}
-	case "audio":
+	case "audio", "image", "document":
 		if req.AudioPath == "" {
-			return fmt.Errorf("audio file required for type=audio")
+			return fmt.Errorf("file required for type=%s", req.Type)
 		}
 		fi, err := os.Stat(req.AudioPath)
 		if err != nil {
-			return fmt.Errorf("audio file not accessible: %w", err)
+			return fmt.Errorf("file not accessible: %w", err)
 		}
 		if fi.Size() > maxAudioSize {
-			return fmt.Errorf("audio file too large: %d bytes (max %d)", fi.Size(), maxAudioSize)
+			return fmt.Errorf("file too large: %d bytes (max %d)", fi.Size(), maxAudioSize)
 		}
 	default:
-		return fmt.Errorf("unsupported type %q (expected text, url, or audio)", req.Type)
+		return fmt.Errorf("unsupported type %q (expected text, url, audio, image, or document)", req.Type)
 	}
 	return nil
 }

@@ -540,7 +540,19 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			googleClientID, _ = resolveField("google_client_id", "", os.Getenv("LINKARI_GOOGLE_CLIENT_ID"), "",
 				func(s *ServerConfig) string { return s.GoogleClientID })
 
+			// EPIC-073: create shield middleware for Funnel client identity enforcement.
+			var shield *Shield
+			{
+				shieldMode := "log" // default
+				if serverFileCfg != nil {
+					shieldMode = serverFileCfg.ShieldConfig()
+				}
+				shield = NewShield(shieldMode)
+				slog.Info("shield started", "event_type", "shield_started", "mode", shieldMode)
+			}
+
 			srv := NewServer(token, router, queue, ring, debug, fcmTokenSource)
+			srv.SetShield(shield)
 			srv.jiraToken = jiraToken
 			srv.jiraAPIUsername = jiraAPIUsername
 			srv.jiraAPIPassword = jiraAPIPassword
@@ -728,6 +740,11 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 								queue.SetPushConfig(sf.PushConfig())
 								if relayedWatchdog != nil {
 									relayedWatchdog.SetConfig(sf.RelayedWatchdog())
+								}
+								// EPIC-073: hot-reload shield mode.
+								if shield != nil {
+									shield.Reload(sf.ShieldConfig())
+									slog.Info("shield reloaded", "event_type", "shield_reloaded", "mode", sf.ShieldConfig())
 								}
 							}
 						}
