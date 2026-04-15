@@ -58,6 +58,7 @@ func (s ServerConfig) IsZero() bool {
 		s.RelayedWatchdogInterval.D == 0 && s.RelayedWatchdogMaxAge.D == 0 &&
 		s.SnapshotInterval.D == 0 && s.SnapshotPath == "" &&
 		!s.Share.HeuristicOverrideEnabled &&
+		s.Shield.Mode == "" &&
 		s.WhisperModel == "" && s.FfmpegPath == "" &&
 		s.GoogleClientID == "" && s.SessionTTLDays == 0 &&
 		!s.Sandbox.Enabled
@@ -287,6 +288,9 @@ type ServerConfig struct {
 	SessionTTLDays int      `yaml:"session_ttl_days"` // session token TTL in days (default 90)
 	InviteCodes    []string `yaml:"invite_codes"`     // static invite codes seeded into DB at startup
 
+	// EPIC-073: shield middleware config.
+	Shield ShieldYAMLConfig `yaml:"shield"`
+
 	// EPIC-072 M6: cluster detection config.
 	ClusterThreshold float64 `yaml:"cluster_threshold"` // Jaccard threshold (default 0.4)
 	ClusterMinItems  int     `yaml:"cluster_min_items"`  // minimum items to form cluster (default 3)
@@ -314,6 +318,22 @@ type ShareConfig struct {
 	// icon the user tapped). When false (the default), received_action
 	// wins unconditionally.
 	HeuristicOverrideEnabled bool `yaml:"heuristic_override_enabled"`
+}
+
+// ShieldYAMLConfig is the on-disk shape of the `shield:` block in server.yaml.
+// Controls the X-Linkari-Client header validation middleware on the Funnel mux.
+type ShieldYAMLConfig struct {
+	// Mode: "log" (default) emits debug logs for invalid/missing headers;
+	// "enforce" returns 403.
+	Mode string `yaml:"mode"`
+}
+
+// ShieldConfig returns the resolved shield mode. Empty mode defaults to "log".
+func (s *ServerConfig) ShieldConfig() string {
+	if s.Shield.Mode == "" {
+		return "log"
+	}
+	return s.Shield.Mode
 }
 
 // PushYAMLConfig is the on-disk shape of the `push:` block in server.yaml.

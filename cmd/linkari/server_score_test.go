@@ -88,7 +88,7 @@ func runScoreAsyncSync(t *testing.T, rawURL, profile string, q *Queue, eval Eval
 	t.Helper()
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: eval, done: done}
-	go scoreURLAsync(rawURL, profile, q, wrapped)
+	go scoreURLAsync(&ShareRequest{URL: rawURL, Profile: profile}, q, wrapped)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
@@ -127,7 +127,7 @@ func (e *onceDoneEval) Evaluate(ctx context.Context, content, prompt string) (*S
 // complete.
 func runScoreAsyncSkip(t *testing.T, rawURL, profile string, q *Queue, eval Evaluator) {
 	t.Helper()
-	go scoreURLAsync(rawURL, profile, q, eval)
+	go scoreURLAsync(&ShareRequest{URL: rawURL, Profile: profile}, q, eval)
 	time.Sleep(200 * time.Millisecond)
 }
 
@@ -405,9 +405,9 @@ func TestClassifyURLProfile(t *testing.T) {
 
 // EPIC-061 M3: classificationPreamble format.
 func TestClassificationPreamble(t *testing.T) {
-	p := classificationPreamble("eng", "https://github.com/golang/go")
-	if !strings.Contains(p, "eng") || !strings.Contains(p, "github.com") {
-		t.Errorf("preamble should contain profile and URL: %q", p)
+	p := classificationPreamble("eng", "https://github.com/golang/go", "url_domain")
+	if !strings.Contains(p, "eng") || !strings.Contains(p, "github.com") || !strings.Contains(p, "url_domain") {
+		t.Errorf("preamble should contain profile, URL, and source: %q", p)
 	}
 }
 

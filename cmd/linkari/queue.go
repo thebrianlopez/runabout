@@ -173,6 +173,11 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE queue ADD COLUMN cluster_id INTEGER DEFAULT NULL",
 		// EPIC-072 M9: action_route column.
 		"ALTER TABLE queue ADD COLUMN action_route TEXT DEFAULT ''",
+		// EPIC-038 M3: intent metadata columns for audit/replay.
+		"ALTER TABLE queue ADD COLUMN mime_type TEXT DEFAULT ''",
+		"ALTER TABLE queue ADD COLUMN calling_package TEXT DEFAULT ''",
+		"ALTER TABLE queue ADD COLUMN relative_path TEXT DEFAULT ''",
+		"ALTER TABLE queue ADD COLUMN file_name TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -335,9 +340,10 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title)
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
 		req.URL, req.Text, req.Type, req.Action, req.Profile, now, req.Title,
+		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue: %w", err)
@@ -357,9 +363,10 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, score, verdict, queued_at, scored_at, title)
-		 VALUES (?, ?, ?, ?, ?, 'scored', 0, ?, ?, ?, ?)`,
+		`INSERT INTO queue (url, text, type, action, profile, status, score, verdict, queued_at, scored_at, title, mime_type, calling_package, relative_path, file_name)
+		 VALUES (?, ?, ?, ?, ?, 'scored', 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.URL, req.Text, req.Type, req.Action, req.Profile, verdict, now, now, req.Title,
+		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue scored: %w", err)

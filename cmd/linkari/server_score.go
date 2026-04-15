@@ -163,11 +163,14 @@ const audioChunkSizeThreshold = 50 << 20
 // classificationPreamble returns a preamble to prepend to the evaluator
 // prompt when the profile was auto-classified from a URL. This tells the
 // LLM which profile rubric to apply and why.
-func classificationPreamble(profile, rawURL string) string {
+func classificationPreamble(profile, rawURL string, source string) string {
+	if source == "" {
+		source = "url"
+	}
 	return fmt.Sprintf(
-		"[Auto-classified profile: %s (from URL: %s)]\n"+
+		"[Auto-classified profile: %s (source: %s, URL: %s)]\n"+
 			"Score this content using the %s profile rubric.\n\n",
-		profile, rawURL, profile,
+		profile, source, rawURL, profile,
 	)
 }
 
@@ -182,18 +185,60 @@ func classificationPreamble(profile, rawURL string) string {
 //
 // Takes eval as a parameter so tests can inject a stub Evaluator without
 // touching the execHaiku var (test-seam choice from EPIC-060 assessment).
-func scoreURLAsync(rawURL, profile string, q *Queue, eval Evaluator) {
+func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// EPIC-061 M3: auto-classify profile from URL when empty.
+	rawURL := req.URL
+	profile := req.Profile
+
+	// EPIC-038 M4: try intent metadata classification first (highest signal).
 	autoClassified := false
-	contentClassify := false // true when domain match failed and content classification is needed
+	contentClassify := false
+	classifySource := "" // tracks which signal classified the profile
+	if profile == "" {
+		if metaProfile := classifyByIntentMetadata(req); metaProfile != "" {
+			profile = metaProfile
+			autoClassified = true
+			classifySource = "intent_metadata"
+			slog.Info("server_score: intent-metadata classified",
+				"event_type", "server_score_metadata_classify",
+				"url", rawURL,
+				"calling_package", req.CallingPackage,
+				"app_category", req.AppCategory,
+				"classified_profile", metaProfile,
+			)
+		}
+	}
+
+	// EPIC-038 M5: filename keyword heuristics.
+	if profile == "" && req.Filename != "" {
+		if p := classifyByFilename(req.Filename); p != "" {
+			profile = p
+			autoClassified = true
+			classifySource = "filename"
+		}
+	}
+
+	// EPIC-038 M5: relativePath prefix matching (also detects screenshots).
+	if req.RelativePath != "" {
+		if p, isSS := classifyByRelativePath(req.RelativePath); isSS {
+			req.IsScreenshot = true
+		} else if p != "" && profile == "" {
+			profile = p
+			autoClassified = true
+			classifySource = "relative_path"
+		}
+	}
+
+	// EPIC-061 M3: fall back to URL-based classification when metadata didn't match.
 	if profile == "" {
 		classified, matched := classifyURLProfile(rawURL)
 		profile = classified
 		autoClassified = true
-		if !matched {
+		if matched {
+			classifySource = "url_domain"
+		} else {
 			contentClassify = true
 		}
 	}
@@ -217,35 +262,72 @@ func scoreURLAsync(rawURL, profile string, q *Queue, eval Evaluator) {
 		return
 	}
 
-	// Fetch page content. 30s sub-context leaves headroom within the 60s budget.
-	fetchCtx, fetchCancel := context.WithTimeout(ctx, 30*time.Second)
-	defer fetchCancel()
-	content, err := fetchJinaContent(fetchCtx, rawURL)
-	if err != nil {
-		slog.Warn("server_score: fetch failed",
-			"event_type", "server_score_fetch_error",
+	// EPIC-038 M4: screenshots skip Jina fetch — use extraText/extraSubject
+	// as classification input instead. No URL content to fetch for screenshots.
+	var content string
+	if req.IsScreenshot {
+		screenshotContent := strings.TrimSpace(req.ExtraSubject + "\n" + req.ExtraText)
+		if screenshotContent == "" {
+			slog.Info("server_score: screenshot with no text metadata",
+				"event_type", "server_score_skip",
+				"url", rawURL,
+				"profile", profile,
+				"reason", "screenshot_no_text",
+			)
+			return
+		}
+		if profile == "" || contentClassify {
+			classified := classifyContentProfile(ctx, screenshotContent)
+			if classified != "" {
+				profile = classified
+				autoClassified = true
+				contentClassify = false
+			}
+		}
+		slog.Info("server_score: screenshot classification",
+			"event_type", "server_score_screenshot",
 			"url", rawURL,
 			"profile", profile,
-			"error", err,
+			"text_len", len(screenshotContent),
 		)
-		return
-	}
-	content = truncateRunes(content, contentTruncationRunes)
-	if strings.TrimSpace(content) == "" {
-		slog.Warn("server_score: empty content after fetch",
-			"event_type", "server_score_empty_content",
-			"url", rawURL,
-			"profile", profile,
-		)
-		return
+		content = screenshotContent
+	} else {
+		// Fetch page content. 30s sub-context leaves headroom within the 60s budget.
+		fetchCtx, fetchCancel := context.WithTimeout(ctx, 30*time.Second)
+		defer fetchCancel()
+		var err error
+		content, err = fetchJinaContent(fetchCtx, rawURL)
+		if err != nil {
+			slog.Warn("server_score: fetch failed",
+				"event_type", "server_score_fetch_error",
+				"url", rawURL,
+				"profile", profile,
+				"error", err,
+			)
+			return
+		}
+		content = truncateRunes(content, contentTruncationRunes)
+		if strings.TrimSpace(content) == "" {
+			slog.Warn("server_score: empty content after fetch",
+				"event_type", "server_score_empty_content",
+				"url", rawURL,
+				"profile", profile,
+			)
+			return
+		}
 	}
 
 	// Content-based classification: when domain matching fell through to the
 	// "eng" fallback, ask Haiku to classify the fetched content into the best
 	// profile. This is cheap (~100 tokens) and avoids scoring travel/life/dining
 	// content under the eng rubric.
+	// EPIC-038 M4: prepend extraSubject as supplementary classification signal.
 	if contentClassify {
-		classified := classifyContentProfile(ctx, content)
+		classifyInput := content
+		if req.ExtraSubject != "" {
+			classifyInput = "[Shared with subject: " + req.ExtraSubject + "]\n\n" + content
+		}
+		classified := classifyContentProfile(ctx, classifyInput)
 		if classified != "" {
 			slog.Info("server_score: content-classified profile",
 				"event_type", "server_score_content_classify",
@@ -254,6 +336,7 @@ func scoreURLAsync(rawURL, profile string, q *Queue, eval Evaluator) {
 				"content_classified", classified,
 			)
 			profile = classified
+			classifySource = "content"
 		}
 	}
 
@@ -271,7 +354,7 @@ func scoreURLAsync(rawURL, profile string, q *Queue, eval Evaluator) {
 
 	// EPIC-061 M3: prepend classification preamble when auto-classified.
 	if autoClassified {
-		sysPrompt = classificationPreamble(profile, rawURL) + sysPrompt
+		sysPrompt = classificationPreamble(profile, rawURL, classifySource) + sysPrompt
 	}
 
 	// Evaluate via Haiku. eval.Evaluate routes through execHaiku indirection —
@@ -358,10 +441,296 @@ func scoreURLAsync(rawURL, profile string, q *Queue, eval Evaluator) {
 	)
 }
 
+// scoreFileAsync scores image/document shares server-side without Jina fetch.
+// EPIC-038 GAP-05: classifies via classifyIntentProfile, synthesizes content
+// from metadata, and runs the standard template-load + eval + persist pipeline.
+func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	profile := req.Profile
+
+	// Classify via intent metadata cascade + LLM fallback.
+	autoClassified := false
+	classifySource := ""
+	if profile == "" {
+		classified := classifyIntentProfile(ctx, req)
+		if classified != "" {
+			profile = classified
+			autoClassified = true
+			classifySource = "intent_profile"
+		}
+	}
+	if profile == "" {
+		profile = "eng"
+		autoClassified = true
+		classifySource = "default_fallback"
+	}
+
+	// Synthesize content from available metadata (no URL to fetch).
+	var parts []string
+	if req.ExtraSubject != "" {
+		parts = append(parts, "Subject: "+req.ExtraSubject)
+	}
+	if req.ExtraText != "" {
+		parts = append(parts, "Text: "+req.ExtraText)
+	}
+	if req.Filename != "" {
+		parts = append(parts, "Filename: "+req.Filename)
+	}
+	if req.MimeType != "" {
+		parts = append(parts, "Type: "+req.MimeType)
+	}
+	content := strings.Join(parts, "\n")
+	if strings.TrimSpace(content) == "" {
+		slog.Info("score_file: no metadata for scoring",
+			"event_type", "score_file_skip",
+			"profile", profile,
+			"type", req.Type,
+			"reason", "no_metadata",
+		)
+		return
+	}
+
+	slog.Info("score_file: start",
+		"event_type", "score_file_start",
+		"profile", profile,
+		"type", req.Type,
+		"content_len", len(content),
+	)
+
+	// Load profile template and evaluate.
+	_, sysPrompt, err := loadProfileTemplate(profile)
+	if err != nil {
+		slog.Warn("score_file: load template failed",
+			"event_type", "score_file_template_error",
+			"profile", profile,
+			"error", err,
+		)
+		return
+	}
+	if autoClassified {
+		sysPrompt = classificationPreamble(profile, "", classifySource) + sysPrompt
+	}
+
+	sc, err := eval.Evaluate(ctx, content, sysPrompt)
+	if err != nil {
+		slog.Warn("score_file: evaluate failed",
+			"event_type", "score_file_eval_error",
+			"profile", profile,
+			"error", err,
+		)
+		return
+	}
+	sc.Profile = profile
+	sc.SourceType = "server-score"
+
+	slog.Info("score_file: evaluated",
+		"event_type", "score_file_evaluated",
+		"profile", profile,
+		"score", sc.Score,
+		"verdict", sc.Verdict,
+	)
+
+	if q == nil {
+		return
+	}
+
+	// Persist via queue row ID (file shares have no URL to match on).
+	slug := fmt.Sprintf("file-%d", req.QueueRowID)
+	if err := q.UpdateScore(req.QueueRowID, sc.Score, sc.Tags, sc.Verdict, slug); err != nil {
+		slog.Warn("score_file: UpdateScore failed",
+			"event_type", "score_file_queue_error",
+			"row_id", req.QueueRowID,
+			"error", err,
+		)
+		return
+	}
+
+	// Auto-archive when score meets threshold.
+	threshold := archiveThreshold(profile)
+	if threshold >= 0 && sc.Score >= threshold {
+		q.Archive(req.QueueRowID)
+	}
+
+	// FCM push via dual-writer invariant (EPIC-051).
+	resolvePushConfigOnce(q)
+	_, _ = q.EnqueueDigestIfDue(context.Background(),
+		profile, sc.Score, slug, sc.Verdict, "", "")
+
+	slog.Info("score_file: complete",
+		"event_type", "score_file_complete",
+		"row_id", req.QueueRowID,
+		"profile", profile,
+		"score", sc.Score,
+	)
+}
+
 // validProfiles is the set of profiles that classifyContentProfile accepts.
 var validProfiles = map[string]bool{
 	"eng": true, "travel": true, "life": true,
 	"dining": true, "fashion": true, "finance": true, "music": true,
+}
+
+// EPIC-038 M4: packageProfileMap maps known Android package names to Linkari
+// profiles. Used as a high-confidence signal before URL-based classification.
+var packageProfileMap = map[string]string{
+	"com.spotify.music":                "music",
+	"com.google.android.youtube":       "eng",
+	"com.google.android.apps.youtube.music": "music",
+	"com.soundcloud.android":           "music",
+	"com.airbnb.android":               "travel",
+	"com.booking":                      "travel",
+	"com.tripadvisor.tripadvisor":      "travel",
+	"com.google.android.apps.maps":     "travel",
+	"com.robinhood.android":            "finance",
+	"com.venmo":                        "finance",
+	"com.squareup.cash":                "finance",
+	"com.mint":                         "finance",
+	"com.coinbase.android":             "finance",
+	"com.instagram.android":            "life",
+	"com.twitter.android":              "life",
+	"com.reddit.frontpage":             "eng",
+	"com.github.android":               "eng",
+	"org.mozilla.firefox":              "eng",
+	"com.chrome.beta":                  "eng",
+	"com.amazon.mShop.android.shopping": "life",
+	"com.ubercab.eats":                 "dining",
+	"com.doordash.driverapp":           "dining",
+	"com.grubhub.android":              "dining",
+	"com.yelp.android":                 "dining",
+	"com.opentable":                    "dining",
+}
+
+// EPIC-038 M4: appCategoryProfileMap maps Android ApplicationInfo.category
+// constants to Linkari profiles. Lower confidence than packageProfileMap.
+// Constants from android.content.pm.ApplicationInfo:
+//
+//	CATEGORY_GAME = 0, CATEGORY_AUDIO = 1, CATEGORY_VIDEO = 2,
+//	CATEGORY_IMAGE = 3, CATEGORY_SOCIAL = 4, CATEGORY_NEWS = 5,
+//	CATEGORY_MAPS = 6, CATEGORY_PRODUCTIVITY = 7, CATEGORY_ACCESSIBILITY = 8
+var appCategoryProfileMap = map[int]string{
+	1: "music",  // CATEGORY_AUDIO
+	4: "life",   // CATEGORY_SOCIAL
+	5: "eng",    // CATEGORY_NEWS
+	6: "travel", // CATEGORY_MAPS
+}
+
+// classifyByIntentMetadata returns a profile derived from Android intent
+// metadata (package name, app category). Returns empty string if no mapping
+// matches, signaling that URL/content classification should proceed.
+func classifyByIntentMetadata(req *ShareRequest) string {
+	// Highest confidence: exact package name match.
+	if req.CallingPackage != "" {
+		if p, ok := packageProfileMap[req.CallingPackage]; ok {
+			return p
+		}
+	}
+	// Medium confidence: Android app category.
+	if req.AppCategory > 0 {
+		if p, ok := appCategoryProfileMap[req.AppCategory]; ok {
+			return p
+		}
+	}
+	return ""
+}
+
+// EPIC-038 M5: filenameKeywords maps lowercase filename substrings to profiles.
+var filenameKeywords = map[string]string{
+	"invoice":   "finance",
+	"receipt":   "finance",
+	"statement": "finance",
+	"tax":       "finance",
+	"payslip":   "finance",
+	"resume":    "life",
+	"cv":        "life",
+	"recipe":    "dining",
+	"menu":      "dining",
+	"itinerary": "travel",
+	"boarding":  "travel",
+	"ticket":    "travel",
+}
+
+// EPIC-038 M5: relativePathPrefixes maps MediaStore RELATIVE_PATH prefixes
+// to profiles or flags. Checked in order of specificity.
+var relativePathPrefixes = []struct {
+	prefix  string
+	profile string
+}{
+	{"DCIM/Screenshots", ""}, // isScreenshot detection — not a profile
+	{"Screenshots", ""},
+	{"Music/", "music"},
+	{"Recordings/", "music"},
+	{"Download/", ""},  // too generic for classification
+	{"Documents/", ""}, // too generic
+}
+
+// classifyByFilename returns a profile derived from filename keyword matching.
+func classifyByFilename(filename string) string {
+	lower := strings.ToLower(filename)
+	for keyword, profile := range filenameKeywords {
+		if strings.Contains(lower, keyword) {
+			return profile
+		}
+	}
+	return ""
+}
+
+// classifyByRelativePath returns a profile and isScreenshot flag based on
+// the MediaStore RELATIVE_PATH prefix.
+func classifyByRelativePath(relPath string) (profile string, isScreenshot bool) {
+	for _, entry := range relativePathPrefixes {
+		if strings.HasPrefix(relPath, entry.prefix) {
+			if entry.prefix == "DCIM/Screenshots" || entry.prefix == "Screenshots" {
+				return "", true
+			}
+			return entry.profile, false
+		}
+	}
+	return "", false
+}
+
+// classifyIntentProfile uses intent metadata to classify a non-URL share into
+// the best-matching profile. Cascades through: package → app category →
+// filename keywords → relativePath → Haiku with metadata context.
+// Returns empty string if no classification could be made.
+func classifyIntentProfile(ctx context.Context, req *ShareRequest) string {
+	// 1. Package name (highest confidence).
+	if p := classifyByIntentMetadata(req); p != "" {
+		return p
+	}
+	// 2. Filename keywords.
+	if req.Filename != "" {
+		if p := classifyByFilename(req.Filename); p != "" {
+			return p
+		}
+	}
+	// 3. RelativePath prefix.
+	if req.RelativePath != "" {
+		if p, _ := classifyByRelativePath(req.RelativePath); p != "" {
+			return p
+		}
+	}
+	// 4. Haiku classification with metadata context (last resort).
+	var hints []string
+	if req.ExtraSubject != "" {
+		hints = append(hints, "Subject: "+req.ExtraSubject)
+	}
+	if req.ExtraText != "" {
+		hints = append(hints, "Text: "+truncateRunes(req.ExtraText, 500))
+	}
+	if req.Filename != "" {
+		hints = append(hints, "Filename: "+req.Filename)
+	}
+	if req.CallingPackage != "" {
+		hints = append(hints, "Source app: "+req.CallingPackage)
+	}
+	if len(hints) == 0 {
+		return ""
+	}
+	snippet := strings.Join(hints, "\n")
+	classified := classifyContentProfile(ctx, snippet)
+	return classified
 }
 
 // contentClassifyPrompt is the system prompt for the lightweight Haiku
@@ -409,7 +778,7 @@ func classifyContentProfile(ctx context.Context, content string) string {
 // Pipeline: ffmpeg m4a→wav → [segment if large] → whisper transcribe →
 // backfill queue text → save transcript file → loadProfileTemplate("vnote_synopsis") →
 // execHaiku (plain text) → UpdateScore → EnqueueDigestIfDue (FCM push).
-func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, originalFilename string, whisperModel string) {
+func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, originalFilename string, whisperModel string, extraText string, req *ShareRequest) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Second)
 	defer cancel()
 	defer os.Remove(audioPath) // temp m4a cleanup
@@ -594,6 +963,32 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, or
 	}
 
 	// Step 4: save transcript file to docs/transcripts/ (EPIC-071 M2).
+	// EPIC-038 GAP-04: use classifyIntentProfile as LLM fallback when profile
+	// is still empty after heuristic cascade. Falls back to extraText-only
+	// classification when the full request is unavailable.
+	if profile == "" && req != nil {
+		classified := classifyIntentProfile(ctx, req)
+		if classified != "" {
+			profile = classified
+			slog.Info("score_audio: classified via intent profile",
+				"event_type", "score_audio_intent_classify",
+				"row_id", rowID,
+				"classified_profile", classified,
+			)
+		}
+	} else if profile == "" && extraText != "" {
+		ctx2, cancel2 := context.WithTimeout(ctx, 15*time.Second)
+		classified := classifyContentProfile(ctx2, extraText)
+		cancel2()
+		if classified != "" {
+			profile = classified
+			slog.Info("score_audio: classified from extraText",
+				"event_type", "score_audio_extratext_classify",
+				"row_id", rowID,
+				"classified_profile", classified,
+			)
+		}
+	}
 	if profile == "" {
 		profile = "voice"
 	}
