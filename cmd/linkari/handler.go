@@ -446,8 +446,15 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 
 	// EPIC-071: audio shares branch to scoreAudioAsync synopsis pipeline.
 	if ac.ServerScore && req.Type == "audio" {
-		go scoreAudioAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel)
+		go scoreAudioAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel, req.ExtraText, req)
 		return "Transcribing — synopsis via FCM", nil
+	}
+
+	// EPIC-038 GAP-05: image/document shares route to scoreFileAsync — no Jina
+	// fetch needed, classification + scoring uses intent metadata.
+	if ac.ServerScore && (req.Type == "image" || req.Type == "document") {
+		go scoreFileAsync(req, r.queue, HaikuJSONEvaluator{})
+		return "Scoring file — verdict via FCM", nil
 	}
 
 	// EPIC-060 M1: server_score=true runs the full scoring pipeline entirely
@@ -456,7 +463,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	// Queue.ScoreByURL + EnqueueDigestIfDue. Returns immediately; verdict
 	// arrives via FCM push.
 	if ac.ServerScore {
-		go scoreURLAsync(req.URL, req.Profile, r.queue, HaikuJSONEvaluator{})
+		go scoreURLAsync(req, r.queue, HaikuJSONEvaluator{})
 		return "Scoring — verdict via FCM", nil
 	}
 

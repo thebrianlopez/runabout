@@ -134,7 +134,7 @@ func installHaikuSynopsisStub(t *testing.T, synopsis string) chan struct{} {
 
 func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID int64, done chan struct{}) {
 	t.Helper()
-	go scoreAudioAsync(audioPath, profile, q, rowID, "test.m4a", "")
+	go scoreAudioAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil)
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -145,7 +145,7 @@ func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID 
 
 func runScoreAudioSkip(t *testing.T, audioPath, profile string, q *Queue, rowID int64) {
 	t.Helper()
-	go scoreAudioAsync(audioPath, profile, q, rowID, "test.m4a", "")
+	go scoreAudioAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil)
 	time.Sleep(300 * time.Millisecond)
 }
 
