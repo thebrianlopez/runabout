@@ -721,6 +721,14 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				select {
 				case s := <-sig:
 					if s == syscall.SIGHUP {
+						reloadStart := time.Now()
+
+						// Capture prev shield mode before any reload.
+						prevShieldMode := ""
+						if shield != nil {
+							prevShieldMode = shield.Mode()
+						}
+
 						// Hot-reload action config.
 						newCfg, reloadErr := LoadConfig(configFile)
 						if reloadErr != nil {
@@ -735,20 +743,49 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 						if reloadErr := ReloadArchiveThresholdConfig(); reloadErr != nil {
 							slog.Error("SIGHUP archive threshold reload failed", "error", reloadErr)
 						}
+
+						var newShieldMode string
+						var pushCfg *PushConfig
+						var wdCfg RelayedWatchdogCfg
 						if queue != nil {
 							if sf, sfErr := LoadServerFile(serverFilePath); sfErr == nil && sf != nil {
-								queue.SetPushConfig(sf.PushConfig())
+								pushCfg = sf.PushConfig()
+								queue.SetPushConfig(pushCfg)
+								wdCfg = sf.RelayedWatchdog()
 								if relayedWatchdog != nil {
-									relayedWatchdog.SetConfig(sf.RelayedWatchdog())
+									relayedWatchdog.SetConfig(wdCfg)
 								}
 								// EPIC-073: hot-reload shield mode.
 								if shield != nil {
-									shield.Reload(sf.ShieldConfig())
-									slog.Info("shield reloaded", "event_type", "shield_reloaded", "mode", sf.ShieldConfig())
+									newShieldMode = sf.ShieldConfig()
+									shield.Reload(newShieldMode)
 								}
 							}
 						}
-						slog.Info("SIGHUP reloaded actions from config", "count", len(newCfg.Actions))
+
+						dur := time.Since(reloadStart)
+						logAttrs := []any{
+							"event_type", "config_reloaded",
+							"trigger", "SIGHUP",
+							"config_path", serverFilePath,
+							"actions_count", len(newCfg.Actions),
+							"duration_ms", dur.Milliseconds(),
+						}
+						if shield != nil {
+							logAttrs = append(logAttrs,
+								"shield_mode", newShieldMode,
+								"shield_changed", newShieldMode != prevShieldMode,
+								"shield_prev", prevShieldMode,
+							)
+						}
+						if pushCfg != nil {
+							logAttrs = append(logAttrs, "push_notify_min_score", pushCfg.NotifyMinScore)
+						}
+						logAttrs = append(logAttrs,
+							"watchdog_interval", wdCfg.Interval,
+							"watchdog_max_age", wdCfg.MaxAge,
+						)
+						slog.Info("config reloaded", logAttrs...)
 						continue
 					}
 					slog.Info("shutting down")
