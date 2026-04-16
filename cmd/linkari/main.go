@@ -296,6 +296,12 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 
 			// TLS env fallbacks (flags take precedence when explicitly set).
+			// Only needed for --local --tls (no tsnet Funnel). When tsnet is
+			// enabled (the default since EPIC-048), Tailscale handles TLS and
+			// these PEM files are unused. To generate them for local TLS:
+			//   mkcert -cert-file ~/.config/linkari/cert.pem \
+			//          -key-file  ~/.config/linkari/key.pem  \
+			//          localhost 127.0.0.1
 			if !tlsEnabled {
 				tlsEnabled = os.Getenv("LINKARI_TLS") == "1" || os.Getenv("LINKARI_TLS") == "true"
 			}

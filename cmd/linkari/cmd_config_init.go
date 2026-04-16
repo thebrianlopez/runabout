@@ -88,6 +88,15 @@ const serverYAMLTemplate = `server:
   # API token for PagerDuty integration.
   pagerduty_token: secretsmanager://linkari/jira-webhook#PAGERDUTY_API_TOKEN
 
+  # --- TLS (local-only mode) ---
+
+  # When tsnet is enabled (default), Tailscale handles TLS automatically and
+  # no local PEM files are needed. For local-only TLS (--local --tls), generate
+  # cert.pem and key.pem with mkcert:
+  #   mkcert -cert-file ~/.config/linkari/cert.pem \
+  #          -key-file  ~/.config/linkari/key.pem  \
+  #          localhost 127.0.0.1
+
   # --- Networking ---
 
   # HTTP listen port (also: LINKARI_PORT env var).
