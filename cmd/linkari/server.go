@@ -76,8 +76,14 @@ type ShareRequest struct {
 	IsScreenshot   bool   `json:"is_screenshot,omitempty"`
 	ExtraSubject   string `json:"extra_subject,omitempty"`
 	ExtraText      string `json:"extra_text,omitempty"`
-	FileSize       int64  `json:"file_size,omitempty"`
-	DateAdded      string `json:"date_added,omitempty"`
+	// FileSize is the file size in bytes from MediaStore. Telemetry-only —
+	// not used in classification or scoring decisions. Retained for future
+	// use (e.g., early rejection of oversized non-audio document shares).
+	FileSize int64 `json:"file_size,omitempty"`
+	// DateAdded is the MediaStore COLUMN_DATE_ADDED timestamp (seconds since epoch).
+	// Telemetry-only — not used in classification or scoring decisions. Retained
+	// for audit trail and future temporal heuristics.
+	DateAdded string `json:"date_added,omitempty"`
 	RelativePath   string `json:"relative_path,omitempty"`
 	Filename       string `json:"filename,omitempty"`
 
@@ -90,12 +96,20 @@ type ShareRequest struct {
 // ShareResponse is the structured JSON response.
 // EPIC-055 U1: id and slug are included so the Android client can poll
 // /archive?status=scored for the scored row without a separate lookup.
+//
+// EPIC-076 M2: ClassifySource reflects the pre-goroutine routing signal
+// (e.g. "caller", "domain_fallback"). For ServerScore=true actions the
+// full classification cascade runs inside scoreURLAsync/scoreFileAsync
+// goroutines after this response has already been sent — those paths
+// cannot populate ClassifySource synchronously. A TODO is tracked to
+// surface the async classify_source via /queue/{id} or FCM push payload.
 type ShareResponse struct {
-	Status    string `json:"status"`
-	Message   string `json:"message"`
-	Timestamp string `json:"timestamp"`
-	ID        int64  `json:"id,omitempty"`   // queue row id for client correlation (U1)
-	Slug      string `json:"slug,omitempty"` // URL slug for /archive polling (U1)
+	Status         string `json:"status"`
+	Message        string `json:"message"`
+	Timestamp      string `json:"timestamp"`
+	ID             int64  `json:"id,omitempty"`              // queue row id for client correlation (U1)
+	Slug           string `json:"slug,omitempty"`            // URL slug for /archive polling (U1)
+	ClassifySource string `json:"classify_source,omitempty"` // EPIC-076: pre-goroutine routing signal; absent on async ServerScore path
 }
 
 // RingLog is a thread-safe ring buffer that captures log lines and
@@ -948,11 +962,12 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 				"error", err.Error(),
 			)
 			writeJSON(w, http.StatusOK, ShareResponse{
-				Status:    "queued",
-				Message:   "tmux unavailable, queued for replay",
-				Timestamp: time.Now().UTC().Format(time.RFC3339),
-				ID:        queueID,
-				Slug:      urlToSlug(req.URL),
+				Status:         "queued",
+				Message:        "tmux unavailable, queued for replay",
+				Timestamp:      time.Now().UTC().Format(time.RFC3339),
+				ID:             queueID,
+				Slug:           urlToSlug(req.URL),
+				ClassifySource: resolution.Reason,
 			})
 			return
 		}
@@ -984,11 +999,12 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		"result", result,
 	)
 	writeJSON(w, http.StatusOK, ShareResponse{
-		Status:    "ok",
-		Message:   result,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		ID:        queueID,
-		Slug:      urlToSlug(req.URL),
+		Status:         "ok",
+		Message:        result,
+		Timestamp:      time.Now().UTC().Format(time.RFC3339),
+		ID:             queueID,
+		Slug:           urlToSlug(req.URL),
+		ClassifySource: resolution.Reason,
 	})
 }
 
