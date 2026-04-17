@@ -16,20 +16,24 @@ type Event struct {
 	Metadata  map[string]interface{} `json:"metadata"`
 }
 
-// EventLogger appends JSONL events to a file.
+// EventLogger appends JSONL events to a file using a persistent file handle.
+// The mutex serializes all writes; the handle is opened once in NewEventLogger
+// and closed via Close(). This eliminates per-event open/close syscall overhead
+// and fd exhaustion risk under burst traffic.
+//
+// SIGHUP note: if the events log path changes on config reload, call Close()
+// in the SIGHUP handler and create a new EventLogger pointing at the new path.
 type EventLogger struct {
 	mu   sync.Mutex
 	path string
+	f    *os.File // persistent handle; nil if open failed at construction
 }
 
 // NewEventLogger creates a logger that appends to the given file path.
 // The parent directory is created if it doesn't exist.
 func NewEventLogger(path string) (*EventLogger, error) {
-	dir := path[:max(0, len(path)-len("/linkari_events.jsonl"))]
-	if dir == "" {
-		dir = "."
-	}
-	// Use filepath.Dir logic inline to avoid import for one call.
+	// Derive parent directory by scanning backwards for the last '/'.
+	dir := "."
 	for i := len(path) - 1; i >= 0; i-- {
 		if path[i] == '/' {
 			dir = path[:i]
@@ -39,7 +43,11 @@ func NewEventLogger(path string) (*EventLogger, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("creating event log directory: %w", err)
 	}
-	return &EventLogger{path: path}, nil
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("open event log: %w", err)
+	}
+	return &EventLogger{path: path, f: f}, nil
 }
 
 // Emit appends a JSONL event to the log file.
@@ -58,13 +66,24 @@ func (l *EventLogger) Emit(eventType string, metadata map[string]interface{}) er
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	f, err := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("open event log: %w", err)
+	if l.f == nil {
+		return fmt.Errorf("event log not open")
 	}
-	defer f.Close()
+	_, err = l.f.Write(data)
+	return err
+}
 
-	_, err = f.Write(data)
+// Close flushes and closes the underlying file handle. Should be called on
+// server shutdown or before creating a new EventLogger for the same path
+// (e.g. after a SIGHUP that changes the log path).
+func (l *EventLogger) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.f == nil {
+		return nil
+	}
+	err := l.f.Close()
+	l.f = nil
 	return err
 }
 

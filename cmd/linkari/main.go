@@ -611,6 +611,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				slog.Warn("event logger disabled", "error", err)
 			} else {
 				srv.events = events
+				router.SetEvents(events) // EPIC-076 M1: wire into scoring goroutines
 				slog.Info("event logging enabled", "path", eventsPath)
 			}
 			if fcmTokenSource != nil {

@@ -80,6 +80,7 @@ type Router struct {
 	mu           sync.RWMutex
 	queue        *Queue
 	whisperModel string // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
+	events       *EventLogger // EPIC-076: classification telemetry; nil when event logging not configured
 }
 
 // SetQueue wires the queue for server-side uinit_* scoring (EPIC-060 M1).
@@ -94,6 +95,15 @@ func (r *Router) SetQueue(q *Queue) {
 func (r *Router) SetWhisperModel(path string) {
 	r.mu.Lock()
 	r.whisperModel = path
+	r.mu.Unlock()
+}
+
+// SetEvents wires the EventLogger for classification telemetry (EPIC-076 M1).
+// Called after EventLogger creation in main.go so classify_stage_win events
+// can be emitted from scoreURLAsync and scoreFileAsync goroutines.
+func (r *Router) SetEvents(e *EventLogger) {
+	r.mu.Lock()
+	r.events = e
 	r.mu.Unlock()
 }
 
@@ -453,7 +463,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	// EPIC-038 GAP-05: image/document shares route to scoreFileAsync — no Jina
 	// fetch needed, classification + scoring uses intent metadata.
 	if ac.ServerScore && (req.Type == "image" || req.Type == "document") {
-		go scoreFileAsync(req, r.queue, HaikuJSONEvaluator{})
+		go scoreFileAsync(req, r.queue, HaikuJSONEvaluator{}, r.events)
 		return "Scoring file — verdict via FCM", nil
 	}
 
@@ -463,7 +473,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	// Queue.ScoreByURL + EnqueueDigestIfDue. Returns immediately; verdict
 	// arrives via FCM push.
 	if ac.ServerScore {
-		go scoreURLAsync(req, r.queue, HaikuJSONEvaluator{})
+		go scoreURLAsync(req, r.queue, HaikuJSONEvaluator{}, r.events)
 		return "Scoring — verdict via FCM", nil
 	}
 
