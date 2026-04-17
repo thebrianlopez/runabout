@@ -2,15 +2,19 @@ package mdq
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Document represents a parsed markdown document.
 type Document struct {
-	Title    string
-	Sections []Section
+	Title       string
+	Frontmatter map[string]any
+	Sections    []Section
 }
 
 // Section represents a heading and its content.
@@ -46,6 +50,48 @@ func Parse(r io.Reader) (*Document, error) {
 	scanner := bufio.NewScanner(r)
 	doc := &Document{}
 
+	// Collect all lines so frontmatter can be extracted before the main loop.
+	var lines []string
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	// Detect and parse YAML frontmatter: first non-empty line must be "---".
+	startIdx := 0
+	if len(lines) > 0 {
+		// Find first non-empty line.
+		firstNonEmpty := -1
+		for i, l := range lines {
+			if strings.TrimSpace(l) != "" {
+				firstNonEmpty = i
+				break
+			}
+		}
+		if firstNonEmpty >= 0 && strings.TrimSpace(lines[firstNonEmpty]) == "---" {
+			// Scan for closing "---".
+			closeIdx := -1
+			for i := firstNonEmpty + 1; i < len(lines); i++ {
+				if strings.TrimSpace(lines[i]) == "---" {
+					closeIdx = i
+					break
+				}
+			}
+			if closeIdx > firstNonEmpty {
+				fmLines := lines[firstNonEmpty+1 : closeIdx]
+				fmRaw := strings.Join(fmLines, "\n")
+				var fm map[string]any
+				if err := yaml.Unmarshal([]byte(fmRaw), &fm); err != nil {
+					return nil, fmt.Errorf("frontmatter: %w", err)
+				}
+				doc.Frontmatter = fm
+				startIdx = closeIdx + 1
+			}
+		}
+	}
+
 	var flat []flatSection
 	var currentIdx int = -1   // index into flat for current section
 	var tableHeaders []string // non-nil when inside a table
@@ -65,8 +111,7 @@ func Parse(r io.Reader) (*Document, error) {
 		sawSeparator = false
 	}
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	for _, line := range lines[startIdx:]  {
 
 		// Track fenced code block state (``` or ~~~).
 		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
@@ -149,9 +194,6 @@ func Parse(r io.Reader) (*Document, error) {
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
 	flushTable()
 
 	// Trim trailing whitespace from content.
