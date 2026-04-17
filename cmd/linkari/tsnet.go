@@ -8,8 +8,37 @@ import (
 	"strings"
 	"time"
 
+	"tailscale.com/ipn"
 	"tailscale.com/tsnet"
 )
+
+type contextKey string
+
+const realIPKey contextKey = "realIP"
+
+// funnelConnContext extracts the real client IP from Tailscale FunnelConn.Src
+// and stores it in the request context. Used as http.Server.ConnContext for
+// the Funnel listener so downstream handlers see the actual remote IP rather
+// than the Tailscale relay address.
+func funnelConnContext(ctx context.Context, c net.Conn) context.Context {
+	if fc, ok := c.(*ipn.FunnelConn); ok {
+		return context.WithValue(ctx, realIPKey, fc.Src.Addr().String())
+	}
+	return ctx
+}
+
+// realIP returns the real client IP from context (set by funnelConnContext),
+// falling back to r.RemoteAddr with port stripped.
+func realIPFromContext(ctx context.Context, remoteAddr string) string {
+	if ip, ok := ctx.Value(realIPKey).(string); ok && ip != "" {
+		return ip
+	}
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr
+	}
+	return host
+}
 
 // TsnetConfig holds the configuration for the embedded Tailscale node.
 type TsnetConfig struct {
