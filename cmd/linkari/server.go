@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"mime"
+	"net"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -196,6 +197,10 @@ type Server struct {
 	sessionTTLDays int                  // session token TTL; 0 = use default (90 days)
 	// EPIC-051 M3: lastDigestPush deleted — throttle state lives in SQL via
 	// Queue.EnqueueDigestIfDue. Do not re-add in-memory throttle state here.
+
+	// EPIC-001 M3: IP blocklist and CORS origins.
+	blocklist   []*net.IPNet // parsed CIDRs (single IPs stored as /32 or /128)
+	corsOrigins []string     // allowed CORS origins for Funnel; empty = wildcard
 }
 
 // NewServer creates a new Server with the given bearer token, router, and optional queue.
@@ -226,6 +231,54 @@ func (s *Server) SetTsnetAddr(addr string) {
 	s.tsnetAddr = addr
 }
 
+// SetBlocklist parses IP/CIDR strings and stores them for blocklist middleware.
+func (s *Server) SetBlocklist(entries []string) {
+	for _, entry := range entries {
+		_, cidr, err := net.ParseCIDR(entry)
+		if err != nil {
+			// Try as bare IP.
+			ip := net.ParseIP(entry)
+			if ip == nil {
+				slog.Warn("blocklist: skipping invalid entry", "entry", entry)
+				continue
+			}
+			bits := 32
+			if ip.To4() == nil {
+				bits = 128
+			}
+			cidr = &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}
+		}
+		s.blocklist = append(s.blocklist, cidr)
+	}
+	if len(s.blocklist) > 0 {
+		slog.Info("blocklist loaded", "entries", len(s.blocklist))
+	}
+}
+
+// SetCORSOrigins sets the allowed CORS origins for FunnelMux.
+func (s *Server) SetCORSOrigins(origins []string) {
+	s.corsOrigins = origins
+}
+
+// blocklistMiddleware rejects requests from blocked IPs with 403.
+func (s *Server) blocklistMiddleware(next http.Handler) http.Handler {
+	if len(s.blocklist) == 0 {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := net.ParseIP(realIPFromContext(r.Context(), r.RemoteAddr))
+		if ip != nil {
+			for _, cidr := range s.blocklist {
+				if cidr.Contains(ip) {
+					http.Error(w, "Forbidden", http.StatusForbidden)
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // authenticateRequest checks if the request carries a valid bearer token.
 // Accepts the operator token (s.token) OR a valid session token (EPIC-001).
 // Returns true if authenticated. Does NOT check action-scoped restrictions
@@ -241,6 +294,32 @@ func (s *Server) authenticateRequest(r *http.Request) bool {
 	}
 	_, ok := s.checkSessionAuth(bearer)
 	return ok
+}
+
+// funnelCORSMiddleware restricts CORS to configured origins on the Funnel
+// listener. When s.corsOrigins is empty, falls back to wildcard "*".
+func (s *Server) funnelCORSMiddleware(next http.Handler) http.Handler {
+	if len(s.corsOrigins) == 0 {
+		return corsMiddleware(next)
+	}
+	allowed := make(map[string]bool, len(s.corsOrigins))
+	for _, o := range s.corsOrigins {
+		allowed[o] = true
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if allowed[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Linkari-Client")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // corsMiddleware adds CORS headers to all responses and handles preflight OPTIONS requests.
@@ -268,16 +347,20 @@ func (s *Server) Mux() http.Handler {
 }
 
 // FunnelMux returns a restricted mux for the public Funnel listener.
-// Local-only endpoints (/healthz, /logs, /logs/stream) are excluded.
-// Middleware chain: traceMiddleware → corsMiddleware → shieldMiddleware → mux
+// Only explicitly allowlisted routes are registered — everything else
+// returns 404 to scanners. Local-only endpoints (/healthz, /logs,
+// /logs/stream, /notify) are excluded.
+// Middleware chain: traceMiddleware → funnelCORS → blocklist → funnelAuthGuard → shieldMiddleware → mux
 func (s *Server) FunnelMux() http.Handler {
 	mux := http.NewServeMux()
-	s.registerRoutes(mux)
+	s.registerFunnelRoutes(mux)
 	var handler http.Handler = mux
+	handler = s.funnelAuthGuardMiddleware(handler)
 	if s.shield != nil {
 		handler = s.shield.Middleware(handler)
 	}
-	return traceMiddleware(corsMiddleware(handler))
+	handler = s.blocklistMiddleware(handler)
+	return traceMiddleware(s.funnelCORSMiddleware(handler))
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the status code for
@@ -365,6 +448,29 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/google", s.handleAuthGoogle)
 	mux.HandleFunc("POST /auth/invite", s.handleAuthInvite)
 	mux.HandleFunc("POST /admin/invite", s.handleAdminInvite)
+}
+
+// registerFunnelRoutes adds the public-facing route allowlist for the Funnel
+// listener. Only endpoints that external clients legitimately need are
+// registered — everything else (e.g. /notify, /admin/invite, /push/test)
+// is excluded so scanners get 404.
+func (s *Server) registerFunnelRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/share", s.handleShare)
+	mux.HandleFunc("/actions", s.handleActions)
+	mux.HandleFunc("/register", s.handleRegister)
+	mux.HandleFunc("/queue", s.handleQueue)
+	mux.HandleFunc("POST /queue/{id}/score", s.handleQueueScore)
+	mux.HandleFunc("POST /queue/{id}/outcome", s.handleQueueOutcome)
+	mux.HandleFunc("POST /queue/{id}/feedback", s.handleQueueFeedback)
+	mux.HandleFunc("POST /queue/slug/{slug}/feedback", s.handleQueueFeedbackBySlug)
+	mux.HandleFunc("POST /queue/slug/{slug}/outcome", s.handleQueueOutcomeBySlug)
+	mux.HandleFunc("GET /profiles/stats", s.handleProfileStats)
+	mux.HandleFunc("/archive", s.handleArchive)
+	mux.HandleFunc("/digest", s.handleDigest)
+	mux.HandleFunc("POST /search", s.handleSearch)
+	mux.HandleFunc("POST /auth/google", s.handleAuthGoogle)
+	mux.HandleFunc("POST /auth/invite", s.handleAuthInvite)
+	mux.HandleFunc("GET /health", s.handleHealthMinimal)
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
@@ -458,9 +564,24 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleHealthMinimal is the Funnel-safe health probe — returns only
+// {"status":"ok"} with no internal state. Registered on FunnelMux as /health.
+func (s *Server) handleHealthMinimal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok"}` + "\n"))
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authenticateRequest(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -565,11 +686,9 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate limit by remote IP
-	ip := r.RemoteAddr
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		ip = strings.TrimSpace(strings.Split(fwd, ",")[0])
-	}
+	// Rate limit by real client IP — extracted from FunnelConn.Src on Funnel
+	// connections, or RemoteAddr on local. Never trust X-Forwarded-For (GAP-5).
+	ip := realIPFromContext(r.Context(), r.RemoteAddr)
 	if !s.limiter.allow(ip) {
 		slog.DebugContext(ctx, "share rejected: rate limit exceeded", "ip", ip)
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
@@ -1087,6 +1206,11 @@ func (s *Server) handleQueueOutcome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validOutcomes[req.Outcome] {
+		writeError(w, http.StatusBadRequest, "invalid outcome value")
+		return
+	}
+
 	if err := s.queue.UpdateOutcome(id, req.Outcome); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("update outcome: %v", err))
 		return
@@ -1231,6 +1355,11 @@ func (s *Server) handleQueueOutcomeBySlug(w http.ResponseWriter, r *http.Request
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	if !validOutcomes[req.Outcome] {
+		writeError(w, http.StatusBadRequest, "invalid outcome value")
 		return
 	}
 

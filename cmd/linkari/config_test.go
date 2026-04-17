@@ -116,8 +116,8 @@ func TestRenderCommand(t *testing.T) {
 		data     TemplateData
 		want     string
 	}{
-		{"uinit_auto", TemplateData{URL: "https://example.com", Profile: "eng"}, "uinit --auto-resume --profile eng https://example.com"},
-		{"ginit_auto", TemplateData{Text: "PROJ-123"}, "ginit PROJ-123"},
+		{"uinit_auto", TemplateData{URL: "https://example.com", Profile: "eng"}, "uinit --auto-resume --profile eng 'https://example.com'"},
+		{"ginit_auto", TemplateData{Text: "PROJ-123"}, "ginit 'PROJ-123'"},
 	}
 
 	for _, tt := range tests {

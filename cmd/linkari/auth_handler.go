@@ -47,6 +47,7 @@ func (s *Server) handleAuthGoogle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
 	var req authGoogleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -110,6 +111,7 @@ func (s *Server) handleAuthInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
 	var req authInviteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -157,7 +159,7 @@ func (s *Server) handleAuthInvite(w http.ResponseWriter, r *http.Request) {
 	userID, err := s.queue.RedeemInvite(req.InviteCode, claims.Sub, claims.Email, claims.Name)
 	if err != nil {
 		slog.Warn("invite redemption failed", "error", err, "code", req.InviteCode)
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, "invalid or expired invite code")
 		return
 	}
 
