@@ -302,6 +302,13 @@ type ServerConfig struct {
 	// EPIC-038 M1: gVisor sandbox config. When Sandbox.Enabled is true, all
 	// ffmpeg/whisper/claude subprocess calls are routed through ContainerRuntime.
 	Sandbox SandboxConfig `yaml:"sandbox"`
+
+	// EPIC-001 M3: IP blocklist — IPs and CIDRs rejected with 403 before routing.
+	Blocklist []string `yaml:"blocklist"`
+
+	// EPIC-001 M3: CORS origins allowlist for FunnelMux. When empty,
+	// falls back to "*" (wildcard). When set, only listed origins are allowed.
+	CORSOrigins []string `yaml:"cors_origins"`
 }
 
 // ShareConfig controls how share requests map their received action/profile to
@@ -425,6 +432,16 @@ type TemplateData struct {
 	Slug    string
 }
 
+// ShellQuoted returns a copy with user-supplied fields (URL, Text, Match)
+// wrapped in shell-safe single quotes. Profile and Slug are server-derived
+// and not quoted.
+func (d TemplateData) ShellQuoted() TemplateData {
+	d.URL = shellQuote(d.URL)
+	d.Text = shellQuote(d.Text)
+	d.Match = shellQuote(d.Match)
+	return d
+}
+
 // defaultConfigPath returns ~/.config/linkari/actions.yaml.
 func defaultConfigPath() string {
 	home, _ := os.UserHomeDir()
@@ -546,10 +563,13 @@ func evalCondition(cond string) bool {
 }
 
 // RenderCommand renders the command string for a template/regex action.
+// User-supplied fields (URL, Text, Match) are automatically shell-quoted
+// to prevent injection via URL payloads (GAP-9).
 func (a *ActionConfig) RenderCommand(data TemplateData) (string, error) {
 	if a.compiledTemplate == nil {
 		return "", fmt.Errorf("action %q: no compiled template", a.ID)
 	}
+	data = data.ShellQuoted()
 	var buf strings.Builder
 	if err := a.compiledTemplate.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("action %q: template exec: %w", a.ID, err)

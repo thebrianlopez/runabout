@@ -21,6 +21,7 @@ func TestHealthz(t *testing.T) {
 	mux := srv.Mux()
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -45,6 +46,7 @@ func TestHealthzWithDB(t *testing.T) {
 	mux := srv.Mux()
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -74,6 +76,7 @@ func TestHealthzDegradedDB(t *testing.T) {
 	mux := srv.Mux()
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 

@@ -95,8 +95,7 @@ func (s *Shield) Middleware(next http.Handler) http.Handler {
 //
 // Passthrough list: /auth/google, /auth/invite, /register (G-09).
 //
-// NOT wired into FunnelMux() — Chrome extension needs Sign-In first (Layer 2
-// prep, will be wired in a future epic).
+// Wired into FunnelMux() by EPIC-001 M1.
 //
 // NOTE: X-Linkari-Client is an unauthenticated signal, not a security
 // boundary (G-08). This guard is the actual auth-layer enforcement.

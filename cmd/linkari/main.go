@@ -587,6 +587,10 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			if serverFileCfg != nil && serverFileCfg.SessionTTLDays > 0 {
 				srv.sessionTTLDays = serverFileCfg.SessionTTLDays
 			}
+			if serverFileCfg != nil {
+				srv.SetBlocklist(serverFileCfg.Blocklist)
+				srv.SetCORSOrigins(serverFileCfg.CORSOrigins)
+			}
 
 			// EPIC-051 M3/M4: install the live push config on the queue so
 			// EnqueueDigestIfDue honors notify_min_score + per-profile
@@ -652,8 +656,15 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				go snapWorker.Run(cmd.Context())
 			}
 
+			// When tsnet Funnel is active, bind the local listener to
+			// 127.0.0.1 only — LAN exposure is unnecessary since the
+			// Funnel provides the public ingress path (GAP-1).
+			listenHost := ""
+			if tsnetEnabled {
+				listenHost = "127.0.0.1"
+			}
 			httpServer := &http.Server{
-				Addr:         fmt.Sprintf(":%d", port),
+				Addr:         fmt.Sprintf("%s:%d", listenHost, port),
 				Handler:      srv.Mux(),
 				ReadTimeout:  5 * time.Second,
 				WriteTimeout: 10 * time.Second,
@@ -676,9 +687,10 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				// TLS: signal after starting goroutine (optimistic — port binds inside).
 				signalDetachReady()
 			} else {
-				ln, lnErr := net.Listen("tcp", fmt.Sprintf(":%d", port))
+				listenAddr := fmt.Sprintf("%s:%d", listenHost, port)
+				ln, lnErr := net.Listen("tcp", listenAddr)
 				if lnErr != nil {
-					return fmt.Errorf("listen :%d: %w", port, lnErr)
+					return fmt.Errorf("listen %s: %w", listenAddr, lnErr)
 				}
 				slog.Info("linkari listening",
 					"event_type", "listener_up",
@@ -713,6 +725,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 						ReadTimeout:  10 * time.Second,
 						WriteTimeout: 30 * time.Second,
 						IdleTimeout:  120 * time.Second,
+						ConnContext:  funnelConnContext,
 					}
 					go func() {
 						errCh <- tsnetHTTPServer.Serve(ln)
