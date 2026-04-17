@@ -258,3 +258,83 @@ func TestParseTitleNotStolenByCodeBlock(t *testing.T) {
 		t.Fatalf("got %d sections, want 1", len(doc.Sections))
 	}
 }
+
+func TestParseFrontmatter(t *testing.T) {
+	input := "---\nstatus: Draft\nauthor: alice\n---\n# T\n\nBody text.\n"
+	doc, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Frontmatter == nil {
+		t.Fatal("Frontmatter is nil, want map with status=Draft")
+	}
+	if doc.Frontmatter["status"] != "Draft" {
+		t.Errorf("Frontmatter[status] = %v, want Draft", doc.Frontmatter["status"])
+	}
+	if doc.Frontmatter["author"] != "alice" {
+		t.Errorf("Frontmatter[author] = %v, want alice", doc.Frontmatter["author"])
+	}
+	if doc.Title != "T" {
+		t.Errorf("Title = %q, want T", doc.Title)
+	}
+	if len(doc.Sections) != 1 {
+		t.Fatalf("got %d sections, want 1", len(doc.Sections))
+	}
+	if doc.Sections[0].Content != "Body text." {
+		t.Errorf("Section content = %q, want Body text.", doc.Sections[0].Content)
+	}
+}
+
+func TestParseFrontmatterAbsent(t *testing.T) {
+	input := "# T\n\nJust content.\n"
+	doc, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Frontmatter != nil {
+		t.Errorf("Frontmatter = %v, want nil", doc.Frontmatter)
+	}
+	if doc.Title != "T" {
+		t.Errorf("Title = %q, want T", doc.Title)
+	}
+}
+
+func TestParseFrontmatterWithNestedList(t *testing.T) {
+	input := "---\ntitle: My Epic\nagents:\n  - runabout-agent\n  - linkari-android-agent\nstatus: In Progress\n---\n# My Epic\n"
+	doc, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Frontmatter == nil {
+		t.Fatal("Frontmatter is nil")
+	}
+	agents, ok := doc.Frontmatter["agents"]
+	if !ok {
+		t.Fatal("Frontmatter missing agents key")
+	}
+	agentList, ok := agents.([]any)
+	if !ok {
+		t.Fatalf("agents = %T, want []any", agents)
+	}
+	if len(agentList) != 2 {
+		t.Fatalf("agents len = %d, want 2", len(agentList))
+	}
+	if agentList[0] != "runabout-agent" {
+		t.Errorf("agents[0] = %v, want runabout-agent", agentList[0])
+	}
+	if agentList[1] != "linkari-android-agent" {
+		t.Errorf("agents[1] = %v, want linkari-android-agent", agentList[1])
+	}
+	if doc.Frontmatter["status"] != "In Progress" {
+		t.Errorf("status = %v, want In Progress", doc.Frontmatter["status"])
+	}
+}
+
+func TestParseFrontmatterMalformed(t *testing.T) {
+	// Unclosed bracket in YAML is a parse error.
+	input := "---\nbad: [\n---\n# T\n"
+	_, err := Parse(strings.NewReader(input))
+	if err == nil {
+		t.Error("expected error for malformed frontmatter, got nil")
+	}
+}
