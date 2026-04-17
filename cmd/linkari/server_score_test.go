@@ -88,7 +88,7 @@ func runScoreAsyncSync(t *testing.T, rawURL, profile string, q *Queue, eval Eval
 	t.Helper()
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: eval, done: done}
-	go scoreURLAsync(&ShareRequest{URL: rawURL, Profile: profile}, q, wrapped)
+	go scoreURLAsync(&ShareRequest{URL: rawURL, Profile: profile}, q, wrapped, nil)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
@@ -127,7 +127,7 @@ func (e *onceDoneEval) Evaluate(ctx context.Context, content, prompt string) (*S
 // complete.
 func runScoreAsyncSkip(t *testing.T, rawURL, profile string, q *Queue, eval Evaluator) {
 	t.Helper()
-	go scoreURLAsync(&ShareRequest{URL: rawURL, Profile: profile}, q, eval)
+	go scoreURLAsync(&ShareRequest{URL: rawURL, Profile: profile}, q, eval, nil)
 	time.Sleep(200 * time.Millisecond)
 }
 

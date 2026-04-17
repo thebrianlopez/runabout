@@ -185,7 +185,7 @@ func classificationPreamble(profile, rawURL string, source string) string {
 //
 // Takes eval as a parameter so tests can inject a stub Evaluator without
 // touching the execHaiku var (test-seam choice from EPIC-060 assessment).
-func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator) {
+func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -220,7 +220,19 @@ func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator) {
 		}
 	}
 
-	// EPIC-038 M5: relativePath prefix matching (also detects screenshots).
+	// EPIC-075 M3: subject keyword heuristics (higher signal than relativePath).
+	if profile == "" && req.ExtraSubject != "" {
+		if p := classifyBySubjectKeywords(req.ExtraSubject); p != "" {
+			profile = p
+			autoClassified = true
+			classifySource = "subject_keywords"
+		}
+	}
+
+	// EPIC-038 M5 / EPIC-075 M5: relativePath prefix matching.
+	// This block runs unconditionally (even when profile is already set) because
+	// screenshot detection must always fire — a screenshot from a finance app is
+	// still a screenshot. Profile assignment is gated on profile=="".
 	if req.RelativePath != "" {
 		if p, isSS := classifyByRelativePath(req.RelativePath); isSS {
 			req.IsScreenshot = true
@@ -243,11 +255,24 @@ func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator) {
 		}
 	}
 
+	// EPIC-076 M1: emit classify_stage_win after cascade resolves.
+	// jq recipe: jq 'select(.event_type=="classify_stage_win") | .metadata.classify_source' linkari_events.jsonl | sort | uniq -c
+	if events != nil {
+		_ = events.Emit("classify_stage_win", map[string]interface{}{
+			"url":              rawURL,
+			"profile":          profile,
+			"classify_source":  classifySource,
+			"auto_classified":  autoClassified,
+			"row_id":           req.QueueRowID,
+		})
+	}
+
 	slog.Info("server_score: start",
 		"event_type", "server_score_start",
 		"url", rawURL,
 		"profile", profile,
 		"auto_classified", autoClassified,
+		"classify_source", classifySource,
 	)
 
 	// Early exit for video/audio platforms — Jina returns empty or JS-stripped
@@ -379,6 +404,8 @@ func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator) {
 		"score", sc.Score,
 		"verdict", sc.Verdict,
 		"latency_ms", sc.LatencyMs,
+		"classify_source", classifySource,
+		"auto_classified", autoClassified,
 	)
 
 	// Persist — ScoreByURL finds the queued row by URL and updates it to scored.
@@ -438,13 +465,14 @@ func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator) {
 		"profile", profile,
 		"score", sc.Score,
 		"status", item.Status,
+		"classify_source", classifySource,
 	)
 }
 
 // scoreFileAsync scores image/document shares server-side without Jina fetch.
 // EPIC-038 GAP-05: classifies via classifyIntentProfile, synthesizes content
 // from metadata, and runs the standard template-load + eval + persist pipeline.
-func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator) {
+func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -465,6 +493,17 @@ func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator) {
 		profile = "eng"
 		autoClassified = true
 		classifySource = "default_fallback"
+	}
+
+	// EPIC-076 M1: emit classify_stage_win after cascade resolves.
+	if events != nil {
+		_ = events.Emit("classify_stage_win", map[string]interface{}{
+			"url":             "",
+			"profile":         profile,
+			"classify_source": classifySource,
+			"auto_classified": autoClassified,
+			"row_id":          req.QueueRowID,
+		})
 	}
 
 	// Synthesize content from available metadata (no URL to fetch).
@@ -497,6 +536,7 @@ func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator) {
 		"profile", profile,
 		"type", req.Type,
 		"content_len", len(content),
+		"classify_source", classifySource,
 	)
 
 	// Load profile template and evaluate.
@@ -530,6 +570,7 @@ func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator) {
 		"profile", profile,
 		"score", sc.Score,
 		"verdict", sc.Verdict,
+		"classify_source", classifySource,
 	)
 
 	if q == nil {
@@ -563,6 +604,7 @@ func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator) {
 		"row_id", req.QueueRowID,
 		"profile", profile,
 		"score", sc.Score,
+		"classify_source", classifySource,
 	)
 }
 
@@ -588,9 +630,10 @@ var packageProfileMap = map[string]string{
 	"com.squareup.cash":                "finance",
 	"com.mint":                         "finance",
 	"com.coinbase.android":             "finance",
-	"com.instagram.android":            "life",
+	// NOTE: com.instagram.android and com.reddit.frontpage intentionally omitted
+	// (EPIC-075 M4): these are multi-topic apps whose shares do not reliably
+	// indicate a single profile. They fall through to URL/content classification.
 	"com.twitter.android":              "life",
-	"com.reddit.frontpage":             "eng",
 	"com.github.android":               "eng",
 	"org.mozilla.firefox":              "eng",
 	"com.chrome.beta":                  "eng",
@@ -616,13 +659,53 @@ var appCategoryProfileMap = map[int]string{
 	6: "travel", // CATEGORY_MAPS
 }
 
+// EPIC-075 M4: mimeProfileMap maps specific MIME types to Linkari profiles.
+// Only types with strong profile signal are included — generic types like
+// "application/pdf" or "image/jpeg" are omitted to avoid false positives.
+var mimeProfileMap = map[string]string{
+	"application/vnd.ms-excel":                                         "finance",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "finance",
+	"text/x-vcard": "life",
+	"text/vcard":   "life",
+}
+
+// mapsRestaurantRE detects dining-context signals in subject/text for shares
+// originating from Google Maps. When matched, overrides the default travel
+// profile assigned to com.google.android.apps.maps.
+var mapsRestaurantRE = regexp.MustCompile(`(?i)\b(?:restaurant|cafe|café|bistro|diner|eatery|bar|pub|grill|sushi|pizza|burger|menu|cuisine|food|dining|brunch|lunch|dinner|breakfast)\b`)
+
+// compositeProfileOverride returns a non-empty profile override when a
+// package+subject/text combination carries a stronger signal than the
+// package alone provides. Currently handles:
+//   - com.google.android.apps.maps + restaurant keyword → dining
+//
+// Returns empty string when no override applies.
+func compositeProfileOverride(pkg, subject, text string) string {
+	if pkg == "com.google.android.apps.maps" {
+		combined := subject + " " + text
+		if mapsRestaurantRE.MatchString(combined) {
+			return "dining"
+		}
+	}
+	return ""
+}
+
 // classifyByIntentMetadata returns a profile derived from Android intent
-// metadata (package name, app category). Returns empty string if no mapping
-// matches, signaling that URL/content classification should proceed.
+// metadata (package name, app category, MIME type). Returns empty string if
+// no mapping matches, signaling that URL/content classification should proceed.
 func classifyByIntentMetadata(req *ShareRequest) string {
-	// Highest confidence: exact package name match.
+	// Highest confidence: exact package name match, with composite override.
 	if req.CallingPackage != "" {
+		if override := compositeProfileOverride(req.CallingPackage, req.ExtraSubject, req.ExtraText); override != "" {
+			return override
+		}
 		if p, ok := packageProfileMap[req.CallingPackage]; ok {
+			return p
+		}
+	}
+	// MIME type classification (EPIC-075 M4).
+	if req.MimeType != "" {
+		if p, ok := mimeProfileMap[req.MimeType]; ok {
 			return p
 		}
 	}
@@ -635,56 +718,140 @@ func classifyByIntentMetadata(req *ShareRequest) string {
 	return ""
 }
 
-// EPIC-038 M5: filenameKeywords maps lowercase filename substrings to profiles.
-var filenameKeywords = map[string]string{
-	"invoice":   "finance",
-	"receipt":   "finance",
-	"statement": "finance",
-	"tax":       "finance",
-	"payslip":   "finance",
-	"resume":    "life",
-	"cv":        "life",
-	"recipe":    "dining",
-	"menu":      "dining",
-	"itinerary": "travel",
-	"boarding":  "travel",
-	"ticket":    "travel",
-}
-
-// EPIC-038 M5: relativePathPrefixes maps MediaStore RELATIVE_PATH prefixes
-// to profiles or flags. Checked in order of specificity.
-var relativePathPrefixes = []struct {
-	prefix  string
+// EPIC-075 M2: filenameKeywords is an ordered slice of keyword→profile mappings.
+// Finance keywords come first to take priority over travel in ambiguous cases
+// (e.g., "ticket" could be event/travel, but finance signals are more specific).
+// Short keywords (≤3 chars: "cv", "tax") use word-boundary matching via
+// filenameKeywordREs to avoid false positives like "recover"→life or "taxi"→finance.
+var filenameKeywords = []struct {
+	keyword string
 	profile string
 }{
-	{"DCIM/Screenshots", ""}, // isScreenshot detection — not a profile
-	{"Screenshots", ""},
-	{"Music/", "music"},
-	{"Recordings/", "music"},
-	{"Download/", ""},  // too generic for classification
-	{"Documents/", ""}, // too generic
+	{"invoice", "finance"},
+	{"receipt", "finance"},
+	{"statement", "finance"},
+	{"tax", "finance"},
+	{"payslip", "finance"},
+	{"resume", "life"},
+	{"cv", "life"},
+	{"recipe", "dining"},
+	{"menu", "dining"},
+	{"itinerary", "travel"},
+	{"boarding", "travel"},
+	{"ticket", "travel"},
+}
+
+// filenameShortKeywords is the set of keywords (≤3 chars) that require
+// token-boundary matching. For these keywords classifyByFilename splits the
+// filename on [-_. ] separators and checks for an exact token match rather
+// than a substring match, preventing "taxi"→"tax" and "recover"→"cv" false positives.
+var filenameShortKeywords = func() map[string]struct{} {
+	m := make(map[string]struct{})
+	for _, entry := range filenameKeywords {
+		if len(entry.keyword) <= 3 {
+			m[entry.keyword] = struct{}{}
+		}
+	}
+	return m
+}()
+
+// filenameSplitRE splits a filename (lower-cased, extension stripped) on the
+// separator characters used by common file-naming conventions.
+var filenameSplitRE = regexp.MustCompile(`[-_. ]+`)
+
+// EPIC-038 M5 / EPIC-075 M5: relativePathPrefixes maps MediaStore RELATIVE_PATH
+// prefixes to profiles or screenshot flags. Checked in order of specificity.
+// isScreenshot=true entries set req.IsScreenshot without returning a profile.
+var relativePathPrefixes = []struct {
+	prefix      string
+	profile     string
+	isScreenshot bool
+}{
+	// Stock Android / most OEMs
+	{"DCIM/Screenshots", "", true},
+	{"Screenshots", "", true},
+	// Samsung (One UI): shares from the Gallery app use this path
+	{"Pictures/Screenshots", "", true},
+	// Xiaomi (MIUI/HyperOS): screenshot path differs from stock Android
+	{"Screencap", "", true},
+	{"Music/", "music", false},
+	{"Recordings/", "music", false},
+	{"Download/", "", false},  // too generic for classification
+	{"Documents/", "", false}, // too generic
 }
 
 // classifyByFilename returns a profile derived from filename keyword matching.
+// Iterates filenameKeywords in declared order (finance before travel) for
+// deterministic results. Short keywords (≤3 chars) use token-boundary matching:
+// the filename is split on [-_. ] separators and the keyword must be an exact
+// token, preventing "taxi.jpg"→"tax"→finance and "recover.pdf"→"cv"→life
+// false positives.
 func classifyByFilename(filename string) string {
 	lower := strings.ToLower(filename)
-	for keyword, profile := range filenameKeywords {
-		if strings.Contains(lower, keyword) {
-			return profile
+	for _, entry := range filenameKeywords {
+		if _, isShort := filenameShortKeywords[entry.keyword]; isShort {
+			// Token-boundary match: split on separators, check for exact token.
+			tokens := filenameSplitRE.Split(lower, -1)
+			for _, tok := range tokens {
+				if tok == entry.keyword {
+					return entry.profile
+				}
+			}
+		} else {
+			if strings.Contains(lower, entry.keyword) {
+				return entry.profile
+			}
+		}
+	}
+	return ""
+}
+
+// EPIC-075 M3: subjectKeywords maps lowercase subject substrings to profiles.
+// Ordered by specificity — more specific terms first within each profile group.
+var subjectKeywords = []struct {
+	keyword string
+	profile string
+}{
+	// Finance
+	{"portfolio", "finance"},
+	{"stock", "finance"},
+	{"invest", "finance"},
+	{"invoice", "finance"},
+	// Dining
+	{"recipe", "dining"},
+	{"restaurant", "dining"},
+	{"menu", "dining"},
+	// Travel
+	{"flight", "travel"},
+	{"hotel", "travel"},
+	{"itinerary", "travel"},
+	// Music
+	{"album", "music"},
+	{"playlist", "music"},
+	{"track", "music"},
+}
+
+// classifyBySubjectKeywords returns a profile derived from keyword matching on
+// the share's ExtraSubject field. Uses substring matching (subjects are natural
+// language sentences, not structured filenames, so token splitting is not needed).
+// Returns empty string if no keyword matches.
+func classifyBySubjectKeywords(subject string) string {
+	lower := strings.ToLower(subject)
+	for _, entry := range subjectKeywords {
+		if strings.Contains(lower, entry.keyword) {
+			return entry.profile
 		}
 	}
 	return ""
 }
 
 // classifyByRelativePath returns a profile and isScreenshot flag based on
-// the MediaStore RELATIVE_PATH prefix.
+// the MediaStore RELATIVE_PATH prefix. Screenshot entries (isScreenshot=true)
+// return an empty profile — the caller sets req.IsScreenshot instead.
 func classifyByRelativePath(relPath string) (profile string, isScreenshot bool) {
 	for _, entry := range relativePathPrefixes {
 		if strings.HasPrefix(relPath, entry.prefix) {
-			if entry.prefix == "DCIM/Screenshots" || entry.prefix == "Screenshots" {
-				return "", true
-			}
-			return entry.profile, false
+			return entry.profile, entry.isScreenshot
 		}
 	}
 	return "", false
@@ -705,13 +872,19 @@ func classifyIntentProfile(ctx context.Context, req *ShareRequest) string {
 			return p
 		}
 	}
-	// 3. RelativePath prefix.
+	// 3. Subject keywords (EPIC-075 M3).
+	if req.ExtraSubject != "" {
+		if p := classifyBySubjectKeywords(req.ExtraSubject); p != "" {
+			return p
+		}
+	}
+	// 4. RelativePath prefix.
 	if req.RelativePath != "" {
 		if p, _ := classifyByRelativePath(req.RelativePath); p != "" {
 			return p
 		}
 	}
-	// 4. Haiku classification with metadata context (last resort).
+	// 5. Haiku classification with metadata context (last resort).
 	var hints []string
 	if req.ExtraSubject != "" {
 		hints = append(hints, "Subject: "+req.ExtraSubject)
