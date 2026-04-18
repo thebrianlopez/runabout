@@ -100,8 +100,9 @@ func installWhisperStub(t *testing.T, transcript string, err error) {
 // --- helper: run scoreAudioAsync synchronously ------------------------------
 
 // installHaikuSynopsisStub stubs execHaiku to return a fixed synopsis and
-// signals done on the first call. Also creates a temporary vnote_synopsis.md
-// template so loadProfileTemplate("vnote_synopsis") succeeds.
+// execHaikuJSON to return a valid rubric verdict with score=75.
+// Signals done on the first execHaiku call. Also creates temporary
+// vnote_synopsis.md and vnote_triage.yaml templates.
 func installHaikuSynopsisStub(t *testing.T, synopsis string) chan struct{} {
 	t.Helper()
 	done := make(chan struct{})
@@ -115,6 +116,13 @@ func installHaikuSynopsisStub(t *testing.T, synopsis string) chan struct{} {
 	}
 	t.Cleanup(func() { execHaiku = prev })
 
+	// EPIC-081 M4: stub execHaikuJSON for the rubric scoring step.
+	prevJSON := execHaikuJSON
+	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+		return []byte(`{"type":"result","result":"{\"score\":75,\"verdict\":\"test rubric verdict\",\"rubric_scores\":{\"Clarity\":15,\"Actionability\":20,\"Novelty\":15,\"Urgency\":10,\"Topic Match\":15},\"topic_tags\":[\"test\"]}","is_error":false,"usage":{"input_tokens":10,"output_tokens":20},"total_cost_usd":0.001}`), nil
+	}
+	t.Cleanup(func() { execHaikuJSON = prevJSON })
+
 	// Create temp vnote_synopsis template so loadProfileTemplate finds it.
 	// Use a single base dir for both the template and ORG_PATH to ensure
 	// the env var points to the same tree where the file was written.
@@ -122,6 +130,79 @@ func installHaikuSynopsisStub(t *testing.T, synopsis string) chan struct{} {
 	dir := filepath.Join(base, "docs", "prompts", "profiles")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "vnote_synopsis.md"), []byte("Summarize this voice note transcript.\n\n{{transcript}}"), 0o644)
+
+	// EPIC-081 M4: create vnote_triage.yaml for rubric scoring.
+	os.WriteFile(filepath.Join(dir, "vnote_triage.yaml"), []byte(`id: vnote_triage
+version: 1
+schema_version: triage_verdict_v1
+content_modes:
+  - audio
+persona_intro: "You are an audio triage assistant."
+noise_gate:
+  min_chars: 20
+  skip_label: "too short"
+persona_body: |
+  ## Task
+  Evaluate this voice note.
+verdict_prompt: "what is this about?"
+rubric:
+  - name: Clarity
+    weight: 20
+    rationale: "clear?"
+  - name: Actionability
+    weight: 25
+    rationale: "actionable?"
+  - name: Novelty
+    weight: 20
+    rationale: "new?"
+  - name: Urgency
+    weight: 15
+    rationale: "urgent?"
+  - name: Topic Match
+    weight: 20
+    rationale: "relevant?"
+action_items:
+  count: "1-3"
+  horizon_days: 3
+key_facts:
+  count: "2-4"
+`), 0o644)
+
+	// Also create a life.yaml profile for default fallback (EPIC-081 M4).
+	os.WriteFile(filepath.Join(dir, "life.yaml"), []byte(`id: life
+version: 1
+schema_version: triage_verdict_v1
+persona_intro: "You are a life triage assistant."
+noise_gate:
+  min_chars: 200
+  skip_label: "no content"
+persona_body: |
+  ## Task
+  Evaluate life content.
+verdict_prompt: "what is this?"
+rubric:
+  - name: A
+    weight: 20
+    rationale: "a"
+  - name: B
+    weight: 20
+    rationale: "b"
+  - name: C
+    weight: 20
+    rationale: "c"
+  - name: D
+    weight: 20
+    rationale: "d"
+  - name: E
+    weight: 20
+    rationale: "e"
+action_items:
+  count: "1-2"
+  horizon_days: 7
+key_facts:
+  count: "2-3"
+`), 0o644)
+
 	t.Setenv("ORG_PATH", base)
 
 	// Override transcript dir to temp.
@@ -174,7 +255,7 @@ func TestScoreAudioAsync_HappyPath(t *testing.T) {
 
 	runScoreAudioSync(t, audioFile, "eng", q, id, done)
 
-	// Check queue row is scored with transcript backfilled and score=100.
+	// Check queue row is scored with transcript backfilled and rubric score.
 	items, err := q.List("", 20)
 	if err != nil {
 		t.Fatalf("list: %v", err)
@@ -186,8 +267,9 @@ func TestScoreAudioAsync_HappyPath(t *testing.T) {
 			if it.Status != "scored" && it.Status != "archived" {
 				t.Errorf("status = %q, want scored or archived", it.Status)
 			}
-			if it.Score == nil || *it.Score != 100 {
-				t.Errorf("score = %v, want 100 (synopsis always 100)", it.Score)
+			// EPIC-081 M4: score is now rubric-scored (stub returns 75).
+			if it.Score == nil || *it.Score != 75 {
+				t.Errorf("score = %v, want 75 (rubric-scored)", it.Score)
 			}
 			if it.Text == "" {
 				t.Errorf("text not backfilled")
@@ -379,8 +461,9 @@ func TestScoreAudioAsync_Chunked(t *testing.T) {
 			if it.Status != "scored" && it.Status != "archived" {
 				t.Errorf("status = %q, want scored or archived", it.Status)
 			}
-			if it.Score == nil || *it.Score != 100 {
-				t.Errorf("score = %v, want 100", it.Score)
+			// EPIC-081 M4: score is now rubric-scored (stub returns 75).
+			if it.Score == nil || *it.Score != 75 {
+				t.Errorf("score = %v, want 75 (rubric-scored)", it.Score)
 			}
 			// Transcript should contain all three chunks concatenated.
 			if !strings.Contains(it.Text, "First chunk") || !strings.Contains(it.Text, "Third chunk") {

@@ -35,11 +35,15 @@ type ProfileManifest struct {
 	ID             string         `yaml:"id"`
 	Version        int            `yaml:"version"`
 	SchemaVersion  string         `yaml:"schema_version"`
+	ContentModes   []string       `yaml:"content_modes,omitempty"`
 	PersonaIntro   string         `yaml:"persona_intro"`
+	VisionPersonaIntro string     `yaml:"vision_persona_intro,omitempty"`
 	NoiseGate      NoiseGate      `yaml:"noise_gate"`
 	PersonaBody    string         `yaml:"persona_body"`
 	VerdictPrompt  string         `yaml:"verdict_prompt"`
 	Rubric         []RubricAxis   `yaml:"rubric"`
+	VisionRubric   []RubricAxis   `yaml:"vision_rubric,omitempty"`
+	AudioRubric    []RubricAxis   `yaml:"audio_rubric,omitempty"`
 	ActionItems    ActionItems    `yaml:"action_items"`
 	KeyFacts       KeyFacts       `yaml:"key_facts"`
 	History        *HistoryBlock  `yaml:"history,omitempty"`
@@ -90,6 +94,48 @@ type HistoryBlock struct {
 	Intro string `yaml:"intro,omitempty"`
 }
 
+// hasContentMode returns true if the manifest declares the given mode
+// in its content_modes list.
+func (m *ProfileManifest) hasContentMode(mode string) bool {
+	for _, cm := range m.ContentModes {
+		if cm == mode {
+			return true
+		}
+	}
+	return false
+}
+
+// hasTextMode returns true if the profile handles text content.
+// A profile with no content_modes is implicitly text-only.
+func (m *ProfileManifest) hasTextMode() bool {
+	return len(m.ContentModes) == 0 || m.hasContentMode("text")
+}
+
+// validateRubricAxes validates a rubric axis set — axes must have
+// non-empty names/rationales, positive weights, and sum to 100.
+func validateRubricAxes(label string, axes []RubricAxis) error {
+	if len(axes) == 0 {
+		return fmt.Errorf("%s must have at least 1 axis", label)
+	}
+	sum := 0
+	for i, ax := range axes {
+		if strings.TrimSpace(ax.Name) == "" {
+			return fmt.Errorf("%s[%d].name required", label, i)
+		}
+		if ax.Weight <= 0 {
+			return fmt.Errorf("%s[%d].weight (%s) must be > 0", label, i, ax.Name)
+		}
+		if strings.TrimSpace(ax.Rationale) == "" {
+			return fmt.Errorf("%s[%d].rationale (%s) required", label, i, ax.Name)
+		}
+		sum += ax.Weight
+	}
+	if sum != 100 {
+		return fmt.Errorf("%s weights must sum to 100, got %d", label, sum)
+	}
+	return nil
+}
+
 // Validate enforces the schema invariants `linkari profile lint` (M3)
 // will also check at hook time. Called from LoadProfileManifest.
 func (m *ProfileManifest) Validate() error {
@@ -108,30 +154,41 @@ func (m *ProfileManifest) Validate() error {
 	if strings.TrimSpace(m.PersonaBody) == "" {
 		return fmt.Errorf("persona_body required")
 	}
-	if m.NoiseGate.MinChars <= 0 {
+	// Vision profiles may have min_chars=0 (no text to gate on).
+	if !m.hasContentMode("vision") && m.NoiseGate.MinChars <= 0 {
 		return fmt.Errorf("noise_gate.min_chars must be > 0")
 	}
 	if strings.TrimSpace(m.NoiseGate.SkipLabel) == "" {
 		return fmt.Errorf("noise_gate.skip_label required")
 	}
-	if len(m.Rubric) != 5 {
-		return fmt.Errorf("rubric must have exactly 5 axes, got %d", len(m.Rubric))
+	// Text-mode profiles require the primary rubric with exactly 5 axes.
+	if m.hasTextMode() {
+		if len(m.Rubric) != 5 {
+			return fmt.Errorf("rubric must have exactly 5 axes, got %d", len(m.Rubric))
+		}
+		if err := validateRubricAxes("rubric", m.Rubric); err != nil {
+			return err
+		}
 	}
-	sum := 0
-	for i, ax := range m.Rubric {
-		if strings.TrimSpace(ax.Name) == "" {
-			return fmt.Errorf("rubric[%d].name required", i)
+	// Vision-only profiles may use the primary rubric with flexible axis count.
+	if !m.hasTextMode() && len(m.Rubric) > 0 {
+		if err := validateRubricAxes("rubric", m.Rubric); err != nil {
+			return err
 		}
-		if ax.Weight <= 0 {
-			return fmt.Errorf("rubric[%d].weight (%s) must be > 0", i, ax.Name)
-		}
-		if strings.TrimSpace(ax.Rationale) == "" {
-			return fmt.Errorf("rubric[%d].rationale (%s) required", i, ax.Name)
-		}
-		sum += ax.Weight
 	}
-	if sum != 100 {
-		return fmt.Errorf("rubric weights must sum to 100, got %d", sum)
+	// Vision-only profiles with no primary rubric must have a vision_rubric.
+	if !m.hasTextMode() && len(m.Rubric) == 0 && len(m.VisionRubric) == 0 && len(m.AudioRubric) == 0 {
+		return fmt.Errorf("non-text profile must have rubric, vision_rubric, or audio_rubric")
+	}
+	if len(m.VisionRubric) > 0 {
+		if err := validateRubricAxes("vision_rubric", m.VisionRubric); err != nil {
+			return err
+		}
+	}
+	if len(m.AudioRubric) > 0 {
+		if err := validateRubricAxes("audio_rubric", m.AudioRubric); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(m.ActionItems.Count) == "" {
 		return fmt.Errorf("action_items.count required")
@@ -242,6 +299,29 @@ func joinExamplesQuoted(xs []string) string {
 		parts[i] = fmt.Sprintf("%q", x)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// RenderForMode produces the system prompt for the given content mode.
+// It selects the appropriate rubric and persona intro based on the mode:
+//   - "vision": uses VisionRubric (falls back to Rubric), VisionPersonaIntro (falls back to PersonaIntro)
+//   - "audio":  uses AudioRubric (falls back to Rubric)
+//   - "text"/empty: uses Rubric and PersonaIntro (standard)
+func (m *ProfileManifest) RenderForMode(mode string) (string, error) {
+	view := *m
+	switch mode {
+	case "vision":
+		if len(m.VisionRubric) > 0 {
+			view.Rubric = m.VisionRubric
+		}
+		if m.VisionPersonaIntro != "" {
+			view.PersonaIntro = m.VisionPersonaIntro
+		}
+	case "audio":
+		if len(m.AudioRubric) > 0 {
+			view.Rubric = m.AudioRubric
+		}
+	}
+	return view.Render()
 }
 
 // Render produces the system prompt for this manifest. The output is

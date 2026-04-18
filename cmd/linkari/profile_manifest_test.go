@@ -156,6 +156,183 @@ func TestProfileManifestRenderWithHistory(t *testing.T) {
 	}
 }
 
+func validVisionManifest() *ProfileManifest {
+	return &ProfileManifest{
+		ID:            "image_triage",
+		Version:       1,
+		SchemaVersion: "triage_verdict_v1",
+		ContentModes:  []string{"vision"},
+		PersonaIntro:  "You are a **visual content triage assistant**.",
+		NoiseGate: NoiseGate{
+			MinChars:  0,
+			SkipLabel: "image could not be decoded or is blank",
+		},
+		PersonaBody:   "## Task\n\nTriage shared images.\n",
+		VerdictPrompt: "what is this image?",
+		Rubric: []RubricAxis{
+			{Name: "Visual Clarity", Weight: 40, Rationale: "Can the content be identified?"},
+			{Name: "Profile Signal", Weight: 35, Rationale: "How confidently can this be routed?"},
+			{Name: "Actionability", Weight: 25, Rationale: "Does it contain actionable info?"},
+		},
+		ActionItems: ActionItems{Count: "1-2", HorizonDays: 7},
+		KeyFacts:    KeyFacts{Count: "2-3"},
+	}
+}
+
+func TestProfileManifestValidateVisionProfile(t *testing.T) {
+	t.Run("valid vision-only profile", func(t *testing.T) {
+		m := validVisionManifest()
+		if err := m.Validate(); err != nil {
+			t.Fatalf("expected valid, got %v", err)
+		}
+	})
+
+	t.Run("vision profile allows min_chars=0", func(t *testing.T) {
+		m := validVisionManifest()
+		m.NoiseGate.MinChars = 0
+		if err := m.Validate(); err != nil {
+			t.Fatalf("vision profile should allow min_chars=0, got %v", err)
+		}
+	})
+
+	t.Run("vision profile allows flexible axis count", func(t *testing.T) {
+		m := validVisionManifest()
+		if len(m.Rubric) == 5 {
+			t.Fatal("test fixture should have != 5 axes to test flexibility")
+		}
+		if err := m.Validate(); err != nil {
+			t.Fatalf("vision profile should allow non-5 rubric axes, got %v", err)
+		}
+	})
+
+	t.Run("text profile still requires 5 axes", func(t *testing.T) {
+		m := validEngManifest()
+		m.Rubric = m.Rubric[:3]
+		err := m.Validate()
+		if err == nil || !strings.Contains(err.Error(), "5 axes") {
+			t.Fatalf("expected 5 axes error, got %v", err)
+		}
+	})
+
+	t.Run("non-text profile requires some rubric", func(t *testing.T) {
+		m := validVisionManifest()
+		m.Rubric = nil
+		err := m.Validate()
+		if err == nil || !strings.Contains(err.Error(), "non-text profile must have") {
+			t.Fatalf("expected rubric required error, got %v", err)
+		}
+	})
+}
+
+func TestProfileManifestValidateVisionRubric(t *testing.T) {
+	m := validEngManifest()
+	m.VisionRubric = []RubricAxis{
+		{Name: "Clarity", Weight: 50, Rationale: "clear?"},
+		{Name: "Signal", Weight: 50, Rationale: "signal?"},
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("expected valid with vision_rubric, got %v", err)
+	}
+
+	t.Run("bad vision_rubric weights", func(t *testing.T) {
+		m := validEngManifest()
+		m.VisionRubric = []RubricAxis{
+			{Name: "A", Weight: 30, Rationale: "a"},
+			{Name: "B", Weight: 30, Rationale: "b"},
+		}
+		err := m.Validate()
+		if err == nil || !strings.Contains(err.Error(), "vision_rubric weights must sum to 100") {
+			t.Fatalf("expected sum error, got %v", err)
+		}
+	})
+}
+
+func TestProfileManifestValidateAudioRubric(t *testing.T) {
+	m := validEngManifest()
+	m.AudioRubric = []RubricAxis{
+		{Name: "Clarity", Weight: 20, Rationale: "clear?"},
+		{Name: "Actionability", Weight: 20, Rationale: "actionable?"},
+		{Name: "Novelty", Weight: 20, Rationale: "new?"},
+		{Name: "Urgency", Weight: 20, Rationale: "urgent?"},
+		{Name: "Topic Match", Weight: 20, Rationale: "relevant?"},
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("expected valid with audio_rubric, got %v", err)
+	}
+}
+
+func TestRenderForModeVision(t *testing.T) {
+	m := validEngManifest()
+	m.VisionRubric = []RubricAxis{
+		{Name: "Visual Clarity", Weight: 60, Rationale: "clear image?"},
+		{Name: "Actionability", Weight: 40, Rationale: "actionable?"},
+	}
+	m.VisionPersonaIntro = "You are a **visual triage assistant**."
+
+	out, err := m.RenderForMode("vision")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "Visual Clarity") {
+		t.Error("vision rubric axis missing")
+	}
+	if !strings.Contains(out, "visual triage assistant") {
+		t.Error("vision persona intro missing")
+	}
+	if strings.Contains(out, "Novelty") {
+		t.Error("text rubric axis should not appear in vision mode")
+	}
+}
+
+func TestRenderForModeAudio(t *testing.T) {
+	m := validEngManifest()
+	m.AudioRubric = []RubricAxis{
+		{Name: "Clarity", Weight: 50, Rationale: "clear?"},
+		{Name: "Urgency", Weight: 50, Rationale: "urgent?"},
+	}
+
+	out, err := m.RenderForMode("audio")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "Clarity") || !strings.Contains(out, "Urgency") {
+		t.Error("audio rubric axes missing")
+	}
+	// PersonaIntro should NOT change for audio mode (no VisionPersonaIntro used)
+	if !strings.Contains(out, "technical triage assistant") {
+		t.Error("standard persona intro should be used for audio mode")
+	}
+}
+
+func TestRenderForModeFallback(t *testing.T) {
+	m := validEngManifest()
+	// No vision/audio rubrics — should fall back to primary rubric
+	out, err := m.RenderForMode("vision")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "Novelty") {
+		t.Error("should fall back to primary rubric when vision_rubric absent")
+	}
+}
+
+func TestRenderForModeText(t *testing.T) {
+	m := validEngManifest()
+	m.VisionRubric = []RubricAxis{
+		{Name: "Visual Clarity", Weight: 100, Rationale: "clear?"},
+	}
+	out, err := m.RenderForMode("text")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "Novelty") {
+		t.Error("text mode should use primary rubric")
+	}
+	if strings.Contains(out, "Visual Clarity") {
+		t.Error("text mode should not use vision rubric")
+	}
+}
+
 func TestLoadProfileManifestYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "eng.yaml")

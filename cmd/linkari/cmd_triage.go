@@ -313,6 +313,46 @@ func loadProfileTemplate(profile string) (path, content string, err error) {
 	return "", "", fmt.Errorf("no profile prompt template for %q (checked %v)", profile, checked)
 }
 
+// loadProfileTemplateForMode loads a profile YAML and renders it for
+// the given content mode (e.g., "vision", "audio", "text").
+// Falls back to standard Render() for non-YAML profiles.
+func loadProfileTemplateForMode(profile, mode string) (path, content string, err error) {
+	var dirs []string
+	if orgPath := os.Getenv("ORG_PATH"); orgPath != "" {
+		dirs = append(dirs, filepath.Join(orgPath, "docs", "prompts", "profiles"))
+	}
+	if home, herr := os.UserHomeDir(); herr == nil {
+		dirs = append(dirs, filepath.Join(home, "code", "personal", "docs", "prompts", "profiles"))
+	}
+	var checked []string
+	for _, d := range dirs {
+		yamlPath := filepath.Join(d, profile+".yaml")
+		checked = append(checked, yamlPath)
+		if _, statErr := os.Stat(yamlPath); statErr == nil {
+			m, lerr := LoadProfileManifest(yamlPath)
+			if lerr != nil {
+				return "", "", lerr
+			}
+			rendered, rerr := m.RenderForMode(mode)
+			if rerr != nil {
+				return "", "", rerr
+			}
+			return yamlPath, rendered, nil
+		}
+		mdPath := filepath.Join(d, profile+".md")
+		checked = append(checked, mdPath)
+		b, rerr := os.ReadFile(mdPath)
+		if rerr != nil {
+			continue
+		}
+		if len(bytes.TrimSpace(b)) == 0 {
+			continue
+		}
+		return mdPath, string(b), nil
+	}
+	return "", "", fmt.Errorf("no profile prompt template for %q (checked %v)", profile, checked)
+}
+
 // claudeBinaryPath is the resolved path to the claude CLI binary.
 // Set at startup from ServerConfig.ClaudePath; defaults to "claude".
 var claudeBinaryPath = "claude"
@@ -330,11 +370,16 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.VisionModel != "" {
 		visionModelName = cfg.VisionModel
 	}
+	// EPIC-081 M3: image noise gate threshold.
+	if cfg != nil && cfg.ImageNoiseGateMinBytes > 0 {
+		imageNoiseGateMinBytes = cfg.ImageNoiseGateMinBytes
+	}
 	slog.Info("claude config resolved",
 		"event_type", "claude_config_init",
 		"claude_path", claudeBinaryPath,
 		"vision_model", visionModelName,
 		"scoring_model", claudeModel,
+		"image_noise_gate_min_bytes", imageNoiseGateMinBytes,
 	)
 }
 

@@ -309,8 +309,8 @@ func TestClassifyByIntentMetadata(t *testing.T) {
 		{"category 5 (news) → eng", makeShareReq("", 5, "", "", "", ""), "eng"},
 		{"category 6 (maps) → travel", makeShareReq("", 6, "", "", "", ""), "travel"},
 
-		// EPIC-079 M1: CATEGORY_IMAGE now mapped.
-		{"category 3 (image) → life", makeShareReq("", 3, "", "", "", ""), "life"},
+		// EPIC-081 M3: CATEGORY_IMAGE removed — image shares routed via type-based logic.
+		{"category 3 (image) → empty", makeShareReq("", 3, "", "", "", ""), ""},
 		// Unknown / unmapped categories
 		{"unknown category → empty", makeShareReq("", 99, "", "", "", ""), ""},
 

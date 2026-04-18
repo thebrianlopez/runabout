@@ -204,6 +204,13 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// Screenshot detection — unconditional, orthogonal to profile assignment.
 	detectScreenshot(req)
 
+	// EPIC-081 M2: route image file shares to image_triage profile.
+	// This bypasses the classification cascade — images always use
+	// image_triage for vision-specific rubric evaluation.
+	if req.Type == "image" && profile == "" {
+		profile = "image_triage"
+	}
+
 	// Classification cascade — unified for URL and file shares.
 	autoClassified := false
 	contentClassify := false
@@ -341,6 +348,10 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		if req.MimeType != "" {
 			parts = append(parts, "Type: "+req.MimeType)
 		}
+		// EPIC-081 M3: include file size in content synthesis.
+		if req.FileSize > 0 {
+			parts = append(parts, fmt.Sprintf("FileSize: %d bytes", req.FileSize))
+		}
 		content = strings.Join(parts, "\n")
 		if strings.TrimSpace(content) == "" {
 			slog.Info("score_async: no metadata",
@@ -367,7 +378,15 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	}
 
 	// Load profile template.
-	_, sysPrompt, err := loadProfileTemplate(profile)
+	// EPIC-081 M2: use vision mode for image shares to select vision-specific
+	// rubric axes and persona intro from the profile manifest.
+	var sysPrompt string
+	var err error
+	if req.Type == "image" {
+		_, sysPrompt, err = loadProfileTemplateForMode(profile, "vision")
+	} else {
+		_, sysPrompt, err = loadProfileTemplate(profile)
+	}
 	if err != nil {
 		slog.Warn("score_async: load template failed",
 			"event_type", "score_async_template_error",
@@ -383,10 +402,32 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// EPIC-079 M3: use vision evaluator for image shares with a readable file.
 	// EPIC-080 M7: when image file is absent, log degradation — the image is
 	// not recoverable from the queue row after the HTTP handler completes.
+	// EPIC-081 M3: noise gate — skip vision subprocess for low-metadata images
+	// to save ~$0.04/call when the image is too small and has no text context.
 	if req.Type == "image" {
 		if req.AudioPath != "" {
 			if _, statErr := os.Stat(req.AudioPath); statErr == nil {
-				eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+				// Noise gate: skip vision for images below threshold with no metadata.
+				hasMetadata := req.ExtraText != "" || req.ExtraSubject != ""
+				if req.FileSize > 0 && req.FileSize < imageNoiseGateMinBytes && !hasMetadata {
+					slog.Info("score_async: image noise gate — skipping vision",
+						"event_type", "image_noise_gate_skip",
+						"row_id", req.QueueRowID,
+						"file_size", req.FileSize,
+						"filename", req.Filename,
+						"min_bytes", imageNoiseGateMinBytes,
+					)
+					if events != nil {
+						events.Emit("image_noise_gate_skip", map[string]any{
+							"row_id":    req.QueueRowID,
+							"file_size": req.FileSize,
+							"filename":  req.Filename,
+						})
+					}
+					// Skip vision — fall through to metadata-only eval below.
+				} else {
+					eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+				}
 			}
 		} else {
 			slog.Warn("score_async: image share without file — scoring with metadata only",
@@ -538,10 +579,16 @@ func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLo
 	scoreAsync(req, q, eval, events)
 }
 
+// imageNoiseGateMinBytes is the minimum file size in bytes to invoke vision
+// subprocess. Images below this with no text metadata skip vision. Set from
+// ServerConfig.ImageNoiseGateMinBytes at startup; defaults to 1024 (1KB).
+var imageNoiseGateMinBytes int64 = 1024
+
 // validProfiles is the set of profiles that classifyContentProfile accepts.
 var validProfiles = map[string]bool{
 	"eng": true, "travel": true, "life": true,
 	"dining": true, "fashion": true, "finance": true, "music": true,
+	"image_triage": true,
 }
 
 // EPIC-038 M4: packageProfileMap maps known Android package names to Linkari
@@ -583,8 +630,9 @@ var packageProfileMap = map[string]string{
 //	CATEGORY_IMAGE = 3, CATEGORY_SOCIAL = 4, CATEGORY_NEWS = 5,
 //	CATEGORY_MAPS = 6, CATEGORY_PRODUCTIVITY = 7, CATEGORY_ACCESSIBILITY = 8
 var appCategoryProfileMap = map[int]string{
-	1: "music",  // CATEGORY_AUDIO
-	3: "life",   // CATEGORY_IMAGE
+	1: "music", // CATEGORY_AUDIO
+	// EPIC-081 M3: CATEGORY_IMAGE (3) removed — image shares are routed to
+	// image_triage by scoreAsync's type-based routing (M2), not by app category.
 	4: "life",   // CATEGORY_SOCIAL
 	5: "eng",    // CATEGORY_NEWS
 	6: "travel", // CATEGORY_MAPS
@@ -1223,10 +1271,9 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		}
 	}
 	if profile == "" {
-		// EPIC-077 M6: "eng" default replaces the legacy "voice" fallback.
-		// "voice" was a placeholder that never matched any real profile template;
-		// "eng" is the correct content-agnostic default.
-		profile = "eng"
+		// EPIC-081 M4: "life" default for voice notes — audio content is more
+		// often personal/lifestyle than engineering. Replaces EPIC-077 M6's "eng".
+		profile = "life"
 		audioClassifySource = "default_fallback"
 	}
 
@@ -1256,10 +1303,53 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		)
 	}
 
-	// Step 5: load vnote_synopsis template and generate synopsis via Haiku.
-	// EPIC-071 M2: uses execHaiku directly for plain text output instead of
-	// eval.Evaluate which expects TriageVerdict JSON.
-	_, sysPrompt, err := loadProfileTemplate("vnote_synopsis")
+	// Step 5: rubric scoring via eval.Evaluate() (EPIC-081 M4).
+	// Loads vnote_triage profile (or classified profile) with audio mode
+	// and produces a real rubric-scored verdict instead of hardcoded 100.
+	audioScore := 0
+	audioVerdict := ""
+	var audioTopicTags string
+	if q != nil {
+		q.SetProgress(rowID, "scoring")
+	}
+	_, scoreSysPrompt, scoreErr := loadProfileTemplateForMode(profile, "audio")
+	if scoreErr != nil {
+		slog.Warn("score_audio: load scoring template failed, using vnote_triage fallback",
+			"event_type", "score_audio_scoring_template_error",
+			"row_id", rowID,
+			"profile", profile,
+			"error", scoreErr,
+		)
+		// Fallback: try vnote_triage directly.
+		_, scoreSysPrompt, scoreErr = loadProfileTemplateForMode("vnote_triage", "audio")
+	}
+	if scoreErr == nil {
+		eval := HaikuJSONEvaluator{}
+		sc, evalErr := eval.Evaluate(ctx, transcript, scoreSysPrompt)
+		if evalErr != nil {
+			slog.Warn("score_audio: rubric evaluation failed, falling back to score=0",
+				"event_type", "score_audio_eval_error",
+				"row_id", rowID,
+				"error", evalErr,
+			)
+		} else {
+			audioScore = sc.Score
+			audioVerdict = sc.Verdict
+			audioTopicTags = sc.Tags
+			slog.Info("score_audio: rubric scored",
+				"event_type", "score_audio_rubric_scored",
+				"row_id", rowID,
+				"score", sc.Score,
+				"verdict", sc.Verdict,
+				"profile", profile,
+			)
+		}
+	}
+
+	// Step 6: synopsis generation via Haiku (decoupled from score).
+	// EPIC-071 M2: uses execHaiku directly for plain text output.
+	// Synopsis is used for FCM notification body, not scoring.
+	_, synopsisSysPrompt, err := loadProfileTemplate("vnote_synopsis")
 	if err != nil {
 		slog.Warn("score_audio: load vnote_synopsis template failed",
 			"event_type", "score_audio_template_error",
@@ -1273,13 +1363,13 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	}
 
 	// Replace {{transcript}} placeholder with actual transcript in the prompt.
-	sysPrompt = strings.Replace(sysPrompt, "{{transcript}}", transcript, 1)
+	synopsisSysPrompt = strings.Replace(synopsisSysPrompt, "{{transcript}}", transcript, 1)
 
 	if q != nil {
 		q.SetProgress(rowID, "summarizing")
 	}
 
-	synopsis, err := execHaiku(ctx, sysPrompt, transcript)
+	synopsis, err := execHaiku(ctx, synopsisSysPrompt, transcript)
 	if err != nil {
 		slog.Warn("score_audio: synopsis failed",
 			"event_type", "score_audio_synopsis_error",
@@ -1300,12 +1390,13 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		"synopsis", synopsis,
 	)
 
-	// Step 6: persist — score=100 ensures push delivery past any min-score floor.
+	// Step 7: persist — use rubric score from Step 5 (EPIC-081 M4).
 	if q == nil {
 		return
 	}
 	slug := fmt.Sprintf("vnote-%d", rowID)
-	if err := q.UpdateScore(rowID, 100, "", synopsis, slug); err != nil {
+	_ = audioTopicTags // topic tags available for future use
+	if err := q.UpdateScore(rowID, audioScore, audioVerdict, synopsis, slug); err != nil {
 		slog.Warn("score_audio: UpdateScore failed",
 			"event_type", "score_audio_queue_error",
 			"row_id", rowID,
@@ -1314,21 +1405,22 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		return
 	}
 
-	// Step 7: auto-archive voice notes (always — no threshold gating).
+	// Step 8: auto-archive voice notes (always — no threshold gating).
 	q.Archive(rowID)
 
-	// Step 8: FCM push via the dual-writer invariant (EPIC-051).
-	// score=100 bypasses NotifyMinScore floor. content_type="voice_note"
-	// tells the Android client to render synopsis instead of score.
+	// Step 9: FCM push via the dual-writer invariant (EPIC-051).
+	// content_type="voice_note" tells the Android client to render synopsis.
+	// EPIC-081 M4: uses rubric score instead of hardcoded 100.
 	// EPIC-077 M6: classify_source included in push payload for provenance.
 	resolvePushConfigOnce(q)
 	_, _ = q.EnqueueDigestIfDue(context.Background(),
-		profile, 100, slug, synopsis, "", "", "voice_note", audioClassifySource)
+		profile, audioScore, slug, synopsis, "", "", "voice_note", audioClassifySource)
 
 	slog.Info("score_audio: complete",
 		"event_type", "score_audio_complete",
 		"row_id", rowID,
 		"profile", profile,
+		"score", audioScore,
 		"synopsis", synopsis,
 	)
 }
