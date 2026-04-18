@@ -209,6 +209,51 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 	return out, nil
 }
 
+// runClaudeHaikuVision calls the claude CLI with the Read tool enabled so it
+// can read a local image file for multimodal scoring. The prompt instructs the
+// model to read the image at imagePath and score it. EPIC-079 M3.
+var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
+	systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching the provided schema." +
+		" This applies to ALL cases including noise-gated/skip content." +
+		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
+		" Never output markdown formatting like **Score:** — always use the JSON schema."
+	spFile, err := writeSystemPromptFile(systemPrompt)
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(spFile)
+
+	// Prompt includes instruction to read the image plus any text metadata.
+	prompt := fmt.Sprintf("Read the image file at %s and score it.\n\nMetadata:\n%s", imagePath, textContent)
+
+	cmd := exec.CommandContext(ctx, "claude",
+		"--print",
+		"--model", claudeModel,
+		"--max-turns", "3",
+		"--allowedTools", "Read",
+		"--output-format", "json",
+		"--json-schema", schema,
+		"--system-prompt-file", spFile,
+		"--effort", "low",
+		"--no-session-persistence",
+		"--bare",
+	)
+	cmd.Stdin = strings.NewReader(prompt)
+	cmd.Env = haikuEnv()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("claude vision exec: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	out := bytes.TrimSpace(stdout.Bytes())
+	if len(out) == 0 {
+		return nil, fmt.Errorf("claude vision returned empty output")
+	}
+	return out, nil
+}
+
 // envelopeMeta holds the token usage and cost metadata extracted from the
 // claude --output-format json envelope. EPIC-062 M2.
 type envelopeMeta struct {

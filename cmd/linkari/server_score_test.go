@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -622,5 +624,136 @@ func TestDetectScreenshot_FilenameFallback(t *testing.T) {
 					req.IsScreenshot, tt.wantDetected, tt.relativePath, tt.filename)
 			}
 		})
+	}
+}
+
+// EPIC-079 M5: image/document scoreAsync test coverage.
+
+// runScoreFileAsyncSync runs scoreAsync synchronously for a file share request.
+func runScoreFileAsyncSync(t *testing.T, req *ShareRequest, q *Queue, eval Evaluator) {
+	t.Helper()
+	done := make(chan struct{})
+	wrapped := &onceDoneEval{inner: eval, done: done}
+	go scoreAsync(req, q, wrapped, nil)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Log("runScoreFileAsyncSync: timed out (eval never called)")
+	}
+	time.Sleep(50 * time.Millisecond)
+}
+
+// TestScoreAsync_ImageFileMetadataOnly verifies an image share with no temp
+// file is scored using metadata alone via the standard evaluator.
+func TestScoreAsync_ImageFileMetadataOnly(t *testing.T) {
+	isolateEventsDir(t)
+
+	prev := execContentClassify
+	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+		return "life", nil
+	}
+	t.Cleanup(func() { execContentClassify = prev })
+
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	req := &ShareRequest{
+		Type:     "image",
+		Filename: "IMG-20260407-WA0003.jpg",
+		MimeType: "image/jpeg",
+		Profile:  "life",
+	}
+	id, err := q.Enqueue(req)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	req.QueueRowID = id
+
+	eval := &stubEvaluator{score: 55, verdict: "Photo of food menu"}
+	runScoreFileAsyncSync(t, req, q, eval)
+
+	if calls := atomic.LoadInt32(&eval.calls); calls != 1 {
+		t.Errorf("eval.calls = %d, want 1", calls)
+	}
+
+	items, err := q.List("", 20)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found bool
+	for _, it := range items {
+		if it.ID == id && (it.Status == "scored" || it.Status == "archived") {
+			found = true
+			if it.Score == nil || *it.Score != 55 {
+				t.Errorf("row score = %v, want 55", it.Score)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected scored/archived row for image share")
+	}
+}
+
+// TestScoreAsync_ImageVision verifies an image share with a readable temp file
+// triggers the vision path and cleans up the temp file.
+func TestScoreAsync_ImageVision(t *testing.T) {
+	isolateEventsDir(t)
+
+	prev := execContentClassify
+	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+		return "life", nil
+	}
+	t.Cleanup(func() { execContentClassify = prev })
+
+	// Create a temp image file to simulate Android upload.
+	tmpFile := filepath.Join(t.TempDir(), "test-image.jpg")
+	if err := os.WriteFile(tmpFile, []byte("fake-jpeg-data"), 0644); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	req := &ShareRequest{
+		Type:      "image",
+		Filename:  "IMG-20260407-WA0003.jpg",
+		MimeType:  "image/jpeg",
+		Profile:   "life",
+		AudioPath: tmpFile,
+	}
+	id, err := q.Enqueue(req)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	req.QueueRowID = id
+
+	// Stub the vision CLI call to avoid real API calls.
+	// Return a bare verdict (parseHaikuEnvelope shortcut requires non-empty rubric_scores).
+	prevVision := runClaudeHaikuVision
+	runClaudeHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
+		return []byte(`{"score":72,"verdict":"WhatsApp photo of receipt","rubric_scores":{"visual_clarity":80,"actionability":65},"tags":"","topic_tags":[]}`), nil
+	}
+	t.Cleanup(func() { runClaudeHaikuVision = prevVision })
+
+	eval := &stubEvaluator{score: 72, verdict: "WhatsApp photo of receipt"}
+	runScoreFileAsyncSync(t, req, q, eval)
+
+	items, err := q.List("", 20)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found bool
+	for _, it := range items {
+		if it.ID == id && (it.Status == "scored" || it.Status == "archived") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected scored/archived row for image vision share")
+	}
+
+	// Verify temp file was cleaned up by scoreAsync.
+	if _, err := os.Stat(tmpFile); !os.IsNotExist(err) {
+		t.Errorf("temp file %s should have been removed by scoreAsync", tmpFile)
 	}
 }
