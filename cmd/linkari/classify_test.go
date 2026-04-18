@@ -309,8 +309,9 @@ func TestClassifyByIntentMetadata(t *testing.T) {
 		{"category 5 (news) → eng", makeShareReq("", 5, "", "", "", ""), "eng"},
 		{"category 6 (maps) → travel", makeShareReq("", 6, "", "", "", ""), "travel"},
 
+		// EPIC-079 M1: CATEGORY_IMAGE now mapped.
+		{"category 3 (image) → life", makeShareReq("", 3, "", "", "", ""), "life"},
 		// Unknown / unmapped categories
-		{"category 3 (image) — no mapping → empty", makeShareReq("", 3, "", "", "", ""), ""},
 		{"unknown category → empty", makeShareReq("", 99, "", "", "", ""), ""},
 
 		// Package takes precedence over category (code checks package first)

@@ -80,10 +80,6 @@ type ShareRequest struct {
 	// not used in classification or scoring decisions. Retained for future
 	// use (e.g., early rejection of oversized non-audio document shares).
 	FileSize int64 `json:"file_size,omitempty"`
-	// DateAdded is the MediaStore COLUMN_DATE_ADDED timestamp (seconds since epoch).
-	// Telemetry-only — not used in classification or scoring decisions. Retained
-	// for audit trail and future temporal heuristics.
-	DateAdded string `json:"date_added,omitempty"`
 	RelativePath   string `json:"relative_path,omitempty"`
 	Filename       string `json:"filename,omitempty"`
 
@@ -779,8 +775,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 					req.FileSize = n
 				}
 			case "date_added":
-				b, _ := io.ReadAll(io.LimitReader(part, 64))
-				req.DateAdded = string(b)
+				// EPIC-079 M5: DateAdded removed from ShareRequest — drain but ignore.
+				io.Copy(io.Discard, part)
 			case "relative_path":
 				b, _ := io.ReadAll(io.LimitReader(part, 1024))
 				req.RelativePath = string(b)
@@ -962,39 +958,21 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	//
 	// Profile is only set here if it was not already resolved by
 	// resolveShareAction (e.g. caller-wins for prefix-mapped actions).
+	// EPIC-079 M2: unified sync cascade (stages 1-5 only, no LLM).
 	if req.Profile == "" {
-		if p := classifyByIntentMetadata(&req); p != "" {
-			req.Profile = p
-			req.ClassifySource = "intent_metadata"
-		} else if req.Filename != "" {
-			if p := classifyByFilename(req.Filename); p != "" {
-				req.Profile = p
-				req.ClassifySource = "filename"
-			}
-		}
-		if req.Profile == "" && req.ExtraSubject != "" {
-			if p := classifyBySubjectKeywords(req.ExtraSubject); p != "" {
-				req.Profile = p
-				req.ClassifySource = "subject_keywords"
-			}
-		}
-		if req.Profile == "" && req.RelativePath != "" {
-			if p, _ := classifyByRelativePath(req.RelativePath); p != "" {
-				req.Profile = p
-				req.ClassifySource = "relative_path"
-			}
-		}
-		if req.Profile == "" && req.URL != "" {
-			classified, matched := classifyURLProfile(req.URL)
-			req.Profile = classified
-			if matched {
-				req.ClassifySource = "url_domain"
-			} else {
-				req.ClassifySource = "url_domain_fallback"
-			}
-		}
+		req.Profile, req.ClassifySource = classifyShareRequestFast(&req)
 	} else {
 		req.ClassifySource = "caller"
+	}
+	// Emit classify_stage_win for pre-enqueue telemetry (EPIC-079 M2).
+	if s.events != nil && req.ClassifySource != "" {
+		_ = s.events.Emit("classify_stage_win", map[string]interface{}{
+			"url":             req.URL,
+			"profile":         req.Profile,
+			"classify_source": req.ClassifySource,
+			"phase":           "pre_enqueue",
+			"content_type":    req.Type,
+		})
 	}
 
 	// EPIC-078 M5: pre-enqueue dedup for file shares. When the same filename

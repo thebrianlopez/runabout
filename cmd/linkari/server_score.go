@@ -191,6 +191,12 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
+	// EPIC-079 M3: clean up temp file for image/document shares.
+	// scoreAsync now owns the temp file (disarmed in handleShare via audioCleanup="").
+	if req.AudioPath != "" && req.Type != "audio" {
+		defer os.Remove(req.AudioPath)
+	}
+
 	isURLShare := req.Type == "url"
 	rawURL := req.URL
 	profile := req.Profile
@@ -211,11 +217,11 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			contentClassify = true
 		}
 	}
+	// EPIC-079 M1: removed default_fallback block — file shares now fall
+	// through to stage-6 LLM classify in scoreAsync (classifyContentProfile)
+	// instead of being hardcoded to "eng".
 	if profile == "" && !isURLShare {
-		// File shares with no classification default to "eng".
-		profile = "eng"
-		autoClassified = true
-		classifySource = "default_fallback"
+		contentClassify = true
 	}
 
 	// Emit classify_stage_win for telemetry (EPIC-077 M6).
@@ -344,6 +350,20 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			)
 			return
 		}
+
+		// EPIC-079 M1: stage-6 LLM classify for file shares that had no
+		// profile signal from the fast cascade.
+		if contentClassify {
+			if classified := classifyContentProfile(ctx, content); classified != "" {
+				slog.Info("score_async: file content-classified",
+					"event_type", "score_async_content_classify",
+					"type", req.Type,
+					"content_classified", classified,
+				)
+				profile = classified
+				classifySource = "content"
+			}
+		}
 	}
 
 	// Load profile template.
@@ -358,6 +378,13 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	}
 	if autoClassified {
 		sysPrompt = classificationPreamble(profile, rawURL, classifySource) + sysPrompt
+	}
+
+	// EPIC-079 M3: use vision evaluator for image shares with a readable file.
+	if req.Type == "image" && req.AudioPath != "" {
+		if _, statErr := os.Stat(req.AudioPath); statErr == nil {
+			eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+		}
 	}
 
 	// Evaluate via Haiku.
@@ -422,8 +449,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		itemURL = ""
 	}
 
-	// URL-only: persist topic tags.
-	if isURLShare && len(sc.TopicTags) > 0 {
+	// EPIC-079 M4: persist topic tags for all share types (was URL-only).
+	if len(sc.TopicTags) > 0 {
 		if tagErr := q.SetTopicTags(itemID, sc.TopicTags); tagErr != nil {
 			slog.Warn("score_async: SetTopicTags failed", "id", itemID, "error", tagErr)
 		}
@@ -531,6 +558,7 @@ var packageProfileMap = map[string]string{
 //	CATEGORY_MAPS = 6, CATEGORY_PRODUCTIVITY = 7, CATEGORY_ACCESSIBILITY = 8
 var appCategoryProfileMap = map[int]string{
 	1: "music",  // CATEGORY_AUDIO
+	3: "life",   // CATEGORY_IMAGE
 	4: "life",   // CATEGORY_SOCIAL
 	5: "eng",    // CATEGORY_NEWS
 	6: "travel", // CATEGORY_MAPS
@@ -844,6 +872,45 @@ func classifyShareRequest(ctx context.Context, req *ShareRequest) (profile, sour
 	return "", ""
 }
 
+// classifyShareRequestFast runs stages 1-5 of the classification cascade
+// (intent_metadata → filename → subject_keywords → relative_path → url_domain)
+// without any LLM calls. This is the synchronous pre-enqueue classification
+// used in handleShare. Stage-6 (Haiku LLM) runs async in scoreAsync.
+// EPIC-079 M2.
+func classifyShareRequestFast(req *ShareRequest) (profile, source string) {
+	// Stage 1: intent metadata.
+	if p := classifyByIntentMetadata(req); p != "" {
+		return p, "intent_metadata"
+	}
+	// Stage 2: filename keywords.
+	if req.Filename != "" {
+		if p := classifyByFilename(req.Filename); p != "" {
+			return p, "filename"
+		}
+	}
+	// Stage 3: subject keywords.
+	if req.ExtraSubject != "" {
+		if p := classifyBySubjectKeywords(req.ExtraSubject); p != "" {
+			return p, "subject_keywords"
+		}
+	}
+	// Stage 4: relativePath prefix.
+	if req.RelativePath != "" {
+		if p, _ := classifyByRelativePath(req.RelativePath); p != "" {
+			return p, "relative_path"
+		}
+	}
+	// Stage 5: URL domain heuristic.
+	if req.URL != "" {
+		classified, matched := classifyURLProfile(req.URL)
+		if matched {
+			return classified, "url_domain"
+		}
+		return classified, "url_domain_fallback"
+	}
+	return "", ""
+}
+
 // classifyIntentProfile uses intent metadata to classify a non-URL share into
 // the best-matching profile. Delegates to classifyShareRequest for the unified
 // cascade. Retained for backward-compat with scoreAudioAsync callers.
@@ -857,7 +924,7 @@ func classifyIntentProfile(ctx context.Context, req *ShareRequest) string {
 
 // contentClassifyPrompt is the system prompt for the lightweight Haiku
 // classification call. Designed for minimal token usage.
-const contentClassifyPrompt = "Given URL content, respond with exactly one profile name from: eng, travel, life, dining, fashion, finance, music. No explanation."
+const contentClassifyPrompt = "Given shared content metadata or web page text, respond with exactly one profile name from: eng, travel, life, dining, fashion, finance, music. No explanation."
 
 // execContentClassify is the function var used to call Haiku for content
 // classification. Tests override this to avoid real API calls.
