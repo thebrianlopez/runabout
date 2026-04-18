@@ -125,6 +125,53 @@ func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate 
 	return sc, nil
 }
 
+// HaikuVisionEvaluator implements Evaluator for image shares. It calls the
+// claude CLI with the Read tool enabled so it can read local image files for
+// multimodal scoring. EPIC-079 M3.
+type HaikuVisionEvaluator struct {
+	ImagePath string // path to the local image file
+}
+
+func (e HaikuVisionEvaluator) Name() string { return "claude-haiku-vision" }
+
+func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTemplate string) (*Scorecard, error) {
+	start := time.Now()
+	raw, err := runClaudeHaikuVision(ctx, promptTemplate, content, e.ImagePath, triageVerdictSchema)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		return nil, fmt.Errorf("haiku-vision: %w", err)
+	}
+	v, meta, err := parseHaikuEnvelope(raw)
+	if err != nil {
+		return nil, fmt.Errorf("haiku-vision parse: %w", err)
+	}
+	sc := &Scorecard{
+		Score:          v.Score,
+		Verdict:        v.Verdict,
+		Gaps:           v.ActionItems,
+		Tags:           v.Tags,
+		TopicTags:      v.TopicTags,
+		RubricScores:   v.RubricScores,
+		RawMarkdown:    v.RenderMarkdown(),
+		Profile:        v.Profile,
+		ProfileVersion: v.ProfileVersion,
+		Backend:        "claude-haiku-vision",
+		LatencyMs:      latency,
+	}
+	if meta != nil {
+		sc.CostUSD = meta.CostUSD
+		sc.Usage = meta.Usage
+		slog.Info("evaluator: token usage",
+			"backend", "claude-haiku-vision",
+			"cost_usd", meta.CostUSD,
+			"input_tokens", tokenCount(meta.Usage, true),
+			"output_tokens", tokenCount(meta.Usage, false),
+			"latency_ms", latency,
+		)
+	}
+	return sc, nil
+}
+
 // tokenCount safely extracts input or output token count from a TokenUsage pointer.
 func tokenCount(u *TokenUsage, input bool) int {
 	if u == nil {
