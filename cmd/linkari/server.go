@@ -111,6 +111,7 @@ type ShareResponse struct {
 	ID             int64  `json:"id,omitempty"`              // queue row id for client correlation (U1)
 	Slug           string `json:"slug,omitempty"`            // URL slug for /archive polling (U1)
 	ClassifySource string `json:"classify_source,omitempty"` // EPIC-076: pre-goroutine routing signal; absent on async ServerScore path
+	Duplicate      bool   `json:"duplicate,omitempty"`       // EPIC-078 M5: true when a recent identical file share was found
 }
 
 // RingLog is a thread-safe ring buffer that captures log lines and
@@ -994,6 +995,33 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		req.ClassifySource = "caller"
+	}
+
+	// EPIC-078 M5: pre-enqueue dedup for file shares. When the same filename
+	// and file size have been enqueued within the last 5 minutes, return the
+	// existing row ID immediately rather than creating a duplicate queue entry.
+	// Applies only to file shares (non-empty Filename + positive FileSize).
+	// URL shares use a separate dedup path via ScoreByURL.
+	const fileDedupWindow = 5 * time.Minute
+	if s.queue != nil && req.Filename != "" && req.FileSize > 0 {
+		if existing, err := s.queue.FindRecentFile(req.Filename, req.FileSize, fileDedupWindow); err != nil {
+			slog.WarnContext(ctx, "share: FindRecentFile error (dedup skipped)", "error", err)
+		} else if existing != nil {
+			slog.InfoContext(ctx, "share: duplicate file share suppressed",
+				"event_type", "share_file_dedup",
+				"existing_id", existing.ID,
+				"filename", req.Filename,
+				"file_size", req.FileSize,
+			)
+			writeJSON(w, http.StatusOK, ShareResponse{
+				Status:    "ok",
+				Message:   "duplicate",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				ID:        existing.ID,
+				Duplicate: true,
+			})
+			return
+		}
 	}
 
 	// Enqueue for persistence (before routing — survives tmux failures).
