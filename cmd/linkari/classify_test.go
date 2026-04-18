@@ -334,6 +334,164 @@ func TestClassifyByIntentMetadata(t *testing.T) {
 	}
 }
 
+// --- detectScreenshot (EPIC-077 M4) ------------------------------------------
+
+func TestDetectScreenshot(t *testing.T) {
+	cases := []struct {
+		name         string
+		relPath      string
+		wantScreenshot bool
+	}{
+		{"DCIM/Screenshots → screenshot", "DCIM/Screenshots/shot.jpg", true},
+		{"Pictures/Screenshots → screenshot", "Pictures/Screenshots/shot.jpg", true},
+		{"Screencap → screenshot", "Screencap/2026/shot.jpg", true},
+		{"Music/ → not screenshot", "Music/track.mp3", false},
+		{"Download/ → not screenshot", "Download/file.pdf", false},
+		{"empty → not screenshot", "", false},
+		{"DCIM/Camera → not screenshot", "DCIM/Camera/photo.jpg", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := &ShareRequest{RelativePath: c.relPath, IsScreenshot: false}
+			detectScreenshot(req)
+			if req.IsScreenshot != c.wantScreenshot {
+				t.Errorf("detectScreenshot(%q): IsScreenshot=%v, want %v", c.relPath, req.IsScreenshot, c.wantScreenshot)
+			}
+		})
+	}
+}
+
+// TestDetectScreenshot_PreExisting verifies detectScreenshot does not clear
+// an already-set IsScreenshot flag (e.g. set by Android client).
+func TestDetectScreenshot_PreExisting(t *testing.T) {
+	req := &ShareRequest{IsScreenshot: true, RelativePath: "Music/track.mp3"}
+	detectScreenshot(req)
+	if !req.IsScreenshot {
+		t.Error("detectScreenshot must not clear pre-set IsScreenshot=true")
+	}
+}
+
+// --- classifyShareRequest (EPIC-077 M4) --------------------------------------
+
+func TestClassifyShareRequest_Cascade(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name        string
+		req         *ShareRequest
+		llmReturn   string
+		wantProfile string
+		wantSource  string
+		wantLLM     bool
+	}{
+		{
+			name:        "stage 1: known package wins",
+			req:         makeShareReq("com.spotify.music", 0, "", "", "", ""),
+			wantProfile: "music",
+			wantSource:  "intent_metadata",
+			wantLLM:     false,
+		},
+		{
+			name:        "stage 2: filename keyword wins",
+			req:         makeShareReq("", 0, "invoice_2024.pdf", "", "", ""),
+			wantProfile: "finance",
+			wantSource:  "filename",
+			wantLLM:     false,
+		},
+		{
+			name:        "stage 3: subject keyword wins",
+			req:         makeShareReq("", 0, "", "", "Best flight deals this summer", ""),
+			wantProfile: "travel",
+			wantSource:  "subject_keywords",
+			wantLLM:     false,
+		},
+		{
+			name:        "stage 4: relativePath wins",
+			req:         makeShareReq("", 0, "", "Music/track.mp3", "", ""),
+			wantProfile: "music",
+			wantSource:  "relative_path",
+			wantLLM:     false,
+		},
+		{
+			name: "stage 5: URL domain positive match",
+			req: &ShareRequest{
+				URL:  "https://github.com/foo/bar",
+				Type: "url",
+			},
+			wantProfile: "eng",
+			wantSource:  "url_domain",
+			wantLLM:     false,
+		},
+		{
+			name: "stage 5: URL domain fallback returns sentinel",
+			req: &ShareRequest{
+				URL:  "https://unknown-site.example.com/page",
+				Type: "url",
+			},
+			wantProfile: "eng",
+			wantSource:  "url_domain_fallback",
+			wantLLM:     false,
+		},
+		{
+			name:        "stage 6: LLM hints fallback fires when no URL",
+			req:         makeShareReq("", 0, "", "", "", "Best pasta I have ever had"),
+			llmReturn:   "dining",
+			wantProfile: "dining",
+			wantSource:  "content_llm_hints",
+			wantLLM:     true,
+		},
+		{
+			name:        "all miss, no hints → empty",
+			req:         makeShareReq("", 0, "", "", "", ""),
+			wantProfile: "",
+			wantSource:  "",
+			wantLLM:     false,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			llmCalls := 0
+			prev := execContentClassify
+			execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+				llmCalls++
+				return c.llmReturn, nil
+			}
+			t.Cleanup(func() { execContentClassify = prev })
+
+			gotProfile, gotSource := classifyShareRequest(ctx, c.req)
+
+			if gotProfile != c.wantProfile {
+				t.Errorf("classifyShareRequest() profile=%q, want %q", gotProfile, c.wantProfile)
+			}
+			if gotSource != c.wantSource {
+				t.Errorf("classifyShareRequest() source=%q, want %q", gotSource, c.wantSource)
+			}
+			if c.wantLLM && llmCalls == 0 {
+				t.Error("expected LLM stub to be called, but it was not")
+			}
+			if !c.wantLLM && llmCalls > 0 {
+				t.Errorf("expected LLM stub NOT called, but was called %d times", llmCalls)
+			}
+		})
+	}
+}
+
+// TestClassifyShareRequest_ScreenshotNotConsumed verifies that the screenshot
+// path (relativePath=DCIM/Screenshots) does NOT produce a profile from
+// classifyShareRequest — screenshot detection is detectScreenshot's job, and
+// classifyShareRequest skips screenshot entries in relativePathPrefixes.
+func TestClassifyShareRequest_ScreenshotNotConsumed(t *testing.T) {
+	ctx := context.Background()
+	req := makeShareReq("", 0, "", "DCIM/Screenshots/shot.jpg", "", "")
+	gotProfile, gotSource := classifyShareRequest(ctx, req)
+	// Screenshot path has isScreenshot=true, profile="" — classifyShareRequest
+	// should not assign a profile from it.
+	if gotProfile != "" || gotSource != "" {
+		t.Errorf("classifyShareRequest() should not classify screenshot relPath; got profile=%q source=%q", gotProfile, gotSource)
+	}
+}
+
 // --- classifyIntentProfile cascade -------------------------------------------
 
 func TestClassifyIntentProfile_Cascade(t *testing.T) {

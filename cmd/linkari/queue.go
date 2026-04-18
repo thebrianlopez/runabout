@@ -54,9 +54,10 @@ type QueueItem struct {
 	FeedbackAt   string `json:"feedback_at,omitempty"`
 	Title        string `json:"title,omitempty"`
 	RubricScores string `json:"rubric_scores,omitempty"`
-	TopicTags    string `json:"topic_tags,omitempty"`
-	ClusterID    *int64 `json:"cluster_id,omitempty"`
-	ActionRoute  string `json:"action_route,omitempty"`
+	TopicTags      string `json:"topic_tags,omitempty"`
+	ClusterID      *int64 `json:"cluster_id,omitempty"`
+	ActionRoute    string `json:"action_route,omitempty"`
+	ClassifySource string `json:"classify_source,omitempty"` // EPIC-077 M1
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -178,6 +179,8 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE queue ADD COLUMN calling_package TEXT DEFAULT ''",
 		"ALTER TABLE queue ADD COLUMN relative_path TEXT DEFAULT ''",
 		"ALTER TABLE queue ADD COLUMN file_name TEXT DEFAULT ''",
+		// EPIC-077 M1: classification source — which cascade stage won pre-enqueue.
+		"ALTER TABLE queue ADD COLUMN classify_source TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -228,9 +231,10 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	// as push_outbox grows. Both statements are idempotent.
 	pushMigrations := []string{
 		"ALTER TABLE push_outbox ADD COLUMN profile TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE push_outbox ADD COLUMN gap_summary TEXT NOT NULL DEFAULT ''",    // EPIC-058 M7
-		"ALTER TABLE push_outbox ADD COLUMN content_type TEXT NOT NULL DEFAULT ''", // EPIC-071 M3
-		"ALTER TABLE push_outbox ADD COLUMN action_route TEXT NOT NULL DEFAULT ''", // EPIC-072 M9
+		"ALTER TABLE push_outbox ADD COLUMN gap_summary TEXT NOT NULL DEFAULT ''",       // EPIC-058 M7
+		"ALTER TABLE push_outbox ADD COLUMN content_type TEXT NOT NULL DEFAULT ''",     // EPIC-071 M3
+		"ALTER TABLE push_outbox ADD COLUMN action_route TEXT NOT NULL DEFAULT ''",     // EPIC-072 M9
+		"ALTER TABLE push_outbox ADD COLUMN classify_source TEXT NOT NULL DEFAULT ''",  // EPIC-077 M6
 	}
 	for _, m := range pushMigrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -337,13 +341,15 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 }
 
 // Enqueue inserts a share request into the queue with status=pending.
+// req.ClassifySource (EPIC-077 M1) is persisted to the classify_source column
+// to record which pre-enqueue cascade stage determined the profile.
 func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name)
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
 		req.URL, req.Text, req.Type, req.Action, req.Profile, now, req.Title,
-		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename,
+		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename, req.ClassifySource,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue: %w", err)
@@ -353,6 +359,7 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 		"event_type", "queue_enqueue",
 		"id", id,
 		"type", req.Type,
+		"classify_source", req.ClassifySource,
 	)
 	return id, nil
 }
@@ -360,13 +367,14 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 // EnqueueScored inserts a share request as pre-scored (status=scored, score=0).
 // Used by auto_score actions (EPIC-057 ginit_*) so the RelayedWatchdog never
 // sweeps these rows — they skip the pending→relayed→scored progression.
+// req.ClassifySource (EPIC-077 M1) is persisted to the classify_source column.
 func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, score, verdict, queued_at, scored_at, title, mime_type, calling_package, relative_path, file_name)
-		 VALUES (?, ?, ?, ?, ?, 'scored', 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO queue (url, text, type, action, profile, status, score, verdict, queued_at, scored_at, title, mime_type, calling_package, relative_path, file_name, classify_source)
+		 VALUES (?, ?, ?, ?, ?, 'scored', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.URL, req.Text, req.Type, req.Action, req.Profile, verdict, now, now, req.Title,
-		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename,
+		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename, req.ClassifySource,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue scored: %w", err)
@@ -377,11 +385,12 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 		"id", id,
 		"type", req.Type,
 		"verdict", verdict,
+		"classify_source", req.ClassifySource,
 	)
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,'')"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,'')"
 
 // Pending returns all items with status=pending, ordered by id ASC (FIFO).
 func (q *Queue) Pending() ([]QueueItem, error) {
@@ -571,6 +580,40 @@ func (q *Queue) UpdateScore(id int64, score int, tags, verdict, slug string, rub
 		score, tags, verdict, slug, now, rubricJSON, id,
 	)
 	return err
+}
+
+// ScoreByID updates a queue row to scored status, using row ID as the key.
+// Used by scoreAsync (EPIC-077 M5) for file shares where no URL is available
+// for URL-based dedup lookup. Includes an idempotency guard modeled on
+// ScoreByURL: if the row is already scored or archived, the update is skipped.
+// Returns (true, nil) when the row was updated; (false, nil) when already scored/archived.
+func (q *Queue) ScoreByID(rowID int64, score int, tags, verdict, slug string, rubricScores ...map[string]int) (bool, error) {
+	// Idempotency guard: skip if already scored or archived.
+	var status string
+	err := q.db.QueryRow("SELECT status FROM queue WHERE id=?", rowID).Scan(&status)
+	if err != nil {
+		return false, fmt.Errorf("ScoreByID status check id=%d: %w", rowID, err)
+	}
+	if status == "scored" || status == "archived" {
+		return false, nil
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	rubricJSON := ""
+	if len(rubricScores) > 0 && rubricScores[0] != nil {
+		if b, err := json.Marshal(rubricScores[0]); err == nil {
+			rubricJSON = string(b)
+		}
+	}
+	res, err := q.db.Exec(
+		"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=? WHERE id=?",
+		score, tags, verdict, slug, now, rubricJSON, rowID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("ScoreByID update id=%d: %w", rowID, err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // SetActionRoute persists the action_route on a queue item (EPIC-072 M9).
@@ -1040,21 +1083,22 @@ func (q *Queue) SearchFTS5(query string, profile string, limit int) ([]QueueItem
 
 // PushItem is a row in the push_outbox table.
 type PushItem struct {
-	ID          int64
-	Score       int
-	Slug        string
-	Verdict     string
-	URL         string
-	Kind        string
-	Profile     string // EPIC-061: auto-classified profile for FCM payload
-	Status      string
-	Attempts    int
-	NextAttempt int64
-	CreatedAt   int64
-	UpdatedAt   int64
-	LastError   string
-	GapSummary  string // EPIC-058 M7
-	ContentType string // EPIC-071 M3: "voice_note" for audio shares
+	ID             int64
+	Score          int
+	Slug           string
+	Verdict        string
+	URL            string
+	Kind           string
+	Profile        string // EPIC-061: auto-classified profile for FCM payload
+	Status         string
+	Attempts       int
+	NextAttempt    int64
+	CreatedAt      int64
+	UpdatedAt      int64
+	LastError      string
+	GapSummary     string // EPIC-058 M7
+	ContentType    string // EPIC-071 M3: "voice_note" for audio shares
+	ClassifySource string // EPIC-077 M6: cascade stage that produced the profile
 }
 
 // EnqueuePush inserts a pending row into push_outbox and returns its id.
@@ -1150,10 +1194,14 @@ func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score in
 	if len(gapSummary) > 1 {
 		ct = gapSummary[1] // EPIC-071 M3: optional content_type (e.g. "voice_note")
 	}
+	cs := ""
+	if len(gapSummary) > 2 {
+		cs = gapSummary[2] // EPIC-077 M6: optional classify_source
+	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, gap_summary, content_type, status, attempts, next_attempt, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 'digest', ?, ?, ?, 'pending', 0, ?, ?, ?)`,
-		score, slug, verdict, url, profile, gs, ct, now, now, now,
+		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, gap_summary, content_type, classify_source, status, attempts, next_attempt, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 'digest', ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+		score, slug, verdict, url, profile, gs, ct, cs, now, now, now,
 	)
 	if err != nil {
 		return EnqueueDigestResult{}, fmt.Errorf("insert digest: %w", err)
@@ -1191,7 +1239,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 		limit = 50
 	}
 	rows, err := q.db.Query(
-		`SELECT id, score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at, last_error, gap_summary, content_type
+		`SELECT id, score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at, last_error, gap_summary, content_type, COALESCE(classify_source,'')
 		 FROM push_outbox WHERE status='pending' AND next_attempt <= ? ORDER BY id ASC LIMIT ?`,
 		time.Now().Unix(), limit,
 	)
@@ -1202,7 +1250,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 	var items []PushItem
 	for rows.Next() {
 		var p PushItem
-		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Profile, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError, &p.GapSummary, &p.ContentType); err != nil {
+		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Profile, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError, &p.GapSummary, &p.ContentType, &p.ClassifySource); err != nil {
 			return nil, err
 		}
 		items = append(items, p)
@@ -1481,7 +1529,7 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 	for rows.Next() {
 		var it QueueItem
 		var score int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute); err != nil {
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource); err != nil {
 			return nil, err
 		}
 		if score != 0 {

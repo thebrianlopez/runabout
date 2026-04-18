@@ -127,7 +127,7 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 			})
 			continue
 		}
-		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary, p.ContentType); err != nil {
+		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary, p.ContentType, p.ClassifySource); err != nil {
 			attempts := p.Attempts + 1
 			if attempts >= pushMaxAttempts {
 				_ = s.queue.MarkPushDead(p.ID, err.Error())
@@ -221,7 +221,9 @@ func emitShareActionResolved(res ShareResolution, url string, queueID int64) {
 // the FCM data payload so the Android client can display it.
 // EPIC-071 M3: contentType parameter added — "voice_note" triggers a
 // different notification title/body and includes content_type in the data map.
-func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, profile, gapSummary, contentType string) error {
+// EPIC-077 M6: classifySource parameter added — included in FCM data payload
+// so the Android client can surface classification provenance in debug views.
+func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, profile, gapSummary, contentType, classifySource string) error {
 	tok, err := s.fcmTokenSource.Token()
 	if err != nil {
 		return fmt.Errorf("obtaining oauth2 token: %w", err)
@@ -255,13 +257,14 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 				"body":  notifBody,
 			},
 			"data": map[string]string{
-				"slug":         slug,
-				"verdict":      verdict,
-				"url":          url,
-				"score":        fmt.Sprintf("%d", score),
-				"profile":      profile,
-				"gap_summary":  gapSummary,
-				"content_type": contentType,
+				"slug":            slug,
+				"verdict":         verdict,
+				"url":             url,
+				"score":           fmt.Sprintf("%d", score),
+				"profile":         profile,
+				"gap_summary":     gapSummary,
+				"content_type":    contentType,
+				"classify_source": classifySource,
 			},
 			"android": map[string]string{
 				"priority": "high",

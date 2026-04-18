@@ -91,18 +91,19 @@ type ShareRequest struct {
 	AudioPath        string `json:"-"` // EPIC-067: temp file path for uploaded audio
 	QueueRowID       int64  `json:"-"` // EPIC-067: queue row ID for audio scoring (no URL to match on)
 	OriginalFilename string `json:"-"` // EPIC-071: original filename from multipart upload
+	ClassifySource   string `json:"-"` // EPIC-077 M1: cascade stage that won pre-enqueue classification
 }
 
 // ShareResponse is the structured JSON response.
 // EPIC-055 U1: id and slug are included so the Android client can poll
 // /archive?status=scored for the scored row without a separate lookup.
 //
-// EPIC-076 M2: ClassifySource reflects the pre-goroutine routing signal
-// (e.g. "caller", "domain_fallback"). For ServerScore=true actions the
-// full classification cascade runs inside scoreURLAsync/scoreFileAsync
-// goroutines after this response has already been sent — those paths
-// cannot populate ClassifySource synchronously. A TODO is tracked to
-// surface the async classify_source via /queue/{id} or FCM push payload.
+// EPIC-077 M1: ClassifySource reflects the pre-enqueue synchronous cascade
+// stage that determined the profile (e.g. "intent_metadata", "url_domain",
+// "caller"). Always populated — the fast cascade runs synchronously before
+// Enqueue. The async Haiku content classification in scoreURLAsync may
+// override the profile after this response is sent; the final classify_source
+// is surfaced via /queue/{id} (EPIC-077 M6).
 type ShareResponse struct {
 	Status         string `json:"status"`
 	Message        string `json:"message"`
@@ -845,7 +846,14 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			"type", req.Type, "action", req.Action, "audio_size", audioWritten,
 			"temp_path", req.AudioPath, "mime_type", req.MimeType,
 			"calling_package", req.CallingPackage, "profile", req.Profile,
+			"filename", req.Filename, "relative_path", req.RelativePath,
+			"is_screenshot", req.IsScreenshot, "file_size", req.FileSize,
 		)
+		if s.debug {
+			if raw, err := json.MarshalIndent(req, "", "  "); err == nil {
+				fmt.Fprintf(s.ring.Writer(), "DEBUG share payload (multipart):\n%s\n", raw)
+			}
+		}
 	} else {
 		// Existing JSON path.
 		r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
@@ -861,7 +869,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		)
 		if s.debug {
 			if raw, err := json.MarshalIndent(req, "", "  "); err == nil {
-				slog.DebugContext(ctx, "share payload (debug)", "body", string(raw))
+				fmt.Fprintf(s.ring.Writer(), "DEBUG share payload (debug):\n%s\n", raw)
 			}
 		}
 	}
@@ -882,6 +890,21 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		slog.DebugContext(ctx, "share rejected: validation error", "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// EPIC-077 M2: Jira reroute fires first — before scoped-auth and before
+	// resolveShareAction. Ordering invariant:
+	//   1. routeJiraURL (uinit_auto + Jira URL → ginit_auto)
+	//   2. checkScopedAuth (sees post-reroute action — mobile token rejected for ginit_*)
+	//   3. resolveShareAction (full caller-wins resolution, minus Jira rerouting)
+	//
+	// This makes the Jira Ingress Invariant (EPIC-057) explicit and independently
+	// testable. routeJiraURL mutates req.Action when rerouting applies.
+	if s.router.RouteJiraURL(&req) {
+		slog.DebugContext(ctx, "share: jira auto-rerouted to ginit_auto",
+			"event_type", "share_jira_rerouted",
+			"url", req.URL,
+		)
 	}
 
 	// EPIC-052: resolve (action, profile) provenance BEFORE any DB write so
@@ -919,6 +942,53 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	emitShareActionResolved(resolution, req.URL, 0)
+
+	// EPIC-077 M1: synchronous fast-cascade classification pre-enqueue.
+	// Runs the pure, IO-free stages (<1ms total) so classify_source is persisted
+	// on the queue row at enqueue time. The slow stage (classifyContentProfile
+	// via Haiku LLM) remains async inside scoreURLAsync/scoreFileAsync goroutines.
+	//
+	// Two-phase classification model:
+	//   Phase 1 (sync, pre-enqueue, <1ms): intent_metadata → filename →
+	//     subject_keywords → relative_path → url_domain heuristics.
+	//   Phase 2 (async, post-enqueue): Haiku content classification override.
+	//
+	// Profile is only set here if it was not already resolved by
+	// resolveShareAction (e.g. caller-wins for prefix-mapped actions).
+	if req.Profile == "" {
+		if p := classifyByIntentMetadata(&req); p != "" {
+			req.Profile = p
+			req.ClassifySource = "intent_metadata"
+		} else if req.Filename != "" {
+			if p := classifyByFilename(req.Filename); p != "" {
+				req.Profile = p
+				req.ClassifySource = "filename"
+			}
+		}
+		if req.Profile == "" && req.ExtraSubject != "" {
+			if p := classifyBySubjectKeywords(req.ExtraSubject); p != "" {
+				req.Profile = p
+				req.ClassifySource = "subject_keywords"
+			}
+		}
+		if req.Profile == "" && req.RelativePath != "" {
+			if p, _ := classifyByRelativePath(req.RelativePath); p != "" {
+				req.Profile = p
+				req.ClassifySource = "relative_path"
+			}
+		}
+		if req.Profile == "" && req.URL != "" {
+			classified, matched := classifyURLProfile(req.URL)
+			req.Profile = classified
+			if matched {
+				req.ClassifySource = "url_domain"
+			} else {
+				req.ClassifySource = "url_domain_fallback"
+			}
+		}
+	} else {
+		req.ClassifySource = "caller"
+	}
 
 	// Enqueue for persistence (before routing — survives tmux failures).
 	// EPIC-057: actions with AutoScore=true are enqueued as pre-scored so the
@@ -967,7 +1037,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 				Timestamp:      time.Now().UTC().Format(time.RFC3339),
 				ID:             queueID,
 				Slug:           urlToSlug(req.URL),
-				ClassifySource: resolution.Reason,
+				ClassifySource: req.ClassifySource,
 			})
 			return
 		}
@@ -997,6 +1067,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		"profile", req.Profile,
 		"title", req.Title,
 		"result", result,
+		"queue_id", queueID,
+		"filename", req.Filename,
 	)
 	writeJSON(w, http.StatusOK, ShareResponse{
 		Status:         "ok",
@@ -1004,7 +1076,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		Timestamp:      time.Now().UTC().Format(time.RFC3339),
 		ID:             queueID,
 		Slug:           urlToSlug(req.URL),
-		ClassifySource: resolution.Reason,
+		ClassifySource: req.ClassifySource,
 	})
 }
 
@@ -1726,7 +1798,7 @@ func (s *Server) handleTestPush(w http.ResponseWriter, r *http.Request) {
 		testURL     = "https://linkari.test/ping"
 	)
 
-	if err := sendOutboxFCM(s, deviceToken, testScore, testSlug, testVerdict, testURL, "", "", ""); err != nil {
+	if err := sendOutboxFCM(s, deviceToken, testScore, testSlug, testVerdict, testURL, "", "", "", ""); err != nil {
 		slog.WarnContext(ctx, "test push: FCM send failed", "error", err)
 		emitPushEvent("push_test_failed", map[string]interface{}{
 			"reason":    "fcm_send_failed",
@@ -1921,10 +1993,13 @@ func (s *Server) emitShareEvent(req *ShareRequest, status string, start time.Tim
 		return
 	}
 	meta := map[string]interface{}{
-		"profile":     req.Profile,
-		"url_domain":  domainFromURL(rawURL),
-		"status":      status,
-		"duration_ms": time.Since(start).Milliseconds(),
+		"profile":         req.Profile,
+		"url_domain":      domainFromURL(rawURL),
+		"status":          status,
+		"duration_ms":     time.Since(start).Milliseconds(),
+		"type":            req.Type,
+		"row_id":          req.QueueRowID,
+		"classify_source": req.ClassifySource,
 	}
 	if err := s.events.Emit("linkari_share", meta); err != nil {
 		slog.Warn("event emit linkari_share failed", "error", err)

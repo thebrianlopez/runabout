@@ -174,6 +174,39 @@ func (r *Router) Actions() []Action {
 	return r.actions
 }
 
+// routeJiraURL reroutes a uinit_auto share request to ginit_auto when the URL
+// matches the Jira browse pattern and ginit_auto is a registered action.
+//
+// EPIC-077 M2: extracted from resolveShareAction so the invariant is explicit:
+//   Jira reroute → scoped auth → resolveShareAction
+//
+// Returns true when the action was rewritten (req.Action mutated to "ginit_auto").
+// The caller must pass the post-reroute req.Action to checkScopedAuth to preserve
+// the Jira Ingress Invariant (EPIC-057): checkScopedAuth must see the post-reroute
+// action so mobile tokens are rejected for ginit_* even when they sent uinit_auto.
+func routeJiraURL(req *ShareRequest, cfgIndex map[string]*ActionConfig) bool {
+	if req.Action != "uinit_auto" {
+		return false
+	}
+	if !jiraURLRE.MatchString(req.URL) {
+		return false
+	}
+	if _, hasGinit := cfgIndex["ginit_auto"]; !hasGinit {
+		return false
+	}
+	req.Action = "ginit_auto"
+	return true
+}
+
+// RouteJiraURL is the thread-safe router entry point for routeJiraURL.
+// Call this BEFORE checkScopedAuth so scoped-auth sees the post-reroute action.
+// Returns true when the action was rewritten.
+func (r *Router) RouteJiraURL(req *ShareRequest) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return routeJiraURL(req, r.cfgIndex)
+}
+
 // ResolveShare is the server-facing entry point for EPIC-052's provenance
 // helper. It takes a read lock on the router's cfgIndex and delegates to the
 // pure `resolveShareAction` helper. Call this BEFORE writing a queue row so
@@ -355,16 +388,10 @@ func resolveShareAction(req *ShareRequest, cfgIndex map[string]*ActionConfig, he
 		}
 
 		// EPIC-061 M2: auto-profile heuristics for ProfileMap="auto".
+		// Note: Jira URL auto-routing (uinit_auto → ginit_auto) was extracted
+		// to routeJiraURL (EPIC-077 M2) and is now called before ResolveShare
+		// in handleShare. resolveShareAction no longer performs Jira rerouting.
 		if ac.ProfileMap == "auto" && heuristicOverrideEnabled {
-			// Jira URL auto-routing: uinit_auto → ginit_auto.
-			if actionID == "uinit_auto" && jiraURLRE.MatchString(req.URL) {
-				if _, hasGinit := cfgIndex["ginit_auto"]; hasGinit {
-					res.ResolvedAction = "ginit_auto"
-					res.ResolvedProfile = profile
-					res.Reason = "jira_auto_route"
-					return res
-				}
-			}
 			// Domain heuristic profile classification.
 			if profile == "" {
 				classified, matched := classifyURLProfile(req.URL)
@@ -454,27 +481,26 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		return "", err
 	}
 
-	// EPIC-071: audio shares branch to scoreAudioAsync synopsis pipeline.
+	// EPIC-077 M5: audio shares route to processVoiceNoteAsync (renamed from
+	// scoreAudioAsync). Architecturally incompatible with scoreAsync —
+	// hardcoded score=100, execHaiku directly, 1800s timeout, transcript management.
 	if ac.ServerScore && req.Type == "audio" {
-		go scoreAudioAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel, req.ExtraText, req)
+		go processVoiceNoteAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel, req.ExtraText, req, r.events)
 		return "Transcribing — synopsis via FCM", nil
 	}
 
-	// EPIC-038 GAP-05: image/document shares route to scoreFileAsync — no Jina
-	// fetch needed, classification + scoring uses intent metadata.
-	if ac.ServerScore && (req.Type == "image" || req.Type == "document") {
-		go scoreFileAsync(req, r.queue, HaikuJSONEvaluator{}, r.events)
-		return "Scoring file — verdict via FCM", nil
-	}
-
-	// EPIC-060 M1: server_score=true runs the full scoring pipeline entirely
-	// server-side — no tmux window, no shell subprocess. A goroutine fetches
-	// page content via Jina Reader, evaluates via Haiku, and persists through
-	// Queue.ScoreByURL + EnqueueDigestIfDue. Returns immediately; verdict
-	// arrives via FCM push.
-	if ac.ServerScore {
-		go scoreURLAsync(req, r.queue, HaikuJSONEvaluator{}, r.events)
-		return "Scoring — verdict via FCM", nil
+	// EPIC-077 M5: image, document, and URL shares all route to scoreAsync.
+	// scoreAsync branches on req.Type for content acquisition only:
+	//   - "url": Jina fetch (or screenshot metadata)
+	//   - "image"/"document": metadata synthesis
+	if ac.ServerScore && (req.Type == "image" || req.Type == "document" || req.Type == "url" || req.Type == "") {
+		go scoreAsync(req, r.queue, HaikuJSONEvaluator{}, r.events)
+		switch req.Type {
+		case "image", "document":
+			return "Scoring file — verdict via FCM", nil
+		default:
+			return "Scoring — verdict via FCM", nil
+		}
 	}
 
 	// EPIC-043 M5: inline_triage=true runs the rendered command headlessly
