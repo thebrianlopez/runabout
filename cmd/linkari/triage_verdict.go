@@ -23,6 +23,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -226,9 +227,14 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 	// Prompt includes instruction to read the image plus any text metadata.
 	prompt := fmt.Sprintf("Read the image file at %s and score it.\n\nMetadata:\n%s", imagePath, textContent)
 
-	cmd := exec.CommandContext(ctx, "claude",
+	// EPIC-080 M6: os.Stat pre-check on image file before spawning subprocess.
+	if _, statErr := os.Stat(imagePath); statErr != nil {
+		return nil, fmt.Errorf("claude vision: image file not readable: %w", statErr)
+	}
+
+	cmd := exec.CommandContext(ctx, claudeBinaryPath,
 		"--print",
-		"--model", claudeModel,
+		"--model", visionModelName,
 		"--max-turns", "3",
 		"--allowedTools", "Read",
 		"--output-format", "json",
@@ -236,7 +242,6 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 		"--system-prompt-file", spFile,
 		"--effort", "low",
 		"--no-session-persistence",
-		"--bare",
 	)
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Env = haikuEnv()
@@ -245,6 +250,19 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		exitCode := -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+		slog.Error("claude vision exec failed",
+			"event_type", "claude_vision_exec_error",
+			"image_path", imagePath,
+			"exit_code", exitCode,
+			"stdout", strings.TrimSpace(stdout.String()),
+			"stderr", strings.TrimSpace(stderr.String()),
+			"system_prompt_file", spFile,
+		)
 		return nil, fmt.Errorf("claude vision exec: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
 	}
 	out := bytes.TrimSpace(stdout.Bytes())

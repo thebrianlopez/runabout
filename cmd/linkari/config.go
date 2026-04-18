@@ -299,6 +299,10 @@ type ServerConfig struct {
 	ActionRouteThreshold int    `yaml:"action_route_threshold"` // score threshold for action routes (default 80)
 	ResearchDigestPath   string `yaml:"research_digest_path"`   // path for research digest append (M11)
 
+	// EPIC-080 M6: claude CLI path and vision model overrides.
+	ClaudePath  string `yaml:"claude_path"`  // path to claude binary (default: "claude" on PATH)
+	VisionModel string `yaml:"vision_model"` // model for vision scoring (default: claudeModel)
+
 	// EPIC-038 M1: gVisor sandbox config. When Sandbox.Enabled is true, all
 	// ffmpeg/whisper/claude subprocess calls are routed through ContainerRuntime.
 	Sandbox SandboxConfig `yaml:"sandbox"`

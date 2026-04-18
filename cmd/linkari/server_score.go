@@ -381,20 +381,46 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	}
 
 	// EPIC-079 M3: use vision evaluator for image shares with a readable file.
-	if req.Type == "image" && req.AudioPath != "" {
-		if _, statErr := os.Stat(req.AudioPath); statErr == nil {
-			eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+	// EPIC-080 M7: when image file is absent, log degradation — the image is
+	// not recoverable from the queue row after the HTTP handler completes.
+	if req.Type == "image" {
+		if req.AudioPath != "" {
+			if _, statErr := os.Stat(req.AudioPath); statErr == nil {
+				eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+			}
+		} else {
+			slog.Warn("score_async: image share without file — scoring with metadata only",
+				"event_type", "score_async_vision_degraded",
+				"row_id", req.QueueRowID,
+				"filename", req.Filename,
+			)
 		}
 	}
 
 	// Evaluate via Haiku.
 	sc, err := eval.Evaluate(ctx, content, sysPrompt)
 	if err != nil {
-		slog.Warn("score_async: evaluate failed",
+		logArgs := []any{
 			"event_type", "score_async_eval_error",
 			"profile", profile,
 			"error", err,
-		)
+		}
+		if req.AudioPath != "" {
+			logArgs = append(logArgs, "image_path", req.AudioPath)
+			if fi, statErr := os.Stat(req.AudioPath); statErr != nil {
+				logArgs = append(logArgs, "image_stat_error", statErr.Error())
+			} else {
+				logArgs = append(logArgs, "image_size", fi.Size(), "image_mode", fi.Mode().String())
+			}
+		}
+		slog.Warn("score_async: evaluate failed", logArgs...)
+		// EPIC-080 M2: mark queue row as failed so it doesn't stay stuck in
+		// relayed status forever (watchdog can't rescue file shares).
+		if q != nil && req.QueueRowID > 0 {
+			if mErr := q.MarkFailedWithReason(req.QueueRowID, "eval_failed"); mErr != nil {
+				slog.Warn("score_async: MarkFailedWithReason failed", "row_id", req.QueueRowID, "error", mErr)
+			}
+		}
 		return
 	}
 	sc.Profile = profile
