@@ -3,9 +3,9 @@ package main
 // EPIC-067 M3: tests for audio transcription pipeline.
 //
 // Coverage:
-//   1. scoreAudioAsync happy path — transcript backfilled, queue row scored.
-//   2. scoreAudioAsync whisper failure — queue row marked failed.
-//   3. scoreAudioAsync empty transcript — queue row marked failed.
+//   1. processVoiceNoteAsync happy path — transcript backfilled, queue row scored.
+//   2. processVoiceNoteAsync whisper failure — queue row marked failed.
+//   3. processVoiceNoteAsync empty transcript — queue row marked failed.
 //   4. validateRequest audio case — valid and invalid inputs.
 //   5. Queue.SetText — backfills transcript on queue row.
 //   6. Multipart parsing in handleShare — happy path + oversized rejection.
@@ -134,7 +134,7 @@ func installHaikuSynopsisStub(t *testing.T, synopsis string) chan struct{} {
 
 func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID int64, done chan struct{}) {
 	t.Helper()
-	go scoreAudioAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil)
+	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil)
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -145,7 +145,7 @@ func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID 
 
 func runScoreAudioSkip(t *testing.T, audioPath, profile string, q *Queue, rowID int64) {
 	t.Helper()
-	go scoreAudioAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil)
+	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil)
 	time.Sleep(300 * time.Millisecond)
 }
 
