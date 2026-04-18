@@ -196,9 +196,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	profile := req.Profile
 
 	// Screenshot detection — unconditional, orthogonal to profile assignment.
-	if isURLShare {
-		detectScreenshot(req)
-	}
+	detectScreenshot(req)
 
 	// Classification cascade — unified for URL and file shares.
 	autoClassified := false
