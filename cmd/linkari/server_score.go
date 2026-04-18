@@ -734,16 +734,29 @@ func classifyByRelativePath(relPath string) (profile string, isScreenshot bool) 
 	return "", false
 }
 
+// screenshotFilenameRE matches filenames that identify a screenshot regardless
+// of directory path. Used as a fallback when RelativePath is empty (e.g.
+// non-MediaStore URIs from Samsung Gallery). EPIC-078 M3.
+var screenshotFilenameRE = regexp.MustCompile(`(?i)^Screenshot[_\s\-]`)
+
 // detectScreenshot sets req.IsScreenshot=true when the RelativePath indicates
 // a screenshot origin. Runs unconditionally before profile classification —
 // screenshot detection is an orthogonal concern that must not be skipped even
 // when a profile is already set. EPIC-077 M4.
+//
+// EPIC-078 M3: when RelativePath is empty, falls back to matching req.Filename
+// against screenshotFilenameRE so that non-MediaStore URIs (e.g. Samsung
+// Gallery) are still detected via the filename sent by the Android client.
 func detectScreenshot(req *ShareRequest) {
-	if req.RelativePath == "" {
+	if req.RelativePath != "" {
+		_, isScreenshot := classifyByRelativePath(req.RelativePath)
+		if isScreenshot {
+			req.IsScreenshot = true
+		}
 		return
 	}
-	_, isScreenshot := classifyByRelativePath(req.RelativePath)
-	if isScreenshot {
+	// RelativePath is empty — fall back to filename pattern.
+	if req.Filename != "" && screenshotFilenameRE.MatchString(req.Filename) {
 		req.IsScreenshot = true
 	}
 }
