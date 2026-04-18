@@ -313,6 +313,31 @@ func loadProfileTemplate(profile string) (path, content string, err error) {
 	return "", "", fmt.Errorf("no profile prompt template for %q (checked %v)", profile, checked)
 }
 
+// claudeBinaryPath is the resolved path to the claude CLI binary.
+// Set at startup from ServerConfig.ClaudePath; defaults to "claude".
+var claudeBinaryPath = "claude"
+
+// visionModelName is the model used for vision scoring.
+// Set at startup from ServerConfig.VisionModel; defaults to claudeModel.
+var visionModelName = claudeModel
+
+// initClaudeConfig resolves ClaudePath and VisionModel from ServerConfig and
+// logs the resolved values at startup. EPIC-080 M6.
+func initClaudeConfig(cfg *ServerConfig) {
+	if cfg != nil && cfg.ClaudePath != "" {
+		claudeBinaryPath = cfg.ClaudePath
+	}
+	if cfg != nil && cfg.VisionModel != "" {
+		visionModelName = cfg.VisionModel
+	}
+	slog.Info("claude config resolved",
+		"event_type", "claude_config_init",
+		"claude_path", claudeBinaryPath,
+		"vision_model", visionModelName,
+		"scoring_model", claudeModel,
+	)
+}
+
 // haikuEnv returns os.Environ minus CLAUDECODE — claude CLI behaves
 // differently when invoked from inside Claude Code itself, so both the
 // markdown and JSON Haiku paths strip it. (Mirrors fish `env -u CLAUDECODE`.)
@@ -328,6 +353,20 @@ func haikuEnv() []string {
 	// EPIC-062 M6: suppress CLAUDE.md injection in scoring calls to save ~5-8K tokens.
 	filtered = append(filtered, "CLAUDE_CODE_DISABLE_CLAUDE_MDS=1")
 	return filtered
+}
+
+// logHaikuEnvKeys logs the presence (not values) of auth-related environment
+// variables at startup so operators can verify scoring auth is configured.
+// EPIC-080 M3.
+func logHaikuEnvKeys() {
+	keys := []string{"ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "CLAUDECODE"}
+	for _, k := range keys {
+		if os.Getenv(k) != "" {
+			slog.Info("haiku env key present", "key", k)
+		} else {
+			slog.Info("haiku env key absent", "key", k)
+		}
+	}
 }
 
 // writeSystemPromptFile writes the system prompt to a temp file and returns

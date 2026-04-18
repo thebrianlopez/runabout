@@ -139,11 +139,33 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 	raw, err := runClaudeHaikuVision(ctx, promptTemplate, content, e.ImagePath, triageVerdictSchema)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		return nil, fmt.Errorf("haiku-vision: %w", err)
+		// EPIC-080 M3: fall back to JSON evaluator with synthesized metadata.
+		slog.Warn("haiku-vision: falling back to JSON evaluator",
+			"event_type", "score_async_vision_fallback",
+			"image_path", e.ImagePath,
+			"vision_error", err.Error(),
+		)
+		fallbackSc, fbErr := HaikuJSONEvaluator{}.Evaluate(ctx, content, promptTemplate)
+		if fbErr != nil {
+			return nil, fmt.Errorf("haiku-vision: %w; fallback also failed: %w", err, fbErr)
+		}
+		fallbackSc.Backend = "claude-haiku-vision-fallback"
+		return fallbackSc, nil
 	}
-	v, meta, err := parseHaikuEnvelope(raw)
-	if err != nil {
-		return nil, fmt.Errorf("haiku-vision parse: %w", err)
+	v, meta, parseErr := parseHaikuEnvelope(raw)
+	if parseErr != nil {
+		// EPIC-080 M3: parse failure also triggers fallback.
+		slog.Warn("haiku-vision: parse failed, falling back to JSON evaluator",
+			"event_type", "score_async_vision_fallback",
+			"image_path", e.ImagePath,
+			"parse_error", parseErr.Error(),
+		)
+		fallbackSc, fbErr := HaikuJSONEvaluator{}.Evaluate(ctx, content, promptTemplate)
+		if fbErr != nil {
+			return nil, fmt.Errorf("haiku-vision parse: %w; fallback also failed: %w", parseErr, fbErr)
+		}
+		fallbackSc.Backend = "claude-haiku-vision-fallback"
+		return fallbackSc, nil
 	}
 	sc := &Scorecard{
 		Score:          v.Score,

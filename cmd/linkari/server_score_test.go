@@ -757,3 +757,134 @@ func TestScoreAsync_ImageVision(t *testing.T) {
 		t.Errorf("temp file %s should have been removed by scoreAsync", tmpFile)
 	}
 }
+
+// EPIC-080 M7: test coverage for vision failure → fallback → queue chain.
+
+// TestHaikuVisionEvaluator_FallbackOnExecError verifies that when
+// runClaudeHaikuVision fails, the evaluator falls back to the JSON eval path
+// and returns a result with backend="claude-haiku-vision-fallback".
+func TestHaikuVisionEvaluator_FallbackOnExecError(t *testing.T) {
+	// Stub vision exec to fail.
+	prevVision := runClaudeHaikuVision
+	runClaudeHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
+		return nil, fmt.Errorf("vision exec crashed")
+	}
+	t.Cleanup(func() { runClaudeHaikuVision = prevVision })
+
+	// Stub the JSON eval path (used by fallback) to return a valid envelope.
+	prevJSON := execHaikuJSON
+	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+		return []byte(`{"type":"result","result":"{\"score\":42,\"verdict\":\"fallback ok\",\"rubric_scores\":{\"relevance\":50,\"depth\":40}}","is_error":false,"usage":{"input_tokens":10,"output_tokens":20},"total_cost_usd":0.001}`), nil
+	}
+	t.Cleanup(func() { execHaikuJSON = prevJSON })
+
+	tmpFile := filepath.Join(t.TempDir(), "test.jpg")
+	if err := os.WriteFile(tmpFile, []byte("fake"), 0644); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+
+	e := HaikuVisionEvaluator{ImagePath: tmpFile}
+	sc, err := e.Evaluate(context.Background(), "test metadata", "test prompt")
+	if err != nil {
+		t.Fatalf("Evaluate returned error: %v", err)
+	}
+	if sc.Backend != "claude-haiku-vision-fallback" {
+		t.Errorf("backend = %q, want %q", sc.Backend, "claude-haiku-vision-fallback")
+	}
+	if sc.Score != 42 {
+		t.Errorf("score = %d, want 42", sc.Score)
+	}
+}
+
+// TestScoreAsync_EvalFailureMarksQueueRow verifies that when eval.Evaluate
+// returns an error, the queue row is marked as failed with reason "eval_failed".
+func TestScoreAsync_EvalFailureMarksQueueRow(t *testing.T) {
+	isolateEventsDir(t)
+
+	prev := execContentClassify
+	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+		return "life", nil
+	}
+	t.Cleanup(func() { execContentClassify = prev })
+
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	req := &ShareRequest{
+		Type:     "image",
+		Filename: "broken.jpg",
+		MimeType: "image/jpeg",
+		Profile:  "life",
+	}
+	id, err := q.Enqueue(req)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if err := q.MarkRelayed(id); err != nil {
+		t.Fatalf("mark relayed: %v", err)
+	}
+	req.QueueRowID = id
+
+	eval := &stubEvaluator{err: fmt.Errorf("total eval failure")}
+	done := make(chan struct{})
+	wrapped := &onceDoneEval{inner: eval, done: done}
+	go scoreAsync(req, q, wrapped, nil)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Log("timed out waiting for eval")
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify row is marked as failed with error_reason="eval_failed".
+	var status, reason string
+	err = q.db.QueryRow(
+		"SELECT status, COALESCE(error_reason,'') FROM queue WHERE id=?", id,
+	).Scan(&status, &reason)
+	if err != nil {
+		t.Fatalf("query row %d: %v", id, err)
+	}
+	if status != "failed" {
+		t.Errorf("status = %q, want %q", status, "failed")
+	}
+	if reason != "eval_failed" {
+		t.Errorf("error_reason = %q, want %q", reason, "eval_failed")
+	}
+}
+
+// TestVisionExecArgs verifies runClaudeHaikuVision is called with the
+// correct image path, and that the fallback path works when vision fails.
+func TestVisionExecArgs(t *testing.T) {
+	var capturedImagePath string
+	prevVision := runClaudeHaikuVision
+	runClaudeHaikuVision = func(_ context.Context, _, _, imagePath, _ string) ([]byte, error) {
+		capturedImagePath = imagePath
+		return nil, fmt.Errorf("intentional test abort")
+	}
+	t.Cleanup(func() { runClaudeHaikuVision = prevVision })
+
+	// Stub JSON fallback to prevent real API calls.
+	prevJSON := execHaikuJSON
+	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+		return []byte(`{"type":"result","result":"{\"score\":10,\"verdict\":\"fallback\",\"rubric_scores\":{\"relevance\":10}}","is_error":false,"usage":{"input_tokens":5,"output_tokens":10},"total_cost_usd":0.0001}`), nil
+	}
+	t.Cleanup(func() { execHaikuJSON = prevJSON })
+
+	tmpFile := filepath.Join(t.TempDir(), "test.jpg")
+	if err := os.WriteFile(tmpFile, []byte("fake"), 0644); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+
+	e := HaikuVisionEvaluator{ImagePath: tmpFile}
+	sc, err := e.Evaluate(context.Background(), "test content", "test prompt")
+	if err != nil {
+		t.Fatalf("Evaluate error: %v", err)
+	}
+	if capturedImagePath != tmpFile {
+		t.Errorf("imagePath = %q, want %q", capturedImagePath, tmpFile)
+	}
+	// Vision failed → fell back to JSON → should have fallback backend.
+	if sc.Backend != "claude-haiku-vision-fallback" {
+		t.Errorf("backend = %q, want %q", sc.Backend, "claude-haiku-vision-fallback")
+	}
+}
