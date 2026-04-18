@@ -842,6 +842,12 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			req.Filename = req.OriginalFilename
 		}
 
+		// EPIC-078 M2: run screenshot detection synchronously after all
+		// multipart fields are populated. detectScreenshot was previously
+		// only called from the async scoring goroutine — non-MediaStore URIs
+		// (e.g. Samsung Gallery) never set is_screenshot=true on the queue row.
+		detectScreenshot(&req)
+
 		slog.DebugContext(ctx, "share parsed (multipart)",
 			"type", req.Type, "action", req.Action, "audio_size", audioWritten,
 			"temp_path", req.AudioPath, "mime_type", req.MimeType,
