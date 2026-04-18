@@ -58,6 +58,8 @@ type QueueItem struct {
 	ClusterID      *int64 `json:"cluster_id,omitempty"`
 	ActionRoute    string `json:"action_route,omitempty"`
 	ClassifySource string `json:"classify_source,omitempty"` // EPIC-077 M1
+	IsScreenshot   bool   `json:"is_screenshot,omitempty"`   // EPIC-078 M4
+	FileSize       int64  `json:"file_size,omitempty"`        // EPIC-078 M5
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -70,6 +72,14 @@ type Queue struct {
 	// without blocking in-flight writer paths. Nil is treated as the
 	// zero-value PushConfig (1h throttle, no min score).
 	pushCfg atomic.Pointer[PushConfig]
+}
+
+// boolToInt converts a bool to 0/1 for SQLite INTEGER columns.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // SetPushConfig atomically swaps in a new push config. Safe to call from
@@ -181,6 +191,10 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE queue ADD COLUMN file_name TEXT DEFAULT ''",
 		// EPIC-077 M1: classification source — which cascade stage won pre-enqueue.
 		"ALTER TABLE queue ADD COLUMN classify_source TEXT NOT NULL DEFAULT ''",
+		// EPIC-078 M4: screenshot flag for accuracy audits.
+		"ALTER TABLE queue ADD COLUMN is_screenshot INTEGER NOT NULL DEFAULT 0",
+		// EPIC-078 M5: file size for pre-enqueue dedup of repeated file shares.
+		"ALTER TABLE queue ADD COLUMN file_size INTEGER DEFAULT 0",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -346,10 +360,11 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source)
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.URL, req.Text, req.Type, req.Action, req.Profile, now, req.Title,
 		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename, req.ClassifySource,
+		boolToInt(req.IsScreenshot), req.FileSize,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue: %w", err)
@@ -371,10 +386,11 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, score, verdict, queued_at, scored_at, title, mime_type, calling_package, relative_path, file_name, classify_source)
-		 VALUES (?, ?, ?, ?, ?, 'scored', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO queue (url, text, type, action, profile, status, score, verdict, queued_at, scored_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size)
+		 VALUES (?, ?, ?, ?, ?, 'scored', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.URL, req.Text, req.Type, req.Action, req.Profile, verdict, now, now, req.Title,
 		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename, req.ClassifySource,
+		boolToInt(req.IsScreenshot), req.FileSize,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue scored: %w", err)
@@ -390,7 +406,7 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,'')"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0)"
 
 // Pending returns all items with status=pending, ordered by id ASC (FIFO).
 func (q *Queue) Pending() ([]QueueItem, error) {
@@ -1529,12 +1545,14 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 	for rows.Next() {
 		var it QueueItem
 		var score int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource); err != nil {
+		var isScreenshotInt int
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize); err != nil {
 			return nil, err
 		}
 		if score != 0 {
 			it.Score = &score
 		}
+		it.IsScreenshot = isScreenshotInt != 0
 		it.SkipReason = classifySkipReason(score, it.Verdict)
 		items = append(items, it)
 	}
