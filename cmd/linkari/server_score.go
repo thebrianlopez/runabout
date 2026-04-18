@@ -174,389 +174,199 @@ func classificationPreamble(profile, rawURL string, source string) string {
 	)
 }
 
-// scoreURLAsync runs the full server-side scoring pipeline for a uinit_auto share.
-// Must be launched as a goroutine from handleTemplate. The goroutine owns a
-// 60s context independent of the HTTP request to prevent client-disconnect
-// cancellation from aborting a scoring run that has already started.
+// scoreAsync is the unified server-side scoring pipeline for URL and file
+// shares. EPIC-077 M5: merges scoreURLAsync and scoreFileAsync into a single
+// function that branches on req.Type only for content acquisition.
 //
-// Pipeline: auto-classify profile → unsupported-check → Jina fetch (30s) →
-// truncate → loadProfileTemplate → classification preamble → eval.Evaluate
-// (Haiku) → ScoreByURL → archive → EnqueueDigestIfDue (FCM push).
+// Content acquisition:
+//   - URL shares (req.Type=="url"): Jina Reader fetch (30s) or screenshot text
+//   - File shares (req.Type=="image","document"): metadata synthesis (instant)
 //
-// Takes eval as a parameter so tests can inject a stub Evaluator without
-// touching the execHaiku var (test-seam choice from EPIC-060 assessment).
-func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
+// URL-only features (topic tags, clusters, action routes, unsupported platform
+// guards) are gated on req.Type=="url" to preserve existing behavior.
+//
+// Must be launched as a goroutine from handleTemplate.
+// Takes eval as a parameter so tests can inject a stub Evaluator.
+func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
+	isURLShare := req.Type == "url"
 	rawURL := req.URL
 	profile := req.Profile
 
-	// EPIC-038 M4: try intent metadata classification first (highest signal).
+	// Screenshot detection — unconditional, orthogonal to profile assignment.
+	if isURLShare {
+		detectScreenshot(req)
+	}
+
+	// Classification cascade — unified for URL and file shares.
 	autoClassified := false
 	contentClassify := false
-	classifySource := "" // tracks which signal classified the profile
+	classifySource := ""
 	if profile == "" {
-		if metaProfile := classifyByIntentMetadata(req); metaProfile != "" {
-			profile = metaProfile
+		profile, classifySource = classifyShareRequest(ctx, req)
+		if profile != "" {
 			autoClassified = true
-			classifySource = "intent_metadata"
-			slog.Info("server_score: intent-metadata classified",
-				"event_type", "server_score_metadata_classify",
-				"url", rawURL,
-				"calling_package", req.CallingPackage,
-				"app_category", req.AppCategory,
-				"classified_profile", metaProfile,
-			)
 		}
-	}
-
-	// EPIC-038 M5: filename keyword heuristics.
-	if profile == "" && req.Filename != "" {
-		if p := classifyByFilename(req.Filename); p != "" {
-			profile = p
-			autoClassified = true
-			classifySource = "filename"
-		}
-	}
-
-	// EPIC-075 M3: subject keyword heuristics (higher signal than relativePath).
-	if profile == "" && req.ExtraSubject != "" {
-		if p := classifyBySubjectKeywords(req.ExtraSubject); p != "" {
-			profile = p
-			autoClassified = true
-			classifySource = "subject_keywords"
-		}
-	}
-
-	// EPIC-038 M5 / EPIC-075 M5: relativePath prefix matching.
-	// This block runs unconditionally (even when profile is already set) because
-	// screenshot detection must always fire — a screenshot from a finance app is
-	// still a screenshot. Profile assignment is gated on profile=="".
-	if req.RelativePath != "" {
-		if p, isSS := classifyByRelativePath(req.RelativePath); isSS {
-			req.IsScreenshot = true
-		} else if p != "" && profile == "" {
-			profile = p
-			autoClassified = true
-			classifySource = "relative_path"
-		}
-	}
-
-	// EPIC-061 M3: fall back to URL-based classification when metadata didn't match.
-	if profile == "" {
-		classified, matched := classifyURLProfile(rawURL)
-		profile = classified
-		autoClassified = true
-		if matched {
-			classifySource = "url_domain"
-		} else {
+		if classifySource == "url_domain_fallback" {
 			contentClassify = true
 		}
 	}
-
-	// EPIC-076 M1: emit classify_stage_win after cascade resolves.
-	// jq recipe: jq 'select(.event_type=="classify_stage_win") | .metadata.classify_source' linkari_events.jsonl | sort | uniq -c
-	if events != nil {
-		_ = events.Emit("classify_stage_win", map[string]interface{}{
-			"url":              rawURL,
-			"profile":          profile,
-			"classify_source":  classifySource,
-			"auto_classified":  autoClassified,
-			"row_id":           req.QueueRowID,
-		})
-	}
-
-	slog.Info("server_score: start",
-		"event_type", "server_score_start",
-		"url", rawURL,
-		"profile", profile,
-		"auto_classified", autoClassified,
-		"classify_source", classifySource,
-	)
-
-	// Early exit for video/audio platforms — Jina returns empty or JS-stripped
-	// content that would produce noise-gate 0-score results.
-	if unsupportedPipelineRE.MatchString(rawURL) {
-		slog.Info("server_score: unsupported pipeline",
-			"event_type", "server_score_skip",
-			"url", rawURL,
-			"profile", profile,
-			"reason", "unsupported_pipeline",
-		)
-		return
-	}
-
-	// EPIC-038 M4: screenshots skip Jina fetch — use extraText/extraSubject
-	// as classification input instead. No URL content to fetch for screenshots.
-	var content string
-	if req.IsScreenshot {
-		screenshotContent := strings.TrimSpace(req.ExtraSubject + "\n" + req.ExtraText)
-		if screenshotContent == "" {
-			slog.Info("server_score: screenshot with no text metadata",
-				"event_type", "server_score_skip",
-				"url", rawURL,
-				"profile", profile,
-				"reason", "screenshot_no_text",
-			)
-			return
-		}
-		if profile == "" || contentClassify {
-			classified := classifyContentProfile(ctx, screenshotContent)
-			if classified != "" {
-				profile = classified
-				autoClassified = true
-				contentClassify = false
-			}
-		}
-		slog.Info("server_score: screenshot classification",
-			"event_type", "server_score_screenshot",
-			"url", rawURL,
-			"profile", profile,
-			"text_len", len(screenshotContent),
-		)
-		content = screenshotContent
-	} else {
-		// Fetch page content. 30s sub-context leaves headroom within the 60s budget.
-		fetchCtx, fetchCancel := context.WithTimeout(ctx, 30*time.Second)
-		defer fetchCancel()
-		var err error
-		content, err = fetchJinaContent(fetchCtx, rawURL)
-		if err != nil {
-			slog.Warn("server_score: fetch failed",
-				"event_type", "server_score_fetch_error",
-				"url", rawURL,
-				"profile", profile,
-				"error", err,
-			)
-			return
-		}
-		content = truncateRunes(content, contentTruncationRunes)
-		if strings.TrimSpace(content) == "" {
-			slog.Warn("server_score: empty content after fetch",
-				"event_type", "server_score_empty_content",
-				"url", rawURL,
-				"profile", profile,
-			)
-			return
-		}
-	}
-
-	// Content-based classification: when domain matching fell through to the
-	// "eng" fallback, ask Haiku to classify the fetched content into the best
-	// profile. This is cheap (~100 tokens) and avoids scoring travel/life/dining
-	// content under the eng rubric.
-	// EPIC-038 M4: prepend extraSubject as supplementary classification signal.
-	if contentClassify {
-		classifyInput := content
-		if req.ExtraSubject != "" {
-			classifyInput = "[Shared with subject: " + req.ExtraSubject + "]\n\n" + content
-		}
-		classified := classifyContentProfile(ctx, classifyInput)
-		if classified != "" {
-			slog.Info("server_score: content-classified profile",
-				"event_type", "server_score_content_classify",
-				"url", rawURL,
-				"domain_fallback", profile,
-				"content_classified", classified,
-			)
-			profile = classified
-			classifySource = "content"
-		}
-	}
-
-	// Load profile template (same precedence as cmd_triage loadProfileTemplate).
-	_, sysPrompt, err := loadProfileTemplate(profile)
-	if err != nil {
-		slog.Warn("server_score: load template failed",
-			"event_type", "server_score_template_error",
-			"url", rawURL,
-			"profile", profile,
-			"error", err,
-		)
-		return
-	}
-
-	// EPIC-061 M3: prepend classification preamble when auto-classified.
-	if autoClassified {
-		sysPrompt = classificationPreamble(profile, rawURL, classifySource) + sysPrompt
-	}
-
-	// Evaluate via Haiku. eval.Evaluate routes through execHaiku indirection —
-	// the test seam is preserved without changes to execHaiku callers.
-	sc, err := eval.Evaluate(ctx, content, sysPrompt)
-	if err != nil {
-		slog.Warn("server_score: evaluate failed",
-			"event_type", "server_score_eval_error",
-			"url", rawURL,
-			"profile", profile,
-			"error", err,
-		)
-		return
-	}
-	sc.Profile = profile
-	sc.SourceType = "server-score"
-
-	slog.Info("server_score: evaluated",
-		"event_type", "server_score_evaluated",
-		"url", rawURL,
-		"profile", profile,
-		"score", sc.Score,
-		"verdict", sc.Verdict,
-		"latency_ms", sc.LatencyMs,
-		"classify_source", classifySource,
-		"auto_classified", autoClassified,
-	)
-
-	// Persist — ScoreByURL finds the queued row by URL and updates it to scored.
-	// If q is nil (no queue configured), scoring completes but nothing is stored.
-	if q == nil {
-		return
-	}
-	slug := deriveSlugFromURL(rawURL)
-	item, _, err := q.ScoreByURL(rawURL, sc.Score, sc.Verdict, sc.Tags, profile, slug, sc.RubricScores)
-	if err != nil {
-		slog.Warn("server_score: ScoreByURL failed",
-			"event_type", "server_score_queue_error",
-			"url", rawURL,
-			"profile", profile,
-			"error", err,
-		)
-		return
-	}
-
-	// EPIC-072 M5: persist topic tags from scoring.
-	if len(sc.TopicTags) > 0 {
-		if tagErr := q.SetTopicTags(item.ID, sc.TopicTags); tagErr != nil {
-			slog.Warn("server_score: SetTopicTags failed", "id", item.ID, "error", tagErr)
-		}
-	}
-
-	// Auto-archive when score meets profile threshold (mirrors cmd_score path).
-	threshold := archiveThreshold(profile)
-	if threshold >= 0 && item.Score != nil && *item.Score >= threshold {
-		if archErr := q.Archive(item.ID); archErr == nil {
-			item.Status = "archived"
-		}
-	}
-
-	// EPIC-072 M6: trigger cluster detection after scoring (background goroutine).
-	if len(sc.TopicTags) > 0 && profile != "" {
-		go detectClusters(context.Background(), q, profile, 0, 0)
-	}
-
-	// EPIC-072 M9: action route dispatch post-scoring.
-	if item.Score != nil {
-		dispatchActionRoute(context.Background(), sc, profile, rawURL, q, item.ID, 0)
-	}
-
-	// FCM push via the dual-writer invariant (EPIC-051). Every scored row
-	// produces a push regardless of archive status.
-	if item.Score != nil {
-		resolvePushConfigOnce(q)
-		_, _ = q.EnqueueDigestIfDue(context.Background(),
-			item.Profile, *item.Score, item.Slug, item.Verdict, item.URL,
-			sc.GapSummary(3))
-	}
-
-	slog.Info("server_score: complete",
-		"event_type", "server_score_complete",
-		"url", rawURL,
-		"profile", profile,
-		"score", sc.Score,
-		"status", item.Status,
-		"classify_source", classifySource,
-	)
-}
-
-// scoreFileAsync scores image/document shares server-side without Jina fetch.
-// EPIC-038 GAP-05: classifies via classifyIntentProfile, synthesizes content
-// from metadata, and runs the standard template-load + eval + persist pipeline.
-func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	profile := req.Profile
-
-	// Classify via intent metadata cascade + LLM fallback.
-	autoClassified := false
-	classifySource := ""
-	if profile == "" {
-		classified := classifyIntentProfile(ctx, req)
-		if classified != "" {
-			profile = classified
-			autoClassified = true
-			classifySource = "intent_profile"
-		}
-	}
-	if profile == "" {
+	if profile == "" && !isURLShare {
+		// File shares with no classification default to "eng".
 		profile = "eng"
 		autoClassified = true
 		classifySource = "default_fallback"
 	}
 
-	// EPIC-076 M1: emit classify_stage_win after cascade resolves.
+	// Emit classify_stage_win for telemetry (EPIC-077 M6).
+	//
+	// Accuracy baseline queries (linkari_events.jsonl):
+	//   # Distribution of winning cascade stages:
+	//   jq 'select(.event_type=="classify_stage_win") | .classify_source' linkari_events.jsonl | sort | uniq -c
+	//
+	//   # Per-profile stage breakdown:
+	//   jq 'select(.event_type=="classify_stage_win") | {profile, classify_source}' linkari_events.jsonl | sort | uniq -c
+	//
+	//   # Content-LLM reclassification rate (proxy for URL domain fallback frequency):
+	//   jq 'select(.event_type=="classify_stage_win" and .classify_source=="content")' linkari_events.jsonl | wc -l
 	if events != nil {
 		_ = events.Emit("classify_stage_win", map[string]interface{}{
-			"url":             "",
+			"url":             rawURL,
 			"profile":         profile,
 			"classify_source": classifySource,
 			"auto_classified": autoClassified,
 			"row_id":          req.QueueRowID,
+			"content_type":    req.Type,
 		})
 	}
 
-	// Synthesize content from available metadata (no URL to fetch).
-	var parts []string
-	if req.ExtraSubject != "" {
-		parts = append(parts, "Subject: "+req.ExtraSubject)
-	}
-	if req.ExtraText != "" {
-		parts = append(parts, "Text: "+req.ExtraText)
-	}
-	if req.Filename != "" {
-		parts = append(parts, "Filename: "+req.Filename)
-	}
-	if req.MimeType != "" {
-		parts = append(parts, "Type: "+req.MimeType)
-	}
-	content := strings.Join(parts, "\n")
-	if strings.TrimSpace(content) == "" {
-		slog.Info("score_file: no metadata for scoring",
-			"event_type", "score_file_skip",
-			"profile", profile,
-			"type", req.Type,
-			"reason", "no_metadata",
+	slog.Info("score_async: start",
+		"event_type", "score_async_start",
+		"url", rawURL,
+		"type", req.Type,
+		"profile", profile,
+		"auto_classified", autoClassified,
+		"classify_source", classifySource,
+		"filename", req.Filename,
+		"row_id", req.QueueRowID,
+	)
+
+	// URL-only: early exit for unsupported streaming platforms.
+	if isURLShare && unsupportedPipelineRE.MatchString(rawURL) {
+		slog.Info("score_async: unsupported pipeline",
+			"event_type", "score_async_skip",
+			"url", rawURL,
+			"reason", "unsupported_pipeline",
 		)
 		return
 	}
 
-	slog.Info("score_file: start",
-		"event_type", "score_file_start",
-		"profile", profile,
-		"type", req.Type,
-		"content_len", len(content),
-		"classify_source", classifySource,
-	)
+	// Content acquisition — branches on share type.
+	var content string
+	if isURLShare {
+		if req.IsScreenshot {
+			// Screenshots use ExtraSubject+ExtraText instead of Jina.
+			screenshotContent := strings.TrimSpace(req.ExtraSubject + "\n" + req.ExtraText)
+			if screenshotContent == "" {
+				slog.Info("score_async: screenshot no text",
+					"event_type", "score_async_skip",
+					"url", rawURL,
+					"reason", "screenshot_no_text",
+				)
+				return
+			}
+			if profile == "" || contentClassify {
+				if classified := classifyContentProfile(ctx, screenshotContent); classified != "" {
+					profile = classified
+					autoClassified = true
+					contentClassify = false
+				}
+			}
+			content = screenshotContent
+		} else {
+			// Jina fetch for normal URL shares.
+			fetchCtx, fetchCancel := context.WithTimeout(ctx, 30*time.Second)
+			defer fetchCancel()
+			var err error
+			content, err = fetchJinaContent(fetchCtx, rawURL)
+			if err != nil {
+				slog.Warn("score_async: fetch failed",
+					"event_type", "score_async_fetch_error",
+					"url", rawURL,
+					"error", err,
+				)
+				return
+			}
+			content = truncateRunes(content, contentTruncationRunes)
+			if strings.TrimSpace(content) == "" {
+				slog.Warn("score_async: empty content", "event_type", "score_async_empty_content", "url", rawURL)
+				return
+			}
 
-	// Load profile template and evaluate.
+			// Content-based profile reclassification when domain fallback triggered.
+			if contentClassify {
+				classifyInput := content
+				if req.ExtraSubject != "" {
+					classifyInput = "[Shared with subject: " + req.ExtraSubject + "]\n\n" + content
+				}
+				if classified := classifyContentProfile(ctx, classifyInput); classified != "" {
+					slog.Info("score_async: content-classified",
+						"event_type", "score_async_content_classify",
+						"url", rawURL,
+						"content_classified", classified,
+					)
+					profile = classified
+					classifySource = "content"
+				}
+			}
+		}
+	} else {
+		// File share: synthesize content from metadata.
+		var parts []string
+		if req.ExtraSubject != "" {
+			parts = append(parts, "Subject: "+req.ExtraSubject)
+		}
+		if req.ExtraText != "" {
+			parts = append(parts, "Text: "+req.ExtraText)
+		}
+		if req.Filename != "" {
+			parts = append(parts, "Filename: "+req.Filename)
+		}
+		if req.MimeType != "" {
+			parts = append(parts, "Type: "+req.MimeType)
+		}
+		content = strings.Join(parts, "\n")
+		if strings.TrimSpace(content) == "" {
+			slog.Info("score_async: no metadata",
+				"event_type", "score_async_skip",
+				"type", req.Type,
+				"reason", "no_metadata",
+			)
+			return
+		}
+	}
+
+	// Load profile template.
 	_, sysPrompt, err := loadProfileTemplate(profile)
 	if err != nil {
-		slog.Warn("score_file: load template failed",
-			"event_type", "score_file_template_error",
+		slog.Warn("score_async: load template failed",
+			"event_type", "score_async_template_error",
 			"profile", profile,
 			"error", err,
 		)
 		return
 	}
 	if autoClassified {
-		sysPrompt = classificationPreamble(profile, "", classifySource) + sysPrompt
+		sysPrompt = classificationPreamble(profile, rawURL, classifySource) + sysPrompt
 	}
 
+	// Evaluate via Haiku.
 	sc, err := eval.Evaluate(ctx, content, sysPrompt)
 	if err != nil {
-		slog.Warn("score_file: evaluate failed",
-			"event_type", "score_file_eval_error",
+		slog.Warn("score_async: evaluate failed",
+			"event_type", "score_async_eval_error",
 			"profile", profile,
 			"error", err,
 		)
@@ -565,11 +375,12 @@ func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLo
 	sc.Profile = profile
 	sc.SourceType = "server-score"
 
-	slog.Info("score_file: evaluated",
-		"event_type", "score_file_evaluated",
+	slog.Info("score_async: evaluated",
+		"event_type", "score_async_evaluated",
+		"url", rawURL,
+		"type", req.Type,
 		"profile", profile,
 		"score", sc.Score,
-		"verdict", sc.Verdict,
 		"classify_source", classifySource,
 	)
 
@@ -577,35 +388,103 @@ func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLo
 		return
 	}
 
-	// Persist via queue row ID (file shares have no URL to match on).
-	slug := fmt.Sprintf("file-%d", req.QueueRowID)
-	if err := q.UpdateScore(req.QueueRowID, sc.Score, sc.Tags, sc.Verdict, slug); err != nil {
-		slog.Warn("score_file: UpdateScore failed",
-			"event_type", "score_file_queue_error",
-			"row_id", req.QueueRowID,
-			"error", err,
-		)
-		return
+	// Persist — URL shares use ScoreByURL (URL-based dedup upsert);
+	// file shares use ScoreByID (row-ID key, idempotency guard).
+	var itemID int64
+	var itemScore *int
+	var itemStatus, itemProfile, itemSlug, itemVerdict, itemURL string
+	if isURLShare {
+		slug := deriveSlugFromURL(rawURL)
+		item, _, err := q.ScoreByURL(rawURL, sc.Score, sc.Verdict, sc.Tags, profile, slug, sc.RubricScores)
+		if err != nil {
+			slog.Warn("score_async: ScoreByURL failed", "url", rawURL, "error", err)
+			return
+		}
+		itemID = item.ID
+		itemScore = item.Score
+		itemStatus = item.Status
+		itemProfile = item.Profile
+		itemSlug = item.Slug
+		itemVerdict = item.Verdict
+		itemURL = item.URL
+	} else {
+		slug := fmt.Sprintf("file-%d", req.QueueRowID)
+		_, err := q.ScoreByID(req.QueueRowID, sc.Score, sc.Tags, sc.Verdict, slug)
+		if err != nil {
+			slog.Warn("score_async: ScoreByID failed", "row_id", req.QueueRowID, "error", err)
+			return
+		}
+		itemID = req.QueueRowID
+		score := sc.Score
+		itemScore = &score
+		itemStatus = "scored"
+		itemProfile = profile
+		itemSlug = slug
+		itemVerdict = sc.Verdict
+		itemURL = ""
+	}
+
+	// URL-only: persist topic tags.
+	if isURLShare && len(sc.TopicTags) > 0 {
+		if tagErr := q.SetTopicTags(itemID, sc.TopicTags); tagErr != nil {
+			slog.Warn("score_async: SetTopicTags failed", "id", itemID, "error", tagErr)
+		}
 	}
 
 	// Auto-archive when score meets threshold.
-	threshold := archiveThreshold(profile)
-	if threshold >= 0 && sc.Score >= threshold {
-		q.Archive(req.QueueRowID)
+	threshold := archiveThreshold(itemProfile)
+	if itemScore != nil && threshold >= 0 && *itemScore >= threshold {
+		if archErr := q.Archive(itemID); archErr == nil {
+			itemStatus = "archived"
+		}
+	}
+
+	// URL-only: cluster detection.
+	if isURLShare && len(sc.TopicTags) > 0 && itemProfile != "" {
+		go detectClusters(context.Background(), q, itemProfile, 0, 0)
+	}
+
+	// URL-only: action route dispatch.
+	if isURLShare && itemScore != nil {
+		dispatchActionRoute(context.Background(), sc, itemProfile, rawURL, q, itemID, 0)
 	}
 
 	// FCM push via dual-writer invariant (EPIC-051).
-	resolvePushConfigOnce(q)
-	_, _ = q.EnqueueDigestIfDue(context.Background(),
-		profile, sc.Score, slug, sc.Verdict, "", "")
+	// EPIC-077 M6: classify_source threaded through to FCM payload for provenance.
+	if itemScore != nil {
+		resolvePushConfigOnce(q)
+		_, _ = q.EnqueueDigestIfDue(context.Background(),
+			itemProfile, *itemScore, itemSlug, itemVerdict, itemURL,
+			sc.GapSummary(3), "", classifySource)
+	}
 
-	slog.Info("score_file: complete",
-		"event_type", "score_file_complete",
-		"row_id", req.QueueRowID,
-		"profile", profile,
+	slog.Info("score_async: complete",
+		"event_type", "score_async_complete",
+		"url", rawURL,
+		"type", req.Type,
+		"profile", itemProfile,
 		"score", sc.Score,
+		"status", itemStatus,
 		"classify_source", classifySource,
 	)
+}
+
+// scoreURLAsync delegates to scoreAsync. EPIC-077 M5: retained because
+// tests and some call sites use it by name. Ensures req.Type == "url" so
+// scoreAsync takes the URL-share branch regardless of how the caller constructed
+// the request (legacy callers may leave Type empty when URL is populated).
+func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
+	if req.Type == "" && req.URL != "" {
+		req.Type = "url"
+	}
+	scoreAsync(req, q, eval, events)
+}
+
+// scoreFileAsync delegates to scoreAsync. EPIC-077 M5: retained for the same
+// reason as scoreURLAsync. handleTemplate dispatch will be updated to call
+// scoreAsync directly.
+func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
+	scoreAsync(req, q, eval, events)
 }
 
 // validProfiles is the set of profiles that classifyContentProfile accepts.
@@ -857,34 +736,80 @@ func classifyByRelativePath(relPath string) (profile string, isScreenshot bool) 
 	return "", false
 }
 
-// classifyIntentProfile uses intent metadata to classify a non-URL share into
-// the best-matching profile. Cascades through: package → app category →
-// filename keywords → relativePath → Haiku with metadata context.
-// Returns empty string if no classification could be made.
-func classifyIntentProfile(ctx context.Context, req *ShareRequest) string {
-	// 1. Package name (highest confidence).
-	if p := classifyByIntentMetadata(req); p != "" {
-		return p
+// detectScreenshot sets req.IsScreenshot=true when the RelativePath indicates
+// a screenshot origin. Runs unconditionally before profile classification —
+// screenshot detection is an orthogonal concern that must not be skipped even
+// when a profile is already set. EPIC-077 M4.
+func detectScreenshot(req *ShareRequest) {
+	if req.RelativePath == "" {
+		return
 	}
-	// 2. Filename keywords.
+	_, isScreenshot := classifyByRelativePath(req.RelativePath)
+	if isScreenshot {
+		req.IsScreenshot = true
+	}
+}
+
+// classifyShareRequest is the single entry point for the fast classification
+// cascade. It replaces the duplicate inline cascade in scoreURLAsync and the
+// classifyIntentProfile helper used by scoreFileAsync. EPIC-077 M4.
+//
+// Cascade order:
+//  1. intent_metadata (package name, MIME type, app category) — highest confidence
+//  2. filename keywords
+//  3. subject keywords
+//  4. relativePath prefix (profile signal only; screenshot detection is separate)
+//  5. URL domain heuristic — only when req.URL is non-empty
+//  6. Haiku content LLM — only when contentClassify=true (URL domain fell through
+//     to "eng" fallback) or when all metadata stages missed and hints are available
+//
+// Returns (profile, source) where source names the winning cascade stage.
+// Returns ("", "") when no classification was possible.
+//
+// The contentClassify flag is set when URL domain matching returns the "eng"
+// fallback rather than a positive match — the caller may then run Haiku
+// classification on fetched page content to refine the profile.
+func classifyShareRequest(ctx context.Context, req *ShareRequest) (profile, source string) {
+	// Stage 1: intent metadata (package name, MIME type, app category).
+	if p := classifyByIntentMetadata(req); p != "" {
+		return p, "intent_metadata"
+	}
+
+	// Stage 2: filename keywords.
 	if req.Filename != "" {
 		if p := classifyByFilename(req.Filename); p != "" {
-			return p
+			return p, "filename"
 		}
 	}
-	// 3. Subject keywords (EPIC-075 M3).
+
+	// Stage 3: subject keywords.
 	if req.ExtraSubject != "" {
 		if p := classifyBySubjectKeywords(req.ExtraSubject); p != "" {
-			return p
+			return p, "subject_keywords"
 		}
 	}
-	// 4. RelativePath prefix.
+
+	// Stage 4: relativePath prefix (profile signal only — screenshot detection
+	// is handled by detectScreenshot, which runs unconditionally before this).
 	if req.RelativePath != "" {
 		if p, _ := classifyByRelativePath(req.RelativePath); p != "" {
-			return p
+			return p, "relative_path"
 		}
 	}
-	// 5. Haiku classification with metadata context (last resort).
+
+	// Stage 5: URL domain heuristic (URL shares only).
+	if req.URL != "" {
+		classified, matched := classifyURLProfile(req.URL)
+		if matched {
+			return classified, "url_domain"
+		}
+		// Domain fell through to "eng" fallback — signal caller to run content LLM.
+		// Return a sentinel so scoreURLAsync can trigger content classification.
+		return classified, "url_domain_fallback"
+	}
+
+	// Stage 6: Haiku LLM fallback with metadata hints (non-URL shares only).
+	// Builds a context snippet from all available metadata and calls Haiku.
 	var hints []string
 	if req.ExtraSubject != "" {
 		hints = append(hints, "Subject: "+req.ExtraSubject)
@@ -899,11 +824,24 @@ func classifyIntentProfile(ctx context.Context, req *ShareRequest) string {
 		hints = append(hints, "Source app: "+req.CallingPackage)
 	}
 	if len(hints) == 0 {
-		return ""
+		return "", ""
 	}
 	snippet := strings.Join(hints, "\n")
-	classified := classifyContentProfile(ctx, snippet)
-	return classified
+	if p := classifyContentProfile(ctx, snippet); p != "" {
+		return p, "content_llm_hints"
+	}
+	return "", ""
+}
+
+// classifyIntentProfile uses intent metadata to classify a non-URL share into
+// the best-matching profile. Delegates to classifyShareRequest for the unified
+// cascade. Retained for backward-compat with scoreAudioAsync callers.
+// EPIC-077 M4: callers should prefer classifyShareRequest directly.
+//
+// Deprecated: use classifyShareRequest instead.
+func classifyIntentProfile(ctx context.Context, req *ShareRequest) string {
+	p, _ := classifyShareRequest(ctx, req)
+	return p
 }
 
 // contentClassifyPrompt is the system prompt for the lightweight Haiku
@@ -939,9 +877,14 @@ func classifyContentProfile(ctx context.Context, content string) string {
 	return ""
 }
 
-// scoreAudioAsync runs the voice note transcription and synopsis pipeline.
+// processVoiceNoteAsync runs the voice note transcription and synopsis pipeline.
 // Must be launched as a goroutine from handleTemplate. Owns a 1800s context
 // independent of the HTTP request to accommodate 200MB uploads.
+//
+// EPIC-077 M5: renamed from scoreAudioAsync. Architecturally incompatible with
+// scoreAsync — uses hardcoded score=100, calls execHaiku directly (not via
+// eval.Evaluate), has a 1800s timeout (vs 120s), and manages transcript files.
+// This pipeline is intentionally excluded from the URL/file unification.
 //
 // EPIC-071 M2: replaced eval.Evaluate (JSON scorecard) with execHaiku
 // (plain text synopsis) using the vnote_synopsis prompt template. Audio
@@ -951,16 +894,24 @@ func classifyContentProfile(ctx context.Context, content string) string {
 // Pipeline: ffmpeg m4a→wav → [segment if large] → whisper transcribe →
 // backfill queue text → save transcript file → loadProfileTemplate("vnote_synopsis") →
 // execHaiku (plain text) → UpdateScore → EnqueueDigestIfDue (FCM push).
-func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, originalFilename string, whisperModel string, extraText string, req *ShareRequest) {
+func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int64, originalFilename string, whisperModel string, extraText string, req *ShareRequest, events *EventLogger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Second)
 	defer cancel()
 	defer os.Remove(audioPath) // temp m4a cleanup
 
+	var mimeType, callingPackage string
+	if req != nil {
+		mimeType = req.MimeType
+		callingPackage = req.CallingPackage
+	}
 	slog.Info("score_audio: start",
 		"event_type", "score_audio_start",
 		"row_id", rowID,
 		"audio_path", audioPath,
 		"original_filename", originalFilename,
+		"profile", profile,
+		"mime_type", mimeType,
+		"calling_package", callingPackage,
 	)
 
 	if q != nil {
@@ -1139,10 +1090,14 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, or
 	// EPIC-038 GAP-04: use classifyIntentProfile as LLM fallback when profile
 	// is still empty after heuristic cascade. Falls back to extraText-only
 	// classification when the full request is unavailable.
+	//
+	// EPIC-077 M6: track the cascade stage that won for classify_stage_win telemetry.
+	audioClassifySource := "caller"
 	if profile == "" && req != nil {
 		classified := classifyIntentProfile(ctx, req)
 		if classified != "" {
 			profile = classified
+			audioClassifySource = "intent_metadata"
 			slog.Info("score_audio: classified via intent profile",
 				"event_type", "score_audio_intent_classify",
 				"row_id", rowID,
@@ -1155,6 +1110,7 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, or
 		cancel2()
 		if classified != "" {
 			profile = classified
+			audioClassifySource = "content_lm"
 			slog.Info("score_audio: classified from extraText",
 				"event_type", "score_audio_extratext_classify",
 				"row_id", rowID,
@@ -1163,7 +1119,23 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, or
 		}
 	}
 	if profile == "" {
-		profile = "voice"
+		// EPIC-077 M6: "eng" default replaces the legacy "voice" fallback.
+		// "voice" was a placeholder that never matched any real profile template;
+		// "eng" is the correct content-agnostic default.
+		profile = "eng"
+		audioClassifySource = "default_fallback"
+	}
+
+	// Emit classify_stage_win for the audio pipeline (EPIC-077 M6).
+	// jq recipe for accuracy baseline:
+	//   jq 'select(.event_type=="classify_stage_win" and .content_type=="audio") | {profile, classify_source, row_id}' linkari_events.jsonl
+	if events != nil {
+		_ = events.Emit("classify_stage_win", map[string]interface{}{
+			"row_id":          rowID,
+			"profile":         profile,
+			"classify_source": audioClassifySource,
+			"content_type":    "audio",
+		})
 	}
 	txPath, err := saveTranscriptFile(rowID, profile, originalFilename, transcript)
 	if err != nil {
@@ -1244,9 +1216,10 @@ func scoreAudioAsync(audioPath string, profile string, q *Queue, rowID int64, or
 	// Step 8: FCM push via the dual-writer invariant (EPIC-051).
 	// score=100 bypasses NotifyMinScore floor. content_type="voice_note"
 	// tells the Android client to render synopsis instead of score.
+	// EPIC-077 M6: classify_source included in push payload for provenance.
 	resolvePushConfigOnce(q)
 	_, _ = q.EnqueueDigestIfDue(context.Background(),
-		profile, 100, slug, synopsis, "", "", "voice_note")
+		profile, 100, slug, synopsis, "", "", "voice_note", audioClassifySource)
 
 	slog.Info("score_audio: complete",
 		"event_type", "score_audio_complete",

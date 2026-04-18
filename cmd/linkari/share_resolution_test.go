@@ -98,8 +98,9 @@ func TestResolveShareAction_DomainHeuristic(t *testing.T) {
 	}
 }
 
-// EPIC-061 M2: Jira URL auto-routing. When uinit_auto receives a Jira URL,
-// it is transparently rerouted to ginit_auto.
+// EPIC-061 M2 / EPIC-077 M2: Jira URL auto-routing. When uinit_auto receives
+// a Jira URL, routeJiraURL reroutes it to ginit_auto BEFORE resolveShareAction
+// is called. resolveShareAction no longer contains Jira rerouting logic.
 func TestResolveShareAction_JiraAutoRoute(t *testing.T) {
 	idx := testCfgIndex()
 	jiraURLs := []string{
@@ -108,12 +109,18 @@ func TestResolveShareAction_JiraAutoRoute(t *testing.T) {
 	}
 	for _, u := range jiraURLs {
 		req := &ShareRequest{Action: "uinit_auto", Type: "url", URL: u}
+		// EPIC-077 M2: routeJiraURL fires before resolveShareAction.
+		rerouted := routeJiraURL(req, idx)
+		if !rerouted {
+			t.Errorf("url=%s: expected routeJiraURL to reroute, but it did not", u)
+		}
+		if req.Action != "ginit_auto" {
+			t.Errorf("url=%s: expected req.Action=ginit_auto after routeJiraURL, got %q", u, req.Action)
+		}
+		// After reroute, resolveShareAction sees ginit_auto — caller-wins.
 		got := resolveShareAction(req, idx, true)
 		if got.ResolvedAction != "ginit_auto" {
-			t.Errorf("url=%s: expected reroute to ginit_auto, got %q", u, got.ResolvedAction)
-		}
-		if got.Reason != "jira_auto_route" {
-			t.Errorf("url=%s: expected reason jira_auto_route, got %q", u, got.Reason)
+			t.Errorf("url=%s: expected resolveShareAction to preserve ginit_auto, got %q", u, got.ResolvedAction)
 		}
 	}
 }

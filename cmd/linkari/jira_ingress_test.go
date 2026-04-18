@@ -7,6 +7,7 @@ import (
 
 // EPIC-057 M3: Jira ingress invariant tests — regex validation, scoped auth,
 // and auto-score enqueue path.
+// EPIC-077 M2: routeJiraURL extraction tests — ordering invariant validation.
 
 func TestJiraKeyRegex(t *testing.T) {
 	cases := []struct {
@@ -106,5 +107,152 @@ func TestAutoScoreEnqueuePath(t *testing.T) {
 	}
 	if len(pending) != 0 {
 		t.Errorf("auto-scored row should not appear in pending, got %d", len(pending))
+	}
+}
+
+// TestRouteJiraURL validates routeJiraURL behaviour: uinit_auto + Jira URL →
+// ginit_auto rewrite; non-Jira URLs and non-uinit_auto actions are unchanged.
+// EPIC-077 M2.
+func TestRouteJiraURL(t *testing.T) {
+	cfgIndex := map[string]*ActionConfig{
+		"uinit_auto": {ID: "uinit_auto"},
+		"ginit_auto": {ID: "ginit_auto"},
+	}
+
+	cases := []struct {
+		name       string
+		action     string
+		url        string
+		wantAction string
+		wantReroute bool
+	}{
+		{
+			name:        "uinit_auto + Jira URL → ginit_auto",
+			action:      "uinit_auto",
+			url:         "https://mycompany.atlassian.net/browse/PROJ-123",
+			wantAction:  "ginit_auto",
+			wantReroute: true,
+		},
+		{
+			name:        "uinit_auto + non-Jira URL → no reroute",
+			action:      "uinit_auto",
+			url:         "https://github.com/foo/bar",
+			wantAction:  "uinit_auto",
+			wantReroute: false,
+		},
+		{
+			name:        "ginit_auto already set → no reroute",
+			action:      "ginit_auto",
+			url:         "https://mycompany.atlassian.net/browse/PROJ-456",
+			wantAction:  "ginit_auto",
+			wantReroute: false,
+		},
+		{
+			name:        "uinit_auto + Jira URL but no ginit_auto in cfg → no reroute",
+			action:      "uinit_auto",
+			url:         "https://mycompany.atlassian.net/browse/PROJ-789",
+			wantAction:  "uinit_auto",
+			wantReroute: false,
+		},
+		{
+			name:        "empty action → no reroute",
+			action:      "",
+			url:         "https://mycompany.atlassian.net/browse/PROJ-1",
+			wantAction:  "",
+			wantReroute: false,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := cfgIndex
+			if c.name == "uinit_auto + Jira URL but no ginit_auto in cfg → no reroute" {
+				cfg = map[string]*ActionConfig{
+					"uinit_auto": {ID: "uinit_auto"},
+					// ginit_auto absent
+				}
+			}
+			req := &ShareRequest{Action: c.action, URL: c.url, Profile: ""}
+			got := routeJiraURL(req, cfg)
+			if got != c.wantReroute {
+				t.Errorf("routeJiraURL() rerouted=%v, want %v", got, c.wantReroute)
+			}
+			if req.Action != c.wantAction {
+				t.Errorf("routeJiraURL() req.Action=%q, want %q", req.Action, c.wantAction)
+			}
+		})
+	}
+}
+
+// TestRouteJiraURLOrderingInvariant verifies the EPIC-077 M2 ordering invariant:
+// routeJiraURL fires before checkScopedAuth. A uinit_auto share with a Jira
+// URL and a mobile token must be rerouted to ginit_auto FIRST — then rejected
+// by checkScopedAuth (mobile tokens cannot invoke ginit_*). This test confirms
+// that a mobile token cannot sneak a Jira URL through as uinit_auto.
+func TestRouteJiraURLOrderingInvariant(t *testing.T) {
+	cfgIndex := map[string]*ActionConfig{
+		"uinit_auto": {ID: "uinit_auto"},
+		"ginit_auto": {ID: "ginit_auto"},
+	}
+	srv := &Server{
+		token:     "mobile-secret",
+		jiraToken: "jira-secret",
+	}
+
+	req := &ShareRequest{
+		Action: "uinit_auto",
+		URL:    "https://mycompany.atlassian.net/browse/PROJ-123",
+	}
+
+	// Step 1: Jira reroute fires first.
+	rerouted := routeJiraURL(req, cfgIndex)
+	if !rerouted {
+		t.Fatal("expected routeJiraURL to reroute uinit_auto → ginit_auto")
+	}
+	if req.Action != "ginit_auto" {
+		t.Fatalf("expected req.Action=ginit_auto after reroute, got %q", req.Action)
+	}
+
+	// Step 2: checkScopedAuth sees post-reroute action "ginit_auto".
+	// Mobile token must be rejected — ginit_* is Jira-only.
+	kind, ok := srv.checkScopedAuth("mobile-secret", req.Action)
+	if ok {
+		t.Errorf("checkScopedAuth(mobile-secret, ginit_auto) should reject — mobile cannot invoke ginit_*")
+	}
+	if kind != "mobile" {
+		t.Errorf("expected kind=mobile, got %q", kind)
+	}
+
+	// Jira token must be accepted for ginit_auto.
+	kind, ok = srv.checkScopedAuth("jira-secret", req.Action)
+	if !ok {
+		t.Errorf("checkScopedAuth(jira-secret, ginit_auto) should accept — Jira token may invoke ginit_*")
+	}
+	if kind != "jira" {
+		t.Errorf("expected kind=jira, got %q", kind)
+	}
+}
+
+// TestRouteJiraURL_ProfileEmpty confirms that routeJiraURL reroutes correctly
+// even when profile="" (the uinit_auto case with no pre-set profile).
+// This is the canonical use case: uinit_auto + Jira URL → ginit_auto, profile="".
+func TestRouteJiraURL_ProfileEmpty(t *testing.T) {
+	cfgIndex := map[string]*ActionConfig{
+		"uinit_auto": {ID: "uinit_auto"},
+		"ginit_auto": {ID: "ginit_auto"},
+	}
+	req := &ShareRequest{
+		Action:  "uinit_auto",
+		URL:     "https://company.atlassian.net/browse/ENG-42",
+		Profile: "",
+	}
+	if !routeJiraURL(req, cfgIndex) {
+		t.Fatal("expected reroute")
+	}
+	if req.Action != "ginit_auto" {
+		t.Errorf("expected ginit_auto, got %q", req.Action)
+	}
+	if req.Profile != "" {
+		t.Errorf("routeJiraURL must not modify profile; got %q", req.Profile)
 	}
 }
