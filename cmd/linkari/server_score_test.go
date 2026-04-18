@@ -543,3 +543,84 @@ func TestSanitizeTranscriptFilename(t *testing.T) {
 		}
 	}
 }
+
+// TestDetectScreenshot_FilenameFallback verifies the filename-pattern fallback
+// introduced in EPIC-078 M3 — when RelativePath is empty, detectScreenshot
+// matches req.Filename against screenshotFilenameRE.
+func TestDetectScreenshot_FilenameFallback(t *testing.T) {
+	tests := []struct {
+		name         string
+		relativePath string
+		filename     string
+		wantDetected bool
+	}{
+		// RelativePath-based detection (EPIC-077 M4).
+		{
+			name:         "DCIM/Screenshots path sets is_screenshot",
+			relativePath: "DCIM/Screenshots/",
+			wantDetected: true,
+		},
+		{
+			name:         "Screenshots path sets is_screenshot",
+			relativePath: "Screenshots/",
+			wantDetected: true,
+		},
+		{
+			name:         "non-screenshot path leaves is_screenshot false",
+			relativePath: "DCIM/Camera/",
+			wantDetected: false,
+		},
+		// Filename fallback (EPIC-078 M3) — RelativePath is empty.
+		{
+			name:         "Samsung Gallery: Screenshot_ filename sets is_screenshot",
+			filename:     "Screenshot_20260411_123703_WhatsApp.jpg",
+			wantDetected: true,
+		},
+		{
+			name:         "Screenshot with hyphen separator",
+			filename:     "Screenshot-2026-04-11-12.37.jpg",
+			wantDetected: true,
+		},
+		{
+			name:         "Screenshot with space separator",
+			filename:     "Screenshot 2026-04-11.png",
+			wantDetected: true,
+		},
+		{
+			name:         "non-screenshot filename leaves is_screenshot false",
+			filename:     "IMG_20260411_123703.jpg",
+			wantDetected: false,
+		},
+		{
+			name:         "empty filename and empty relativePath: no detection",
+			wantDetected: false,
+		},
+		// RelativePath takes precedence over filename when both are present.
+		{
+			name:         "relativePath wins when both present (screenshot path)",
+			relativePath: "DCIM/Screenshots/",
+			filename:     "IMG_not_a_screenshot.jpg",
+			wantDetected: true,
+		},
+		{
+			name:         "relativePath wins when both present (non-screenshot path)",
+			relativePath: "DCIM/Camera/",
+			filename:     "Screenshot_20260411.jpg",
+			wantDetected: false, // filename fallback NOT used when relativePath is non-empty
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &ShareRequest{
+				RelativePath: tt.relativePath,
+				Filename:     tt.filename,
+			}
+			detectScreenshot(req)
+			if req.IsScreenshot != tt.wantDetected {
+				t.Errorf("IsScreenshot = %v, want %v (relativePath=%q filename=%q)",
+					req.IsScreenshot, tt.wantDetected, tt.relativePath, tt.filename)
+			}
+		})
+	}
+}
