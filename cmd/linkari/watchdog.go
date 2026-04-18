@@ -217,6 +217,13 @@ func (w *RelayedWatchdog) rescueFromDisk(stuck []TimedOutRelayed, now time.Time,
 	}
 
 	for _, t := range stuck {
+		// EPIC-080 M2: file shares have no URL and no on-disk _score.json;
+		// they can only be rescued by the real-time MarkFailedWithReason in
+		// scoreAsync. Skip directly to the timeout path.
+		if t.URL == "" {
+			unrescued = append(unrescued, t)
+			continue
+		}
 		s, ok := index[scoreIndexKey{URL: t.URL, Profile: t.Profile}]
 		if !ok {
 			unrescued = append(unrescued, t)

@@ -657,6 +657,12 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				go snapWorker.Run(cmd.Context())
 			}
 
+			// EPIC-080 M6: resolve claude binary path and vision model from config.
+			initClaudeConfig(serverFileCfg)
+
+			// EPIC-080 M3: log auth key presence at startup for diagnostics.
+			logHaikuEnvKeys()
+
 			// When tsnet Funnel is active, bind the local listener to
 			// 127.0.0.1 only — LAN exposure is unnecessary since the
 			// Funnel provides the public ingress path (GAP-1).
