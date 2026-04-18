@@ -1078,6 +1078,33 @@ func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug s
 	return item, true, err
 }
 
+// FindRecentFile returns the most-recent queue row whose file_name and
+// file_size match and whose queued_at is within window of now, excluding
+// failed and archived rows. Returns (nil, nil) when no match is found.
+//
+// EPIC-078 M5: used by handleShare as a pre-enqueue dedup guard for
+// repeated file shares (same file shared multiple times in quick succession).
+func (q *Queue) FindRecentFile(filename string, fileSize int64, window time.Duration) (*QueueItem, error) {
+	if filename == "" || fileSize <= 0 || window <= 0 {
+		return nil, nil
+	}
+	cutoff := time.Now().UTC().Add(-window).Format(time.RFC3339)
+	rows, err := q.query(
+		"SELECT "+queueCols+" FROM queue"+
+			" WHERE file_name = ? AND file_size = ? AND queued_at > ?"+
+			" AND status NOT IN ('failed','archived')"+
+			" ORDER BY id DESC LIMIT 1",
+		filename, fileSize, cutoff,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("FindRecentFile: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
+}
+
 // SearchFTS5 runs a full-text search against the queue_fts index.
 func (q *Queue) SearchFTS5(query string, profile string, limit int) ([]QueueItem, error) {
 	if limit <= 0 {

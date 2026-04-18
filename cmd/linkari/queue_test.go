@@ -1132,3 +1132,92 @@ func TestFTS5SearchWithTopicTags(t *testing.T) {
 		t.Error("expected FTS5 to find item via topic_tags")
 	}
 }
+
+// TestFindRecentFile exercises the pre-enqueue dedup logic for repeated file
+// shares (EPIC-078 M5). A match within the window returns the existing row;
+// a share outside the window (or with mismatched name/size) returns nil.
+func TestFindRecentFile(t *testing.T) {
+	q := newTestQueue(t)
+
+	req := &ShareRequest{
+		Type:     "image",
+		Filename: "Screenshot_20260411_123703_WhatsApp.jpg",
+		FileSize: 204800,
+	}
+	id, err := q.Enqueue(req)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	t.Run("match within window returns existing row", func(t *testing.T) {
+		got, err := q.FindRecentFile(req.Filename, req.FileSize, 5*time.Minute)
+		if err != nil {
+			t.Fatalf("FindRecentFile: %v", err)
+		}
+		if got == nil {
+			t.Fatal("expected match, got nil")
+		}
+		if got.ID != id {
+			t.Errorf("got ID %d, want %d", got.ID, id)
+		}
+	})
+
+	t.Run("different filename returns nil", func(t *testing.T) {
+		got, err := q.FindRecentFile("IMG_different.jpg", req.FileSize, 5*time.Minute)
+		if err != nil {
+			t.Fatalf("FindRecentFile: %v", err)
+		}
+		if got != nil {
+			t.Errorf("expected nil for different filename, got ID %d", got.ID)
+		}
+	})
+
+	t.Run("different file size returns nil", func(t *testing.T) {
+		got, err := q.FindRecentFile(req.Filename, req.FileSize+1, 5*time.Minute)
+		if err != nil {
+			t.Fatalf("FindRecentFile: %v", err)
+		}
+		if got != nil {
+			t.Errorf("expected nil for different file size, got ID %d", got.ID)
+		}
+	})
+
+	t.Run("zero file size guard returns nil", func(t *testing.T) {
+		got, err := q.FindRecentFile(req.Filename, 0, 5*time.Minute)
+		if err != nil {
+			t.Fatalf("FindRecentFile: %v", err)
+		}
+		if got != nil {
+			t.Errorf("expected nil for zero file size, got ID %d", got.ID)
+		}
+	})
+
+	t.Run("expired window returns nil", func(t *testing.T) {
+		// 1ns window — any existing row is outside it.
+		got, err := q.FindRecentFile(req.Filename, req.FileSize, time.Nanosecond)
+		if err != nil {
+			t.Fatalf("FindRecentFile: %v", err)
+		}
+		if got != nil {
+			t.Errorf("expected nil for expired window, got ID %d", got.ID)
+		}
+	})
+
+	t.Run("failed row not returned", func(t *testing.T) {
+		q2 := newTestQueue(t)
+		id2, err := q2.Enqueue(req)
+		if err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if err := q2.MarkFailed(id2); err != nil {
+			t.Fatalf("MarkFailed: %v", err)
+		}
+		got, err := q2.FindRecentFile(req.Filename, req.FileSize, 5*time.Minute)
+		if err != nil {
+			t.Fatalf("FindRecentFile: %v", err)
+		}
+		if got != nil {
+			t.Errorf("expected nil for failed row, got ID %d", got.ID)
+		}
+	})
+}
