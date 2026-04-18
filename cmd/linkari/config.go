@@ -303,6 +303,11 @@ type ServerConfig struct {
 	ClaudePath  string `yaml:"claude_path"`  // path to claude binary (default: "claude" on PATH)
 	VisionModel string `yaml:"vision_model"` // model for vision scoring (default: claudeModel)
 
+	// EPIC-081 M3: image noise gate — minimum file size in bytes to invoke
+	// vision subprocess. Images below this threshold with no text metadata
+	// are scored 0 without a vision API call. Default: 1024 (1KB).
+	ImageNoiseGateMinBytes int64 `yaml:"image_noise_gate_min_bytes"`
+
 	// EPIC-038 M1: gVisor sandbox config. When Sandbox.Enabled is true, all
 	// ffmpeg/whisper/claude subprocess calls are routed through ContainerRuntime.
 	Sandbox SandboxConfig `yaml:"sandbox"`
