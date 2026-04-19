@@ -552,6 +552,27 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	sc.PromptHash = promptHash(sysPrompt)
 	sc.PromptVersion = promptVersionFromPath(tmplPath)
 
+	// EPIC-083 M2-3: per-call cost ceiling monitoring. Logs when a single eval
+	// exceeds MaxScoringCostUSD — monitoring only, does not block processing.
+	if sc.CostUSD > 0 && sc.CostUSD > maxScoringCostUSD {
+		slog.Warn("score_async: cost exceeded ceiling",
+			"event_type", "score_cost_exceeded",
+			"cost_usd", sc.CostUSD,
+			"threshold_usd", maxScoringCostUSD,
+			"url", rawURL,
+			"type", req.Type,
+			"profile", profile,
+		)
+		if events != nil {
+			events.Emit("score_cost_exceeded", map[string]any{
+				"row_id":        req.QueueRowID,
+				"cost_usd":      sc.CostUSD,
+				"threshold_usd": maxScoringCostUSD,
+				"profile":       profile,
+			})
+		}
+	}
+
 	slog.Info("score_async: evaluated",
 		"event_type", "score_async_evaluated",
 		"url", rawURL,
@@ -688,6 +709,12 @@ func isCameraPhoto(req *ShareRequest) bool {
 // subprocess. Images below this with no text metadata skip vision. Set from
 // ServerConfig.ImageNoiseGateMinBytes at startup; defaults to 1024 (1KB).
 var imageNoiseGateMinBytes int64 = 1024
+
+// maxScoringCostUSD is the per-call scoring cost ceiling (USD). When a single
+// eval.Evaluate call exceeds this amount, a score_cost_exceeded event is logged.
+// Monitoring only — does not block processing. Set from
+// ServerConfig.MaxScoringCostUSD at startup; defaults to 0.05. EPIC-083 M2-3.
+var maxScoringCostUSD float64 = 0.05
 
 // imageNoiseGateMaxBytes is the maximum file size in bytes for vision scoring.
 // Images above this skip vision entirely — they're likely raw camera files or
