@@ -20,7 +20,7 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 - **workctl** — fetch and export Atlassian & GitHub work data (weekly/quarterly summaries, career reports)
 - **ghwatch** — stream GitHub repository activity to the terminal (push, PRs, workflow runs)
 
-**Last Updated:** 2026-04-14
+**Last Updated:** 2026-04-19
 
 ## Install
 
@@ -176,7 +176,13 @@ linkari serve --tsnet --tsnet-authkey $TS_AUTHKEY --token $LINKARI_TOKEN \
 
 If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `linkari serve` automatically falls back to local-only mode with a WARN log. Config is hot-reloadable via SIGHUP (actions, archive thresholds, push config, watchdog tuning).
 
-**Actions:** `text` (paste into existing pane), `url` (opens new tmux window via `uinit` with profile), `ginit` (parses Jira key, opens `ginit <KEY>`). Seven URL profiles: eng, life, travel, fashion, music, finance, dining. URL windows use `remain-on-exit failed` — auto-close on success, stay open on error. Domain heuristics auto-classify URLs into profiles (e.g. github.com → eng, booking.com → travel).
+**Actions:** `text` (paste into existing pane), `url` (opens new tmux window via `uinit` with profile), `ginit` (parses Jira key, opens `ginit <KEY>`). Seven URL profiles: eng, life, travel, fashion, music, finance, dining. URL windows use `remain-on-exit failed` — auto-close on success, stay open on error. Domain heuristics auto-classify URLs into profiles (e.g. github.com → eng, booking.com → travel). Login-wall domains (Instagram, X/Twitter, Facebook) are pre-filtered to avoid wasting Haiku calls on inaccessible content; LinkedIn `/pulse/` articles are exempted as publicly accessible.
+
+**Server-side scoring:** URL actions with `ServerScore: true` bypass the tmux → fish pipeline entirely — a goroutine fetches page content via Jina Reader, evaluates with Haiku, scores, archives, and sends FCM push. Unsupported domains (YouTube, Spotify, TikTok, etc.) return early without burning a Haiku call.
+
+**Execution runtime:** Three runtime implementations — `LocalRuntime` (default, subprocess), `ContainerRuntime` (gVisor-sandboxed via containerd for ffmpeg/whisper), and `HybridRuntime` (routes ffmpeg/whisper through containers but keeps claude CLI local for OAuth2 reasons). Controlled by `sandbox.enabled` in `server.yaml`.
+
+**Shield:** `X-Linkari-Client` header validation on the Funnel mux. Two modes: `log` (default, debug logging) and `enforce` (403 on invalid/missing headers). CORS preflight (OPTIONS) is always exempt.
 
 **Endpoints:**
 
@@ -200,19 +206,24 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 | `/auth/google` | POST | Google ID token verification for mobile clients |
 | `/auth/invite` | POST | Redeem invite code to create a user account |
 | `/admin/invite` | POST | Generate invite codes (operator bearer token required) |
+| `/health` | GET | Minimal health probe (Funnel-safe, returns `{"status":"ok"}`) |
 | `/healthz` | GET | Health check with DB status (local only) |
 | `/logs` | GET | Last 100 log lines (local only) |
 | `/logs/stream` | GET | SSE realtime log stream (local only) |
 
 All endpoints except `/healthz`, `/logs`, `/logs/stream`, and `/auth/*` require bearer token auth (or Google ID token for authenticated users). Rate limited to 30 req/min per IP.
 
-**Adaptive assistant (EPIC-072):** Feedback and outcome signals flow back from the client via `/queue/{id}/feedback` and `/queue/{id}/outcome` (or by slug). A tag-based clustering engine (Jaccard similarity on `topic_tags`) detects content themes across scored items. When a scored item meets the profile threshold, action routing dispatches it to either Jira ticket drafting or research digest append. Per-profile statistics are available via `GET /profiles/stats`.
+**Adaptive assistant (EPIC-072):** Feedback and outcome signals flow back from the client via `/queue/{id}/feedback` and `/queue/{id}/outcome` (or by slug). A tag-based clustering engine (Jaccard similarity on `topic_tags`) detects content themes across scored items. When a scored item meets the profile threshold, action routing dispatches it to either Jira ticket drafting (`draft_jira_ticket`) or research digest append (`append_research_digest`). Per-profile statistics are available via `GET /profiles/stats`.
+
+**Classification cascade (EPIC-079):** `classifyShareRequestFast` (stages 1-5, no LLM) runs synchronously pre-enqueue. `classifyShareRequest` (stages 1-6, includes LLM) runs async in `scoreAsync`. File shares fall through to stage-6 LLM classify using synthesized metadata.
+
+**Vision scoring (EPIC-079 M3):** `HaikuVisionEvaluator` scores local image files via `claude --print --allowedTools Read --bare`. Selected when `req.Type == "image"` and the file is readable.
 
 **Auth:** Google Sign-In (ID token verification against Google JWKS) for mobile clients. Invite-code flow for onboarding new users; operator bearer token generates codes via `POST /admin/invite`.
 
-**Queue & replay:** Every share is persisted to SQLite before routing. If tmux is unavailable, the request returns `"queued"` and a background goroutine replays pending items every 30s when tmux comes back. A `RelayedWatchdog` marks rows stuck in `relayed` status past a configurable max age as `failed` with `scoring_timeout`.
+**Queue & replay:** Every share is persisted to SQLite before routing. If tmux is unavailable, the request returns `"queued"` and a background goroutine replays pending items every 30s when tmux comes back. A `RelayedWatchdog` marks rows stuck in `relayed` status past a configurable max age as `failed` with `scoring_timeout`. A `SnapshotWorker` periodically writes a clean copy of `queue.db` via `VACUUM INTO` for crash recovery.
 
-**Scoring & archiving:** `POST /queue/{id}/score` accepts a score (0-100), tags, and slug. Items auto-archive when score meets the profile threshold (80 default, 70 for finance/dining, disabled for life). Archived high-score items trigger an FCM digest push at most once per hour (configurable per-profile throttle via `server.yaml`).
+**Scoring & archiving:** `POST /queue/{id}/score` accepts a score (0-100), tags, and slug. Items auto-archive when score meets the profile threshold (80 default, 70 for finance/dining, disabled for life). Archived high-score items trigger an FCM digest push at most once per hour (configurable per-profile throttle via `server.yaml`). Push delivery uses a durable outbox pattern (`push_outbox` table) with exponential backoff and a 24h TTL.
 
 **CLI subcommands:**
 
@@ -236,7 +247,7 @@ All endpoints except `/healthz`, `/logs`, `/logs/stream`, and `/auth/*` require 
 
 **Triage pipeline:** `linkari triage` loads a per-profile YAML manifest from `docs/prompts/profiles/`, renders a system prompt via `text/template`, shells out to the `claude` CLI for a single-turn Haiku call, parses the returned markdown verdict, and persists the score through `Queue.ScoreByURL`. The eval harness (`linkari eval`) supports capture/replay of fixture corpora for regression testing across prompt iterations.
 
-**Observability:** JSONL event logging to `~/.config/linkari/linkari_events.jsonl` — emits `linkari_share`, `linkari_digest`, and `share_scoring_timeout` events with profile, domain, duration, and status. Structured logging via slog with configurable format (`text`/`json`) and level.
+**Observability:** JSONL event logging to `~/.config/linkari/linkari_events.jsonl`. Key event types: `linkari_share`, `linkari_digest`, `share_scoring_timeout`, `score_async_*` (server-side pipeline stages), `push_attempt`, `snapshot_written`, `shield_blocked`, `config_reloaded`. Structured logging via slog with configurable format (`text`/`json`) and level. SIGHUP hot-reloads config and emits `config_reloaded`.
 
 ## wasend
 
@@ -332,6 +343,18 @@ cd cmd/workctl && go test ./...    # workctl + ghwatch (separate module)
 
 Version, commit, and build date are injected at build time via ldflags. The Go workspace (`go.work`) ties the root module to five separate-module satellites: linkari, fetchpage, wasend, protonexport, and workctl.
 
+**Container images** (linkari sandbox runtime):
+
+```bash
+make container-build                        # native platform (dev iteration)
+make container-push IMAGE_REGISTRY=ghcr.io/blo-grindr/linkari  # multi-arch push
+make lima-start                             # start Lima gVisor VM
+make lima-test                              # gVisor smoke test
+make integration-test                       # container integration tests (requires Lima)
+```
+
+Three images: `ffmpeg` (audio conversion), `whisper` (speech-to-text), `claude-sandbox` (LLM invocation). All support linux/amd64 + linux/arm64 via `docker buildx`.
+
 ## Telemetry
 
 Every tool emits schema v2 JSONL events to `~/.automation-metrics/events/YYYY-MM-DD.jsonl` via `emit_jsonl`. Events include command, subcommand, duration, exit code, and flags — correlated by `session_id` across the full [automation topology](https://github.com/blo-grindr/infra-knowledge).
@@ -347,7 +370,7 @@ cmd/shellprof/        # shellprof entry point (root module)
 cmd/hookval/          # hookval entry point (root module)
 cmd/effiscore/        # effiscore entry point (root module)
 cmd/fetchpage/        # fetchpage entry point (separate module)
-cmd/linkari/          # linkari entry point (separate module, ~70 files)
+cmd/linkari/          # linkari entry point (separate module, ~80 files)
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
 cmd/workctl/          # workctl module root (separate module)
@@ -361,4 +384,5 @@ internal/hookval/     # schema parsing, signal validation, doc generation
 internal/effiscore/   # DD metrics client, efficiency scoring, topology emission
 internal/telemetry/   # CLI telemetry via emit_jsonl
 internal/version/     # shared version formatting
+container/            # Dockerfiles for gVisor sandbox runtime (ffmpeg, whisper, claude-sandbox)
 ```
