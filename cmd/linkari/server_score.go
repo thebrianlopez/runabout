@@ -50,6 +50,10 @@ var galleryPackages = map[string]bool{
 	"com.samsung.android.gallery":    true,
 }
 
+// scoreSemaphore bounds the number of concurrent detectClusters goroutines.
+// Non-blocking acquire: skip with warning if full. EPIC-083 M5-4.
+var scoreSemaphore = make(chan struct{}, 10)
+
 // jinaHTTPClient is the HTTP client for Jina Reader requests. Uses a 35s
 // timeout to give Jina a margin above the 30s fetch context timeout —
 // the context cancels first; this is a backstop for runaway connections.
@@ -213,6 +217,26 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
+	// EPIC-083 M5-2: deferred prefilter summary — emits one event at function
+	// exit with the prefilter stage (if any), whether eval was skipped, latency,
+	// and cost. The pointer fields are updated as scoreAsync progresses.
+	scoreStart := time.Now()
+	var prefilterStage string
+	var evalSkipped = true // assume skipped until eval actually runs
+	var costUSD float64
+	defer func() {
+		if events != nil {
+			events.Emit("score_prefilter_summary", map[string]any{
+				"row_id":          req.QueueRowID,
+				"prefilter_stage": prefilterStage,
+				"eval_skipped":    evalSkipped,
+				"latency_ms":      time.Since(scoreStart).Milliseconds(),
+				"cost_usd":        costUSD,
+				"type":            req.Type,
+			})
+		}
+	}()
+
 	// EPIC-079 M3: clean up temp file for image/document shares.
 	// scoreAsync now owns the temp file (disarmed in handleShare via audioCleanup="").
 	if req.AudioPath != "" && req.Type != "audio" {
@@ -272,6 +296,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			"auto_classified": autoClassified,
 			"row_id":          req.QueueRowID,
 			"content_type":    req.Type,
+			"phase":           "score_async", // EPIC-083 M5-1
 		})
 	}
 
@@ -288,6 +313,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 
 	// URL-only: early exit for unsupported streaming platforms.
 	if isURLShare && unsupportedPipelineRE.MatchString(rawURL) {
+		prefilterStage = "unsupported_pipeline"
 		slog.Info("score_async: unsupported pipeline",
 			"event_type", "score_async_skip",
 			"url", rawURL,
@@ -299,6 +325,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// EPIC-083 M1-1: login-wall domain gate — sites that require auth return
 	// empty or login-page HTML via Jina, wasting a Haiku call.
 	if isURLShare && loginWallDomainRE.MatchString(rawURL) {
+		prefilterStage = "login_wall_domain"
 		slog.Info("score_async: login-wall domain",
 			"event_type", "score_prefilter_skip",
 			"url", rawURL,
@@ -546,6 +573,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		}
 		return
 	}
+	evalSkipped = false
+	costUSD = sc.CostUSD
 	sc.Profile = profile
 	sc.SourceType = "server-score"
 	// EPIC-082 M1: prompt traceability — populate hash and version from template.
@@ -638,8 +667,22 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	}
 
 	// URL-only: cluster detection.
+	// EPIC-083 M5-4: 30s timeout + semaphore to bound concurrent goroutines.
 	if isURLShare && len(sc.TopicTags) > 0 && itemProfile != "" {
-		go detectClusters(context.Background(), q, itemProfile, 0, 0)
+		select {
+		case scoreSemaphore <- struct{}{}:
+			go func() {
+				defer func() { <-scoreSemaphore }()
+				clusterCtx, clusterCancel := context.WithTimeout(ctx, 30*time.Second)
+				defer clusterCancel()
+				detectClusters(clusterCtx, q, itemProfile, 0, 0)
+			}()
+		default:
+			slog.Warn("score_async: cluster detection skipped — semaphore full",
+				"event_type", "score_cluster_semaphore_full",
+				"profile", itemProfile,
+			)
+		}
 	}
 
 	// URL-only: action route dispatch.
@@ -1424,6 +1467,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			"profile":         profile,
 			"classify_source": audioClassifySource,
 			"content_type":    "audio",
+			"phase":           "audio_async", // EPIC-083 M5-1
 		})
 	}
 	txPath, err := saveTranscriptFile(rowID, profile, originalFilename, transcript)
