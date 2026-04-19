@@ -367,10 +367,12 @@ var visionModelName = claudeModel
 //
 // Architecture note (EPIC-008 M5): CLI exec is the permanent integration
 // pattern. The claude CLI authenticates via OAuth2 device flow, storing tokens
-// in ~/.claude/. There are no standalone API keys — the SDK requires the same
-// OAuth2 session. Moving to the SDK would not eliminate the CLI dependency;
-// it would add one. All scoring paths (URL, image, audio) shell out to the
-// claude binary and this is by design, not a migration gap.
+// in ~/.claude/. Linkari is designed for self-hosted deployment — each user
+// installs and runs it on their own laptop using their own Claude Code
+// subscription. There are no plans to support Anthropic API keys, SDK client
+// libraries, or direct HTTP calls to the Anthropic API. All scoring paths
+// (URL, image, audio) shell out to the claude binary and this is by design,
+// not a migration gap. Do not introduce ANTHROPIC_API_KEY passthrough.
 func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.ClaudePath != "" {
 		claudeBinaryPath = cfg.ClaudePath
@@ -381,6 +383,10 @@ func initClaudeConfig(cfg *ServerConfig) {
 	// EPIC-081 M3: image noise gate threshold.
 	if cfg != nil && cfg.ImageNoiseGateMinBytes > 0 {
 		imageNoiseGateMinBytes = cfg.ImageNoiseGateMinBytes
+	}
+	// EPIC-084 M2: prefilter notification gate.
+	if cfg != nil {
+		notifyOnPrefilterSkip = cfg.NotifyOnPrefilterSkip
 	}
 	slog.Info("claude config resolved",
 		"event_type", "claude_config_init",
@@ -440,9 +446,11 @@ func haikuEnv() []string {
 	return filtered
 }
 
-// logHaikuEnvKeys logs the presence (not values) of auth-related environment
-// variables at startup so operators can verify scoring auth is configured.
-// EPIC-080 M3.
+// logHaikuEnvKeys logs the presence (not values) of LLM-related environment
+// variables at startup. These are diagnostic only — Linkari authenticates
+// exclusively via the claude CLI's OAuth2 session, NOT via API keys.
+// The keys are logged to help debug subprocess behavior, not because they
+// are expected to be set. EPIC-080 M3.
 func logHaikuEnvKeys() {
 	keys := []string{"ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "CLAUDECODE"}
 	for _, k := range keys {

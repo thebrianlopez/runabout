@@ -203,6 +203,51 @@ func TestScoreURLAsync_UnsupportedPipelineSkipped(t *testing.T) {
 	}
 }
 
+// 2b. EPIC-084 M1: Unsupported pipeline marks queue row as failed.
+func TestScoreURLAsync_UnsupportedPipelineMarksRowFailed(t *testing.T) {
+	q := newTestQueue(t)
+	id, err := q.Enqueue(&ShareRequest{Type: "url", URL: "https://www.youtube.com/watch?v=abc", Profile: "eng"})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if err := q.MarkRelayed(id); err != nil {
+		t.Fatalf("mark relayed: %v", err)
+	}
+
+	eval := &stubEvaluator{score: 90, verdict: "great"}
+	go scoreURLAsync(&ShareRequest{
+		URL: "https://www.youtube.com/watch?v=abc", Profile: "eng",
+		QueueRowID: id,
+	}, q, eval, nil)
+	time.Sleep(200 * time.Millisecond)
+
+	items, err := q.List("failed", 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(items) == 0 {
+		t.Fatal("expected queue row to be marked failed for unsupported pipeline")
+	}
+	if items[0].Status != "failed" {
+		t.Errorf("status = %q, want failed", items[0].Status)
+	}
+}
+
+// 2c. EPIC-084 M1: Vimeo, Rumble, Dailymotion are blocked by unsupportedPipelineRE.
+func TestScoreURLAsync_NewUnsupportedPlatformsSkipped(t *testing.T) {
+	eval := &stubEvaluator{score: 90, verdict: "great"}
+	for _, u := range []string{
+		"https://vimeo.com/123456789",
+		"https://rumble.com/v1abc-video.html",
+		"https://www.dailymotion.com/video/x7abc",
+	} {
+		runScoreAsyncSkip(t, u, "eng", nil, eval)
+	}
+	if atomic.LoadInt32(&eval.calls) != 0 {
+		t.Errorf("eval called %d times, want 0 for new unsupported platforms", atomic.LoadInt32(&eval.calls))
+	}
+}
+
 // 3. Jina fetch error (non-2xx) — eval is never called, no queue write.
 func TestScoreURLAsync_FetchErrorSkipsEval(t *testing.T) {
 	srv := jinaBodyServer(t, http.StatusInternalServerError, "error")
@@ -355,6 +400,9 @@ func TestUnsupportedPipelineRE(t *testing.T) {
 		"https://soundcloud.com/artist/track",
 		"https://www.tiktok.com/@user/video/123",
 		"https://www.netflix.com/title/abc",
+		"https://vimeo.com/123456789",
+		"https://rumble.com/v1abc-video.html",
+		"https://www.dailymotion.com/video/x7abc",
 	}
 	allowed := []string{
 		"https://arxiv.org/abs/1706.03762",
