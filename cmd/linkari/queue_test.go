@@ -220,7 +220,7 @@ func TestQueueUpdateScore(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://test.com", Profile: "eng"})
 	q.MarkRelayed(id)
 
-	if err := q.UpdateScore(id, 87, "networking,vpn", "good article about vpn tools", "test-slug"); err != nil {
+	if err := q.UpdateScore(id, 87, "networking,vpn", "good article about vpn tools", "test-slug", "", ""); err != nil {
 		t.Fatalf("UpdateScore: %v", err)
 	}
 
@@ -247,7 +247,7 @@ func TestQueueArchive(t *testing.T) {
 
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://test.com", Profile: "eng"})
 	q.MarkRelayed(id)
-	q.UpdateScore(id, 92, "go,tools", "", "")
+	q.UpdateScore(id, 92, "go,tools", "", "", "", "")
 	q.Archive(id)
 
 	archived, err := q.ListArchived("", 10)
@@ -282,7 +282,7 @@ func TestQueueRecentScored(t *testing.T) {
 	for i, s := range scores {
 		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: fmt.Sprintf("https://%d.com", i)})
 		q.MarkRelayed(id)
-		q.UpdateScore(id, s, "", "", "")
+		q.UpdateScore(id, s, "", "", "", "", "")
 	}
 
 	since := time.Now().Add(-1 * time.Hour)
@@ -316,7 +316,7 @@ func TestQueueScoreByURL_UpdateRelayed(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://example.com/article", Profile: "eng"})
 	q.MarkRelayed(id)
 
-	item, inserted, err := q.ScoreByURL("https://example.com/article", 85, "great article", "networking", "eng", "example-article")
+	item, inserted, err := q.ScoreByURL("https://example.com/article", 85, "great article", "networking", "eng", "example-article", "", "")
 	if err != nil {
 		t.Fatalf("ScoreByURL: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestQueueScoreByURL_UpdateRelayed(t *testing.T) {
 func TestQueueScoreByURL_Insert(t *testing.T) {
 	q := newTestQueue(t)
 
-	item, inserted, err := q.ScoreByURL("https://cli-only.com", 72, "cli verdict", "", "finance", "cli-only-slug")
+	item, inserted, err := q.ScoreByURL("https://cli-only.com", 72, "cli verdict", "", "finance", "cli-only-slug", "", "")
 	if err != nil {
 		t.Fatalf("ScoreByURL: %v", err)
 	}
@@ -358,8 +358,8 @@ func TestQueueScoreByURL_Insert(t *testing.T) {
 func TestQueueScoreByURL_Idempotent(t *testing.T) {
 	q := newTestQueue(t)
 
-	q.ScoreByURL("https://already.com", 90, "first verdict", "", "eng", "slug1")
-	item, inserted, err := q.ScoreByURL("https://already.com", 95, "second verdict", "", "eng", "slug2")
+	q.ScoreByURL("https://already.com", 90, "first verdict", "", "eng", "slug1", "", "")
+	item, inserted, err := q.ScoreByURL("https://already.com", 95, "second verdict", "", "eng", "slug2", "", "")
 	if err != nil {
 		t.Fatalf("ScoreByURL: %v", err)
 	}
@@ -387,8 +387,8 @@ func TestQueueScoreByURL_Idempotent(t *testing.T) {
 func TestQueueSearchFTS5(t *testing.T) {
 	q := newTestQueue(t)
 
-	q.ScoreByURL("https://example.com/pangolin", 88, "self-hosted tunnel alternative to cloudflare", "networking", "eng", "pangolin")
-	q.ScoreByURL("https://example.com/recipe", 65, "delicious pasta carbonara recipe from rome", "food", "dining", "pasta-recipe")
+	q.ScoreByURL("https://example.com/pangolin", 88, "self-hosted tunnel alternative to cloudflare", "networking", "eng", "pangolin", "", "")
+	q.ScoreByURL("https://example.com/recipe", 65, "delicious pasta carbonara recipe from rome", "food", "dining", "pasta-recipe", "", "")
 
 	// Search for tunnel-related content.
 	results, err := q.SearchFTS5("tunnel", "", 10)
@@ -426,7 +426,7 @@ func TestQueueVerdictSlugRoundTrip(t *testing.T) {
 
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://test.com", Profile: "eng"})
 	q.MarkRelayed(id)
-	q.UpdateScore(id, 80, "go", "verdict text here", "my-slug")
+	q.UpdateScore(id, 80, "go", "verdict text here", "my-slug", "", "")
 
 	item, err := q.GetByID(id)
 	if err != nil {
@@ -589,7 +589,7 @@ func TestSkipReasonInArchiveResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := q.UpdateScore(id, 0, "", "Paywalled content behind subscription", "slug"); err != nil {
+	if err := q.UpdateScore(id, 0, "", "Paywalled content behind subscription", "slug", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	items, err := q.ListArchived("", 10)
@@ -621,7 +621,7 @@ func TestSkipReasonInArchiveResponse(t *testing.T) {
 func TestUpdateOutcome(t *testing.T) {
 	q := newTestQueue(t)
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://outcome.test"})
-	q.UpdateScore(id, 80, "go", "good article", "slug-1")
+	q.UpdateScore(id, 80, "go", "good article", "slug-1", "", "")
 
 	if err := q.UpdateOutcome(id, "acted"); err != nil {
 		t.Fatalf("UpdateOutcome: %v", err)
@@ -654,7 +654,7 @@ func TestUpdateOutcomeValidation(t *testing.T) {
 func TestUpdateFeedback(t *testing.T) {
 	q := newTestQueue(t)
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://feedback.test"})
-	q.UpdateScore(id, 75, "go", "decent", "slug-2")
+	q.UpdateScore(id, 75, "go", "decent", "slug-2", "", "")
 
 	if err := q.UpdateFeedback(id, "too_high"); err != nil {
 		t.Fatalf("UpdateFeedback: %v", err)
@@ -687,11 +687,11 @@ func TestProfileStats(t *testing.T) {
 	// Seed items across two profiles.
 	for i, u := range []string{"https://a.test", "https://b.test", "https://c.test"} {
 		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: u, Profile: "work"})
-		q.UpdateScore(id, 60+i*10, "go", "v", fmt.Sprintf("slug-%d", i))
+		q.UpdateScore(id, 60+i*10, "go", "v", fmt.Sprintf("slug-%d", i), "", "")
 		q.Archive(id)
 	}
 	id4, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://d.test", Profile: "life"})
-	q.UpdateScore(id4, 90, "go", "great", "slug-d")
+	q.UpdateScore(id4, 90, "go", "great", "slug-d", "", "")
 	q.Archive(id4)
 
 	// Add feedback to some items.
@@ -728,7 +728,7 @@ func TestListArchivedFiltered(t *testing.T) {
 	// Seed items with varied scores.
 	for i, u := range []string{"https://f1.test", "https://f2.test", "https://f3.test"} {
 		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: u, Profile: "work"})
-		q.UpdateScore(id, 50+i*20, "go", "v", fmt.Sprintf("s-%d", i)) // 50, 70, 90
+		q.UpdateScore(id, 50+i*20, "go", "v", fmt.Sprintf("s-%d", i), "", "") // 50, 70, 90
 		q.Archive(id)
 	}
 
@@ -776,7 +776,7 @@ func TestListArchivedFiltered(t *testing.T) {
 func TestGetBySlug(t *testing.T) {
 	q := newTestQueue(t)
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://slug-test.com/article"})
-	q.UpdateScore(id, 80, "go,test", "good article", "slug-test-com-article")
+	q.UpdateScore(id, 80, "go,test", "good article", "slug-test-com-article", "", "")
 
 	item, err := q.GetBySlug("slug-test-com-article")
 	if err != nil {
@@ -801,9 +801,9 @@ func TestGetBySlugNotFound(t *testing.T) {
 func TestGetBySlugReturnsMostRecent(t *testing.T) {
 	q := newTestQueue(t)
 	id1, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://dup.com/a"})
-	q.UpdateScore(id1, 50, "go", "ok", "dup-slug")
+	q.UpdateScore(id1, 50, "go", "ok", "dup-slug", "", "")
 	id2, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://dup.com/b"})
-	q.UpdateScore(id2, 90, "go", "great", "dup-slug")
+	q.UpdateScore(id2, 90, "go", "great", "dup-slug", "", "")
 
 	item, err := q.GetBySlug("dup-slug")
 	if err != nil {
@@ -834,7 +834,7 @@ func TestFeedbackAndroidVocabulary(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: fmt.Sprintf("https://vocab-%s.test", tt.input)})
-			q.UpdateScore(id, 70, "go", "test", fmt.Sprintf("vocab-%s", tt.input))
+			q.UpdateScore(id, 70, "go", "test", fmt.Sprintf("vocab-%s", tt.input), "", "")
 
 			err := q.UpdateFeedback(id, tt.input)
 			if tt.wantErr {
@@ -907,7 +907,7 @@ func TestUpdateScoreWithRubric(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://rubric.test"})
 
 	rubric := map[string]int{"Novelty": 80, "Depth": 60, "Relevance": 90}
-	if err := q.UpdateScore(id, 77, "go", "good", "rubric-slug", rubric); err != nil {
+	if err := q.UpdateScore(id, 77, "go", "good", "rubric-slug", "", "", rubric); err != nil {
 		t.Fatalf("UpdateScore with rubric: %v", err)
 	}
 
@@ -926,7 +926,7 @@ func TestUpdateScoreWithRubric(t *testing.T) {
 func TestScoreByURLWithRubric(t *testing.T) {
 	q := newTestQueue(t)
 	rubric := map[string]int{"Signal": 85, "Actionability": 70}
-	item, inserted, err := q.ScoreByURL("https://rubric-url.test", 78, "verdict", "go", "eng", "rubric-url-slug", rubric)
+	item, inserted, err := q.ScoreByURL("https://rubric-url.test", 78, "verdict", "go", "eng", "rubric-url-slug", "", "", rubric)
 	if err != nil {
 		t.Fatalf("ScoreByURL: %v", err)
 	}
@@ -951,7 +951,7 @@ func TestProfileStatsRubricAverages(t *testing.T) {
 		{"Novelty": 70, "Depth": 80},
 	} {
 		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: fmt.Sprintf("https://rubric-avg-%d.test", i), Profile: "eng"})
-		q.UpdateScore(id, 70+i*5, "go", "v", fmt.Sprintf("slug-%d", i), rubric)
+		q.UpdateScore(id, 70+i*5, "go", "v", fmt.Sprintf("slug-%d", i), "", "", rubric)
 	}
 
 	stats, err := q.ProfileStats("eng")
@@ -980,7 +980,7 @@ func TestUpdateScoreWithoutRubric(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://norubric.test"})
 
 	// Call without rubric (backward compat).
-	if err := q.UpdateScore(id, 50, "go", "ok", "no-rubric-slug"); err != nil {
+	if err := q.UpdateScore(id, 50, "go", "ok", "no-rubric-slug", "", ""); err != nil {
 		t.Fatalf("UpdateScore without rubric: %v", err)
 	}
 	item, _ := q.GetByID(id)
@@ -997,12 +997,12 @@ func TestDriftDetection(t *testing.T) {
 	// Create items with outcomes: acted items score higher than ignored.
 	for i := 0; i < 5; i++ {
 		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: fmt.Sprintf("https://acted-%d.test", i), Profile: "eng"})
-		q.UpdateScore(id, 80+i, "go", "v", fmt.Sprintf("acted-%d", i))
+		q.UpdateScore(id, 80+i, "go", "v", fmt.Sprintf("acted-%d", i), "", "")
 		q.UpdateOutcome(id, "acted")
 	}
 	for i := 0; i < 5; i++ {
 		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: fmt.Sprintf("https://ignored-%d.test", i), Profile: "eng"})
-		q.UpdateScore(id, 40+i, "go", "v", fmt.Sprintf("ignored-%d", i))
+		q.UpdateScore(id, 40+i, "go", "v", fmt.Sprintf("ignored-%d", i), "", "")
 		q.UpdateOutcome(id, "ignored")
 	}
 
@@ -1039,7 +1039,7 @@ func TestDriftDetectionNoOutcomes(t *testing.T) {
 
 	// Items with no outcomes — drift should be nil.
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://no-outcome.test", Profile: "eng"})
-	q.UpdateScore(id, 70, "go", "v", "no-outcome-slug")
+	q.UpdateScore(id, 70, "go", "v", "no-outcome-slug", "", "")
 
 	stats, err := q.ProfileStats("eng")
 	if err != nil {
@@ -1059,7 +1059,7 @@ func TestDriftDetectionNoOutcomes(t *testing.T) {
 func TestSetTopicTags(t *testing.T) {
 	q := newTestQueue(t)
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://tags.test"})
-	q.UpdateScore(id, 80, "go", "good", "tags-slug")
+	q.UpdateScore(id, 80, "go", "good", "tags-slug", "", "")
 
 	tags := []string{"go", "testing", "ci-cd"}
 	if err := q.SetTopicTags(id, tags); err != nil {
@@ -1081,7 +1081,7 @@ func TestSetTopicTags(t *testing.T) {
 func TestSetTopicTagsEmpty(t *testing.T) {
 	q := newTestQueue(t)
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://empty-tags.test"})
-	q.UpdateScore(id, 80, "go", "good", "empty-tags-slug")
+	q.UpdateScore(id, 80, "go", "good", "empty-tags-slug", "", "")
 
 	// Empty slice should be a no-op.
 	if err := q.SetTopicTags(id, nil); err != nil {
@@ -1120,7 +1120,7 @@ func TestNormalizeTopicTags(t *testing.T) {
 func TestFTS5SearchWithTopicTags(t *testing.T) {
 	q := newTestQueue(t)
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://fts-tags.test", Profile: "eng"})
-	q.UpdateScore(id, 85, "go", "great article about kubernetes", "fts-tags-slug")
+	q.UpdateScore(id, 85, "go", "great article about kubernetes", "fts-tags-slug", "", "")
 	q.SetTopicTags(id, []string{"kubernetes", "devops", "cloud"})
 
 	// FTS5 should find the item via topic_tags content.

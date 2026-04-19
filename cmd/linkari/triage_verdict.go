@@ -177,7 +177,7 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 		" This applies to ALL cases including noise-gated/skip content." +
 		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
 		" Never output markdown formatting like **Score:** — always use the JSON schema."
-	spFile, err := writeSystemPromptFile(systemPrompt)
+	spFile, _, err := writeSystemPromptFile(systemPrompt)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 		" This applies to ALL cases including noise-gated/skip content." +
 		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
 		" Never output markdown formatting like **Score:** — always use the JSON schema."
-	spFile, err := writeSystemPromptFile(systemPrompt)
+	spFile, _, err := writeSystemPromptFile(systemPrompt)
 	if err != nil {
 		return nil, err
 	}

@@ -35,7 +35,7 @@ func TestScoreCmd_AutoArchiveEnqueuesDigestPush(t *testing.T) {
 	defer q.Close()
 
 	// Queue row should be archived.
-	item, _, err := q.ScoreByURL("https://example.com/cli-push", 95, "cli verdict", "", "eng", "cli-push-slug")
+	item, _, err := q.ScoreByURL("https://example.com/cli-push", 95, "cli verdict", "", "eng", "cli-push-slug", "", "")
 	if err != nil {
 		t.Fatalf("ScoreByURL: %v", err)
 	}

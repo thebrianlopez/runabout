@@ -74,7 +74,7 @@ func backfillCmd() *cobra.Command {
 					return nil
 				}
 
-				_, inserted, err := q.ScoreByURL(s.URL, s.Score, s.Verdict, s.Tags, s.Profile, s.Slug)
+				_, inserted, err := q.ScoreByURL(s.URL, s.Score, s.Verdict, s.Tags, s.Profile, s.Slug, "", "")
 				if err != nil {
 					result.Skipped++
 					return nil

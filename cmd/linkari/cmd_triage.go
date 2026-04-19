@@ -149,6 +149,7 @@ the eval harness path).`,
 			sc.Profile = profile
 			sc.SourceType = "cli-triage"
 			sc.PromptVersion = promptVersionFromPath(tmplPath)
+			sc.PromptHash = promptHash(sysPrompt)
 
 			// EPIC-058 M3: confidence gate — check if score meets threshold
 			// for auto-launch. M4 wires the actual ginit launch.
@@ -202,7 +203,7 @@ the eval harness path).`,
 			}
 			defer q.Close()
 
-			item, _, err := q.ScoreByURL(url, res.Score, res.Verdict, res.Tags, profile, slug, sc.RubricScores)
+			item, _, err := q.ScoreByURL(url, res.Score, res.Verdict, res.Tags, profile, slug, sc.PromptHash, sc.PromptVersion, sc.RubricScores)
 			if err != nil {
 				return fmt.Errorf("score: %w", err)
 			}
@@ -415,23 +416,24 @@ func logHaikuEnvKeys() {
 }
 
 // writeSystemPromptFile writes the system prompt to a temp file and returns
-// the path. The caller must defer os.Remove on the returned path.
+// the path and content hash. The caller must defer os.Remove on the returned path.
 // EPIC-062 M1: --system-prompt-file is used instead of inline --system-prompt.
-func writeSystemPromptFile(prompt string) (string, error) {
+// EPIC-082 M1: returns prompt hash alongside path for traceability.
+func writeSystemPromptFile(prompt string) (string, string, error) {
 	f, err := os.CreateTemp("", "linkari-sysprompt-*.txt")
 	if err != nil {
-		return "", fmt.Errorf("create system prompt file: %w", err)
+		return "", "", fmt.Errorf("create system prompt file: %w", err)
 	}
 	if _, err := f.WriteString(prompt); err != nil {
 		f.Close()
 		os.Remove(f.Name())
-		return "", fmt.Errorf("write system prompt file: %w", err)
+		return "", "", fmt.Errorf("write system prompt file: %w", err)
 	}
 	if err := f.Close(); err != nil {
 		os.Remove(f.Name())
-		return "", fmt.Errorf("close system prompt file: %w", err)
+		return "", "", fmt.Errorf("close system prompt file: %w", err)
 	}
-	return f.Name(), nil
+	return f.Name(), promptHash(prompt), nil
 }
 
 // runClaudeHaiku shells out to the claude CLI for a single-turn Haiku call.
@@ -441,7 +443,7 @@ func writeSystemPromptFile(prompt string) (string, error) {
 // additional flag is needed to suppress them. --effort low for faster inference,
 // --no-session-persistence to avoid writing session state to disk.
 func runClaudeHaiku(ctx context.Context, systemPrompt, content string) (string, error) {
-	spFile, err := writeSystemPromptFile(systemPrompt)
+	spFile, _, err := writeSystemPromptFile(systemPrompt)
 	if err != nil {
 		return "", err
 	}
@@ -688,6 +690,7 @@ func (triageScorer) Score(fix Fixture) (Golden, error) {
 		Gaps:          sc.Gaps,
 		SourceType:    "eval-fixture",
 		PromptVersion: promptVersionFromPath(tmplPath),
+		PromptHash:    promptHash(sysPrompt), // EPIC-082 M4
 	}, nil
 }
 

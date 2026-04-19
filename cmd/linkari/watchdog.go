@@ -230,7 +230,7 @@ func (w *RelayedWatchdog) rescueFromDisk(stuck []TimedOutRelayed, now time.Time,
 			continue
 		}
 
-		ingested, ierr := w.queue.IngestScoreIfRelayed(t.ID, s.Score, s.Tags, s.Verdict, s.Slug)
+		ingested, ierr := w.queue.IngestScoreIfRelayed(t.ID, s.Score, s.Tags, s.Verdict, s.Slug, "", "")
 		if ierr != nil {
 			slog.Error("watchdog ingest failed",
 				"event_type", "relayed_watchdog_ingest_error",

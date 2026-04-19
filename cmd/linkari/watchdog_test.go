@@ -377,7 +377,7 @@ func TestIngestScoreIfRelayedRaceGuard(t *testing.T) {
 	}
 	id, _ := res.LastInsertId()
 
-	ingested, err := q.IngestScoreIfRelayed(id, 90, "", "save", "slug")
+	ingested, err := q.IngestScoreIfRelayed(id, 90, "", "save", "slug", "", "")
 	if err != nil {
 		t.Fatalf("IngestScoreIfRelayed: %v", err)
 	}

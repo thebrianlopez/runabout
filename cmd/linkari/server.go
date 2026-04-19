@@ -1236,7 +1236,7 @@ func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.queue.UpdateScore(id, req.Score, req.Tags, req.Verdict, req.Slug, req.RubricScores); err != nil {
+	if err := s.queue.UpdateScore(id, req.Score, req.Tags, req.Verdict, req.Slug, "", "", req.RubricScores); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("update score: %v", err))
 		return
 	}
@@ -1889,7 +1889,7 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 
 	// Persist score + verdict to queue and auto-archive if threshold met.
 	if s.queue != nil && req.URL != "" {
-		item, _, err := s.queue.ScoreByURL(req.URL, req.Score, req.Verdict, req.Tags, req.Profile, req.Slug)
+		item, _, err := s.queue.ScoreByURL(req.URL, req.Score, req.Verdict, req.Tags, req.Profile, req.Slug, "", "")
 		if err != nil {
 			slog.WarnContext(ctx, "notify queue persist failed", "error", err)
 		} else {
