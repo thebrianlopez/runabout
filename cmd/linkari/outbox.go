@@ -104,6 +104,11 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 		return 0
 	}
 
+	// EPIC-083 M5-3: emit push_outbox_depth when items > 0.
+	emitPushEvent("push_outbox_depth", map[string]interface{}{
+		"depth": len(items),
+	})
+
 	// Snapshot device token and token source once per drain tick.
 	deviceToken, err := s.queue.GetDeviceToken()
 	if err != nil {
