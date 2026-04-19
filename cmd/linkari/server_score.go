@@ -30,9 +30,29 @@ var unsupportedPipelineRE = regexp.MustCompile(`(?i)(?:youtube\.com|youtu\.be|sp
 
 // loginWallDomainRE matches URL patterns for sites that require login to
 // access content. Jina Reader returns empty or login-page HTML for these,
-// wasting a Haiku call. LinkedIn /pulse/ articles are excluded (publicly
-// accessible). EPIC-083 M1-1.
-var loginWallDomainRE = regexp.MustCompile(`(?i)(?:instagram\.com|x\.com|twitter\.com|facebook\.com|linkedin\.com/(?!pulse/))`)
+// wasting a Haiku call. LinkedIn is handled separately by isLoginWallDomain
+// to exclude /pulse/ articles (publicly accessible). EPIC-083 M1-1.
+var loginWallDomainRE = regexp.MustCompile(`(?i)(?:instagram\.com|x\.com|twitter\.com|facebook\.com)`)
+
+// linkedinPulseRE matches LinkedIn /pulse/ article URLs which are publicly
+// accessible and should NOT be blocked by the login-wall gate.
+var linkedinPulseRE = regexp.MustCompile(`(?i)linkedin\.com/pulse/`)
+
+// linkedinDomainRE matches any LinkedIn URL.
+var linkedinDomainRE = regexp.MustCompile(`(?i)linkedin\.com/`)
+
+// isLoginWallDomain returns true when the URL belongs to a login-wall domain.
+// LinkedIn /pulse/ articles are excluded (publicly accessible).
+func isLoginWallDomain(rawURL string) bool {
+	if loginWallDomainRE.MatchString(rawURL) {
+		return true
+	}
+	// LinkedIn: block unless it's a /pulse/ article.
+	if linkedinDomainRE.MatchString(rawURL) && !linkedinPulseRE.MatchString(rawURL) {
+		return true
+	}
+	return false
+}
 
 // cameraTimestampRE matches filenames produced by camera apps (IMG_20260101,
 // DSC_1234, DCIM_xxx, PXL_20260101, VID_20260101). Used by the camera photo
@@ -324,7 +344,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 
 	// EPIC-083 M1-1: login-wall domain gate — sites that require auth return
 	// empty or login-page HTML via Jina, wasting a Haiku call.
-	if isURLShare && loginWallDomainRE.MatchString(rawURL) {
+	if isURLShare && isLoginWallDomain(rawURL) {
 		prefilterStage = "login_wall_domain"
 		slog.Info("score_async: login-wall domain",
 			"event_type", "score_prefilter_skip",

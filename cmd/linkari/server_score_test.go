@@ -891,9 +891,9 @@ func TestVisionExecArgs(t *testing.T) {
 
 // EPIC-083 M1: pre-filter gate tests.
 
-// TestLoginWallDomainRE verifies the login-wall domain regex matches all
+// TestIsLoginWallDomain verifies the login-wall domain detection matches all
 // documented domains and excludes allowed URL patterns.
-func TestLoginWallDomainRE(t *testing.T) {
+func TestIsLoginWallDomain(t *testing.T) {
 	blocked := []string{
 		"https://www.instagram.com/p/abc123",
 		"https://instagram.com/stories/user",
@@ -911,13 +911,13 @@ func TestLoginWallDomainRE(t *testing.T) {
 		"https://arxiv.org/abs/1706.03762",
 	}
 	for _, u := range blocked {
-		if !loginWallDomainRE.MatchString(u) {
-			t.Errorf("expected %q to match loginWallDomainRE", u)
+		if !isLoginWallDomain(u) {
+			t.Errorf("expected %q to be login-wall domain", u)
 		}
 	}
 	for _, u := range allowed {
-		if loginWallDomainRE.MatchString(u) {
-			t.Errorf("expected %q NOT to match loginWallDomainRE", u)
+		if isLoginWallDomain(u) {
+			t.Errorf("expected %q NOT to be login-wall domain", u)
 		}
 	}
 }
