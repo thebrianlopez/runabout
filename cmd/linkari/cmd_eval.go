@@ -75,6 +75,7 @@ type Golden struct {
 	Gaps          []string `json:"gaps,omitempty"`
 	SourceType    string   `json:"source_type,omitempty"`
 	PromptVersion string   `json:"prompt_version,omitempty"`
+	PromptHash    string   `json:"prompt_hash,omitempty"` // EPIC-082 M4: sha256 prefix of rendered prompt
 	// Skip signals that the scorer could not produce a comparable score
 	// this run (parse failure after repair, malformed verdict, noise-gate
 	// hit). The eval runner treats Skip as neither pass nor fail — it is
@@ -141,7 +142,7 @@ Default fixtures directory (both subcommands), in priority order:
 // manifest and calls the JSON Haiku contract via Evaluator (EPIC-058 M2).
 // Tests swap in a deterministic fake.
 var refreshScorerFn = func(ctx context.Context, profile, content string) (*Scorecard, error) {
-	_, sysPrompt, err := loadProfileTemplate(profile)
+	tmplPath, sysPrompt, err := loadProfileTemplate(profile)
 	if err != nil {
 		return nil, fmt.Errorf("load template: %w", err)
 	}
@@ -151,6 +152,9 @@ var refreshScorerFn = func(ctx context.Context, profile, content string) (*Score
 		return nil, err
 	}
 	sc.SourceType = "eval-refresh"
+	// EPIC-082 M4: populate prompt traceability for refresh-goldens.
+	sc.PromptVersion = promptVersionFromPath(tmplPath)
+	sc.PromptHash = promptHash(sysPrompt)
 	return sc, nil
 }
 
@@ -245,6 +249,10 @@ is bumped to the refresh timestamp.`,
 					Score:         p.scorecard.Score,
 					Verdict:       p.scorecard.Verdict,
 					RawMarkdown:   p.scorecard.RawMarkdown,
+					Gaps:          p.scorecard.Gaps,           // EPIC-082 M4
+					SourceType:    "eval-refresh",             // EPIC-082 M4
+					PromptVersion: p.scorecard.PromptVersion,  // EPIC-082 M4
+					PromptHash:    p.scorecard.PromptHash,     // EPIC-082 M4
 					RefreshedFrom: &prior,
 				}
 				f, err := os.Create(p.path)
@@ -355,7 +363,7 @@ func evalRunCmd() *cobra.Command {
 			fmt.Fprintf(os.Stderr, "eval: scorer=%s tolerance=±%d fixtures=%d\n",
 				scorer.Name(), tolerance, len(fixtures))
 
-			var failures, skips int
+			var failures, skips, stales int
 			for _, fix := range fixtures {
 				got, err := scorer.Score(fix)
 				if err != nil {
@@ -379,6 +387,16 @@ func evalRunCmd() *cobra.Command {
 				if delta < 0 {
 					delta = -delta
 				}
+				// EPIC-082 M4: STALE — prompt version changed since golden was captured.
+				// Non-gating: logged but does not increment failures.
+				if delta > tolerance && fix.Golden.PromptVersion != "" && got.PromptVersion != fix.Golden.PromptVersion {
+					fmt.Printf("STALE %s: score=%d golden=%d delta=±%d (prompt changed: %s→%s)\n",
+						fix.ID, got.Score, fix.Golden.Score, delta,
+						fix.Golden.PromptVersion[:min(8, len(fix.Golden.PromptVersion))],
+						got.PromptVersion[:min(8, len(got.PromptVersion))])
+					stales++
+					continue
+				}
 				if delta > tolerance {
 					fmt.Printf("FAIL %s: score=%d golden=%d delta=±%d (tolerance=±%d)\n",
 						fix.ID, got.Score, fix.Golden.Score, delta, tolerance)
@@ -395,8 +413,8 @@ func evalRunCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Fprintf(os.Stderr, "eval: %d/%d passed (%d failed, %d skipped)\n",
-				len(fixtures)-failures-skips, len(fixtures), failures, skips)
+			fmt.Fprintf(os.Stderr, "eval: %d/%d passed (%d failed, %d skipped, %d stale)\n",
+				len(fixtures)-failures-skips-stales, len(fixtures), failures, skips, stales)
 			if failures > 0 {
 				return fmt.Errorf("%d fixture(s) failed", failures)
 			}

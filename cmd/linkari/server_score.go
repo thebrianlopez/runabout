@@ -380,12 +380,13 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// Load profile template.
 	// EPIC-081 M2: use vision mode for image shares to select vision-specific
 	// rubric axes and persona intro from the profile manifest.
-	var sysPrompt string
+	// EPIC-082 M1: capture tmplPath for prompt traceability.
+	var tmplPath, sysPrompt string
 	var err error
 	if req.Type == "image" {
-		_, sysPrompt, err = loadProfileTemplateForMode(profile, "vision")
+		tmplPath, sysPrompt, err = loadProfileTemplateForMode(profile, "vision")
 	} else {
-		_, sysPrompt, err = loadProfileTemplate(profile)
+		tmplPath, sysPrompt, err = loadProfileTemplate(profile)
 	}
 	if err != nil {
 		slog.Warn("score_async: load template failed",
@@ -466,6 +467,9 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	}
 	sc.Profile = profile
 	sc.SourceType = "server-score"
+	// EPIC-082 M1: prompt traceability — populate hash and version from template.
+	sc.PromptHash = promptHash(sysPrompt)
+	sc.PromptVersion = promptVersionFromPath(tmplPath)
 
 	slog.Info("score_async: evaluated",
 		"event_type", "score_async_evaluated",
@@ -487,7 +491,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	var itemStatus, itemProfile, itemSlug, itemVerdict, itemURL string
 	if isURLShare {
 		slug := deriveSlugFromURL(rawURL)
-		item, _, err := q.ScoreByURL(rawURL, sc.Score, sc.Verdict, sc.Tags, profile, slug, sc.RubricScores)
+		item, _, err := q.ScoreByURL(rawURL, sc.Score, sc.Verdict, sc.Tags, profile, slug, sc.PromptHash, sc.PromptVersion, sc.RubricScores)
 		if err != nil {
 			slog.Warn("score_async: ScoreByURL failed", "url", rawURL, "error", err)
 			return
@@ -501,7 +505,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		itemURL = item.URL
 	} else {
 		slug := fmt.Sprintf("file-%d", req.QueueRowID)
-		_, err := q.ScoreByID(req.QueueRowID, sc.Score, sc.Tags, sc.Verdict, slug)
+		_, err := q.ScoreByID(req.QueueRowID, sc.Score, sc.Tags, sc.Verdict, slug, sc.PromptHash, sc.PromptVersion)
 		if err != nil {
 			slog.Warn("score_async: ScoreByID failed", "row_id", req.QueueRowID, "error", err)
 			return
@@ -1396,7 +1400,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	}
 	slug := fmt.Sprintf("vnote-%d", rowID)
 	_ = audioTopicTags // topic tags available for future use
-	if err := q.UpdateScore(rowID, audioScore, audioVerdict, synopsis, slug); err != nil {
+	if err := q.UpdateScore(rowID, audioScore, audioVerdict, synopsis, slug, "", ""); err != nil {
 		slog.Warn("score_audio: UpdateScore failed",
 			"event_type", "score_audio_queue_error",
 			"row_id", rowID,

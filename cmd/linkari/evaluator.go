@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -41,6 +42,7 @@ type Scorecard struct {
 	Backend        string         `json:"backend,omitempty"`        // e.g. "claude-haiku"
 	LatencyMs      int64          `json:"latency_ms,omitempty"`
 	PromptVersion  string         `json:"prompt_version,omitempty"` // git SHA of template file
+	PromptHash     string         `json:"prompt_hash,omitempty"`    // EPIC-082 M1: sha256 prefix of rendered prompt
 	SourceType     string         `json:"source_type,omitempty"`    // "cli-triage", "cli-score", "eval-refresh", "eval-fixture"
 	CostUSD        float64        `json:"cost_usd,omitempty"`       // EPIC-062 M2: per-call cost from JSON envelope
 	Usage          *TokenUsage    `json:"usage,omitempty"`           // EPIC-062 M2: per-call token usage
@@ -285,4 +287,11 @@ func promptVersionFromPath(tmplPath string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// promptHash returns the first 16 hex characters of the SHA-256 of the
+// rendered prompt content. Used for content-level prompt identity (EPIC-082 M1).
+func promptHash(content string) string {
+	h := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("%x", h[:8])
 }

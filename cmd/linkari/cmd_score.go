@@ -126,6 +126,7 @@ For batch evaluation across a fixture set, see EPIC-054 (planned).`,
 			}
 			sc.SourceType = "cli-score"
 			sc.PromptVersion = promptVersionFromPath(promptSourcePath(promptSource))
+			sc.PromptHash = promptHash(sysPrompt)
 
 			// EPIC-058 M3: confidence gate.
 			if actionCfg := lookupGinitAction(profile); actionCfg != nil && CheckGate(sc, *actionCfg) {
@@ -188,7 +189,7 @@ For batch evaluation across a fixture set, see EPIC-054 (planned).`,
 			}
 			defer q.Close()
 
-			item, _, err := q.ScoreByURL(url, res.Score, res.Verdict, res.Tags, profile, slug, sc.RubricScores)
+			item, _, err := q.ScoreByURL(url, res.Score, res.Verdict, res.Tags, profile, slug, sc.PromptHash, sc.PromptVersion, sc.RubricScores)
 			if err != nil {
 				return fmt.Errorf("score: %w", err)
 			}
@@ -361,7 +362,7 @@ scores directly.`,
 			}
 			defer q.Close()
 
-			item, _, err := q.ScoreByURL(url, score, verdict, tags, profile, slug)
+			item, _, err := q.ScoreByURL(url, score, verdict, tags, profile, slug, "", "")
 			if err != nil {
 				return fmt.Errorf("score: %w", err)
 			}
