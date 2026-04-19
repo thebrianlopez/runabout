@@ -187,6 +187,7 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 		"--print",
 		"--model", claudeModel,
 		"--max-turns", "3", // --output-format json + --json-schema uses internal tool-call turns to enforce schema; 1 is insufficient
+		"--max-tokens", "500", // EPIC-083 M2-2: cap output tokens
 		"--tools", "",
 		"--output-format", "json",
 		"--json-schema", schema,
@@ -214,6 +215,12 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 // can read a local image file for multimodal scoring. The prompt instructs the
 // model to read the image at imagePath and score it. EPIC-079 M3.
 var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
+	// EPIC-083 M2-1: score-first instruction — short-circuit personal photos to
+	// avoid filling the full rubric when the image has no engineered content.
+	systemPrompt += "\n\nIf the image is a personal photo (DCIM, camera roll, selfie, food, pet, scenery)" +
+		" with no text, code, document, diagram, or engineered content visible," +
+		` respond immediately with {"score": 0, "verdict": "personal photo", "rubric_scores": {}}` +
+		" without filling the full rubric."
 	systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching the provided schema." +
 		" This applies to ALL cases including noise-gated/skip content." +
 		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
@@ -236,6 +243,7 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 		"--print",
 		"--model", visionModelName,
 		"--max-turns", "3",
+		"--max-tokens", "500", // EPIC-083 M2-2: cap output tokens
 		"--allowedTools", "Read",
 		"--output-format", "json",
 		"--json-schema", schema,
