@@ -888,3 +888,149 @@ func TestVisionExecArgs(t *testing.T) {
 		t.Errorf("backend = %q, want %q", sc.Backend, "claude-haiku-vision-fallback")
 	}
 }
+
+// EPIC-083 M1: pre-filter gate tests.
+
+// TestLoginWallDomainRE verifies the login-wall domain regex matches all
+// documented domains and excludes allowed URL patterns.
+func TestLoginWallDomainRE(t *testing.T) {
+	blocked := []string{
+		"https://www.instagram.com/p/abc123",
+		"https://instagram.com/stories/user",
+		"https://x.com/user/status/123",
+		"https://twitter.com/user/status/123",
+		"https://www.facebook.com/post/123",
+		"https://facebook.com/groups/abc",
+		"https://www.linkedin.com/in/someone",
+		"https://linkedin.com/feed/update/123",
+	}
+	allowed := []string{
+		"https://www.linkedin.com/pulse/some-article-title",
+		"https://linkedin.com/pulse/my-post",
+		"https://github.com/golang/go",
+		"https://arxiv.org/abs/1706.03762",
+	}
+	for _, u := range blocked {
+		if !loginWallDomainRE.MatchString(u) {
+			t.Errorf("expected %q to match loginWallDomainRE", u)
+		}
+	}
+	for _, u := range allowed {
+		if loginWallDomainRE.MatchString(u) {
+			t.Errorf("expected %q NOT to match loginWallDomainRE", u)
+		}
+	}
+}
+
+// TestScoreAsync_LoginWallSkipsEval verifies that URL shares to login-wall
+// domains exit early without calling eval.
+func TestScoreAsync_LoginWallSkipsEval(t *testing.T) {
+	eval := &stubEvaluator{score: 90, verdict: "great"}
+	runScoreAsyncSkip(t, "https://www.instagram.com/p/abc123", "eng", nil, eval)
+	if atomic.LoadInt32(&eval.calls) != 0 {
+		t.Errorf("eval called %d times, want 0 for login-wall domain", atomic.LoadInt32(&eval.calls))
+	}
+}
+
+// TestIsCameraPhoto verifies the camera photo noise gate logic.
+func TestIsCameraPhoto(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *ShareRequest
+		want bool
+	}{
+		{
+			name: "gallery app + camera filename = camera photo",
+			req: &ShareRequest{
+				CallingPackage: "com.google.android.apps.photos",
+				Filename:       "IMG_20260419_123456.jpg",
+			},
+			want: true,
+		},
+		{
+			name: "gallery app + non-camera filename = not camera",
+			req: &ShareRequest{
+				CallingPackage: "com.google.android.apps.photos",
+				Filename:       "meme.jpg",
+			},
+			want: false,
+		},
+		{
+			name: "non-gallery app + camera filename = not camera",
+			req: &ShareRequest{
+				CallingPackage: "com.whatsapp",
+				Filename:       "IMG_20260419_123456.jpg",
+			},
+			want: false,
+		},
+		{
+			name: "gallery app + camera filename + extra text = not camera",
+			req: &ShareRequest{
+				CallingPackage: "com.sec.android.gallery3d",
+				Filename:       "IMG_20260419_123456.jpg",
+				ExtraText:      "Check out this sunset!",
+			},
+			want: false,
+		},
+		{
+			name: "gallery app + camera filename + screenshot = not camera",
+			req: &ShareRequest{
+				CallingPackage: "com.sec.android.gallery3d",
+				Filename:       "IMG_20260419_123456.jpg",
+				IsScreenshot:   true,
+			},
+			want: false,
+		},
+		{
+			name: "DSC pattern matches",
+			req: &ShareRequest{
+				CallingPackage: "com.sec.android.gallery3d",
+				Filename:       "DSC_20260419.jpg",
+			},
+			want: true,
+		},
+		{
+			name: "PXL pattern matches",
+			req: &ShareRequest{
+				CallingPackage: "com.google.android.apps.photos",
+				Filename:       "PXL_20260419_123456789.jpg",
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isCameraPhoto(tt.req)
+			if got != tt.want {
+				t.Errorf("isCameraPhoto() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCameraTimestampRE verifies the camera timestamp regex patterns.
+func TestCameraTimestampRE(t *testing.T) {
+	matches := []string{
+		"IMG_20260419_123456.jpg",
+		"DSC_20260101.jpg",
+		"DCIM_20260419_xyz.png",
+		"PXL_20260419_123456789.jpg",
+		"VID_20260419_120000.mp4",
+	}
+	nonMatches := []string{
+		"meme.jpg",
+		"Screenshot_20260419.png",
+		"document.pdf",
+		"WhatsApp Image 2026-04-19.jpeg",
+	}
+	for _, f := range matches {
+		if !cameraTimestampRE.MatchString(f) {
+			t.Errorf("expected %q to match cameraTimestampRE", f)
+		}
+	}
+	for _, f := range nonMatches {
+		if cameraTimestampRE.MatchString(f) {
+			t.Errorf("expected %q NOT to match cameraTimestampRE", f)
+		}
+	}
+}
