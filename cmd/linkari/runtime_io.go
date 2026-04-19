@@ -16,7 +16,7 @@ package main
 //   $LINKARI_PROFILE_PATH or default  /profiles       (ro)
 //   per-invocation tmpdir             /linkari/io     (rw, tmpfs)
 //
-// ContainerRuntime.InvokeFFmpeg, InvokeWhisperTranscribe, and InvokeClaudeSubprocess
+// ContainerRuntime.InvokeFFmpeg and InvokeWhisperTranscribe
 // are updated in this file to use containerRunWithIO.
 
 import (
@@ -298,7 +298,7 @@ var monotonicID = func() int64 {
 // one definition exists per method — we keep both files for clarity and remove
 // the M4 implementations below.
 //
-// The M4 InvokeFFmpeg, InvokeWhisperTranscribe, InvokeClaudeSubprocess are
+// The M4 InvokeFFmpeg and InvokeWhisperTranscribe are
 // removed from runtime_container.go and replaced here.
 
 // InvokeFFmpeg converts inputPath to outputPath inside a sandboxed container.
@@ -364,49 +364,6 @@ func (r *ContainerRuntime) InvokeWhisperTranscribe(ctx context.Context, wavPath,
 		paths.mounts(),
 		ProcessIO{Stdout: &stdout, Stderr: &stderr},
 		PolicyNone, // whisper needs no network access
-	)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(stdout.String()), nil
-}
-
-// InvokeClaudeSubprocess calls the claude CLI inside a sandboxed container.
-func (r *ContainerRuntime) InvokeClaudeSubprocess(ctx context.Context, systemPrompt, content string) (string, error) {
-	paths, err := resolveSandboxPaths("")
-	if err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(paths.IODir)
-
-	// Write system prompt into the io dir (read-only from container perspective
-	// is enforced by mount options — /linkari/io is rw but the file won't be modified).
-	spFile := filepath.Join(paths.IODir, "system_prompt.txt")
-	if err := os.WriteFile(spFile, []byte(systemPrompt), 0o644); err != nil {
-		return "", fmt.Errorf("sandbox: write system prompt: %w", err)
-	}
-
-	env := []string{}
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		env = append(env, "ANTHROPIC_API_KEY="+key)
-	}
-
-	var stdout, stderr strings.Builder
-	_, err = r.containerRunWithIO(ctx,
-		r.cfg.ImageRegistry+"/claude-sandbox:latest",
-		[]string{
-			"--print",
-			"--model", claudeModel,
-			"--max-turns", "1",
-			"--effort", "low",
-			"--no-session-persistence",
-			"--system-prompt-file", "/linkari/io/system_prompt.txt",
-			content,
-		},
-		env,
-		paths.mounts(),
-		ProcessIO{Stdout: &stdout, Stderr: &stderr},
-		PolicyHost, // claude CLI needs host network to reach api.anthropic.com
 	)
 	if err != nil {
 		return "", err

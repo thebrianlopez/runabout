@@ -173,8 +173,8 @@ func (h *HybridRuntime) InvokeClaudeSubprocess(ctx context.Context, systemPrompt
 // ─── ContainerRuntime ─────────────────────────────────────────────────────────
 
 // ContainerRuntime is the gVisor-sandboxed implementation.
-// M4 (runtime_container.go) implements InvokeFFmpeg, InvokeWhisperTranscribe,
-// and InvokeClaudeSubprocess using the containerd v2 client + gVisor runsc.
+// M4 (runtime_container.go) implements InvokeFFmpeg and InvokeWhisperTranscribe
+// using the containerd v2 client + gVisor runsc.
 // M5 adds mount path resolution and stdin/stdout piping.
 // M6 adds timeout policy and native exec fallback.
 type ContainerRuntime struct {

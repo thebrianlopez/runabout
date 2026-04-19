@@ -189,5 +189,5 @@ func trimOutput(s string, n int) string {
 	return "..." + s[len(s)-n:]
 }
 
-// InvokeFFmpeg, InvokeWhisperTranscribe, and InvokeClaudeSubprocess are
-// implemented in runtime_io.go (M5) using containerRunWithIO + bind mounts.
+// InvokeFFmpeg and InvokeWhisperTranscribe are implemented in runtime_io.go
+// (M5) using containerRunWithIO + bind mounts.

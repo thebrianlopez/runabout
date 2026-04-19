@@ -364,6 +364,13 @@ var visionModelName = claudeModel
 
 // initClaudeConfig resolves ClaudePath and VisionModel from ServerConfig and
 // logs the resolved values at startup. EPIC-080 M6.
+//
+// Architecture note (EPIC-008 M5): CLI exec is the permanent integration
+// pattern. The claude CLI authenticates via OAuth2 device flow, storing tokens
+// in ~/.claude/. There are no standalone API keys — the SDK requires the same
+// OAuth2 session. Moving to the SDK would not eliminate the CLI dependency;
+// it would add one. All scoring paths (URL, image, audio) shell out to the
+// claude binary and this is by design, not a migration gap.
 func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.ClaudePath != "" {
 		claudeBinaryPath = cfg.ClaudePath
@@ -382,6 +389,38 @@ func initClaudeConfig(cfg *ServerConfig) {
 		"scoring_model", claudeModel,
 		"image_noise_gate_min_bytes", imageNoiseGateMinBytes,
 	)
+
+	// EPIC-008 M5: startup smoke test — validate the claude binary is
+	// accessible and responds to --version. Fail fast with an actionable
+	// error rather than discovering the problem on the first scoring request.
+	if err := validateClaudeCLI(); err != nil {
+		slog.Error("claude CLI validation failed — scoring will not work",
+			"event_type", "claude_cli_validation_failed",
+			"claude_path", claudeBinaryPath,
+			"error", err,
+		)
+	}
+}
+
+// validateClaudeCLI runs `claude --version` as a lightweight smoke test to
+// confirm the binary is accessible and executable. EPIC-008 M5.
+func validateClaudeCLI() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, claudeBinaryPath, "--version")
+	cmd.Env = haikuEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("claude --version failed: %w (is %q in PATH?)", err, claudeBinaryPath)
+	}
+	version := strings.TrimSpace(string(out))
+	slog.Info("claude CLI validated",
+		"event_type", "claude_cli_validated",
+		"claude_path", claudeBinaryPath,
+		"version", version,
+	)
+	return nil
 }
 
 // haikuEnv returns os.Environ minus CLAUDECODE — claude CLI behaves
@@ -415,14 +454,65 @@ func logHaikuEnvKeys() {
 	}
 }
 
+// claudeExecOpts configures the flag set for a `claude --print` invocation.
+// buildClaudeArgs assembles the args slice from these options, ensuring a
+// single point of flag assembly across all scoring paths. EPIC-008 M2.
+type claudeExecOpts struct {
+	Model          string // e.g. claudeModel or visionModelName
+	MaxTurns       string // "1" for plain text, "3" for JSON/vision
+	Tools          string // "--tools" value; empty string disables all
+	AllowedTools   string // "--allowedTools" value; empty omits the flag
+	OutputFormat   string // "json" or empty (plain text)
+	JSONSchema     string // schema string; empty omits --json-schema
+	SystemPrompt   string // path to system prompt temp file
+}
+
+// buildClaudeArgs returns the args slice for exec.CommandContext. The binary
+// path is NOT included — it's the first arg to CommandContext, not part of args.
+func buildClaudeArgs(opts claudeExecOpts) []string {
+	args := []string{
+		"--print",
+		"--model", opts.Model,
+		"--max-turns", opts.MaxTurns,
+	}
+	if opts.Tools != "" || opts.AllowedTools == "" {
+		// --tools "" disables all tools (plain text + JSON paths).
+		// Only omitted when AllowedTools is explicitly set (vision path).
+		args = append(args, "--tools", opts.Tools)
+	}
+	if opts.AllowedTools != "" {
+		args = append(args, "--allowedTools", opts.AllowedTools)
+	}
+	if opts.OutputFormat != "" {
+		args = append(args, "--output-format", opts.OutputFormat)
+	}
+	if opts.JSONSchema != "" {
+		args = append(args, "--json-schema", opts.JSONSchema)
+	}
+	args = append(args,
+		"--system-prompt-file", opts.SystemPrompt,
+		"--effort", "low",
+		"--no-session-persistence",
+	)
+	return args
+}
+
 // writeSystemPromptFile writes the system prompt to a temp file and returns
 // the path and content hash. The caller must defer os.Remove on the returned path.
 // EPIC-062 M1: --system-prompt-file is used instead of inline --system-prompt.
 // EPIC-082 M1: returns prompt hash alongside path for traceability.
 func writeSystemPromptFile(prompt string) (string, string, error) {
-	f, err := os.CreateTemp("", "linkari-sysprompt-*.txt")
+	// EPIC-008 M6: explicit 0600 permissions — system prompts may contain
+	// scoring rubrics and profile-specific instructions.
+	tmpDir := os.TempDir()
+	f, err := os.CreateTemp(tmpDir, "linkari-sysprompt-*.txt")
 	if err != nil {
 		return "", "", fmt.Errorf("create system prompt file: %w", err)
+	}
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", "", fmt.Errorf("chmod system prompt file: %w", err)
 	}
 	if _, err := f.WriteString(prompt); err != nil {
 		f.Close()
@@ -449,15 +539,12 @@ func runClaudeHaiku(ctx context.Context, systemPrompt, content string) (string, 
 	}
 	defer os.Remove(spFile)
 
-	cmd := exec.CommandContext(ctx, "claude",
-		"--print",
-		"--model", claudeModel,
-		"--max-turns", "1",
-		"--tools", "",
-		"--system-prompt-file", spFile,
-		"--effort", "low",
-		"--no-session-persistence",
-	)
+	cmd := exec.CommandContext(ctx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
+		Model:        claudeModel,
+		MaxTurns:     "1",
+		Tools:        "",
+		SystemPrompt: spFile,
+	})...)
 	cmd.Stdin = strings.NewReader(content)
 	cmd.Env = haikuEnv()
 
