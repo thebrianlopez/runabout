@@ -27,7 +27,7 @@ import (
 // unsupportedPipelineRE matches URL patterns that cannot be scored via the
 // Jina Reader text pipeline (video/audio/streaming platforms). These return
 // early with no queue update rather than burning a Haiku call on empty content.
-var unsupportedPipelineRE = regexp.MustCompile(`(?i)(?:youtube\.com|youtu\.be|spotify\.com|twitch\.tv|soundcloud\.com|tiktok\.com|netflix\.com)`)
+var unsupportedPipelineRE = regexp.MustCompile(`(?i)(?:youtube\.com|youtu\.be|spotify\.com|twitch\.tv|soundcloud\.com|tiktok\.com|netflix\.com|vimeo\.com|rumble\.com|dailymotion\.com)`)
 
 // loginWallDomainRE matches URL patterns for sites that require login to
 // access content. Jina Reader returns empty or login-page HTML for these,
@@ -297,6 +297,14 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	if profile == "" && !isURLShare {
 		contentClassify = true
 	}
+	// EPIC-084 M3: when intent_metadata produces the generic default "eng",
+	// allow content-LLM reclassification. The cascade correctly stops at
+	// stage 1 (packageProfileMap hit), but "eng" is indistinguishable from
+	// the default — the content-LLM can do better for multi-topic packages
+	// like com.google.android.youtube.
+	if classifySource == "intent_metadata" && profile == "eng" {
+		contentClassify = true
+	}
 
 	// Emit classify_stage_win for telemetry (EPIC-077 M6).
 	//
@@ -340,6 +348,10 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			"url", rawURL,
 			"reason", "unsupported_pipeline",
 		)
+		if q != nil && req.QueueRowID > 0 {
+			_ = q.MarkFailedWithReason(req.QueueRowID, "unsupported_pipeline")
+			enqueuePrefilterPush(q, req, "unsupported_pipeline")
+		}
 		return
 	}
 
@@ -359,6 +371,10 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				"stage":  "login_wall_domain",
 			})
 		}
+		if q != nil && req.QueueRowID > 0 {
+			_ = q.MarkFailedWithReason(req.QueueRowID, "login_wall_domain")
+			enqueuePrefilterPush(q, req, "login_wall_domain")
+		}
 		return
 	}
 
@@ -374,6 +390,10 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 					"url", rawURL,
 					"reason", "screenshot_no_text",
 				)
+				if q != nil && req.QueueRowID > 0 {
+					_ = q.MarkFailedWithReason(req.QueueRowID, "screenshot_no_text")
+					enqueuePrefilterPush(q, req, "screenshot_no_text")
+				}
 				return
 			}
 			if profile == "" || contentClassify {
@@ -396,11 +416,19 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 					"url", rawURL,
 					"error", err,
 				)
+				if q != nil && req.QueueRowID > 0 {
+					_ = q.MarkFailedWithReason(req.QueueRowID, "fetch_failed")
+					enqueuePrefilterPush(q, req, "fetch_failed")
+				}
 				return
 			}
 			content = truncateRunes(content, contentTruncationRunes)
 			if strings.TrimSpace(content) == "" {
 				slog.Warn("score_async: empty content", "event_type", "score_async_empty_content", "url", rawURL)
+				if q != nil && req.QueueRowID > 0 {
+					_ = q.MarkFailedWithReason(req.QueueRowID, "empty_content")
+					enqueuePrefilterPush(q, req, "empty_content")
+				}
 				return
 			}
 
@@ -447,6 +475,10 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				"type", req.Type,
 				"reason", "no_metadata",
 			)
+			if q != nil && req.QueueRowID > 0 {
+				_ = q.MarkFailedWithReason(req.QueueRowID, "no_metadata")
+				enqueuePrefilterPush(q, req, "no_metadata")
+			}
 			return
 		}
 
@@ -482,6 +514,10 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			"profile", profile,
 			"error", err,
 		)
+		if q != nil && req.QueueRowID > 0 {
+			_ = q.MarkFailedWithReason(req.QueueRowID, "template_error")
+			enqueuePrefilterPush(q, req, "template_error")
+		}
 		return
 	}
 	if autoClassified {
@@ -602,6 +638,37 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	sc.PromptHash = promptHash(sysPrompt)
 	sc.PromptVersion = promptVersionFromPath(tmplPath)
 
+	// EPIC-084 M4: emit score_repair_turn event when a repair turn was needed.
+	if sc.RepairTurn && events != nil {
+		events.Emit("score_repair_turn", map[string]any{
+			"row_id":   req.QueueRowID,
+			"cost_usd": sc.CostUSD,
+			"profile":  profile,
+			"type":     req.Type,
+		})
+	}
+
+	// EPIC-084 M4: vision token undercount warning — when input_tokens is
+	// suspiciously low relative to cost, the vision model may have processed
+	// image tokens that aren't reflected in the text token count.
+	if sc.Usage != nil && sc.Usage.InputTokens < 100 && sc.CostUSD > 0.01 {
+		slog.Warn("score_async: vision token undercount",
+			"event_type", "vision_token_undercount_warning",
+			"input_tokens", sc.Usage.InputTokens,
+			"cost_usd", sc.CostUSD,
+			"row_id", req.QueueRowID,
+			"type", req.Type,
+		)
+		if events != nil {
+			events.Emit("vision_token_undercount_warning", map[string]any{
+				"row_id":       req.QueueRowID,
+				"input_tokens": sc.Usage.InputTokens,
+				"cost_usd":     sc.CostUSD,
+				"type":         req.Type,
+			})
+		}
+	}
+
 	// EPIC-083 M2-3: per-call cost ceiling monitoring. Logs when a single eval
 	// exceeds MaxScoringCostUSD — monitoring only, does not block processing.
 	if sc.CostUSD > 0 && sc.CostUSD > maxScoringCostUSD {
@@ -646,6 +713,9 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		item, _, err := q.ScoreByURL(rawURL, sc.Score, sc.Verdict, sc.Tags, profile, slug, sc.PromptHash, sc.PromptVersion, sc.RubricScores)
 		if err != nil {
 			slog.Warn("score_async: ScoreByURL failed", "url", rawURL, "error", err)
+			if req.QueueRowID > 0 {
+				_ = q.MarkFailedWithReason(req.QueueRowID, "score_persist_failed")
+			}
 			return
 		}
 		itemID = item.ID
@@ -660,6 +730,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		_, err := q.ScoreByID(req.QueueRowID, sc.Score, sc.Tags, sc.Verdict, slug, sc.PromptHash, sc.PromptVersion)
 		if err != nil {
 			slog.Warn("score_async: ScoreByID failed", "row_id", req.QueueRowID, "error", err)
+			_ = q.MarkFailedWithReason(req.QueueRowID, "score_persist_failed")
 			return
 		}
 		itemID = req.QueueRowID
@@ -786,6 +857,43 @@ var maxScoringCostUSD float64 = 0.05
 // defaults to 15MB. EPIC-083 M1-3.
 var imageNoiseGateMaxBytes int64 = 15 * 1024 * 1024
 
+// notifyOnPrefilterSkip gates whether prefilter skips (unsupported pipeline,
+// login wall, empty content, etc.) enqueue an FCM push notification. Set from
+// ServerConfig.NotifyOnPrefilterSkip at startup; default false. EPIC-084 M2.
+var notifyOnPrefilterSkip bool
+
+// prefilterVerdicts maps internal prefilter reason codes to user-facing
+// notification verdicts. EPIC-084 M2.
+var prefilterVerdicts = map[string]string{
+	"unsupported_pipeline": "Video platform — not yet supported",
+	"login_wall_domain":    "Login-walled site — can't access content",
+	"empty_content":        "Page had no readable content",
+	"screenshot_no_text":   "Screenshot had no extractable text",
+	"fetch_failed":         "Could not fetch page content",
+	"no_metadata":          "File had no scorable metadata",
+	"template_error":       "Scoring configuration error",
+}
+
+// enqueuePrefilterPush sends a user-facing notification for a prefilter skip,
+// if notifications are enabled. EPIC-084 M2.
+func enqueuePrefilterPush(q *Queue, req *ShareRequest, reason string) {
+	if !notifyOnPrefilterSkip || q == nil {
+		return
+	}
+	verdict, ok := prefilterVerdicts[reason]
+	if !ok {
+		verdict = "Share could not be scored"
+	}
+	profile := req.Profile
+	if profile == "" {
+		profile = "prefilter"
+	}
+	slug := fmt.Sprintf("prefilter-%d", req.QueueRowID)
+	if err := q.EnqueuePrefilterPush(profile, slug, verdict, req.URL); err != nil {
+		slog.Warn("enqueuePrefilterPush failed", "row_id", req.QueueRowID, "reason", reason, "error", err)
+	}
+}
+
 // validProfiles is the set of profiles that classifyContentProfile accepts.
 var validProfiles = map[string]bool{
 	"eng": true, "travel": true, "life": true,
@@ -806,6 +914,13 @@ var validProfilesSorted = func() []string {
 
 // EPIC-038 M4: packageProfileMap maps known Android package names to Linkari
 // profiles. Used as a high-confidence signal before URL-based classification.
+//
+// EPIC-084 M3: entries mapping to "eng" suppress content-LLM reclassification
+// by default because "eng" is also the generic fallback. scoreAsync compensates
+// by enabling contentClassify when classifySource=="intent_metadata" and
+// profile=="eng". Entries mapping to non-"eng" profiles (e.g., "music",
+// "travel") genuinely suppress reclassification — the package signal is
+// definitive for those profiles.
 var packageProfileMap = map[string]string{
 	"com.spotify.music":                "music",
 	"com.google.android.youtube":       "eng",

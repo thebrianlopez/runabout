@@ -1351,6 +1351,20 @@ func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score in
 	}, nil
 }
 
+// EnqueuePrefilterPush inserts a push_outbox row for a prefilter skip/failure
+// notification. Bypasses min-score floor and throttle — prefilter events are
+// low-volume and the user should always be notified when their share was not
+// scored. EPIC-084 M2.
+func (q *Queue) EnqueuePrefilterPush(profile, slug, verdict, url string) error {
+	now := time.Now().Unix()
+	_, err := q.db.Exec(
+		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, gap_summary, content_type, classify_source, status, attempts, next_attempt, created_at, updated_at)
+		 VALUES (0, ?, ?, ?, 'digest', ?, '', 'prefilter', '', 'pending', 0, ?, ?, ?)`,
+		slug, verdict, url, profile, now, now, now,
+	)
+	return err
+}
+
 // LastDigestPushAt returns the unix timestamp of the most recent digest row
 // in push_outbox, or 0 if none exist. Used by the CLI score path to throttle
 // digest pushes without in-process state.
