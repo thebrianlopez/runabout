@@ -37,8 +37,8 @@ var outboxMu sync.Mutex
 
 // idleEmitEvery is how many consecutive empty drain cycles trigger a
 // push_outbox_idle_metric event. With pushPollInterval=2s this emits once
-// every 60s of continuous idle state. EPIC-051 M7.
-const idleEmitEvery = 30
+// every 600s (~10min) of continuous idle state. EPIC-051 M7.
+const idleEmitEvery = 300
 
 // StartPushWorker launches the push_outbox drain goroutine. It polls every
 // pushPollInterval, drains up to pushDrainLimit pending rows per tick under

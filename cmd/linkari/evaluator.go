@@ -6,6 +6,13 @@ package main
 // paths behind a single Evaluate() contract. The Evaluator is
 // backend-agnostic — production uses Claude Haiku via the claude CLI,
 // but the interface is swappable for local models or alternative providers.
+//
+// ARCHITECTURE CONSTRAINT: All LLM scoring MUST use the claude CLI binary
+// (OAuth2 device flow via the user's own Claude Code subscription). Linkari
+// does NOT support Anthropic API keys, SDK clients, or direct HTTP calls to
+// the Anthropic API. This is a permanent design decision — users self-host
+// on their own laptop with their own subscription. Do not add ANTHROPIC_API_KEY
+// passthrough or API client dependencies.
 
 import (
 	"context"
@@ -46,6 +53,7 @@ type Scorecard struct {
 	SourceType     string         `json:"source_type,omitempty"`    // "cli-triage", "cli-score", "eval-refresh", "eval-fixture"
 	CostUSD        float64        `json:"cost_usd,omitempty"`       // EPIC-062 M2: per-call cost from JSON envelope
 	Usage          *TokenUsage    `json:"usage,omitempty"`           // EPIC-062 M2: per-call token usage
+	RepairTurn     bool           `json:"repair_turn,omitempty"`    // EPIC-084 M4: true when verdict required a repair turn
 }
 
 // Evaluator is the backend-agnostic scoring contract. All content
@@ -116,11 +124,13 @@ func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate 
 	if meta != nil {
 		sc.CostUSD = meta.CostUSD
 		sc.Usage = meta.Usage
+		sc.RepairTurn = meta.RepairTurn
 		slog.Info("evaluator: token usage",
 			"backend", "claude-haiku-json",
 			"cost_usd", meta.CostUSD,
 			"input_tokens", tokenCount(meta.Usage, true),
 			"output_tokens", tokenCount(meta.Usage, false),
+			"repair_turn", meta.RepairTurn,
 			"latency_ms", latency,
 		)
 	}
@@ -209,11 +219,13 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 	if meta != nil {
 		sc.CostUSD = meta.CostUSD
 		sc.Usage = meta.Usage
+		sc.RepairTurn = meta.RepairTurn
 		slog.Info("evaluator: token usage",
 			"backend", "claude-haiku-vision",
 			"cost_usd", meta.CostUSD,
 			"input_tokens", tokenCount(meta.Usage, true),
 			"output_tokens", tokenCount(meta.Usage, false),
+			"repair_turn", meta.RepairTurn,
 			"latency_ms", latency,
 		)
 	}

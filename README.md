@@ -180,6 +180,8 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 
 **Server-side scoring:** URL actions with `ServerScore: true` bypass the tmux → fish pipeline entirely — a goroutine fetches page content via Jina Reader, evaluates with Haiku, scores, archives, and sends FCM push. Unsupported domains (YouTube, Spotify, TikTok, etc.) return early without burning a Haiku call.
 
+**Auth model (permanent):** All LLM scoring shells out to the `claude` CLI binary, which authenticates via the user's own Claude Code subscription (OAuth2 device flow). Linkari does not support Anthropic API keys, API client libraries, or direct Anthropic HTTP calls. Each user installs and runs Linkari on their own laptop — there is no shared API key deployment model.
+
 **Execution runtime:** Three runtime implementations — `LocalRuntime` (default, subprocess), `ContainerRuntime` (gVisor-sandboxed via containerd for ffmpeg/whisper), and `HybridRuntime` (routes ffmpeg/whisper through containers but keeps claude CLI local for OAuth2 reasons). Controlled by `sandbox.enabled` in `server.yaml`.
 
 **Shield:** `X-Linkari-Client` header validation on the Funnel mux. Two modes: `log` (default, debug logging) and `enforce` (403 on invalid/missing headers). CORS preflight (OPTIONS) is always exempt.

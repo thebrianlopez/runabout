@@ -275,8 +275,9 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 // envelopeMeta holds the token usage and cost metadata extracted from the
 // claude --output-format json envelope. EPIC-062 M2.
 type envelopeMeta struct {
-	CostUSD      float64    `json:"total_cost_usd"`
-	Usage        *TokenUsage `json:"-"`
+	CostUSD      float64     `json:"total_cost_usd"`
+	Usage        *TokenUsage `json:"usage,omitempty"`
+	RepairTurn   bool        `json:"repair_turn,omitempty"` // EPIC-084 M4: true when verdict required a repair turn
 }
 
 // parseHaikuEnvelope unwraps a `claude --output-format json` payload into
@@ -399,6 +400,13 @@ func haikuVerdictWithRepair(ctx context.Context, sysPrompt, content string) (Tri
 	v2, meta2, perr2 := parseHaikuEnvelope(stdout2)
 	if perr2 != nil {
 		return TriageVerdict{}, nil, fmt.Errorf("repair parse: %w (orig: %v)", perr2, perr)
+	}
+	// EPIC-084 M4: sum costs from both turns instead of replacing.
+	if meta2 != nil {
+		meta2.RepairTurn = true
+		if meta != nil {
+			meta2.CostUSD += meta.CostUSD
+		}
 	}
 	return v2, meta2, nil
 }

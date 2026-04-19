@@ -209,6 +209,7 @@ type ActionConfig struct {
 	ConfidenceThreshold int  `yaml:"confidence_threshold,omitempty"` // EPIC-058 M3: minimum score to pass confidence gate (0 = no gate)
 	AutoLaunch          bool `yaml:"auto_launch,omitempty"`          // EPIC-058 M3: auto-launch ginit when gate passes (requires confidence_threshold > 0)
 	ServerScore         bool `yaml:"server_score,omitempty"`         // EPIC-060: score uinit_* actions server-side via Jina+Haiku (no tmux window)
+	ForceContentClassify bool `yaml:"force_content_classify,omitempty"` // EPIC-084 M3: always run content-LLM classification even when cascade produces a profile
 
 	// Parsed fields (not in YAML)
 	compiledTemplate *template.Template
@@ -317,6 +318,11 @@ type ServerConfig struct {
 	// eval.Evaluate call exceeds this amount, a score_cost_exceeded event
 	// is logged. Monitoring only — does not block processing. Default: 0.05.
 	MaxScoringCostUSD float64 `yaml:"max_scoring_cost_usd"`
+
+	// EPIC-084 M2: when true, prefilter skips (unsupported pipeline, login
+	// wall, empty content, etc.) enqueue an FCM push so the user knows
+	// their share was not scored. Default false to avoid spam during dev.
+	NotifyOnPrefilterSkip bool `yaml:"notify_on_prefilter_skip"`
 
 	// EPIC-038 M1: gVisor sandbox config. When Sandbox.Enabled is true, all
 	// ffmpeg/whisper/claude subprocess calls are routed through ContainerRuntime.
