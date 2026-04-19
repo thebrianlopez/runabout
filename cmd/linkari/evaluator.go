@@ -142,14 +142,27 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		// EPIC-080 M3: fall back to JSON evaluator with synthesized metadata.
-		slog.Warn("haiku-vision: falling back to JSON evaluator",
+		slog.Warn("haiku-vision: exec failed, falling back to JSON evaluator",
 			"event_type", "score_async_vision_fallback",
 			"image_path", e.ImagePath,
 			"vision_error", err.Error(),
 		)
 		fallbackSc, fbErr := HaikuJSONEvaluator{}.Evaluate(ctx, content, promptTemplate)
 		if fbErr != nil {
-			return nil, fmt.Errorf("haiku-vision: %w; fallback also failed: %w", err, fbErr)
+			// EPIC-008 M4: both exec paths failed — return metadata-only scorecard
+			// instead of propagating error. The row gets a score=0 with an observable
+			// verdict rather than failing the entire scoring pipeline.
+			slog.Error("haiku-vision: all evaluators failed, returning metadata-only scorecard",
+				"event_type", "score_async_all_evaluators_failed",
+				"image_path", e.ImagePath,
+				"vision_error", err.Error(),
+				"json_error", fbErr.Error(),
+			)
+			return &Scorecard{
+				Score:   0,
+				Verdict: "eval_failed",
+				Backend: "metadata-only",
+			}, nil
 		}
 		fallbackSc.Backend = "claude-haiku-vision-fallback"
 		return fallbackSc, nil
@@ -164,7 +177,18 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 		)
 		fallbackSc, fbErr := HaikuJSONEvaluator{}.Evaluate(ctx, content, promptTemplate)
 		if fbErr != nil {
-			return nil, fmt.Errorf("haiku-vision parse: %w; fallback also failed: %w", parseErr, fbErr)
+			// EPIC-008 M4: both paths failed after parse error.
+			slog.Error("haiku-vision: all evaluators failed after parse error, returning metadata-only scorecard",
+				"event_type", "score_async_all_evaluators_failed",
+				"image_path", e.ImagePath,
+				"parse_error", parseErr.Error(),
+				"json_error", fbErr.Error(),
+			)
+			return &Scorecard{
+				Score:   0,
+				Verdict: "eval_failed",
+				Backend: "metadata-only",
+			}, nil
 		}
 		fallbackSc.Backend = "claude-haiku-vision-fallback"
 		return fallbackSc, nil

@@ -183,18 +183,14 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 	}
 	defer os.Remove(spFile)
 
-	cmd := exec.CommandContext(ctx, "claude",
-		"--print",
-		"--model", claudeModel,
-		"--max-turns", "3", // --output-format json + --json-schema uses internal tool-call turns to enforce schema; 1 is insufficient
-		"--max-tokens", "500", // EPIC-083 M2-2: cap output tokens
-		"--tools", "",
-		"--output-format", "json",
-		"--json-schema", schema,
-		"--system-prompt-file", spFile,
-		"--effort", "low",
-		"--no-session-persistence",
-	)
+	cmd := exec.CommandContext(ctx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
+		Model:        claudeModel,
+		MaxTurns:     "3", // --output-format json + --json-schema uses internal tool-call turns to enforce schema; 1 is insufficient
+		Tools:        "",
+		OutputFormat: "json",
+		JSONSchema:   schema,
+		SystemPrompt: spFile,
+	})...)
 	cmd.Stdin = strings.NewReader(content)
 	cmd.Env = haikuEnv()
 
@@ -239,18 +235,14 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 		return nil, fmt.Errorf("claude vision: image file not readable: %w", statErr)
 	}
 
-	cmd := exec.CommandContext(ctx, claudeBinaryPath,
-		"--print",
-		"--model", visionModelName,
-		"--max-turns", "3",
-		"--max-tokens", "500", // EPIC-083 M2-2: cap output tokens
-		"--allowedTools", "Read",
-		"--output-format", "json",
-		"--json-schema", schema,
-		"--system-prompt-file", spFile,
-		"--effort", "low",
-		"--no-session-persistence",
-	)
+	cmd := exec.CommandContext(ctx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
+		Model:        visionModelName,
+		MaxTurns:     "3",
+		AllowedTools: "Read",
+		OutputFormat: "json",
+		JSONSchema:   schema,
+		SystemPrompt: spFile,
+	})...)
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Env = haikuEnv()
 

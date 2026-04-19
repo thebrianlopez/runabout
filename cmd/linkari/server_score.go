@@ -10,6 +10,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,8 +18,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"errors"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -792,6 +793,17 @@ var validProfiles = map[string]bool{
 	"image_triage": true,
 }
 
+// validProfilesSorted is validProfiles keys in deterministic order for
+// substring extraction fallback. EPIC-008 M6.
+var validProfilesSorted = func() []string {
+	keys := make([]string, 0, len(validProfiles))
+	for k := range validProfiles {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}()
+
 // EPIC-038 M4: packageProfileMap maps known Android package names to Linkari
 // profiles. Used as a high-confidence signal before URL-based classification.
 var packageProfileMap = map[string]string{
@@ -1221,7 +1233,8 @@ func classifyContentProfile(ctx context.Context, content string) string {
 		return result
 	}
 	// Try to extract a valid profile from a longer response.
-	for p := range validProfiles {
+	// Deterministic order: sorted slice scan avoids map iteration randomness.
+	for _, p := range validProfilesSorted {
 		if strings.Contains(result, p) {
 			return p
 		}
@@ -1524,16 +1537,25 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		)
 		// Fallback: try vnote_triage directly.
 		_, scoreSysPrompt, scoreErr = loadProfileTemplateForMode("vnote_triage", "audio")
+		if scoreErr != nil {
+			slog.Warn("score_audio: vnote_triage fallback template also missing",
+				"event_type", "score_audio_double_template_miss",
+				"row_id", rowID,
+				"profile", profile,
+				"error", scoreErr,
+			)
+		}
 	}
 	if scoreErr == nil {
 		eval := HaikuJSONEvaluator{}
 		sc, evalErr := eval.Evaluate(ctx, transcript, scoreSysPrompt)
 		if evalErr != nil {
-			slog.Warn("score_audio: rubric evaluation failed, falling back to score=0",
+			slog.Warn("score_audio: rubric evaluation failed",
 				"event_type", "score_audio_eval_error",
 				"row_id", rowID,
 				"error", evalErr,
 			)
+			audioVerdict = "eval_failed"
 		} else {
 			audioScore = sc.Score
 			audioVerdict = sc.Verdict
@@ -1573,17 +1595,17 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 
 	synopsis, err := execHaiku(ctx, synopsisSysPrompt, transcript)
 	if err != nil {
-		slog.Warn("score_audio: synopsis failed",
+		slog.Warn("score_audio: synopsis failed, persisting rubric score with empty synopsis",
 			"event_type", "score_audio_synopsis_error",
 			"row_id", rowID,
+			"score", audioScore,
+			"verdict", audioVerdict,
 			"error", err,
 		)
-		if q != nil {
-			q.MarkFailedWithReason(rowID, "synopsis_failed")
-		}
-		return
+		synopsis = ""
+	} else {
+		synopsis = strings.TrimSpace(synopsis)
 	}
-	synopsis = strings.TrimSpace(synopsis)
 
 	slog.Info("score_audio: synopsis generated",
 		"event_type", "score_audio_synopsis",
