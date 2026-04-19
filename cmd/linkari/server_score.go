@@ -28,6 +28,28 @@ import (
 // early with no queue update rather than burning a Haiku call on empty content.
 var unsupportedPipelineRE = regexp.MustCompile(`(?i)(?:youtube\.com|youtu\.be|spotify\.com|twitch\.tv|soundcloud\.com|tiktok\.com|netflix\.com)`)
 
+// loginWallDomainRE matches URL patterns for sites that require login to
+// access content. Jina Reader returns empty or login-page HTML for these,
+// wasting a Haiku call. LinkedIn /pulse/ articles are excluded (publicly
+// accessible). EPIC-083 M1-1.
+var loginWallDomainRE = regexp.MustCompile(`(?i)(?:instagram\.com|x\.com|twitter\.com|facebook\.com|linkedin\.com/(?!pulse/))`)
+
+// cameraTimestampRE matches filenames produced by camera apps (IMG_20260101,
+// DSC_1234, DCIM_xxx, PXL_20260101, VID_20260101). Used by the camera photo
+// noise gate to skip vision scoring on raw camera photos. EPIC-083 M1-2.
+var cameraTimestampRE = regexp.MustCompile(`(?i)^(?:IMG|DSC|DCIM|PXL|VID)_\d{8}`)
+
+// galleryPackages is the set of Android gallery/photos apps whose image shares
+// combined with camera timestamp filenames indicate raw camera photos unlikely
+// to be worth scoring. EPIC-083 M1-2.
+var galleryPackages = map[string]bool{
+	"com.sec.android.gallery3d":      true,
+	"com.google.android.apps.photos": true,
+	"com.miui.gallery":               true,
+	"com.oneplus.gallery":            true,
+	"com.samsung.android.gallery":    true,
+}
+
 // jinaHTTPClient is the HTTP client for Jina Reader requests. Uses a 35s
 // timeout to give Jina a margin above the 30s fetch context timeout —
 // the context cancels first; this is a backstop for runaway connections.
@@ -274,6 +296,24 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		return
 	}
 
+	// EPIC-083 M1-1: login-wall domain gate — sites that require auth return
+	// empty or login-page HTML via Jina, wasting a Haiku call.
+	if isURLShare && loginWallDomainRE.MatchString(rawURL) {
+		slog.Info("score_async: login-wall domain",
+			"event_type", "score_prefilter_skip",
+			"url", rawURL,
+			"stage", "login_wall_domain",
+		)
+		if events != nil {
+			events.Emit("score_prefilter_skip", map[string]any{
+				"row_id": req.QueueRowID,
+				"url":    rawURL,
+				"stage":  "login_wall_domain",
+			})
+		}
+		return
+	}
+
 	// Content acquisition — branches on share type.
 	var content string
 	if isURLShare {
@@ -408,26 +448,67 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	if req.Type == "image" {
 		if req.AudioPath != "" {
 			if _, statErr := os.Stat(req.AudioPath); statErr == nil {
-				// Noise gate: skip vision for images below threshold with no metadata.
-				hasMetadata := req.ExtraText != "" || req.ExtraSubject != ""
-				if req.FileSize > 0 && req.FileSize < imageNoiseGateMinBytes && !hasMetadata {
-					slog.Info("score_async: image noise gate — skipping vision",
-						"event_type", "image_noise_gate_skip",
+				// EPIC-083 M1-3: upper-bound file size gate — validate against
+				// actual file on disk (don't trust client-supplied FileSize alone).
+				if fi, fiErr := os.Stat(req.AudioPath); fiErr == nil && fi.Size() > imageNoiseGateMaxBytes {
+					slog.Info("score_async: oversize file gate — skipping vision",
+						"event_type", "score_prefilter_skip",
+						"row_id", req.QueueRowID,
+						"file_size", fi.Size(),
+						"max_bytes", imageNoiseGateMaxBytes,
+						"stage", "oversize_file",
+					)
+					if events != nil {
+						events.Emit("score_prefilter_skip", map[string]any{
+							"row_id":    req.QueueRowID,
+							"file_size": fi.Size(),
+							"stage":     "oversize_file",
+						})
+					}
+					// Skip vision — fall through to metadata-only eval below.
+				} else if isCameraPhoto(req) {
+					// EPIC-083 M1-2: camera photo noise gate — gallery app +
+					// camera timestamp filename + no text context + not screenshot.
+					slog.Info("score_async: camera photo gate — skipping vision",
+						"event_type", "score_prefilter_skip",
 						"row_id", req.QueueRowID,
 						"file_size", req.FileSize,
 						"filename", req.Filename,
-						"min_bytes", imageNoiseGateMinBytes,
+						"stage", "camera_photo_gate",
 					)
 					if events != nil {
-						events.Emit("image_noise_gate_skip", map[string]any{
-							"row_id":    req.QueueRowID,
-							"file_size": req.FileSize,
-							"filename":  req.Filename,
+						events.Emit("score_prefilter_skip", map[string]any{
+							"row_id":   req.QueueRowID,
+							"filename": req.Filename,
+							"stage":    "camera_photo_gate",
 						})
 					}
 					// Skip vision — fall through to metadata-only eval below.
 				} else {
-					eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+					// EPIC-083 M1-4: renamed from image_noise_gate_skip to
+					// score_prefilter_skip with stage field.
+					hasMetadata := req.ExtraText != "" || req.ExtraSubject != ""
+					if req.FileSize > 0 && req.FileSize < imageNoiseGateMinBytes && !hasMetadata {
+						slog.Info("score_async: image noise gate — skipping vision",
+							"event_type", "score_prefilter_skip",
+							"row_id", req.QueueRowID,
+							"file_size", req.FileSize,
+							"filename", req.Filename,
+							"min_bytes", imageNoiseGateMinBytes,
+							"stage", "noise_gate_min_size",
+						)
+						if events != nil {
+							events.Emit("score_prefilter_skip", map[string]any{
+								"row_id":    req.QueueRowID,
+								"file_size": req.FileSize,
+								"filename":  req.Filename,
+								"stage":     "noise_gate_min_size",
+							})
+						}
+						// Skip vision — fall through to metadata-only eval below.
+					} else {
+						eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+					}
 				}
 			}
 		} else {
@@ -583,10 +664,36 @@ func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLo
 	scoreAsync(req, q, eval, events)
 }
 
+// isCameraPhoto returns true when a share request looks like a raw camera photo
+// that is unlikely to contain scorable content: the calling package is a gallery
+// app, the filename matches a camera timestamp pattern, there's no text context,
+// and it's not a screenshot. EPIC-083 M1-2.
+func isCameraPhoto(req *ShareRequest) bool {
+	if req.IsScreenshot {
+		return false
+	}
+	if !galleryPackages[req.CallingPackage] {
+		return false
+	}
+	if !cameraTimestampRE.MatchString(req.Filename) {
+		return false
+	}
+	if req.ExtraSubject != "" || req.ExtraText != "" {
+		return false
+	}
+	return true
+}
+
 // imageNoiseGateMinBytes is the minimum file size in bytes to invoke vision
 // subprocess. Images below this with no text metadata skip vision. Set from
 // ServerConfig.ImageNoiseGateMinBytes at startup; defaults to 1024 (1KB).
 var imageNoiseGateMinBytes int64 = 1024
+
+// imageNoiseGateMaxBytes is the maximum file size in bytes for vision scoring.
+// Images above this skip vision entirely — they're likely raw camera files or
+// uncompressed exports. Set from ServerConfig.ImageNoiseGateMaxBytes at startup;
+// defaults to 15MB. EPIC-083 M1-3.
+var imageNoiseGateMaxBytes int64 = 15 * 1024 * 1024
 
 // validProfiles is the set of profiles that classifyContentProfile accepts.
 var validProfiles = map[string]bool{

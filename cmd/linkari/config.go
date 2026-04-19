@@ -61,7 +61,8 @@ func (s ServerConfig) IsZero() bool {
 		s.Shield.Mode == "" &&
 		s.WhisperModel == "" && s.FfmpegPath == "" &&
 		s.GoogleClientID == "" && s.SessionTTLDays == 0 &&
-		!s.Sandbox.Enabled
+		!s.Sandbox.Enabled &&
+		s.ImageNoiseGateMaxBytes == 0 && s.MaxScoringCostUSD == 0
 }
 
 // RelayedWatchdogConfig is the resolved runtime view of the watchdog knobs,
@@ -307,6 +308,15 @@ type ServerConfig struct {
 	// vision subprocess. Images below this threshold with no text metadata
 	// are scored 0 without a vision API call. Default: 1024 (1KB).
 	ImageNoiseGateMinBytes int64 `yaml:"image_noise_gate_min_bytes"`
+
+	// EPIC-083 M1-3: upper-bound file size gate — images above this threshold
+	// skip vision scoring entirely. Default: 15MB (15 * 1024 * 1024).
+	ImageNoiseGateMaxBytes int64 `yaml:"image_noise_gate_max_bytes"`
+
+	// EPIC-083 M2-3: per-call scoring cost ceiling (USD). When a single
+	// eval.Evaluate call exceeds this amount, a score_cost_exceeded event
+	// is logged. Monitoring only — does not block processing. Default: 0.05.
+	MaxScoringCostUSD float64 `yaml:"max_scoring_cost_usd"`
 
 	// EPIC-038 M1: gVisor sandbox config. When Sandbox.Enabled is true, all
 	// ffmpeg/whisper/claude subprocess calls are routed through ContainerRuntime.
