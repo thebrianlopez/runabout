@@ -27,13 +27,13 @@ func seedHistoryQueue(t *testing.T) (http.Handler, *Queue) {
 	}
 	for i := 0; i < 5; i++ {
 		id := mustEnq("default")
-		if err := q.UpdateScore(id, 70+i, "tag", "verdict body long enough to pass sanity check", "slug"); err != nil {
+		if err := q.UpdateScore(id, 70+i, "tag", "verdict body long enough to pass sanity check", "slug", "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for i := 0; i < 3; i++ {
 		id := mustEnq("default")
-		if err := q.UpdateScore(id, 80, "tag", "verdict body long enough", "slug"); err != nil {
+		if err := q.UpdateScore(id, 80, "tag", "verdict body long enough", "slug", "", ""); err != nil {
 			t.Fatal(err)
 		}
 		if err := q.Archive(id); err != nil {
@@ -42,7 +42,7 @@ func seedHistoryQueue(t *testing.T) (http.Handler, *Queue) {
 	}
 	for i := 0; i < 2; i++ {
 		id := mustEnq("eng")
-		if err := q.UpdateScore(id, 90, "tag", "verdict body long enough", "slug"); err != nil {
+		if err := q.UpdateScore(id, 90, "tag", "verdict body long enough", "slug", "", ""); err != nil {
 			t.Fatal(err)
 		}
 		if err := q.Archive(id); err != nil {
@@ -287,7 +287,7 @@ func TestArchiveSkipReasonInResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := q.UpdateScore(id, 0, "", "Paywalled article behind subscription", "slug"); err != nil {
+	if err := q.UpdateScore(id, 0, "", "Paywalled article behind subscription", "slug", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	// Insert a scored item (score > 0) — should have no skip_reason.
@@ -295,7 +295,7 @@ func TestArchiveSkipReasonInResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := q.UpdateScore(id2, 85, "go", "Excellent Go article", "slug2"); err != nil {
+	if err := q.UpdateScore(id2, 85, "go", "Excellent Go article", "slug2", "", ""); err != nil {
 		t.Fatal(err)
 	}
 

@@ -195,6 +195,9 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE queue ADD COLUMN is_screenshot INTEGER NOT NULL DEFAULT 0",
 		// EPIC-078 M5: file size for pre-enqueue dedup of repeated file shares.
 		"ALTER TABLE queue ADD COLUMN file_size INTEGER DEFAULT 0",
+		// EPIC-082 M1: prompt traceability columns.
+		"ALTER TABLE queue ADD COLUMN prompt_hash TEXT DEFAULT ''",
+		"ALTER TABLE queue ADD COLUMN prompt_version TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -533,7 +536,7 @@ func (q *Queue) MarkRelayedTimedOut(ids []int64) error {
 // Returns (true, nil) when the row was rescued; (false, nil) when the row was
 // already scored or not found (lost the race — safe to ignore).
 // EPIC-055 M1.
-func (q *Queue) IngestScoreIfRelayed(id int64, score int, tags, verdict, slug string, rubricScores ...map[string]int) (bool, error) {
+func (q *Queue) IngestScoreIfRelayed(id int64, score int, tags, verdict, slug, promptHashVal, promptVersionVal string, rubricScores ...map[string]int) (bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	rubricJSON := ""
 	if len(rubricScores) > 0 && rubricScores[0] != nil {
@@ -542,9 +545,9 @@ func (q *Queue) IngestScoreIfRelayed(id int64, score int, tags, verdict, slug st
 		}
 	}
 	res, err := q.db.Exec(
-		`UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=?
+		`UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=?, prompt_hash=?, prompt_version=?
 		 WHERE id=? AND status='relayed'`,
-		score, tags, verdict, slug, now, rubricJSON, id,
+		score, tags, verdict, slug, now, rubricJSON, promptHashVal, promptVersionVal, id,
 	)
 	if err != nil {
 		return false, fmt.Errorf("ingest score if relayed id=%d: %w", id, err)
@@ -583,7 +586,8 @@ func (q *Queue) SweepRelayedTimeouts(now time.Time, maxAge time.Duration) ([]Tim
 }
 
 // UpdateScore sets the score, tags, verdict, and slug on a queue item, promoting to 'scored' status.
-func (q *Queue) UpdateScore(id int64, score int, tags, verdict, slug string, rubricScores ...map[string]int) error {
+// EPIC-082 M1: accepts prompt_hash and prompt_version for traceability.
+func (q *Queue) UpdateScore(id int64, score int, tags, verdict, slug, promptHashVal, promptVersionVal string, rubricScores ...map[string]int) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	rubricJSON := ""
 	if len(rubricScores) > 0 && rubricScores[0] != nil {
@@ -592,8 +596,8 @@ func (q *Queue) UpdateScore(id int64, score int, tags, verdict, slug string, rub
 		}
 	}
 	_, err := q.db.Exec(
-		"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=? WHERE id=?",
-		score, tags, verdict, slug, now, rubricJSON, id,
+		"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=?, prompt_hash=?, prompt_version=? WHERE id=?",
+		score, tags, verdict, slug, now, rubricJSON, promptHashVal, promptVersionVal, id,
 	)
 	return err
 }
@@ -603,7 +607,7 @@ func (q *Queue) UpdateScore(id int64, score int, tags, verdict, slug string, rub
 // for URL-based dedup lookup. Includes an idempotency guard modeled on
 // ScoreByURL: if the row is already scored or archived, the update is skipped.
 // Returns (true, nil) when the row was updated; (false, nil) when already scored/archived.
-func (q *Queue) ScoreByID(rowID int64, score int, tags, verdict, slug string, rubricScores ...map[string]int) (bool, error) {
+func (q *Queue) ScoreByID(rowID int64, score int, tags, verdict, slug, promptHashVal, promptVersionVal string, rubricScores ...map[string]int) (bool, error) {
 	// Idempotency guard: skip if already scored or archived.
 	var status string
 	err := q.db.QueryRow("SELECT status FROM queue WHERE id=?", rowID).Scan(&status)
@@ -622,8 +626,8 @@ func (q *Queue) ScoreByID(rowID int64, score int, tags, verdict, slug string, ru
 		}
 	}
 	res, err := q.db.Exec(
-		"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=? WHERE id=?",
-		score, tags, verdict, slug, now, rubricJSON, rowID,
+		"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=?, prompt_hash=?, prompt_version=? WHERE id=?",
+		score, tags, verdict, slug, now, rubricJSON, promptHashVal, promptVersionVal, rowID,
 	)
 	if err != nil {
 		return false, fmt.Errorf("ScoreByID update id=%d: %w", rowID, err)
@@ -721,6 +725,11 @@ type ProfileStat struct {
 	AvgScoreIgnored          *float64           `json:"avg_score_ignored,omitempty"`
 	DriftScore               *float64           `json:"drift_score,omitempty"`
 	CalibrationRecommendation string            `json:"calibration_recommendation,omitempty"`
+	MisclassifyBySource       map[string]int     `json:"misclassify_by_source,omitempty"`  // EPIC-082 M2
+	ScoreBuckets              map[string]int     `json:"score_buckets,omitempty"`          // EPIC-082 M3
+	AvgScore7d                *float64           `json:"avg_score_7d,omitempty"`           // EPIC-082 M3
+	AvgScore30d               *float64           `json:"avg_score_30d,omitempty"`          // EPIC-082 M3
+	FeedbackCalibrationScore  *float64           `json:"feedback_calibration_score,omitempty"` // EPIC-082 M3: (TooHigh-TooLow)/FeedbackCount
 }
 
 // ProfileStats returns aggregate scoring and feedback stats, optionally filtered by profile.
@@ -764,6 +773,30 @@ func (q *Queue) ProfileStats(profile string) ([]ProfileStat, error) {
 		}
 
 		q.computeDrift(&stats[i])
+
+		// EPIC-082 M2: misclassification audit by classify_source.
+		if mcs, err := q.misclassifyBySource(stats[i].Profile); err != nil {
+			slog.Warn("misclassify_by_source failed", "profile", stats[i].Profile, "error", err)
+		} else if len(mcs) > 0 {
+			stats[i].MisclassifyBySource = mcs
+		}
+
+		// EPIC-082 M3: score distribution buckets.
+		if bkts, err := q.scoreBuckets(stats[i].Profile); err != nil {
+			slog.Warn("score_buckets failed", "profile", stats[i].Profile, "error", err)
+		} else {
+			stats[i].ScoreBuckets = bkts
+		}
+
+		// EPIC-082 M3: rolling averages.
+		stats[i].AvgScore7d, _ = q.rollingAvgScore(stats[i].Profile, 7)
+		stats[i].AvgScore30d, _ = q.rollingAvgScore(stats[i].Profile, 30)
+
+		// EPIC-082 M3: feedback calibration score — signed bias.
+		if stats[i].FeedbackCount > 0 {
+			fcs := float64(stats[i].TooHighCount-stats[i].TooLowCount) / float64(stats[i].FeedbackCount)
+			stats[i].FeedbackCalibrationScore = &fcs
+		}
 	}
 	return stats, nil
 }
@@ -798,6 +831,63 @@ func (q *Queue) computeDrift(s *ProfileStat) {
 			s.CalibrationRecommendation = "high_drift_recalibrate_rubric"
 		}
 	}
+}
+
+// misclassifyBySource returns negative-feedback counts grouped by classify_source (EPIC-082 M2).
+func (q *Queue) misclassifyBySource(profile string) (map[string]int, error) {
+	rows, err := q.db.Query(
+		`SELECT classify_source, COUNT(*) FROM queue
+		 WHERE profile=? AND status IN ('scored','archived')
+		 AND feedback IN ('too_high','too_low') AND classify_source!=''
+		 GROUP BY classify_source`,
+		profile,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[string]int{}
+	for rows.Next() {
+		var src string
+		var cnt int
+		if err := rows.Scan(&src, &cnt); err != nil {
+			return nil, err
+		}
+		result[src] = cnt
+	}
+	return result, rows.Err()
+}
+
+// scoreBuckets returns score distribution across 5 buckets (EPIC-082 M3).
+func (q *Queue) scoreBuckets(profile string) (map[string]int, error) {
+	row := q.db.QueryRow(`SELECT
+		SUM(CASE WHEN score BETWEEN 0 AND 19 THEN 1 ELSE 0 END),
+		SUM(CASE WHEN score BETWEEN 20 AND 39 THEN 1 ELSE 0 END),
+		SUM(CASE WHEN score BETWEEN 40 AND 59 THEN 1 ELSE 0 END),
+		SUM(CASE WHEN score BETWEEN 60 AND 79 THEN 1 ELSE 0 END),
+		SUM(CASE WHEN score BETWEEN 80 AND 100 THEN 1 ELSE 0 END)
+		FROM queue WHERE profile=? AND status IN ('scored','archived') AND score IS NOT NULL`, profile)
+	var b0, b1, b2, b3, b4 int
+	if err := row.Scan(&b0, &b1, &b2, &b3, &b4); err != nil {
+		return nil, err
+	}
+	return map[string]int{
+		"0-19": b0, "20-39": b1, "40-59": b2, "60-79": b3, "80-100": b4,
+	}, nil
+}
+
+// rollingAvgScore returns the average score for a profile over the last N days (EPIC-082 M3).
+func (q *Queue) rollingAvgScore(profile string, days int) (*float64, error) {
+	var avg sql.NullFloat64
+	err := q.db.QueryRow(
+		`SELECT AVG(score) FROM queue WHERE profile=? AND status IN ('scored','archived')
+		 AND scored_at >= datetime('now', ? || ' days')`,
+		profile, fmt.Sprintf("-%d", days),
+	).Scan(&avg)
+	if err != nil || !avg.Valid {
+		return nil, err
+	}
+	return &avg.Float64, nil
 }
 
 // rubricAverages computes per-axis average rubric scores for a profile.
@@ -1021,7 +1111,7 @@ func (q *Queue) initFTS5() error {
 // ScoreByURL finds a relayed item by URL and updates it to scored, or inserts
 // a new scored row if no relayed item exists. Returns the item and whether it
 // was an insert (true) or update (false).
-func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug string, rubricScores ...map[string]int) (*QueueItem, bool, error) {
+func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug, promptHashVal, promptVersionVal string, rubricScores ...map[string]int) (*QueueItem, bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	rubricJSON := ""
 	if len(rubricScores) > 0 && rubricScores[0] != nil {
@@ -1054,8 +1144,8 @@ func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug s
 	if len(relayed) > 0 {
 		id := relayed[0].ID
 		_, err = q.db.Exec(
-			"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=? WHERE id=?",
-			score, tags, verdict, slug, now, rubricJSON, id,
+			"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=?, prompt_hash=?, prompt_version=? WHERE id=?",
+			score, tags, verdict, slug, now, rubricJSON, promptHashVal, promptVersionVal, id,
 		)
 		if err != nil {
 			return nil, false, fmt.Errorf("ScoreByURL update: %w", err)
@@ -1066,9 +1156,9 @@ func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug s
 
 	// INSERT path — CLI-originated score with no prior relayed row.
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, scored_at, score, tags, verdict, slug, rubric_scores)
-		 VALUES (?, '', 'url', '', ?, 'scored', ?, ?, ?, ?, ?, ?, ?)`,
-		url, profile, now, now, score, tags, verdict, slug, rubricJSON,
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, scored_at, score, tags, verdict, slug, rubric_scores, prompt_hash, prompt_version)
+		 VALUES (?, '', 'url', '', ?, 'scored', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		url, profile, now, now, score, tags, verdict, slug, rubricJSON, promptHashVal, promptVersionVal,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("ScoreByURL insert: %w", err)

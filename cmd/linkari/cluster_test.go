@@ -107,7 +107,7 @@ func TestDetectClustersEndToEnd(t *testing.T) {
 		`["cooking","recipes"]`, // unrelated
 	} {
 		id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: fmt.Sprintf("https://cluster-%d.test", i), Profile: "eng"})
-		q.UpdateScore(id, 70+i*5, "go", "verdict", fmt.Sprintf("cluster-%d", i))
+		q.UpdateScore(id, 70+i*5, "go", "verdict", fmt.Sprintf("cluster-%d", i), "", "")
 		q.SetTopicTags(id, parseTags(tags))
 	}
 
