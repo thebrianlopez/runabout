@@ -502,6 +502,18 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		return "", err
 	}
 
+	// EPIC-090 M1: vnote_auto + YouTube URL routes to transcribeYouTubeAsync
+	// (transcript-only, no scoring). Must come before the generic YouTube check
+	// so vnote_auto shares don't fall through to scoreYouTubeAsync.
+	if ac.ServerScore && ac.ID == "vnote_auto" && isYouTubeURL(req.URL) {
+		ytPath := r.ytdlpPath
+		if ytPath == "" {
+			ytPath = ytdlpBinaryPath
+		}
+		go transcribeYouTubeAsync(*req, r.queue, ytPath, r.events)
+		return "Fetching YouTube transcript — ready via FCM", nil
+	}
+
 	// EPIC-009 M4: YouTube URL shares route to scoreYouTubeAsync for yt-dlp
 	// transcription and Claude scoring. Must come before the audio branch.
 	if ac.ServerScore && req.Type == "url" && isYouTubeURL(req.URL) {

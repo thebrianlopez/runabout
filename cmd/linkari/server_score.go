@@ -1039,7 +1039,7 @@ var imageNoiseGateMaxBytes int64 = 15 * 1024 * 1024
 var notifyOnPrefilterSkip = true
 
 // prefilterVerdicts maps internal prefilter reason codes to user-facing
-// notification verdicts. EPIC-084 M2.
+// notification verdicts. EPIC-084 M2. EPIC-090 M3: YouTube failure verdicts added.
 var prefilterVerdicts = map[string]string{
 	"unsupported_pipeline": "Video platform — not yet supported",
 	"login_wall_domain":    "Login-walled site — can't access content",
@@ -1048,6 +1048,10 @@ var prefilterVerdicts = map[string]string{
 	"fetch_failed":         "Could not fetch page content",
 	"no_metadata":          "File had no scorable metadata",
 	"template_error":       "Scoring configuration error",
+	// EPIC-090 M3: YouTube-specific failure codes.
+	"yt_no_subtitles":      "YouTube video has no subtitles — transcript unavailable",
+	"yt_dlp_unavailable":   "yt-dlp not found — YouTube transcription not configured",
+	"yt_extraction_failed": "YouTube transcript extraction failed",
 }
 
 // enqueuePrefilterPush sends a user-facing notification for a prefilter skip,
@@ -1802,7 +1806,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			"phase":           "audio_async", // EPIC-083 M5-1
 		})
 	}
-	txPath, err := saveTranscriptFile(rowID, profile, originalFilename, transcript, "voice_note", "", "")
+	txPath, err := saveTranscriptFile(rowID, profile, originalFilename, transcript, "voice_note", "", "", "", 0, "")
 	if err != nil {
 		slog.Warn("score_audio: save transcript failed",
 			"row_id", rowID,
@@ -1979,12 +1983,16 @@ var transcriptDir = func() string {
 
 // saveTranscriptFile writes a transcript to docs/transcripts/ with YAML
 // frontmatter containing metadata. Returns the written file path or error.
-// EPIC-071 M2. EPIC-009 M4: extended with source, sourceURL, videoTitle for YouTube.
+// EPIC-071 M2. EPIC-009 M4: extended with source, sourceURL, videoTitle.
+// EPIC-090 M4: extended with videoID, duration, subtitleType.
 //
 // source: "voice_note" | "youtube" | "" (empty = voice_note legacy behavior)
 // sourceURL: original YouTube URL (empty for voice notes)
 // videoTitle: YouTube video title (empty for voice notes); drives YT filename pattern
-func saveTranscriptFile(rowID int64, profile, originalFilename, transcript, source, sourceURL, videoTitle string) (string, error) {
+// videoID: YouTube video ID (empty for non-YouTube)
+// duration: video duration in seconds (0 when unknown)
+// subtitleType: "manual" | "auto" | "" (empty for non-YouTube)
+func saveTranscriptFile(rowID int64, profile, originalFilename, transcript, source, sourceURL, videoTitle, videoID string, duration int, subtitleType string) (string, error) {
 	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
 		return "", fmt.Errorf("create transcript dir: %w", err)
 	}
@@ -2026,6 +2034,15 @@ func saveTranscriptFile(rowID int64, profile, originalFilename, transcript, sour
 	}
 	if videoTitle != "" {
 		fmt.Fprintf(&buf, "video_title: %q\n", videoTitle)
+	}
+	if videoID != "" {
+		fmt.Fprintf(&buf, "video_id: %q\n", videoID)
+	}
+	if duration > 0 {
+		fmt.Fprintf(&buf, "duration: %d\n", duration)
+	}
+	if subtitleType != "" {
+		fmt.Fprintf(&buf, "subtitle_type: %q\n", subtitleType)
 	}
 	if originalFilename != "" && source != "youtube" {
 		fmt.Fprintf(&buf, "original_filename: %q\n", originalFilename)
