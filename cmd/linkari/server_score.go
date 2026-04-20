@@ -1954,8 +1954,13 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	)
 }
 
+// ytdlpBinaryPath is the path to the yt-dlp binary. Defaults to "yt-dlp" (PATH lookup).
+// Overridden by ServerConfig.YtdlpPath via initClaudeConfig() at startup. EPIC-009 M1.
+var ytdlpBinaryPath = "yt-dlp"
+
 // transcriptDir is the directory where voice note transcripts are saved.
-// Resolved relative to the user's docs/transcripts/ path.
+// Default: ~/code/personal/docs/transcripts. Overridden by ServerConfig.TranscriptsDir
+// via initClaudeConfig() at startup. EPIC-009 M1.
 var transcriptDir = func() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "code", "personal", "docs", "transcripts")
