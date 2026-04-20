@@ -586,3 +586,44 @@ func TestClassifyIntentProfile_Cascade(t *testing.T) {
 		})
 	}
 }
+
+// --- classifySourceToStage (GAP-04 fix) --------------------------------------
+
+// TestClassifySourceToStage verifies that every classify_source value produced
+// by classifyShareRequestFast / classifyShareRequest maps to a non-"unknown"
+// stage string, and that empty / unrecognized sources map to "unknown".
+func TestClassifySourceToStage(t *testing.T) {
+	cases := []struct {
+		source    string
+		wantStage string
+	}{
+		// Cascade stages 1-6.
+		{"intent_metadata", "1"},
+		{"filename", "2"},
+		{"subject_keywords", "3"},
+		{"relative_path", "4"},
+		{"url_domain", "5"},
+		{"url_domain_fallback", "5"},
+		{"content", "6"},
+		{"content_llm_hints", "6"},
+		{"content_lm", "6"}, // audio pipeline variant
+
+		// Special non-cascade sources.
+		{"caller", "caller"},
+		{"image_override", "image_override"},
+		{"default_fallback", "default"},
+
+		// GAP-04: empty and unknown must map to "unknown" (prior bug).
+		{"", "unknown"},
+		{"totally_new_source", "unknown"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.source, func(t *testing.T) {
+			got := classifySourceToStage(c.source)
+			if got != c.wantStage {
+				t.Errorf("classifySourceToStage(%q) = %q, want %q", c.source, got, c.wantStage)
+			}
+		})
+	}
+}

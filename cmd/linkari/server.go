@@ -214,6 +214,9 @@ type Server struct {
 	// EPIC-001 M3: IP blocklist and CORS origins.
 	blocklist   []*net.IPNet // parsed CIDRs (single IPs stored as /32 or /128)
 	corsOrigins []string     // allowed CORS origins for Funnel; empty = wildcard
+
+	// GAP-08: metrics collection. nil when metrics.enabled=false in server.yaml.
+	metrics *MetricsCollector
 }
 
 // NewServer creates a new Server with the given bearer token, router, and optional queue.
@@ -237,6 +240,12 @@ func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug 
 // NewServer signature is frozen (G-15); use this setter instead.
 func (s *Server) SetShield(shield *Shield) {
 	s.shield = shield
+}
+
+// SetMetrics installs the MetricsCollector. Called from main.go after
+// NewMetricsCollector; no-op when m is nil (metrics.enabled=false).
+func (s *Server) SetMetrics(m *MetricsCollector) {
+	s.metrics = m
 }
 
 // SetTsnetAddr records the tsnet Funnel address for health reporting.
@@ -977,6 +986,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			"url":             req.URL,
 			"profile":         req.Profile,
 			"classify_source": req.ClassifySource,
+			"stage":           classifySourceToStage(req.ClassifySource),
 			"phase":           "pre_enqueue",
 			"content_type":    req.Type,
 		})

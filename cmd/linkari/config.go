@@ -352,6 +352,10 @@ type ServerConfig struct {
 	// When non-empty, replaces the compiled-in regex with a case-insensitive
 	// OR match of these domain substrings. Default (empty): use built-in list.
 	UnsupportedPipelineDomains []string `yaml:"unsupported_pipeline_domains"`
+
+	// GAP-07/GAP-08: metrics collection config. Controls whether MetricsCollector
+	// is initialized at startup. Default (absent/nil): enabled. SIGHUP-reloadable.
+	Metrics MetricsYAMLConfig `yaml:"metrics"`
 }
 
 // ShareConfig controls how share requests map their received action/profile to
@@ -376,6 +380,26 @@ type ShieldYAMLConfig struct {
 	// Mode: "log" (default) emits debug logs for invalid/missing headers;
 	// "enforce" returns 403.
 	Mode string `yaml:"mode"`
+}
+
+// MetricsYAMLConfig is the on-disk shape of the `metrics:` block in server.yaml.
+// Controls MetricsCollector initialization for linkari.llm.cost_usd and related
+// metric streams. Default (absent block): enabled.
+type MetricsYAMLConfig struct {
+	// Enabled, when explicitly set to false, prevents MetricsCollector
+	// initialization at startup. When nil (absent from YAML) or true, metrics
+	// collection is active. SIGHUP-reloadable via Server.reloadConfig.
+	Enabled *bool `yaml:"enabled"`
+}
+
+// MetricsEnabled returns true when metrics collection is active. The default
+// when the `metrics:` block is absent is true — callers only skip initialization
+// when Enabled is explicitly set to false.
+func (s *ServerConfig) MetricsEnabled() bool {
+	if s.Metrics.Enabled == nil {
+		return true
+	}
+	return *s.Metrics.Enabled
 }
 
 // ShieldConfig returns the resolved shield mode. Empty mode defaults to "log".
