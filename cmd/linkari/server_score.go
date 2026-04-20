@@ -311,7 +311,13 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// Classification cascade — unified for URL and file shares.
 	autoClassified := false
 	contentClassify := false
-	classifySource := ""
+	// GAP-04: inherit ClassifySource from the pre-enqueue fast cascade so that
+	// caller-provided profiles emit "caller" (not "") in classify_stage_win.
+	// Image-overridden shares get "image_override" below.
+	classifySource := req.ClassifySource
+	if classifySource == "" && profile == "image_triage" {
+		classifySource = "image_override"
+	}
 	if profile == "" {
 		profile, classifySource = classifyShareRequest(ctx, req)
 		if profile != "" {
@@ -356,6 +362,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			"url":             rawURL,
 			"profile":         profile,
 			"classify_source": classifySource,
+			"stage":           classifySourceToStage(classifySource),
 			"auto_classified": autoClassified,
 			"row_id":          req.QueueRowID,
 			"content_type":    req.Type,
@@ -843,6 +850,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	}
 
 	// EPIC-088 M3: persist scoring cost and image tokens after back-calculation.
+	// GAP-07: MetricsCollector.RecordScoringCost is the future hook point for
+	// linkari.llm.cost_usd emission — wire when a metrics backend is configured.
 	if sc.CostUSD > 0 || tokenImageCount(sc.Usage) > 0 {
 		if costErr := q.UpdateScoringCost(itemID, sc.CostUSD, tokenImageCount(sc.Usage)); costErr != nil {
 			slog.Warn("score_async: UpdateScoringCost failed", "id", itemID, "error", costErr)
@@ -905,6 +914,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		"score", sc.Score,
 		"status", itemStatus,
 		"classify_source", classifySource,
+		"cost_usd", sc.CostUSD,                                 // GAP-07: linkari.llm.cost_usd source
+		"image_tokens_estimated", tokenImageCount(sc.Usage),    // GAP-07: future Datadog forwarding
 	)
 }
 
@@ -1459,6 +1470,35 @@ func classifyShareRequest(ctx context.Context, req *ShareRequest) (profile, sour
 	return "", ""
 }
 
+// classifySourceToStage maps a classify_source string to a numeric stage label
+// for classify_stage_win telemetry. Returns "unknown" for empty or unrecognized
+// sources (GAP-04: the prior bug — classifySource left "" in scoreAsync when
+// profile was caller-provided or image-overridden, causing "unknown" in metrics).
+func classifySourceToStage(source string) string {
+	switch source {
+	case "intent_metadata":
+		return "1"
+	case "filename":
+		return "2"
+	case "subject_keywords":
+		return "3"
+	case "relative_path":
+		return "4"
+	case "url_domain", "url_domain_fallback":
+		return "5"
+	case "content", "content_llm_hints", "content_lm":
+		return "6"
+	case "caller":
+		return "caller"
+	case "image_override":
+		return "image_override"
+	case "default_fallback":
+		return "default"
+	default:
+		return "unknown"
+	}
+}
+
 // classifyShareRequestFast runs stages 1-5 of the classification cascade
 // (intent_metadata → filename → subject_keywords → relative_path → url_domain)
 // without any LLM calls. This is the synchronous pre-enqueue classification
@@ -1802,6 +1842,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			"row_id":          rowID,
 			"profile":         profile,
 			"classify_source": audioClassifySource,
+			"stage":           classifySourceToStage(audioClassifySource),
 			"content_type":    "audio",
 			"phase":           "audio_async", // EPIC-083 M5-1
 		})
