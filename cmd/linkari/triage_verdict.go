@@ -162,6 +162,12 @@ func (v TriageVerdict) RenderMarkdown() string {
 // raw envelope bytes.
 var execHaikuJSON = runClaudeHaikuJSON
 
+// execHaikuSynopsisJSON is the JSON-mode synopsis execution path for voice note
+// summarization. Separate from execHaikuJSON so tests can stub them independently
+// without the synopsis stub interfering with rubric scoring expectations.
+// EPIC-088 M1: uses --output-format json + --json-schema for persona isolation.
+var execHaikuSynopsisJSON = runClaudeHaikuJSON
+
 // runClaudeHaikuJSON shells the same `claude --print` invocation as
 // runClaudeHaiku but adds `--output-format json --json-schema <schema>` so
 // the CLI returns a result envelope containing schema-validated JSON.
@@ -186,12 +192,14 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 	cmd := exec.CommandContext(ctx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
 		Model:        claudeModel,
 		MaxTurns:     "3", // --output-format json + --json-schema uses internal tool-call turns to enforce schema; 1 is insufficient
+		MaxTokens:    "600",
 		Tools:        "",
 		OutputFormat: "json",
 		JSONSchema:   schema,
 		SystemPrompt: spFile,
 	})...)
 	cmd.Stdin = strings.NewReader(content)
+	cmd.Dir = os.TempDir() // EPIC-088 M1: prevent subprocess from discovering workspace CLAUDE.md
 	cmd.Env = haikuEnv()
 
 	var stdout, stderr bytes.Buffer
@@ -244,6 +252,7 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 		SystemPrompt: spFile,
 	})...)
 	cmd.Stdin = strings.NewReader(prompt)
+	cmd.Dir = os.TempDir() // EPIC-088 M1: prevent subprocess from discovering workspace CLAUDE.md
 	cmd.Env = haikuEnv()
 
 	var stdout, stderr bytes.Buffer
@@ -402,10 +411,16 @@ func haikuVerdictWithRepair(ctx context.Context, sysPrompt, content string) (Tri
 		return TriageVerdict{}, nil, fmt.Errorf("repair parse: %w (orig: %v)", perr2, perr)
 	}
 	// EPIC-084 M4: sum costs from both turns instead of replacing.
+	// EPIC-088 M2: also sum InputTokens and OutputTokens so repair-turn token
+	// counts reflect the full two-turn consumption, not just the repair turn.
 	if meta2 != nil {
 		meta2.RepairTurn = true
 		if meta != nil {
 			meta2.CostUSD += meta.CostUSD
+			if meta2.Usage != nil && meta.Usage != nil {
+				meta2.Usage.InputTokens += meta.Usage.InputTokens
+				meta2.Usage.OutputTokens += meta.Usage.OutputTokens
+			}
 		}
 	}
 	return v2, meta2, nil

@@ -198,6 +198,9 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		// EPIC-082 M1: prompt traceability columns.
 		"ALTER TABLE queue ADD COLUMN prompt_hash TEXT DEFAULT ''",
 		"ALTER TABLE queue ADD COLUMN prompt_version TEXT DEFAULT ''",
+		// EPIC-088 M3: per-call scoring cost and vision token persistence.
+		"ALTER TABLE queue ADD COLUMN scoring_cost_usd REAL DEFAULT NULL",
+		"ALTER TABLE queue ADD COLUMN image_tokens_estimated INTEGER DEFAULT NULL",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -363,11 +366,11 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size)
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size, slug)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.URL, req.Text, req.Type, req.Action, req.Profile, now, req.Title,
 		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename, req.ClassifySource,
-		boolToInt(req.IsScreenshot), req.FileSize,
+		boolToInt(req.IsScreenshot), req.FileSize, urlToSlug(req.URL),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue: %w", err)
@@ -634,6 +637,17 @@ func (q *Queue) ScoreByID(rowID int64, score int, tags, verdict, slug, promptHas
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+// UpdateScoringCost persists the per-call scoring cost and image token estimate
+// after ScoreByURL/ScoreByID. Called from scoreAsync after vision back-calculation
+// so the corrected image_tokens_estimated value is written. EPIC-088 M3.
+func (q *Queue) UpdateScoringCost(rowID int64, costUSD float64, imageTokensEstimated int) error {
+	_, err := q.db.Exec(
+		"UPDATE queue SET scoring_cost_usd=?, image_tokens_estimated=? WHERE id=?",
+		costUSD, imageTokensEstimated, rowID,
+	)
+	return err
 }
 
 // SetActionRoute persists the action_route on a queue item (EPIC-072 M9).

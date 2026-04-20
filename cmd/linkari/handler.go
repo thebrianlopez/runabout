@@ -317,7 +317,10 @@ var domainProfileMap = []struct {
 	{"travel", "travel"},
 	// life
 	{"retirement", "life"},
-	// music
+	// music — spotify.com and soundcloud.com are also matched by unsupportedPipelineRE
+	// and pre-filtered before scoring. Their entries here ensure profile="music" is
+	// assigned on the inbound request path (used for logging/events), even though
+	// scoring is skipped. EPIC-088 M4: retained as profile-classification escape hatch.
 	{"spotify.com", "music"},
 	{"soundcloud.com", "music"},
 	{"bandcamp.com", "music"},
@@ -341,6 +344,16 @@ var domainProfileMap = []struct {
 	{"asos.com", "fashion"},
 	{"net-a-porter.com", "fashion"},
 	{"vogue.com", "fashion"},
+	// finance (investor relations subdomains — EPIC-087 M3)
+	{"ir.", "finance"},
+	{"investor.", "finance"},
+	{"investors.", "finance"},
+	// life — privacy/legal content (EPIC-087 M3)
+	{"globalprivacycontrol", "life"},
+	{"privacyrights", "life"},
+	{"privacypolicy", "life"},
+	{"terms-of-service", "life"},
+	{"termsofservice", "life"},
 }
 
 // classifyURLProfile returns the heuristic profile for a URL based on domain
@@ -485,7 +498,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	// scoreAudioAsync). Architecturally incompatible with scoreAsync —
 	// hardcoded score=100, execHaiku directly, 1800s timeout, transcript management.
 	if ac.ServerScore && req.Type == "audio" {
-		go processVoiceNoteAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel, req.ExtraText, req, r.events)
+		go processVoiceNoteAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel, req.ExtraText, req, r.events, HaikuJSONEvaluator{})
 		return "Transcribing — synopsis via FCM", nil
 	}
 

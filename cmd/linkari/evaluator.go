@@ -28,8 +28,9 @@ import (
 // TokenUsage tracks per-call token consumption from the claude CLI JSON envelope.
 // EPIC-062 M2: parsed from the --output-format json response metadata.
 type TokenUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens          int `json:"input_tokens"`
+	OutputTokens         int `json:"output_tokens"`
+	ImageTokensEstimated int `json:"image_tokens_estimated,omitempty"` // EPIC-085 M3: back-calculated from cost delta
 }
 
 // Scorecard is the unified output of any Evaluate() call. It replaces the
@@ -130,6 +131,7 @@ func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate 
 			"cost_usd", meta.CostUSD,
 			"input_tokens", tokenCount(meta.Usage, true),
 			"output_tokens", tokenCount(meta.Usage, false),
+			"image_tokens_estimated", tokenImageCount(meta.Usage), // EPIC-088 M2: always 0 for JSON path; included for log schema consistency
 			"repair_turn", meta.RepairTurn,
 			"latency_ms", latency,
 		)
@@ -220,14 +222,9 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 		sc.CostUSD = meta.CostUSD
 		sc.Usage = meta.Usage
 		sc.RepairTurn = meta.RepairTurn
-		slog.Info("evaluator: token usage",
-			"backend", "claude-haiku-vision",
-			"cost_usd", meta.CostUSD,
-			"input_tokens", tokenCount(meta.Usage, true),
-			"output_tokens", tokenCount(meta.Usage, false),
-			"repair_turn", meta.RepairTurn,
-			"latency_ms", latency,
-		)
+		// EPIC-088 M2: do NOT log evaluator: token usage here for vision — image_tokens_estimated
+		// is 0 until scoreAsync back-calculates it. scoreAsync logs the corrected values
+		// via vision_token_correction after applying the back-calculation.
 	}
 	return sc, nil
 }
@@ -241,6 +238,15 @@ func tokenCount(u *TokenUsage, input bool) int {
 		return u.InputTokens
 	}
 	return u.OutputTokens
+}
+
+// tokenImageCount safely extracts image_tokens_estimated from a TokenUsage pointer.
+// Returns 0 for nil or non-vision paths. EPIC-088 M2.
+func tokenImageCount(u *TokenUsage) int {
+	if u == nil {
+		return 0
+	}
+	return u.ImageTokensEstimated
 }
 
 // GapSummary returns a short human-readable summary of the scorecard's gaps
