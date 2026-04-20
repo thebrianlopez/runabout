@@ -60,6 +60,7 @@ func (s ServerConfig) IsZero() bool {
 		!s.Share.HeuristicOverrideEnabled &&
 		s.Shield.Mode == "" &&
 		s.WhisperModel == "" && s.FfmpegPath == "" &&
+		s.TranscriptsDir == "" && s.YtdlpPath == "" &&
 		s.GoogleClientID == "" && s.SessionTTLDays == 0 &&
 		!s.Sandbox.Enabled &&
 		s.ImageNoiseGateMaxBytes == 0 && s.MaxScoringCostUSD == 0
@@ -284,6 +285,10 @@ type ServerConfig struct {
 	// EPIC-067: voice note transcription config.
 	WhisperModel string `yaml:"whisper_model,omitempty"` // path to ggml model file (default: ~/.local/share/whisper/ggml-large-v3-turbo.bin)
 	FfmpegPath   string `yaml:"ffmpeg_path,omitempty"`   // path to ffmpeg binary (default: ffmpeg on PATH)
+
+	// EPIC-009: YouTube transcription config.
+	TranscriptsDir string `yaml:"transcripts_dir,omitempty"` // directory for transcript markdown files (default: ~/code/personal/docs/transcripts)
+	YtdlpPath      string `yaml:"ytdlp_path,omitempty"`      // path to yt-dlp binary (default: yt-dlp on PATH)
 
 	// EPIC-001: Google Sign-In config.
 	GoogleClientID string   `yaml:"google_client_id"` // secretsmanager:// URI or literal; resolved via resolveField pipeline

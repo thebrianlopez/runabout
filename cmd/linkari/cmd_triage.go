@@ -425,6 +425,13 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && len(cfg.UnsupportedPipelineDomains) > 0 {
 		setUnsupportedPipelineDomains(cfg.UnsupportedPipelineDomains)
 	}
+	// EPIC-009 M1: transcript directory and yt-dlp path.
+	if cfg != nil && cfg.TranscriptsDir != "" {
+		transcriptDir = cfg.TranscriptsDir
+	}
+	if cfg != nil && cfg.YtdlpPath != "" {
+		ytdlpBinaryPath = cfg.YtdlpPath
+	}
 	slog.Info("claude config resolved",
 		"event_type", "claude_config_init",
 		"claude_path", claudeBinaryPath,
