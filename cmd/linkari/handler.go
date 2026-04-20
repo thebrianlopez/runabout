@@ -502,6 +502,17 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		return "", err
 	}
 
+	// EPIC-009 M4: YouTube URL shares route to scoreYouTubeAsync for yt-dlp
+	// transcription and Claude scoring. Must come before the audio branch.
+	if ac.ServerScore && req.Type == "url" && isYouTubeURL(req.URL) {
+		ytPath := r.ytdlpPath
+		if ytPath == "" {
+			ytPath = ytdlpBinaryPath
+		}
+		go scoreYouTubeAsync(*req, r.queue, ytPath, r.events)
+		return "Transcribing YouTube — verdict via FCM", nil
+	}
+
 	// EPIC-077 M5: audio shares route to processVoiceNoteAsync (renamed from
 	// scoreAudioAsync). Architecturally incompatible with scoreAsync —
 	// hardcoded score=100, execHaiku directly, 1800s timeout, transcript management.
