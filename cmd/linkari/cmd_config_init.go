@@ -125,6 +125,15 @@ const serverYAMLTemplate = `server:
   # Verbose debug logging (also: --debug flag).
   debug: false
 
+  # --- EPIC-009: YouTube transcription ---
+
+  # Directory where transcript markdown files are saved.
+  # Default: ~/code/personal/docs/transcripts
+  # transcripts_dir: ""
+
+  # Path to the yt-dlp binary. Defaults to "yt-dlp" on PATH.
+  # ytdlp_path: ""
+
   # --- Prefilter: unsupported pipeline domains (EPIC-088 M4) ---
 
   # Override the built-in list of streaming/video domains that are blocked
