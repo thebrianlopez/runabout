@@ -31,6 +31,17 @@ import (
 // Configurable via server.yaml unsupported_pipeline_domains (EPIC-088 M4).
 var unsupportedPipelineRE = regexp.MustCompile(`(?i)(?:youtube\.com|youtu\.be|spotify\.com|twitch\.tv|soundcloud\.com|tiktok\.com|netflix\.com|vimeo\.com|rumble\.com|dailymotion\.com)`)
 
+// youTubeRE matches YouTube URL patterns that can be transcribed via yt-dlp.
+// Covers youtube.com/watch, /shorts, /live, /embed, and youtu.be short links.
+// EPIC-009 M2.
+var youTubeRE = regexp.MustCompile(`(?i)(?:youtube\.com/(?:watch|shorts|live|embed)|youtu\.be/)`)
+
+// isYouTubeURL reports whether the given URL is a YouTube video that can be
+// routed to the yt-dlp transcription pipeline. EPIC-009 M2.
+func isYouTubeURL(u string) bool {
+	return youTubeRE.MatchString(u)
+}
+
 // setUnsupportedPipelineDomains rebuilds unsupportedPipelineRE from a custom
 // domain list sourced from server.yaml. Each entry is treated as a literal
 // domain substring (case-insensitive). Called once at startup from initClaudeConfig.
