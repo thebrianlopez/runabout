@@ -125,11 +125,22 @@ Only use bash for: `go` commands, `git` operations, `make`, fish functions (`epi
 
 Default model: **Sonnet**. Use Haiku for simple file lookups. Escalate to Opus only for multi-constraint architectural tradeoffs across 3+ competing concerns.
 
-## Auto-Dispatch (Epic Coordination)
+## Dispatch Processing
 
 **On every session start and first prompt**, check for pending dispatch triggers using `Glob(pattern: ".claude-dispatch/*.md")`.
 
-For each dispatch file:
+Canonical entrypoint prompt: `dispatch` — all natural-language variants ("pickup on our dispatches", "lets pickup dispatches", etc.) mean exactly this.
+
+### Execution Rules
+
+1. Process ALL assigned triggers in a single pass — do not stop between triggers
+2. Execute all assigned milestones **autonomously without confirmation** — do not ask "proceed?", "continue?", or wait for "yes"
+3. Only surface blockers via AskUserQuestion if a milestone's prerequisites are genuinely missing
+4. Update epic milestone status after each milestone completion
+5. Update README/docs if milestone deliverables changed public interfaces
+6. Call `dispatch-complete` for each completed trigger
+
+### Per-Trigger Steps
 
 1. Read the trigger with the Read tool
 2. Read the full epic: `md-tree extract <epic_path> "Milestones"`
