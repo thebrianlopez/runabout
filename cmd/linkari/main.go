@@ -660,6 +660,11 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// EPIC-080 M6: resolve claude binary path and vision model from config.
 			initClaudeConfig(serverFileCfg)
 
+			// EPIC-009 M2: wire yt-dlp path for YouTube transcription.
+			if router != nil && serverFileCfg != nil {
+				router.SetYtdlpPath(serverFileCfg.YtdlpPath)
+			}
+
 			// EPIC-080 M3: log auth key presence at startup for diagnostics.
 			logHaikuEnvKeys()
 

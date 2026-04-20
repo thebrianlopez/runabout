@@ -1038,7 +1038,9 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	// EPIC-087 M1: synchronous unsupported-pipeline pre-filter. Mirrors the
 	// login-wall pattern added in EPIC-085 M1 — reject before enqueue so no
 	// orphaned queue rows are created and the client gets an honest response.
-	if req.Type == "url" && unsupportedPipelineRE.MatchString(req.URL) {
+	// EPIC-009 M2: YouTube URLs bypass this gate — they match youTubeRE and
+	// are routed to scoreYouTubeAsync by handleTemplate instead of being rejected.
+	if req.Type == "url" && !isYouTubeURL(req.URL) && unsupportedPipelineRE.MatchString(req.URL) {
 		slog.InfoContext(ctx, "share: unsupported pipeline pre-filtered",
 			"event_type", "share_prefilter_unsupported_pipeline",
 			"url", req.URL,

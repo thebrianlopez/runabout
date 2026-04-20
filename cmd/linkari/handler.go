@@ -79,7 +79,8 @@ type Router struct {
 	debug        bool
 	mu           sync.RWMutex
 	queue        *Queue
-	whisperModel string // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
+	whisperModel string       // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
+	ytdlpPath    string       // EPIC-009: path to yt-dlp binary for YouTube transcription
 	events       *EventLogger // EPIC-076: classification telemetry; nil when event logging not configured
 }
 
@@ -95,6 +96,13 @@ func (r *Router) SetQueue(q *Queue) {
 func (r *Router) SetWhisperModel(path string) {
 	r.mu.Lock()
 	r.whisperModel = path
+	r.mu.Unlock()
+}
+
+// SetYtdlpPath sets the yt-dlp binary path for YouTube transcription (EPIC-009 M2).
+func (r *Router) SetYtdlpPath(path string) {
+	r.mu.Lock()
+	r.ytdlpPath = path
 	r.mu.Unlock()
 }
 
