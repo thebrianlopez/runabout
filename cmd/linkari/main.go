@@ -614,6 +614,15 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				router.SetEvents(events) // EPIC-076 M1: wire into scoring goroutines
 				slog.Info("event logging enabled", "path", eventsPath)
 			}
+			// GAP-08: metrics collector — gated on metrics.enabled (default: true).
+			metricsCollector := NewMetricsCollector(serverFileCfg)
+			srv.SetMetrics(metricsCollector)
+			if metricsCollector != nil {
+				slog.Info("metrics collector enabled")
+			} else {
+				slog.Info("metrics collector disabled (metrics.enabled=false in server.yaml)")
+			}
+
 			if fcmTokenSource != nil {
 				slog.Info("FCM push notifications enabled", "firebase_sa", firebaseSA)
 			} else {
