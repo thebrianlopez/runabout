@@ -188,6 +188,20 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
+			// --- Check: yt-dlp binary (EPIC-009 M5) ---
+			{
+				ytPath := "yt-dlp"
+				if serverCfg != nil && serverCfg.YtdlpPath != "" {
+					ytPath = serverCfg.YtdlpPath
+				}
+				if resolved, err := exec.LookPath(ytPath); err != nil {
+					addCheck(warnCheck("ytdlp",
+						fmt.Sprintf("yt-dlp not found at %q — YouTube URL transcription will fail (install yt-dlp or set ytdlp_path in server.yaml)", ytPath)))
+				} else {
+					addCheck(okCheck("ytdlp", resolved))
+				}
+			}
+
 			// --- Check 10: tsnet state directory ---
 			{
 				var tsnetStateDir string
