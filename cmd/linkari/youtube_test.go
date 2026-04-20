@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 )
@@ -68,27 +69,42 @@ func TestIsYouTubeURL(t *testing.T) {
 }
 
 // TestRunYtdlpExtract_MockExec verifies the extraction path using a mock seam.
+// EPIC-090 M4: seam now returns ytVideoMeta instead of a bare title string.
 func TestRunYtdlpExtract_MockExec(t *testing.T) {
 	// Save and restore the real execYtdlp seam.
 	orig := execYtdlp
 	defer func() { execYtdlp = orig }()
 
 	wantTranscript := "Hello world"
-	wantTitle := "Test Video"
-
-	execYtdlp = func(_ context.Context, _, _ string) (string, string, error) {
-		return wantTranscript, wantTitle, nil
+	wantMeta := ytVideoMeta{
+		Title:        "Test Video",
+		ID:           "dQw4w9WgXcQ",
+		Duration:     212,
+		SubtitleType: "manual",
 	}
 
-	got, title, err := execYtdlp(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=test")
+	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+		return wantTranscript, wantMeta, nil
+	}
+
+	got, meta, err := execYtdlp(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != wantTranscript {
 		t.Errorf("transcript: got %q, want %q", got, wantTranscript)
 	}
-	if title != wantTitle {
-		t.Errorf("title: got %q, want %q", title, wantTitle)
+	if meta.Title != wantMeta.Title {
+		t.Errorf("title: got %q, want %q", meta.Title, wantMeta.Title)
+	}
+	if meta.ID != wantMeta.ID {
+		t.Errorf("video_id: got %q, want %q", meta.ID, wantMeta.ID)
+	}
+	if meta.Duration != wantMeta.Duration {
+		t.Errorf("duration: got %d, want %d", meta.Duration, wantMeta.Duration)
+	}
+	if meta.SubtitleType != wantMeta.SubtitleType {
+		t.Errorf("subtitle_type: got %q, want %q", meta.SubtitleType, wantMeta.SubtitleType)
 	}
 }
 
@@ -97,12 +113,38 @@ func TestRunYtdlpExtract_ErrorPath(t *testing.T) {
 	orig := execYtdlp
 	defer func() { execYtdlp = orig }()
 
-	execYtdlp = func(_ context.Context, _, _ string) (string, string, error) {
-		return "", "", fmt.Errorf("yt-dlp: no subtitles found")
+	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: no subtitles found")
 	}
 
 	_, _, err := execYtdlp(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=nosubs")
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+// TestDetectSubtitleType verifies manual vs auto detection from yt-dlp JSON.
+// EPIC-090 M4.
+func TestDetectSubtitleType(t *testing.T) {
+	manualMeta := ytRawMeta{
+		Subtitles: map[string]json.RawMessage{
+			"en": json.RawMessage(`[]`),
+		},
+		AutomaticCaptions: map[string]json.RawMessage{
+			"en": json.RawMessage(`[]`),
+		},
+	}
+	if got := detectSubtitleType(manualMeta); got != "manual" {
+		t.Errorf("expected manual, got %q", got)
+	}
+
+	autoOnlyMeta := ytRawMeta{
+		Subtitles: map[string]json.RawMessage{},
+		AutomaticCaptions: map[string]json.RawMessage{
+			"en": json.RawMessage(`[]`),
+		},
+	}
+	if got := detectSubtitleType(autoOnlyMeta); got != "auto" {
+		t.Errorf("expected auto, got %q", got)
 	}
 }

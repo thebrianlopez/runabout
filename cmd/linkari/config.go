@@ -61,9 +61,16 @@ func (s ServerConfig) IsZero() bool {
 		s.Shield.Mode == "" &&
 		s.WhisperModel == "" && s.FfmpegPath == "" &&
 		s.TranscriptsDir == "" && s.YtdlpPath == "" &&
+		s.YouTube.SubtitleLangs == "" && s.YouTube.TimeoutSeconds == 0 &&
 		s.GoogleClientID == "" && s.SessionTTLDays == 0 &&
 		!s.Sandbox.Enabled &&
 		s.ImageNoiseGateMaxBytes == 0 && s.MaxScoringCostUSD == 0
+}
+
+// YouTubeConfig holds per-field tuning for yt-dlp extraction. EPIC-090 M5.
+type YouTubeConfig struct {
+	SubtitleLangs  string `yaml:"subtitle_langs,omitempty"`  // yt-dlp --sub-langs value (default: "en.*,en")
+	TimeoutSeconds int    `yaml:"timeout_seconds,omitempty"` // extraction timeout in seconds (default: 30)
 }
 
 // RelayedWatchdogConfig is the resolved runtime view of the watchdog knobs,
@@ -287,8 +294,9 @@ type ServerConfig struct {
 	FfmpegPath   string `yaml:"ffmpeg_path,omitempty"`   // path to ffmpeg binary (default: ffmpeg on PATH)
 
 	// EPIC-009: YouTube transcription config.
-	TranscriptsDir string `yaml:"transcripts_dir,omitempty"` // directory for transcript markdown files (default: ~/code/personal/docs/transcripts)
-	YtdlpPath      string `yaml:"ytdlp_path,omitempty"`      // path to yt-dlp binary (default: yt-dlp on PATH)
+	TranscriptsDir string       `yaml:"transcripts_dir,omitempty"` // directory for transcript markdown files (default: ~/code/personal/docs/transcripts)
+	YtdlpPath      string       `yaml:"ytdlp_path,omitempty"`      // path to yt-dlp binary (default: yt-dlp on PATH)
+	YouTube        YouTubeConfig `yaml:"youtube,omitempty"`         // EPIC-090 M5: per-field YouTube tuning
 
 	// EPIC-001: Google Sign-In config.
 	GoogleClientID string   `yaml:"google_client_id"` // secretsmanager:// URI or literal; resolved via resolveField pipeline
@@ -779,7 +787,7 @@ func builtinConfig() *Config {
 				ID:              "vnote_auto",
 				Label:           "Transcribe",
 				Icon:            "mic",
-				Type:            "audio",
+				Type:            "audio,url", // EPIC-090 M1: added "url" so YouTube shares reach vnote_auto
 				Target:          "linkari:0",
 				Kind:            KindTemplate,
 				CommandTemplate: "echo vnote", // stub — never rendered when ServerScore=true

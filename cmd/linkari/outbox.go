@@ -235,11 +235,27 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 	}
 
 	var title, notifBody string
-	if contentType == "voice_note" {
+	switch contentType {
+	case "voice_note":
 		// EPIC-071 M3: voice notes get a synopsis-oriented notification.
 		title = "Voice note transcribed"
 		notifBody = verdict // synopsis is already ≤280 chars from prompt constraint
-	} else {
+	case "youtube_transcript":
+		// EPIC-090 M2: transcript-only YouTube notification (vnote_auto path).
+		title = "YouTube transcript ready"
+		notifBody = verdict // verdict holds video title or "transcribed"
+	case "youtube":
+		// EPIC-090 M5: YouTube scored notification (score path) — YouTube-specific title.
+		notifBody = firstSentence(verdict, 120)
+		switch {
+		case score >= 70:
+			title = fmt.Sprintf("YouTube · Worth saving — %d/100", score)
+		case score >= 40:
+			title = fmt.Sprintf("YouTube · Maybe — %d/100", score)
+		default:
+			title = fmt.Sprintf("YouTube · Skip — %d/100", score)
+		}
+	default:
 		notifBody = slug
 		if verdict != "" {
 			notifBody = firstSentence(verdict, 120)

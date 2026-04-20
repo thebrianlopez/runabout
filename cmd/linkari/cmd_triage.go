@@ -426,11 +426,19 @@ func initClaudeConfig(cfg *ServerConfig) {
 		setUnsupportedPipelineDomains(cfg.UnsupportedPipelineDomains)
 	}
 	// EPIC-009 M1: transcript directory and yt-dlp path.
+	// EPIC-090 M5: tilde expansion for transcripts_dir.
 	if cfg != nil && cfg.TranscriptsDir != "" {
-		transcriptDir = cfg.TranscriptsDir
+		transcriptDir = expandTilde(cfg.TranscriptsDir)
 	}
 	if cfg != nil && cfg.YtdlpPath != "" {
 		ytdlpBinaryPath = cfg.YtdlpPath
+	}
+	// EPIC-090 M5: per-field YouTube tuning.
+	if cfg != nil && cfg.YouTube.SubtitleLangs != "" {
+		ytSubtitleLangs = cfg.YouTube.SubtitleLangs
+	}
+	if cfg != nil && cfg.YouTube.TimeoutSeconds > 0 {
+		ytTimeoutSeconds = cfg.YouTube.TimeoutSeconds
 	}
 	slog.Info("claude config resolved",
 		"event_type", "claude_config_init",
@@ -450,6 +458,16 @@ func initClaudeConfig(cfg *ServerConfig) {
 			"error", err,
 		)
 	}
+}
+
+// expandTilde expands a leading "~/" in a path to the user's home directory.
+// Non-tilde paths are returned unchanged. EPIC-090 M5.
+func expandTilde(path string) string {
+	if !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, path[2:])
 }
 
 // validateClaudeCLI runs `claude --version` as a lightweight smoke test to
