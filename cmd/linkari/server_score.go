@@ -1802,7 +1802,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			"phase":           "audio_async", // EPIC-083 M5-1
 		})
 	}
-	txPath, err := saveTranscriptFile(rowID, profile, originalFilename, transcript)
+	txPath, err := saveTranscriptFile(rowID, profile, originalFilename, transcript, "voice_note", "", "")
 	if err != nil {
 		slog.Warn("score_audio: save transcript failed",
 			"row_id", rowID,
@@ -1977,10 +1977,14 @@ var transcriptDir = func() string {
 	return filepath.Join(home, "code", "personal", "docs", "transcripts")
 }()
 
-// saveTranscriptFile writes a voice note transcript to docs/transcripts/ with
-// YAML frontmatter containing metadata. Returns the written file path or error.
-// EPIC-071 M2.
-func saveTranscriptFile(rowID int64, profile, originalFilename, transcript string) (string, error) {
+// saveTranscriptFile writes a transcript to docs/transcripts/ with YAML
+// frontmatter containing metadata. Returns the written file path or error.
+// EPIC-071 M2. EPIC-009 M4: extended with source, sourceURL, videoTitle for YouTube.
+//
+// source: "voice_note" | "youtube" | "" (empty = voice_note legacy behavior)
+// sourceURL: original YouTube URL (empty for voice notes)
+// videoTitle: YouTube video title (empty for voice notes); drives YT filename pattern
+func saveTranscriptFile(rowID int64, profile, originalFilename, transcript, source, sourceURL, videoTitle string) (string, error) {
 	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
 		return "", fmt.Errorf("create transcript dir: %w", err)
 	}
@@ -1989,17 +1993,24 @@ func saveTranscriptFile(rowID int64, profile, originalFilename, transcript strin
 	date := now.Format("20060102")
 	ts := now.Format("20060102T150405Z")
 
-	// Sanitize original filename for use in the path — replace spaces,
-	// non-ASCII, and filesystem-illegal characters with underscores,
-	// then collapse repeated underscores.
-	safeName := sanitizeTranscriptFilename(originalFilename)
-	if safeName == "" {
-		safeName = "untitled"
+	var filename string
+	if source == "youtube" && videoTitle != "" {
+		// EPIC-009 M4: YouTube filename pattern: YYYYMMDD_<rowID>_YT_<sanitized_title>.md
+		safeTitle := sanitizeTranscriptFilename(videoTitle)
+		if safeTitle == "" {
+			safeTitle = "untitled"
+		}
+		safeTitle = strings.TrimSuffix(safeTitle, filepath.Ext(safeTitle))
+		filename = fmt.Sprintf("%s_%d_YT_%s.md", date, rowID, safeTitle)
+	} else {
+		// Voice note / legacy: YYYYMMDD_<rowID>_<filename>.md
+		safeName := sanitizeTranscriptFilename(originalFilename)
+		if safeName == "" {
+			safeName = "untitled"
+		}
+		safeName = strings.TrimSuffix(safeName, filepath.Ext(safeName))
+		filename = fmt.Sprintf("%s_%d_%s.md", date, rowID, safeName)
 	}
-	// Strip extension — the file is always .md.
-	safeName = strings.TrimSuffix(safeName, filepath.Ext(safeName))
-
-	filename := fmt.Sprintf("%s_%d_%s.md", date, rowID, safeName)
 	path := filepath.Join(transcriptDir, filename)
 
 	var buf strings.Builder
@@ -2007,7 +2018,18 @@ func saveTranscriptFile(rowID int64, profile, originalFilename, transcript strin
 	fmt.Fprintf(&buf, "timestamp: %q\n", ts)
 	fmt.Fprintf(&buf, "row_id: %d\n", rowID)
 	fmt.Fprintf(&buf, "profile: %q\n", profile)
-	fmt.Fprintf(&buf, "original_filename: %q\n", originalFilename)
+	if source != "" {
+		fmt.Fprintf(&buf, "source: %q\n", source)
+	}
+	if sourceURL != "" {
+		fmt.Fprintf(&buf, "source_url: %q\n", sourceURL)
+	}
+	if videoTitle != "" {
+		fmt.Fprintf(&buf, "video_title: %q\n", videoTitle)
+	}
+	if originalFilename != "" && source != "youtube" {
+		fmt.Fprintf(&buf, "original_filename: %q\n", originalFilename)
+	}
 	fmt.Fprintf(&buf, "---\n\n")
 	buf.WriteString(transcript)
 	buf.WriteString("\n")

@@ -1,14 +1,16 @@
-// EPIC-009 M3: YouTube transcription via yt-dlp.
+// EPIC-009 M3/M4: YouTube transcription via yt-dlp.
 //
 // runYtdlpExtract downloads subtitles for a YouTube URL using yt-dlp, strips
 // SRT timing markers, and returns the plain-text transcript and video title.
-// The test seam (execYtdlp) allows unit tests to inject a mock executor.
+// scoreYouTubeAsync is the async pipeline goroutine that wires extraction into
+// the scoring, persistence, and FCM push flow. EPIC-009 M4.
 package main
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -147,4 +149,152 @@ func runYtdlpExtract(ctx context.Context, ytdlpPath, videoURL string) (transcrip
 	}
 
 	return transcript, title, nil
+}
+
+// scoreYouTubeAsync runs the full YouTube transcription + scoring pipeline in a
+// goroutine. It mirrors processVoiceNoteAsync but uses yt-dlp for extraction
+// instead of ffmpeg/whisper. EPIC-009 M4.
+//
+// Pipeline:
+//  1. yt-dlp extract → transcript + title
+//  2. SetText on queue row
+//  3. saveTranscriptFile (source="youtube", YouTube filename pattern)
+//  4. Evaluate via HaikuJSONEvaluator
+//  5. UpdateScore → status=scored
+//  6. EnqueueDigestIfDue → FCM push
+func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	rowID := req.QueueRowID
+	videoURL := req.URL
+	profile := req.Profile
+
+	slog.Info("score_youtube: start",
+		"event_type", "score_youtube_start",
+		"row_id", rowID,
+		"url", videoURL,
+		"profile", profile,
+	)
+
+	if q != nil {
+		q.SetProgress(rowID, "extracting")
+	}
+
+	// Step 1: yt-dlp extraction.
+	transcript, videoTitle, err := execYtdlp(ctx, ytPath, videoURL)
+	if err != nil {
+		errStr := err.Error()
+		var verdict string
+		switch {
+		case strings.Contains(errStr, "not found"):
+			verdict = "yt_dlp_unavailable"
+		case strings.Contains(errStr, "no subtitles"):
+			verdict = "yt_no_subtitles"
+		default:
+			verdict = "yt_extraction_failed"
+		}
+		slog.Warn("score_youtube: extraction failed",
+			"event_type", "yt_transcript_failed",
+			"row_id", rowID,
+			"url", videoURL,
+			"verdict", verdict,
+			"error", err,
+		)
+		if events != nil {
+			_ = events.Emit("yt_transcript_failed", map[string]interface{}{
+				"row_id":  rowID,
+				"url":     videoURL,
+				"verdict": verdict,
+				"error":   errStr,
+			})
+		}
+		if q != nil {
+			q.MarkFailedWithReason(rowID, verdict)
+		}
+		return
+	}
+
+	slog.Info("score_youtube: extracted",
+		"event_type", "yt_transcript_extracted",
+		"row_id", rowID,
+		"url", videoURL,
+		"title", videoTitle,
+		"transcript_len", len(transcript),
+	)
+	if events != nil {
+		_ = events.Emit("yt_transcript_extracted", map[string]interface{}{
+			"row_id":         rowID,
+			"url":            videoURL,
+			"title":          videoTitle,
+			"transcript_len": len(transcript),
+		})
+	}
+
+	// Step 2: backfill queue text.
+	if q != nil {
+		if err := q.SetText(rowID, transcript); err != nil {
+			slog.Warn("score_youtube: SetText failed", "row_id", rowID, "error", err)
+		}
+	}
+
+	// Step 3: save transcript file.
+	txPath, err := saveTranscriptFile(rowID, profile, "", transcript, "youtube", videoURL, videoTitle)
+	if err != nil {
+		slog.Warn("score_youtube: save transcript failed", "row_id", rowID, "error", err)
+		// Non-fatal — continue to scoring.
+	} else {
+		slog.Info("score_youtube: transcript saved",
+			"event_type", "score_youtube_transcript_saved",
+			"row_id", rowID,
+			"path", txPath,
+		)
+	}
+
+	// Step 4: rubric scoring.
+	if q != nil {
+		q.SetProgress(rowID, "scoring")
+	}
+	eval := HaikuJSONEvaluator{}
+	_, sysPrompt, tmplErr := loadProfileTemplateForModeJSON(profile, "url")
+	var ytScore int
+	var ytVerdict, ytTags string
+	if tmplErr == nil {
+		rubricCtx, rubricCancel := context.WithTimeout(ctx, 60*time.Second)
+		sc, evalErr := eval.Evaluate(rubricCtx, transcript, sysPrompt)
+		rubricCancel()
+		if evalErr != nil {
+			slog.Warn("score_youtube: eval failed", "row_id", rowID, "error", evalErr)
+			ytVerdict = "eval_failed"
+		} else {
+			ytScore = sc.Score
+			ytVerdict = sc.Verdict
+			ytTags = sc.Tags
+		}
+	} else {
+		slog.Warn("score_youtube: template load failed", "row_id", rowID, "profile", profile, "error", tmplErr)
+		ytVerdict = "template_missing"
+	}
+
+	// Step 5: persist score.
+	if q == nil {
+		return
+	}
+	slug := fmt.Sprintf("yt-%d", rowID)
+	if err := q.UpdateScore(rowID, ytScore, ytTags, ytVerdict, slug, "", ""); err != nil {
+		slog.Warn("score_youtube: UpdateScore failed", "row_id", rowID, "error", err)
+		return
+	}
+
+	// Step 6: FCM push.
+	resolvePushConfigOnce(q)
+	_, _ = q.EnqueueDigestIfDue(context.Background(), profile, ytScore, slug, ytVerdict, videoURL)
+
+	slog.Info("score_youtube: complete",
+		"event_type", "score_youtube_complete",
+		"row_id", rowID,
+		"score", ytScore,
+		"verdict", ytVerdict,
+		"profile", profile,
+	)
 }
