@@ -217,9 +217,69 @@ All endpoints except `/healthz`, `/logs`, `/logs/stream`, and `/auth/*` require 
 
 **Adaptive assistant (EPIC-072):** Feedback and outcome signals flow back from the client via `/queue/{id}/feedback` and `/queue/{id}/outcome` (or by slug). A tag-based clustering engine (Jaccard similarity on `topic_tags`) detects content themes across scored items. When a scored item meets the profile threshold, action routing dispatches it to either Jira ticket drafting (`draft_jira_ticket`) or research digest append (`append_research_digest`). Per-profile statistics are available via `GET /profiles/stats`.
 
-**Classification cascade (EPIC-079):** `classifyShareRequestFast` (stages 1-5, no LLM) runs synchronously pre-enqueue. `classifyShareRequest` (stages 1-6, includes LLM) runs async in `scoreAsync`. File shares fall through to stage-6 LLM classify using synthesized metadata.
+**Classification cascade (EPIC-079):** `classifyShareRequestFast` (stages 1-5, no LLM) runs synchronously pre-enqueue. `classifyShareRequest` (stages 1-6, includes LLM) runs async in `scoreAsync`. File shares fall through to stage-6 LLM classify using synthesized metadata. Stage-6 has two distinct invocation paths: (a) URL shares post-Jina fetch, where the fetched content is reclassified when stage 5 returned `url_domain_fallback`; (b) non-URL shares with metadata hints (ExtraSubject/ExtraText/Filename), which are classified from synthesized metadata before content fetch. Both call `classifyContentProfile` but at different pipeline stages.
 
-**Vision scoring (EPIC-079 M3):** `HaikuVisionEvaluator` scores local image files via `claude --print --allowedTools Read --bare`. Selected when `req.Type == "image"` and the file is readable.
+**Vision scoring (EPIC-079 M3):** `HaikuVisionEvaluator` scores local image files via `claude --print --allowedTools Read --output-format json --json-schema <schema>`. Selected when `req.Type == "image"` and the file is readable. The score-first short-circuit instruction tells the model to respond immediately with `{"score": 0, "verdict": "personal photo"}` for camera-roll images with no engineered content, bypassing full rubric evaluation.
+
+**Vision prefilter gates:** Three gates run before vision eval in `scoreAsync`, checked in order (first match wins):
+
+| Gate | Config Key | Default | Trigger |
+|------|-----------|---------|---------|
+| `oversize_file` | `image_noise_gate_max_bytes` | 15 MB | File exceeds max bytes |
+| `camera_photo_gate` | *(heuristic, no config)* | — | Gallery app + camera filename pattern (`IMG_/DSC_/PXL_` prefix) + no text metadata |
+| `noise_gate_min_size` | `image_noise_gate_min_bytes` | 1 KB | File below min bytes with no text metadata |
+
+When any gate fires, vision eval is skipped and the share falls through to metadata-only scoring. Each gate emits a `score_prefilter_skip` event.
+
+**Rejection taxonomy:** Shares can be rejected (prefiltered) before or during scoring. Each reason code produces a specific queue row effect and optionally triggers an FCM push notification to the user.
+
+*User-notified prefilters (FCM push via `enqueuePrefilterPush`):*
+
+| Reason Code | Trigger | Queue Effect | User-Facing Verdict |
+|-------------|---------|-------------|---------------------|
+| `unsupported_pipeline` | URL matches streaming domains (YouTube, Spotify, TikTok, Twitch, SoundCloud, Netflix, Vimeo, Rumble, Dailymotion). Domain list configurable via `unsupported_pipeline_domains` in server.yaml. | **Pre-enqueue (primary):** no queue row created, `score_prefilter_skip` event emitted (`phase: "pre_enqueue"`). **Safety-net in scoreAsync:** `MarkFailedWithReason` (fires only when `scoreAsync` is called directly, bypassing the HTTP handler). | "Video platform — not yet supported" |
+| `login_wall_domain` | URL matches login-walled domains (Instagram, X/Twitter, Facebook, LinkedIn non-`/pulse/`) | No queue row created (pre-enqueue) | "Login-walled site — can't access content" |
+| `screenshot_no_text` | Screenshot with empty ExtraSubject + ExtraText | `MarkFailedWithReason` | "Screenshot had no extractable text" |
+| `fetch_failed` | Jina Reader HTTP error | `MarkFailedWithReason` | "Could not fetch page content" |
+| `empty_content` | Jina response body empty after truncation | `MarkFailedWithReason` | "Page had no readable content" |
+| `no_metadata` | File share with no ExtraSubject, ExtraText, Filename, or MimeType | `MarkFailedWithReason` | "File had no scorable metadata" |
+| `template_error` | Profile template load failure | `MarkFailedWithReason` | "Scoring configuration error" |
+
+*Internal-only prefilters (no FCM push):*
+
+| Reason Code | Trigger | Queue Effect |
+|-------------|---------|-------------|
+| `eval_failed` | `Evaluate()` returns error | `MarkFailedWithReason` |
+| `score_persist_failed` | Score DB write error | `MarkFailedWithReason` |
+| `scoring_timeout` | Relayed row exceeds `relayed_watchdog_max_age` (default 15m) | `MarkFailedWithReason` (watchdog) |
+
+*Audio pipeline prefilters (no FCM push):*
+
+| Reason Code | Trigger |
+|-------------|---------|
+| `ffmpeg_failed` | ffmpeg audio conversion error |
+| `wav_stat_failed` | WAV file stat failure |
+| `segment_failed` | ffmpeg segmentation error |
+| `transcription_failed` | Whisper single-pass failure |
+| `transcription_failed_chunk_N` | Whisper chunk N failure |
+| `empty_transcript` | Whisper produces empty output |
+| `template_load_failed` | Voice note synopsis template missing |
+
+FCM push for prefiltered shares is controlled by `notify_on_prefilter_skip` in `server.yaml` (default `false`; Go runtime default is `true` but the YAML zero-value override wins when the key is absent). Reasons not in the `prefilterVerdicts` map fall back to "Share could not be scored".
+
+**Vision telemetry:** The `claude` CLI's `--output-format json` envelope reports `input_tokens` reflecting only text tokens from the CLI wrapper, not image tokens. `ImageTokensEstimated` is back-calculated when `InputTokens < 100 && CostUSD > 0.01` using Haiku 4.5 pricing ($1.00/MTok input, $5.00/MTok output): `imageCost = totalCost - (inputTokens × $1/MTok + outputTokens × $5/MTok)`, then `imageTokensEstimated = imageCost / $1/MTok`. This value is emitted in `vision_token_correction` events and slog but is **not persisted to SQLite** (known limitation).
+
+**Event types:** Key pipeline events emitted to `linkari_events.jsonl`:
+
+| Event Type | Description |
+|------------|-------------|
+| `classify_stage_win` | Classification cascade resolved a profile (fields: `profile`, `classify_source`, `phase`) |
+| `score_prefilter_summary` | Per-share pipeline summary (fields: `prefilter_stage`, `eval_skipped`, `latency_ms`, `cost_usd`, `type`) — always emitted via defer |
+| `score_prefilter_skip` | Vision gate or login-wall rejection (fields: `stage`, `file_size` or `filename`) |
+| `score_repair_turn` | Scoring required a repair turn (fields: `cost_usd`, `profile`, `type`) |
+| `vision_token_correction` | Image token back-calculation applied (fields: `input_tokens`, `image_tokens_estimated`, `cost_usd`) |
+| `score_cost_exceeded` | Scoring cost exceeded threshold (fields: `cost_usd`, `threshold_usd`, `profile`) |
+| `score_cluster_semaphore_full` | Scoring semaphore saturated (slog only, not in JSONL event log) |
 
 **Auth:** Google Sign-In (ID token verification against Google JWKS) for mobile clients. Invite-code flow for onboarding new users; operator bearer token generates codes via `POST /admin/invite`.
 

@@ -60,6 +60,11 @@ const serverYAMLTemplate = `server:
   # and the linkari score CLI) since EPIC-051. Set to 0 to disable.
   notify_min_score: 10
 
+  # Send FCM push notifications when a share is prefiltered (rejected before
+  # scoring). When true, the user gets a push explaining why the share was
+  # skipped (e.g. "Video platform — not yet supported"). Default false.
+  notify_on_prefilter_skip: false
+
   # --- EPIC-051: Push gating ---
   # Per-profile throttle for digest pushes. The unified EnqueueDigestIfDue
   # helper writes at most one digest row per throttle window per profile.
@@ -119,6 +124,26 @@ const serverYAMLTemplate = `server:
 
   # Verbose debug logging (also: --debug flag).
   debug: false
+
+  # --- Prefilter: unsupported pipeline domains (EPIC-088 M4) ---
+
+  # Override the built-in list of streaming/video domains that are blocked
+  # before scoring (YouTube, Spotify, TikTok, etc.). When non-empty this list
+  # REPLACES the compiled-in default — include all domains you want to block.
+  # Each entry is treated as a case-insensitive substring of the URL.
+  # Omit this field (or leave empty) to use the built-in list.
+  #
+  # unsupported_pipeline_domains:
+  #   - youtube.com
+  #   - youtu.be
+  #   - spotify.com
+  #   - twitch.tv
+  #   - soundcloud.com
+  #   - tiktok.com
+  #   - netflix.com
+  #   - vimeo.com
+  #   - rumble.com
+  #   - dailymotion.com
 `
 
 func configCmd() *cobra.Command {

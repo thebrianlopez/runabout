@@ -248,7 +248,7 @@ func resolveScorePrompt(profile, promptFile string) (prompt, source string, err 
 		}
 		return string(b), "file:" + promptFile, nil
 	}
-	path, rendered, lerr := loadProfileTemplate(profile)
+	path, rendered, lerr := loadProfileTemplateJSON(profile)
 	if lerr != nil {
 		return "", "", lerr
 	}

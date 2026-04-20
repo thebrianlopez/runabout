@@ -278,6 +278,23 @@ the eval harness path).`,
 // path is the fallback so the migration can land per-profile without
 // bricking unmigrated ones.
 func loadProfileTemplate(profile string) (path, content string, err error) {
+	return profileTemplateLookup(profile, func(m *ProfileManifest) (string, error) {
+		return m.Render()
+	})
+}
+
+// loadProfileTemplateJSON is loadProfileTemplate for the JSON scoring path.
+// Strips the markdown-only Output Format table and Key Facts section to
+// reduce token cost and avoid conflicting rendering instructions. EPIC-089 M3.
+func loadProfileTemplateJSON(profile string) (path, content string, err error) {
+	return profileTemplateLookup(profile, func(m *ProfileManifest) (string, error) {
+		return m.RenderForJSON()
+	})
+}
+
+// profileTemplateLookup is the shared directory-search implementation for
+// loadProfileTemplate and loadProfileTemplateJSON.
+func profileTemplateLookup(profile string, render func(*ProfileManifest) (string, error)) (path, content string, err error) {
 	var dirs []string
 	if orgPath := os.Getenv("ORG_PATH"); orgPath != "" {
 		dirs = append(dirs, filepath.Join(orgPath, "docs", "prompts", "profiles"))
@@ -294,7 +311,7 @@ func loadProfileTemplate(profile string) (path, content string, err error) {
 			if lerr != nil {
 				return "", "", lerr
 			}
-			rendered, rerr := m.Render()
+			rendered, rerr := render(m)
 			if rerr != nil {
 				return "", "", rerr
 			}
@@ -318,6 +335,22 @@ func loadProfileTemplate(profile string) (path, content string, err error) {
 // the given content mode (e.g., "vision", "audio", "text").
 // Falls back to standard Render() for non-YAML profiles.
 func loadProfileTemplateForMode(profile, mode string) (path, content string, err error) {
+	return profileTemplateForModeLookup(profile, mode, func(m *ProfileManifest) (string, error) {
+		return m.RenderForMode(mode)
+	})
+}
+
+// loadProfileTemplateForModeJSON is loadProfileTemplateForMode for the JSON
+// scoring path. Strips markdown-only sections. EPIC-089 M3.
+func loadProfileTemplateForModeJSON(profile, mode string) (path, content string, err error) {
+	return profileTemplateForModeLookup(profile, mode, func(m *ProfileManifest) (string, error) {
+		return m.RenderForModeJSON(mode)
+	})
+}
+
+// profileTemplateForModeLookup is the shared implementation for
+// loadProfileTemplateForMode and loadProfileTemplateForModeJSON.
+func profileTemplateForModeLookup(profile, mode string, render func(*ProfileManifest) (string, error)) (path, content string, err error) {
 	var dirs []string
 	if orgPath := os.Getenv("ORG_PATH"); orgPath != "" {
 		dirs = append(dirs, filepath.Join(orgPath, "docs", "prompts", "profiles"))
@@ -334,7 +367,7 @@ func loadProfileTemplateForMode(profile, mode string) (path, content string, err
 			if lerr != nil {
 				return "", "", lerr
 			}
-			rendered, rerr := m.RenderForMode(mode)
+			rendered, rerr := render(m)
 			if rerr != nil {
 				return "", "", rerr
 			}
@@ -388,6 +421,10 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil {
 		notifyOnPrefilterSkip = cfg.NotifyOnPrefilterSkip
 	}
+	// EPIC-088 M4: configurable unsupported pipeline domain list.
+	if cfg != nil && len(cfg.UnsupportedPipelineDomains) > 0 {
+		setUnsupportedPipelineDomains(cfg.UnsupportedPipelineDomains)
+	}
 	slog.Info("claude config resolved",
 		"event_type", "claude_config_init",
 		"claude_path", claudeBinaryPath,
@@ -429,14 +466,18 @@ func validateClaudeCLI() error {
 	return nil
 }
 
-// haikuEnv returns os.Environ minus CLAUDECODE — claude CLI behaves
-// differently when invoked from inside Claude Code itself, so both the
-// markdown and JSON Haiku paths strip it. (Mirrors fish `env -u CLAUDECODE`.)
+// haikuEnv returns os.Environ with scoring-unsafe variables stripped.
+// CLAUDECODE is removed so the claude CLI behaves as a standalone subprocess
+// rather than a nested Claude Code session. ANTHROPIC_API_KEY and CLAUDE_API_KEY
+// are stripped to enforce the CLI-only auth invariant — Linkari authenticates
+// exclusively via the claude CLI's OAuth2 session, not API keys. EPIC-089 M5.
 func haikuEnv() []string {
 	env := os.Environ()
 	filtered := env[:0]
 	for _, kv := range env {
-		if strings.HasPrefix(kv, "CLAUDECODE=") {
+		if strings.HasPrefix(kv, "CLAUDECODE=") ||
+			strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") ||
+			strings.HasPrefix(kv, "CLAUDE_API_KEY=") {
 			continue
 		}
 		filtered = append(filtered, kv)
@@ -455,9 +496,9 @@ func logHaikuEnvKeys() {
 	keys := []string{"ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "CLAUDECODE"}
 	for _, k := range keys {
 		if os.Getenv(k) != "" {
-			slog.Info("haiku env key present", "key", k)
+			slog.Warn("haiku env key present — unexpected for CLI-only auth", "key", k)
 		} else {
-			slog.Info("haiku env key absent", "key", k)
+			slog.Debug("haiku env key absent", "key", k)
 		}
 	}
 }
@@ -468,6 +509,7 @@ func logHaikuEnvKeys() {
 type claudeExecOpts struct {
 	Model          string // e.g. claudeModel or visionModelName
 	MaxTurns       string // "1" for plain text, "3" for JSON/vision
+	MaxTokens      string // "--max-tokens" value; empty omits the flag
 	Tools          string // "--tools" value; empty string disables all
 	AllowedTools   string // "--allowedTools" value; empty omits the flag
 	OutputFormat   string // "json" or empty (plain text)
@@ -496,6 +538,9 @@ func buildClaudeArgs(opts claudeExecOpts) []string {
 	}
 	if opts.JSONSchema != "" {
 		args = append(args, "--json-schema", opts.JSONSchema)
+	}
+	if opts.MaxTokens != "" {
+		args = append(args, "--max-tokens", opts.MaxTokens)
 	}
 	args = append(args,
 		"--system-prompt-file", opts.SystemPrompt,
@@ -554,6 +599,7 @@ func runClaudeHaiku(ctx context.Context, systemPrompt, content string) (string, 
 		SystemPrompt: spFile,
 	})...)
 	cmd.Stdin = strings.NewReader(content)
+	cmd.Dir = os.TempDir() // EPIC-088 M1: prevent subprocess from discovering workspace CLAUDE.md
 	cmd.Env = haikuEnv()
 
 	var stdout, stderr bytes.Buffer
@@ -755,7 +801,7 @@ type triageScorer struct{}
 func (triageScorer) Name() string { return "triage-haiku" }
 
 func (triageScorer) Score(fix Fixture) (Golden, error) {
-	tmplPath, sysPrompt, err := loadProfileTemplate(fix.Profile)
+	tmplPath, sysPrompt, err := loadProfileTemplateJSON(fix.Profile)
 	if err != nil {
 		return Golden{}, fmt.Errorf("load template: %w", err)
 	}

@@ -142,7 +142,7 @@ Default fixtures directory (both subcommands), in priority order:
 // manifest and calls the JSON Haiku contract via Evaluator (EPIC-058 M2).
 // Tests swap in a deterministic fake.
 var refreshScorerFn = func(ctx context.Context, profile, content string) (*Scorecard, error) {
-	tmplPath, sysPrompt, err := loadProfileTemplate(profile)
+	tmplPath, sysPrompt, err := loadProfileTemplateJSON(profile)
 	if err != nil {
 		return nil, fmt.Errorf("load template: %w", err)
 	}

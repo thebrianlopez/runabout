@@ -108,7 +108,7 @@ func TestProfileManifestRender(t *testing.T) {
 		"## Key Facts",
 		"3-5 bullet points",
 		"- Architecture patterns",
-		"Be concise. Output markdown. No preamble.",
+		"Be concise. No preamble.",
 	}
 	for _, w := range want {
 		if !strings.Contains(out, w) {
