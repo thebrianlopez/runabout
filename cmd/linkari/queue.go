@@ -1379,6 +1379,29 @@ func (q *Queue) EnqueuePrefilterPush(profile, slug, verdict, url string) error {
 	return err
 }
 
+// EnqueueTranscriptPush inserts a push_outbox row for a YouTube transcript-only
+// notification. Uses content_type='youtube_transcript' so sendOutboxFCM renders
+// a transcript-oriented title/body. Bypasses min-score floor and throttle —
+// transcript delivery should always notify. EPIC-090 M2.
+func (q *Queue) EnqueueTranscriptPush(profile, slug, verdict, url string) error {
+	now := time.Now().Unix()
+	_, err := q.db.Exec(
+		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, gap_summary, content_type, classify_source, status, attempts, next_attempt, created_at, updated_at)
+		 VALUES (0, ?, ?, ?, 'digest', ?, '', 'youtube_transcript', '', 'pending', 0, ?, ?, ?)`,
+		slug, verdict, url, profile, now, now, now,
+	)
+	return err
+}
+
+// SetPushContentType updates the content_type field of a push_outbox row.
+// Used by scoreYouTubeAsync after EnqueueDigestIfDue to tag the row as
+// content_type='youtube' so sendOutboxFCM renders a YouTube-specific title.
+// EPIC-090 M5.
+func (q *Queue) SetPushContentType(id int64, contentType string) error {
+	_, err := q.db.Exec(`UPDATE push_outbox SET content_type = ? WHERE id = ?`, contentType, id)
+	return err
+}
+
 // LastDigestPushAt returns the unix timestamp of the most recent digest row
 // in push_outbox, or 0 if none exist. Used by the CLI score path to throttle
 // digest pushes without in-process state.
