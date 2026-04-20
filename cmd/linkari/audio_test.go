@@ -99,22 +99,25 @@ func installWhisperStub(t *testing.T, transcript string, err error) {
 
 // --- helper: run scoreAudioAsync synchronously ------------------------------
 
-// installHaikuSynopsisStub stubs execHaiku to return a fixed synopsis and
-// execHaikuJSON to return a valid rubric verdict with score=75.
-// Signals done on the first execHaiku call. Also creates temporary
-// vnote_synopsis.md and vnote_triage.yaml templates.
+// installHaikuSynopsisStub stubs execHaikuSynopsisJSON (synopsis path) and
+// execHaikuJSON (rubric scoring path) for audio pipeline tests. Signals done
+// on the first execHaikuSynopsisJSON call. EPIC-088 M1: synopsis uses JSON
+// schema output; stub returns a minimal synopsis envelope.
 func installHaikuSynopsisStub(t *testing.T, synopsis string) chan struct{} {
 	t.Helper()
 	done := make(chan struct{})
 	var once int32
-	prev := execHaiku
-	execHaiku = func(_ context.Context, _, _ string) (string, error) {
+
+	// Stub synopsis JSON path (replaces former execHaiku stub).
+	prevSynopsisJSON := execHaikuSynopsisJSON
+	execHaikuSynopsisJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
 		if atomic.CompareAndSwapInt32(&once, 0, 1) {
 			close(done)
 		}
-		return synopsis, nil
+		env := fmt.Sprintf(`{"type":"result","result":"{\"synopsis\":%q}","is_error":false,"usage":{"input_tokens":5,"output_tokens":10},"total_cost_usd":0.0001}`, synopsis)
+		return []byte(env), nil
 	}
-	t.Cleanup(func() { execHaiku = prev })
+	t.Cleanup(func() { execHaikuSynopsisJSON = prevSynopsisJSON })
 
 	// EPIC-081 M4: stub execHaikuJSON for the rubric scoring step.
 	prevJSON := execHaikuJSON
@@ -215,7 +218,7 @@ key_facts:
 
 func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID int64, done chan struct{}) {
 	t.Helper()
-	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil)
+	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil, HaikuJSONEvaluator{})
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -226,7 +229,7 @@ func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID 
 
 func runScoreAudioSkip(t *testing.T, audioPath, profile string, q *Queue, rowID int64) {
 	t.Helper()
-	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil)
+	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil, HaikuJSONEvaluator{})
 	time.Sleep(300 * time.Millisecond)
 }
 

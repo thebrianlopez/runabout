@@ -79,8 +79,8 @@ go.work               # Go workspace: root + cmd/protonexport + cmd/wasend
 - **tmux exec logging invariant:** `cmd/linkari/tmux.go` uses `logTmuxExec(cmd)` for every `exec.Command("tmux", …)` invocation. Never call `slog.Debug("tmux exec", "args", cmd.Args)` directly — slog renders `[]string` with `%v`, space-joining elements without quoting, so argv boundaries vanish and embedded spaces look like token separators (the 2026-04-09 `linkari-server.log` investigation chased this as a suspected quoting bug). `logTmuxExec` emits both the structured `argv` field and a POSIX-quoted `repro` field that is copy-pasteable into a terminal. Shell quoting uses POSIX single-quotes, not `strconv.Quote` — Go escaping is unsafe for shell paste because `$`, backtick, and `\` re-interpret inside double-quoted strings. Regression coverage: `cmd/linkari/tmux_log_test.go` (unit + `sh -c` round-trip) and `tmux_integration_test.go` (real tmux, `go test -tags=integration`).
 - **Jira Ingress Invariant (EPIC-057):** No Jira-controlled byte may reach `tmux send-keys -l` except via `jiraKeyRegex`-validated `req.Text`. The `ginit_*` command template uses only `{{.Text}}` — never `{{.Title}}` or `{{.URL}}`. `checkScopedAuth` in `server.go` enforces that requests bearing `jira_token` can only invoke `ginit_*` action IDs, and mobile `LINKARI_TOKEN` requests cannot invoke `ginit_*`. The `AutoScore bool` field on `ActionConfig` causes ginit rows to be enqueued as `status=scored, verdict="workspace_bootstrapped"` via `Queue.EnqueueScored`, bypassing the RelayedWatchdog entirely. Regression coverage: `jira_ingress_test.go` (regex 10 cases + scoped-auth 4 cases + enqueue seam), `share_resolution_test.go` (7 ginit_* CallerWins cases), `tmux_log_test.go` (hostile-summary round-trip).
 - **Dual-writer invariant (EPIC-051):** `Queue.EnqueueDigestIfDue(ctx, profile, score, slug, verdict, url)` is the only sanctioned entry point that may write a `kind='digest'` row to `push_outbox`. All three scoring writers — `handleQueueScore`, `handleNotify`, and `cmd_score.go` — go through it. The helper owns the min-score floor (`notify_min_score`), per-profile throttle (`server.yaml push.digest_throttle`), and the SQL-level cross-process race guard. Never add a fourth path; add a new call site to the helper instead. Regression coverage: `integration_push_test.go` (run with `go test -tags=integration ./cmd/linkari/...`).
-- **Classification cascade architecture (EPIC-079):** `classifyShareRequestFast` (stages 1-5, no LLM) runs synchronously pre-enqueue in `handleShare`. `classifyShareRequest` (stages 1-6, includes LLM) runs async in `scoreAsync`. File shares no longer default to "eng" — they fall through to stage-6 LLM classify using synthesized metadata. The pre-enqueue sync cascade emits `classify_stage_win` events with `phase: "pre_enqueue"`. `appCategoryProfileMap` maps CATEGORY_IMAGE (3) to "life".
-- **Vision scoring path (EPIC-079 M3):** `HaikuVisionEvaluator` in `evaluator.go` calls `runClaudeHaikuVision` which invokes `claude --print --allowedTools Read --bare` to read and score local image files. `scoreAsync` selects this evaluator when `req.Type == "image"` and `req.AudioPath` points to a readable file. Temp file cleanup is owned by `scoreAsync` via `defer os.Remove(req.AudioPath)` for non-audio file shares. `SetTopicTags` is no longer gated on `isURLShare` — all share types can have topic tags.
+- **Classification cascade architecture (EPIC-079):** `classifyShareRequestFast` (stages 1-5, no LLM) runs synchronously pre-enqueue in `handleShare`. `classifyShareRequest` (stages 1-6, includes LLM) runs async in `scoreAsync`. File shares no longer default to "eng" — they fall through to stage-6 LLM classify using synthesized metadata. The pre-enqueue sync cascade emits `classify_stage_win` events with `phase: "pre_enqueue"`. `appCategoryProfileMap` maps CATEGORY_IMAGE (3) to "life". `ForceContentClassify` on `ActionConfig` (EPIC-085 M2) is threaded through `ShareRequest.ForceContentClassify` and forces `contentClassify = true` in `scoreAsync` regardless of cascade result.
+- **Vision scoring path (EPIC-079 M3):** `HaikuVisionEvaluator` in `evaluator.go` calls `runClaudeHaikuVision` which invokes `claude --print --allowedTools Read --output-format json --json-schema <schema>` to read and score local image files. `scoreAsync` selects this evaluator when `req.Type == "image"` and `req.AudioPath` points to a readable file. Temp file cleanup is owned by `scoreAsync` via `defer os.Remove(req.AudioPath)` for non-audio file shares. `SetTopicTags` is no longer gated on `isURLShare` — all share types can have topic tags. Vision token back-calculation (EPIC-085 M3): when `InputTokens < 100 && CostUSD > 0.01`, `scoreAsync` back-calculates `ImageTokensEstimated` from the cost delta using Haiku 4.5 pricing ($1.00/MTok input, $5.00/MTok output) and writes the corrected value to `sc.Usage.ImageTokensEstimated` before persisting.
 - `linkari serve` defaults to tsnet Funnel on; pass `--local` for local-only. Falls back to local with WARN when no `tsnet_authkey` is resolvable (EPIC-048).
 - `linkari config init` scaffolds `~/.config/linkari/server.yaml`; `linkari doctor` validates secrets without booting; `serve --detach` is the portable POSIX fork-detach primitive with PID file at `~/.local/state/linkari/linkari.pid` (EPIC-049).
 - Cobra subcommands added to rootCmd in each `cmd/` main.go
@@ -107,29 +107,39 @@ When completing work in this repo, emit Type 3 observation dispatches to `~/code
 
 **Schema:** See Type 3 in `~/.claude/rules/dispatch-system.md`.
 
+## Tool Selection
+
+Use built-in tools first, bash commands last:
+
+| Tool | Use for | NOT |
+|------|---------|-----|
+| Glob | File pattern matching | `fd`, `find`, `ls` |
+| Grep | Content search | `rg`, `grep` |
+| Read | File reading | `cat`, `head`, `tail` |
+| Edit | File editing | `sed`, `awk` |
+| Write | File creation | `echo`, heredoc |
+
+Only use bash for: `go` commands, `git` operations, `make`, fish functions (`epic-claim-milestone`, `dispatch-complete`, etc.).
+
+## Model Selection
+
+Default model: **Sonnet**. Use Haiku for simple file lookups. Escalate to Opus only for multi-constraint architectural tradeoffs across 3+ competing concerns.
+
 ## Auto-Dispatch (Epic Coordination)
 
-**On every session start and first prompt**, check for pending dispatch signals:
+**On every session start and first prompt**, check for pending dispatch triggers using `Glob(pattern: ".claude-dispatch/*.md")`.
 
-```bash
-ls .claude-dispatch/*.json 2>/dev/null
-```
+For each dispatch file:
 
-If dispatch files exist, for each one:
-
-1. Read the trigger: `cat .claude-dispatch/<epic>.json`
+1. Read the trigger with the Read tool
 2. Read the full epic: `md-tree extract <epic_path> "Milestones"`
 3. Identify your assigned milestones from the trigger's `milestones` field
-4. Claim your first milestone by updating its status to `**In Progress**` in the epic
+4. Claim your first milestone: `epic-claim-milestone <epic-file> M1 "In Progress"`
 5. Execute the milestone deliverables completely
-6. Mark the milestone `**Complete (YYYY-MM-DD)**` in the epic
+6. Mark the milestone complete: `epic-claim-milestone <epic-file> M1 "Complete (YYYY-MM-DD)"`
 7. Move to the next assigned milestone
-8. When all your milestones are complete, delete the trigger: `rm .claude-dispatch/<epic>.json`
+8. When all your milestones are complete: `dispatch-complete .claude-dispatch/<file>.md`
 9. If all agents' milestones are complete, update epic `status: Complete`
 
-**Never execute milestones assigned to a different agent.**
+**Never execute dispatches assigned to a different agent** (check `agent` field in frontmatter).
 **Always read the epic file fresh before each milestone — another agent may have updated it.**
-
-## Epic
-
-Full epic and milestone details: `~/.claude/docs/epics/DEVTOOLS_20260301T153830Z_Runabouts_EPIC-001_go_devtools_monorepo.md`

@@ -47,6 +47,9 @@ type ProfileManifest struct {
 	ActionItems    ActionItems    `yaml:"action_items"`
 	KeyFacts       KeyFacts       `yaml:"key_facts"`
 	History        *HistoryBlock  `yaml:"history,omitempty"`
+	// ForJSON gates out markdown-only sections (Output Format table, Key Facts)
+	// when rendering for the JSON scoring path. Not loaded from YAML.
+	ForJSON bool `yaml:"-"`
 }
 
 type NoiseGate struct {
@@ -252,6 +255,7 @@ Do not generate a full evaluation.
 {{- end}}
 {{- end}}
 
+{{if not .ForJSON}}
 ## Output Format
 
 ## Verdict
@@ -274,10 +278,10 @@ One-line: {{.VerdictPrompt}}
 {{- range .KeyFacts.Focus}}
 - {{.}}
 {{- end}}
-
+{{end}}
 Emit 2-10 lowercase topic tags in the topic_tags array. Use stable vocabulary (e.g. "llm", "infra", "career", "go", "security"). Tags should capture the core topics for clustering related shares.
 
-Be concise. Output markdown. No preamble.
+Be concise. No preamble.
 `
 
 var systemPromptTmpl = template.Must(
@@ -307,6 +311,16 @@ func joinExamplesQuoted(xs []string) string {
 //   - "audio":  uses AudioRubric (falls back to Rubric)
 //   - "text"/empty: uses Rubric and PersonaIntro (standard)
 func (m *ProfileManifest) RenderForMode(mode string) (string, error) {
+	return m.renderForModeImpl(mode, false)
+}
+
+// RenderForModeJSON is RenderForMode with markdown-only sections stripped for
+// the JSON scoring path. EPIC-089 M3.
+func (m *ProfileManifest) RenderForModeJSON(mode string) (string, error) {
+	return m.renderForModeImpl(mode, true)
+}
+
+func (m *ProfileManifest) renderForModeImpl(mode string, forJSON bool) (string, error) {
 	view := *m
 	switch mode {
 	case "vision":
@@ -321,18 +335,32 @@ func (m *ProfileManifest) RenderForMode(mode string) (string, error) {
 			view.Rubric = m.AudioRubric
 		}
 	}
-	return view.Render()
+	return view.renderImpl(forJSON)
 }
 
 // Render produces the system prompt for this manifest. The output is
 // fed verbatim to `claude --print --system-prompt`.
 func (m *ProfileManifest) Render() (string, error) {
+	return m.renderImpl(false)
+}
+
+// RenderForJSON produces a system prompt with markdown-only sections stripped:
+// the Output Format table (saves ~286 tokens, avoids training the model to
+// emit rationale) and the Key Facts section (not in triage_verdict_v1.json schema).
+// EPIC-089 M3.
+func (m *ProfileManifest) RenderForJSON() (string, error) {
+	return m.renderImpl(true)
+}
+
+// renderImpl is the shared implementation for Render and RenderForJSON.
+func (m *ProfileManifest) renderImpl(forJSON bool) (string, error) {
 	// Trim trailing newline on PersonaBody so the template's blank-line
 	// gap above "## Output Format" stays consistent regardless of how
 	// the YAML author terminated the block scalar.
 	view := *m
 	view.PersonaBody = strings.TrimRight(m.PersonaBody, "\n")
 	view.PersonaIntro = strings.TrimRight(m.PersonaIntro, "\n")
+	view.ForJSON = forJSON
 
 	// Apply defaults for the optional override fields so YAMLs that
 	// omit them still produce sensible output. Profile authors override

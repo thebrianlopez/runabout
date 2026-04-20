@@ -15,12 +15,13 @@
     "verdict": {
       "type": "string",
       "minLength": 1,
+      "maxLength": 300,
       "description": "One-paragraph verdict for the link."
     },
     "action_items": {
       "type": "array",
-      "items": {"type": "string", "minLength": 1},
-      "maxItems": 10
+      "items": {"type": "string", "minLength": 1, "maxLength": 120},
+      "maxItems": 5
     },
     "tags": {
       "type": "string",

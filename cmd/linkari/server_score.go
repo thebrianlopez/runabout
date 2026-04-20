@@ -10,6 +10,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +28,25 @@ import (
 // unsupportedPipelineRE matches URL patterns that cannot be scored via the
 // Jina Reader text pipeline (video/audio/streaming platforms). These return
 // early with no queue update rather than burning a Haiku call on empty content.
+// Configurable via server.yaml unsupported_pipeline_domains (EPIC-088 M4).
 var unsupportedPipelineRE = regexp.MustCompile(`(?i)(?:youtube\.com|youtu\.be|spotify\.com|twitch\.tv|soundcloud\.com|tiktok\.com|netflix\.com|vimeo\.com|rumble\.com|dailymotion\.com)`)
+
+// setUnsupportedPipelineDomains rebuilds unsupportedPipelineRE from a custom
+// domain list sourced from server.yaml. Each entry is treated as a literal
+// domain substring (case-insensitive). Called once at startup from initClaudeConfig.
+func setUnsupportedPipelineDomains(domains []string) {
+	escaped := make([]string, len(domains))
+	for i, d := range domains {
+		escaped[i] = regexp.QuoteMeta(d)
+	}
+	pattern := `(?i)(?:` + strings.Join(escaped, `|`) + `)`
+	unsupportedPipelineRE = regexp.MustCompile(pattern)
+	slog.Info("unsupported pipeline domains overridden from config",
+		"event_type", "unsupported_pipeline_domains_set",
+		"count", len(domains),
+		"pattern", pattern,
+	)
+}
 
 // loginWallDomainRE matches URL patterns for sites that require login to
 // access content. Jina Reader returns empty or login-page HTML for these,
@@ -305,6 +324,10 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	if classifySource == "intent_metadata" && profile == "eng" {
 		contentClassify = true
 	}
+	// EPIC-085 M2: per-action ForceContentClassify overrides cascade result.
+	if req.ForceContentClassify {
+		contentClassify = true
+	}
 
 	// Emit classify_stage_win for telemetry (EPIC-077 M6).
 	//
@@ -340,14 +363,28 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		"row_id", req.QueueRowID,
 	)
 
-	// URL-only: early exit for unsupported streaming platforms.
+	// URL-only: safety-net exit for unsupported streaming platforms.
+	// EPIC-087 M1: the primary gate moved to handleShare (pre-enqueue) so no
+	// queue row is created for these URLs. This branch fires only if scoreAsync
+	// is called directly (e.g. from cmd_score.go) without going through the HTTP
+	// handler.
 	if isURLShare && unsupportedPipelineRE.MatchString(rawURL) {
 		prefilterStage = "unsupported_pipeline"
-		slog.Info("score_async: unsupported pipeline",
-			"event_type", "score_async_skip",
-			"url", rawURL,
-			"reason", "unsupported_pipeline",
-		)
+		if q == nil || req.QueueRowID == 0 {
+			slog.Warn("score_async: unsupported pipeline reached without queue row — pre-enqueue gate may have been bypassed",
+				"event_type", "score_async_skip",
+				"url", rawURL,
+				"reason", "unsupported_pipeline",
+				"q_nil", q == nil,
+				"row_id", req.QueueRowID,
+			)
+		} else {
+			slog.Info("score_async: unsupported pipeline (safety-net)",
+				"event_type", "score_async_skip",
+				"url", rawURL,
+				"reason", "unsupported_pipeline",
+			)
+		}
 		if q != nil && req.QueueRowID > 0 {
 			_ = q.MarkFailedWithReason(req.QueueRowID, "unsupported_pipeline")
 			enqueuePrefilterPush(q, req, "unsupported_pipeline")
@@ -355,28 +392,9 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		return
 	}
 
-	// EPIC-083 M1-1: login-wall domain gate — sites that require auth return
-	// empty or login-page HTML via Jina, wasting a Haiku call.
-	if isURLShare && isLoginWallDomain(rawURL) {
-		prefilterStage = "login_wall_domain"
-		slog.Info("score_async: login-wall domain",
-			"event_type", "score_prefilter_skip",
-			"url", rawURL,
-			"stage", "login_wall_domain",
-		)
-		if events != nil {
-			events.Emit("score_prefilter_skip", map[string]any{
-				"row_id": req.QueueRowID,
-				"url":    rawURL,
-				"stage":  "login_wall_domain",
-			})
-		}
-		if q != nil && req.QueueRowID > 0 {
-			_ = q.MarkFailedWithReason(req.QueueRowID, "login_wall_domain")
-			enqueuePrefilterPush(q, req, "login_wall_domain")
-		}
-		return
-	}
+	// EPIC-085 M1: login-wall domain gate moved to handleShare (pre-enqueue).
+	// URLs matching isLoginWallDomain are now rejected before enqueue, so this
+	// check is no longer needed here.
 
 	// Content acquisition — branches on share type.
 	var content string
@@ -497,6 +515,23 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		}
 	}
 
+	// Default profile fallback: when all classification stages miss (possible for
+	// file shares with no metadata), fall back to "eng" so that every triage item
+	// reaches eval.Evaluate with a proper persona. Mirrors the pattern in
+	// processVoiceNoteAsync. Without this, profile=="" causes loadProfileTemplateJSON
+	// to fail with template_error and the item is never triaged.
+	if profile == "" {
+		profile = "eng"
+		if classifySource == "" {
+			classifySource = "default_fallback"
+		}
+		slog.Info("score_async: default profile fallback",
+			"event_type", "score_async_default_profile",
+			"type", req.Type,
+			"row_id", req.QueueRowID,
+		)
+	}
+
 	// Load profile template.
 	// EPIC-081 M2: use vision mode for image shares to select vision-specific
 	// rubric axes and persona intro from the profile manifest.
@@ -504,9 +539,9 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	var tmplPath, sysPrompt string
 	var err error
 	if req.Type == "image" {
-		tmplPath, sysPrompt, err = loadProfileTemplateForMode(profile, "vision")
+		tmplPath, sysPrompt, err = loadProfileTemplateForModeJSON(profile, "vision")
 	} else {
-		tmplPath, sysPrompt, err = loadProfileTemplate(profile)
+		tmplPath, sysPrompt, err = loadProfileTemplateJSON(profile)
 	}
 	if err != nil {
 		slog.Warn("score_async: load template failed",
@@ -604,6 +639,24 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		}
 	}
 
+	// Persona injection guard: sysPrompt must never reach eval.Evaluate empty.
+	// A blank sysPrompt causes Haiku to receive only the JSON schema constraint
+	// with no scoring rubric — it cannot produce a meaningful verdict.
+	// loadProfileTemplateJSON should always return a non-empty string for any
+	// resolved profile, but this guard catches edge cases (e.g., an empty YAML
+	// manifest or a RenderForJSON implementation returning "" without error).
+	if strings.TrimSpace(sysPrompt) == "" {
+		slog.Error("score_async: sysPrompt is empty after template load — aborting eval",
+			"event_type", "score_async_empty_sysprompt",
+			"profile", profile,
+			"row_id", req.QueueRowID,
+		)
+		if q != nil && req.QueueRowID > 0 {
+			_ = q.MarkFailedWithReason(req.QueueRowID, "empty_sysprompt")
+		}
+		return
+	}
+
 	// Evaluate via Haiku.
 	sc, err := eval.Evaluate(ctx, content, sysPrompt)
 	if err != nil {
@@ -648,25 +701,60 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		})
 	}
 
-	// EPIC-084 M4: vision token undercount warning — when input_tokens is
-	// suspiciously low relative to cost, the vision model may have processed
-	// image tokens that aren't reflected in the text token count.
-	if sc.Usage != nil && sc.Usage.InputTokens < 100 && sc.CostUSD > 0.01 {
-		slog.Warn("score_async: vision token undercount",
-			"event_type", "vision_token_undercount_warning",
+	// EPIC-088 M2: named constants for vision token back-calculation thresholds.
+	// These replace the magic numbers that were previously inlined.
+	const (
+		visionInputTokenThreshold = 100  // suspiciously low text-token count signals image tokens not reported
+		visionCostThreshold       = 0.01 // minimum cost delta that justifies back-calculation
+	)
+
+	// EPIC-085 M3: vision token back-calculation. When input_tokens is
+	// suspiciously low relative to cost, the vision model processed image tokens
+	// not reflected in the text token count. Back-calculate from cost delta
+	// using Haiku vision input pricing and write the corrected estimate.
+	// EPIC-088 M2: emit vision_token_correction_skipped when image share misses threshold.
+	if req.Type == "image" && sc.Usage != nil && (sc.Usage.InputTokens >= visionInputTokenThreshold || sc.CostUSD <= visionCostThreshold) {
+		slog.Warn("score_async: vision token correction skipped — thresholds not met",
+			"event_type", "vision_token_correction_skipped",
+			"input_tokens", tokenCount(sc.Usage, true),
+			"cost_usd", sc.CostUSD,
+			"row_id", req.QueueRowID,
+		)
+	}
+	if sc.Usage != nil && sc.Usage.InputTokens < visionInputTokenThreshold && sc.CostUSD > visionCostThreshold {
+		textCost := float64(sc.Usage.InputTokens)*haikuInputPricePerToken +
+			float64(sc.Usage.OutputTokens)*haikuOutputPricePerToken
+		imageCost := sc.CostUSD - textCost
+		if imageCost > 0 {
+			sc.Usage.ImageTokensEstimated = int(imageCost / haikuInputPricePerToken)
+		}
+		slog.Info("score_async: vision token back-calculated",
+			"event_type", "vision_token_correction",
 			"input_tokens", sc.Usage.InputTokens,
+			"image_tokens_estimated", sc.Usage.ImageTokensEstimated,
 			"cost_usd", sc.CostUSD,
 			"row_id", req.QueueRowID,
 			"type", req.Type,
 		)
 		if events != nil {
-			events.Emit("vision_token_undercount_warning", map[string]any{
-				"row_id":       req.QueueRowID,
-				"input_tokens": sc.Usage.InputTokens,
-				"cost_usd":     sc.CostUSD,
-				"type":         req.Type,
+			events.Emit("vision_token_correction", map[string]any{
+				"row_id":                 req.QueueRowID,
+				"input_tokens":           sc.Usage.InputTokens,
+				"image_tokens_estimated": sc.Usage.ImageTokensEstimated,
+				"cost_usd":              sc.CostUSD,
+				"type":                  req.Type,
 			})
 		}
+		// EPIC-088 M2: deferred token usage log — emitted after back-calculation so
+		// image_tokens_estimated reflects the corrected value rather than 0.
+		slog.Info("evaluator: token usage",
+			"backend", sc.Backend,
+			"cost_usd", sc.CostUSD,
+			"input_tokens", tokenCount(sc.Usage, true),
+			"output_tokens", tokenCount(sc.Usage, false),
+			"image_tokens_estimated", tokenImageCount(sc.Usage),
+			"repair_turn", sc.RepairTurn,
+		)
 	}
 
 	// EPIC-083 M2-3: per-call cost ceiling monitoring. Logs when a single eval
@@ -741,6 +829,13 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		itemSlug = slug
 		itemVerdict = sc.Verdict
 		itemURL = ""
+	}
+
+	// EPIC-088 M3: persist scoring cost and image tokens after back-calculation.
+	if sc.CostUSD > 0 || tokenImageCount(sc.Usage) > 0 {
+		if costErr := q.UpdateScoringCost(itemID, sc.CostUSD, tokenImageCount(sc.Usage)); costErr != nil {
+			slog.Warn("score_async: UpdateScoringCost failed", "id", itemID, "error", costErr)
+		}
 	}
 
 	// EPIC-079 M4: persist topic tags for all share types (was URL-only).
@@ -851,6 +946,76 @@ var imageNoiseGateMinBytes int64 = 1024
 // ServerConfig.MaxScoringCostUSD at startup; defaults to 0.05. EPIC-083 M2-3.
 var maxScoringCostUSD float64 = 0.05
 
+// haikuInputPricePerToken and haikuOutputPricePerToken are Haiku 4.5 pricing
+// rates used to back-calculate image tokens from cost delta. EPIC-085 M3.
+const (
+	haikuInputPricePerToken  = 1.0 / 1_000_000 // $1.00 per MTok
+	haikuOutputPricePerToken = 5.0 / 1_000_000  // $5.00 per MTok
+)
+
+// pricingForModel returns the (inputPerToken, outputPerToken) pricing rates for
+// a given claude model identifier. Enables future model additions without
+// scattering hardcoded constants. EPIC-088 M3.
+func pricingForModel(model string) (inputPerToken, outputPerToken float64) {
+	switch {
+	case strings.Contains(model, "haiku"):
+		return haikuInputPricePerToken, haikuOutputPricePerToken
+	default:
+		// Unknown model — fall back to Haiku rates conservatively.
+		return haikuInputPricePerToken, haikuOutputPricePerToken
+	}
+}
+
+// voiceNoteSynopsisSchema is the --json-schema value for the audio synopsis
+// call. Using structured JSON output prevents CLAUDE.md injection from
+// polluting a free-form response. EPIC-088 M1.
+const voiceNoteSynopsisSchema = `{"type":"object","properties":{"synopsis":{"type":"string","description":"1-2 sentence plain-text summary of the voice note"}},"required":["synopsis"]}`
+
+// parseSynopsisFromEnvelope extracts the synopsis string from a claude
+// --output-format json envelope shaped by voiceNoteSynopsisSchema.
+// On parse failure it returns an empty string and the meta (if any) so the
+// caller can still persist cost/token data even when the synopsis is missing.
+func parseSynopsisFromEnvelope(stdout []byte) (string, *envelopeMeta, error) {
+	stdout = bytes.TrimSpace(stdout)
+	if len(stdout) == 0 {
+		return "", nil, fmt.Errorf("empty synopsis envelope")
+	}
+	var env struct {
+		Result       json.RawMessage `json:"result"`
+		IsError      bool            `json:"is_error"`
+		Subtype      string          `json:"subtype"`
+		TotalCostUSD float64         `json:"total_cost_usd"`
+		Usage        *TokenUsage     `json:"usage"`
+	}
+	if err := json.Unmarshal(stdout, &env); err != nil {
+		return "", nil, fmt.Errorf("synopsis envelope decode: %w", err)
+	}
+	if env.IsError {
+		return "", nil, fmt.Errorf("claude error envelope (subtype=%s)", env.Subtype)
+	}
+	meta := &envelopeMeta{CostUSD: env.TotalCostUSD, Usage: env.Usage}
+	raw := bytes.TrimSpace(env.Result)
+	if len(raw) == 0 {
+		return "", meta, fmt.Errorf("synopsis envelope has empty result")
+	}
+	// result may be a JSON-encoded string — unwrap once.
+	if raw[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return "", meta, fmt.Errorf("synopsis result string: %w", err)
+		}
+		raw = bytes.TrimSpace([]byte(s))
+		raw = stripCodeFence(raw)
+	}
+	var v struct {
+		Synopsis string `json:"synopsis"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", meta, fmt.Errorf("synopsis decode: %w", err)
+	}
+	return strings.TrimSpace(v.Synopsis), meta, nil
+}
+
 // imageNoiseGateMaxBytes is the maximum file size in bytes for vision scoring.
 // Images above this skip vision entirely — they're likely raw camera files or
 // uncompressed exports. Set from ServerConfig.ImageNoiseGateMaxBytes at startup;
@@ -859,8 +1024,8 @@ var imageNoiseGateMaxBytes int64 = 15 * 1024 * 1024
 
 // notifyOnPrefilterSkip gates whether prefilter skips (unsupported pipeline,
 // login wall, empty content, etc.) enqueue an FCM push notification. Set from
-// ServerConfig.NotifyOnPrefilterSkip at startup; default false. EPIC-084 M2.
-var notifyOnPrefilterSkip bool
+// ServerConfig.NotifyOnPrefilterSkip at startup; default true. EPIC-085 M1.
+var notifyOnPrefilterSkip = true
 
 // prefilterVerdicts maps internal prefilter reason codes to user-facing
 // notification verdicts. EPIC-084 M2.
@@ -888,7 +1053,12 @@ func enqueuePrefilterPush(q *Queue, req *ShareRequest, reason string) {
 	if profile == "" {
 		profile = "prefilter"
 	}
+	// EPIC-085 M1: when called from handleShare (pre-enqueue), QueueRowID is 0.
+	// Use a reason+timestamp slug to ensure uniqueness.
 	slug := fmt.Sprintf("prefilter-%d", req.QueueRowID)
+	if req.QueueRowID == 0 {
+		slug = fmt.Sprintf("prefilter-%s-%d", reason, time.Now().UnixNano())
+	}
 	if err := q.EnqueuePrefilterPush(profile, slug, verdict, req.URL); err != nil {
 		slog.Warn("enqueuePrefilterPush failed", "row_id", req.QueueRowID, "reason", reason, "error", err)
 	}
@@ -1374,8 +1544,11 @@ func classifyContentProfile(ctx context.Context, content string) string {
 //
 // Pipeline: ffmpeg m4a→wav → [segment if large] → whisper transcribe →
 // backfill queue text → save transcript file → loadProfileTemplate("vnote_synopsis") →
-// execHaiku (plain text) → UpdateScore → EnqueueDigestIfDue (FCM push).
-func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int64, originalFilename string, whisperModel string, extraText string, req *ShareRequest, events *EventLogger) {
+// execHaikuSynopsisJSON (JSON schema) → UpdateScore → EnqueueDigestIfDue (FCM push).
+//
+// The eval parameter is the Evaluator used for rubric scoring (step 5). Pass
+// HaikuJSONEvaluator{} in production; inject a stub in tests. EPIC-088 M1.
+func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int64, originalFilename string, whisperModel string, extraText string, req *ShareRequest, events *EventLogger, eval Evaluator) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Second)
 	defer cancel()
 	defer os.Remove(audioPath) // temp m4a cleanup
@@ -1642,7 +1815,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	if q != nil {
 		q.SetProgress(rowID, "scoring")
 	}
-	_, scoreSysPrompt, scoreErr := loadProfileTemplateForMode(profile, "audio")
+	_, scoreSysPrompt, scoreErr := loadProfileTemplateForModeJSON(profile, "audio")
 	if scoreErr != nil {
 		slog.Warn("score_audio: load scoring template failed, using vnote_triage fallback",
 			"event_type", "score_audio_scoring_template_error",
@@ -1651,7 +1824,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			"error", scoreErr,
 		)
 		// Fallback: try vnote_triage directly.
-		_, scoreSysPrompt, scoreErr = loadProfileTemplateForMode("vnote_triage", "audio")
+		_, scoreSysPrompt, scoreErr = loadProfileTemplateForModeJSON("vnote_triage", "audio")
 		if scoreErr != nil {
 			slog.Warn("score_audio: vnote_triage fallback template also missing",
 				"event_type", "score_audio_double_template_miss",
@@ -1662,8 +1835,10 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		}
 	}
 	if scoreErr == nil {
-		eval := HaikuJSONEvaluator{}
-		sc, evalErr := eval.Evaluate(ctx, transcript, scoreSysPrompt)
+		// EPIC-088 M1: per-step timeout — 60s for rubric scoring.
+		rubricCtx, rubricCancel := context.WithTimeout(ctx, 60*time.Second)
+		sc, evalErr := eval.Evaluate(rubricCtx, transcript, scoreSysPrompt)
+		rubricCancel()
 		if evalErr != nil {
 			slog.Warn("score_audio: rubric evaluation failed",
 				"event_type", "score_audio_eval_error",
@@ -1688,7 +1863,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	// Step 6: synopsis generation via Haiku (decoupled from score).
 	// EPIC-071 M2: uses execHaiku directly for plain text output.
 	// Synopsis is used for FCM notification body, not scoring.
-	_, synopsisSysPrompt, err := loadProfileTemplate("vnote_synopsis")
+	_, synopsisSysPrompt, err := loadProfileTemplateJSON("vnote_synopsis")
 	if err != nil {
 		slog.Warn("score_audio: load vnote_synopsis template failed",
 			"event_type", "score_audio_template_error",
@@ -1708,18 +1883,33 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		q.SetProgress(rowID, "summarizing")
 	}
 
-	synopsis, err := execHaiku(ctx, synopsisSysPrompt, transcript)
-	if err != nil {
+	// EPIC-088 M1: per-step timeout — 30s for synopsis. Use execHaikuSynopsisJSON
+	// (--output-format json + --json-schema) for persona isolation: structured
+	// output mode prevents CLAUDE.md context from polluting a free-form response.
+	synopsisCtx, synopsisCancel := context.WithTimeout(ctx, 30*time.Second)
+	synopsisRaw, synopsisErr := execHaikuSynopsisJSON(synopsisCtx, synopsisSysPrompt, transcript, voiceNoteSynopsisSchema)
+	synopsisCancel()
+
+	var synopsis string
+	if synopsisErr != nil {
 		slog.Warn("score_audio: synopsis failed, persisting rubric score with empty synopsis",
 			"event_type", "score_audio_synopsis_error",
 			"row_id", rowID,
 			"score", audioScore,
 			"verdict", audioVerdict,
-			"error", err,
+			"error", synopsisErr,
 		)
-		synopsis = ""
 	} else {
-		synopsis = strings.TrimSpace(synopsis)
+		parsed, _, parseErr := parseSynopsisFromEnvelope(synopsisRaw)
+		if parseErr != nil {
+			slog.Warn("score_audio: synopsis parse failed",
+				"event_type", "score_audio_synopsis_parse_error",
+				"row_id", rowID,
+				"error", parseErr,
+			)
+		} else {
+			synopsis = parsed
+		}
 	}
 
 	slog.Info("score_audio: synopsis generated",

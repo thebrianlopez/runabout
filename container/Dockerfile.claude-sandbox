@@ -30,6 +30,9 @@
 # API key injected at runtime via ANTHROPIC_API_KEY; never baked in.
 
 FROM alpine:3.21 AS base
+# Build-time guard: fail immediately if anyone attempts to build this image.
+# This Dockerfile is archived and must never be built. EPIC-089 M5.
+RUN false
 
 # The claude CLI binary is a self-contained Node.js bundle — no Node runtime
 # needed after bundling. Copy from host path supplied at build time.

@@ -264,6 +264,35 @@ func TestAppendTriageToReadme(t *testing.T) {
 
 // TestTriageScorer_FakeHaiku exercises the triageScorer with a stubbed
 // execHaikuJSON so we never call out to the real claude CLI in tests.
+// TestHaikuEnv_PersonaIsolation verifies that all claude subprocess calls strip
+// CLAUDECODE= from the environment and inject CLAUDE_CODE_DISABLE_CLAUDE_MDS=1
+// to prevent the subprocess from discovering workspace CLAUDE.md files. EPIC-088 M1.
+func TestHaikuEnv_PersonaIsolation(t *testing.T) {
+	// Seed API key vars so we can assert they are stripped. EPIC-089 M5.
+	t.Setenv("ANTHROPIC_API_KEY", "test-should-be-stripped")
+	t.Setenv("CLAUDE_API_KEY", "test-should-be-stripped")
+
+	env := haikuEnv()
+	hasDisableMDs := false
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "CLAUDECODE=") {
+			t.Errorf("CLAUDECODE should be stripped from haikuEnv(), got: %s", kv)
+		}
+		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
+			t.Errorf("ANTHROPIC_API_KEY should be stripped from haikuEnv() — CLI-only auth invariant violated")
+		}
+		if strings.HasPrefix(kv, "CLAUDE_API_KEY=") {
+			t.Errorf("CLAUDE_API_KEY should be stripped from haikuEnv() — CLI-only auth invariant violated")
+		}
+		if kv == "CLAUDE_CODE_DISABLE_CLAUDE_MDS=1" {
+			hasDisableMDs = true
+		}
+	}
+	if !hasDisableMDs {
+		t.Error("CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 not found in haikuEnv() — persona isolation broken")
+	}
+}
+
 func TestTriageScorer_FakeHaiku(t *testing.T) {
 	orig := execHaikuJSON
 	defer func() { execHaikuJSON = orig }()

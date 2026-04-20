@@ -334,6 +334,11 @@ type ServerConfig struct {
 	// EPIC-001 M3: CORS origins allowlist for FunnelMux. When empty,
 	// falls back to "*" (wildcard). When set, only listed origins are allowed.
 	CORSOrigins []string `yaml:"cors_origins"`
+
+	// EPIC-088 M4: override the built-in unsupported pipeline domain list.
+	// When non-empty, replaces the compiled-in regex with a case-insensitive
+	// OR match of these domain substrings. Default (empty): use built-in list.
+	UnsupportedPipelineDomains []string `yaml:"unsupported_pipeline_domains"`
 }
 
 // ShareConfig controls how share requests map their received action/profile to

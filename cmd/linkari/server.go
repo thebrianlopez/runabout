@@ -87,7 +87,8 @@ type ShareRequest struct {
 	AudioPath        string `json:"-"` // EPIC-067: temp file path for uploaded audio
 	QueueRowID       int64  `json:"-"` // EPIC-067: queue row ID for audio scoring (no URL to match on)
 	OriginalFilename string `json:"-"` // EPIC-071: original filename from multipart upload
-	ClassifySource   string `json:"-"` // EPIC-077 M1: cascade stage that won pre-enqueue classification
+	ClassifySource       string `json:"-"` // EPIC-077 M1: cascade stage that won pre-enqueue classification
+	ForceContentClassify bool   `json:"-"` // EPIC-085 M2: per-action flag to always run content-LLM reclassification
 }
 
 // ShareResponse is the structured JSON response.
@@ -946,6 +947,12 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 
 	emitShareActionResolved(resolution, req.URL, 0)
 
+	// EPIC-085 M2: thread per-action ForceContentClassify into the request so
+	// scoreAsync can gate content-LLM reclassification on it.
+	if ac := s.router.LookupAction(req.Action); ac != nil {
+		req.ForceContentClassify = ac.ForceContentClassify
+	}
+
 	// EPIC-077 M1: synchronous fast-cascade classification pre-enqueue.
 	// Runs the pure, IO-free stages (<1ms total) so classify_source is persisted
 	// on the queue row at enqueue time. The slow stage (classifyContentProfile
@@ -1000,6 +1007,58 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+	}
+
+	// EPIC-085 M1: synchronous login-wall pre-filter. Moved from scoreAsync to
+	// handleShare so login-walled URLs are rejected before enqueue — no orphaned
+	// queue rows, honest HTTP response to the client.
+	if req.Type == "url" && isLoginWallDomain(req.URL) {
+		slog.InfoContext(ctx, "share: login-wall domain pre-filtered",
+			"event_type", "share_prefilter_login_wall",
+			"url", req.URL,
+		)
+		if s.events != nil {
+			_ = s.events.Emit("score_prefilter_skip", map[string]interface{}{
+				"url":   req.URL,
+				"stage": "login_wall_domain",
+				"phase": "pre_enqueue",
+			})
+		}
+		if s.queue != nil {
+			enqueuePrefilterPush(s.queue, &req, "login_wall_domain")
+		}
+		writeJSON(w, http.StatusOK, ShareResponse{
+			Status:    "ok",
+			Message:   "Login-walled site — not scored",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+		return
+	}
+
+	// EPIC-087 M1: synchronous unsupported-pipeline pre-filter. Mirrors the
+	// login-wall pattern added in EPIC-085 M1 — reject before enqueue so no
+	// orphaned queue rows are created and the client gets an honest response.
+	if req.Type == "url" && unsupportedPipelineRE.MatchString(req.URL) {
+		slog.InfoContext(ctx, "share: unsupported pipeline pre-filtered",
+			"event_type", "share_prefilter_unsupported_pipeline",
+			"url", req.URL,
+		)
+		if s.events != nil {
+			_ = s.events.Emit("score_prefilter_skip", map[string]interface{}{
+				"url":   req.URL,
+				"stage": "unsupported_pipeline",
+				"phase": "pre_enqueue",
+			})
+		}
+		if s.queue != nil {
+			enqueuePrefilterPush(s.queue, &req, "unsupported_pipeline")
+		}
+		writeJSON(w, http.StatusOK, ShareResponse{
+			Status:    "ok",
+			Message:   "Video platform — not yet supported",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
+		return
 	}
 
 	// Enqueue for persistence (before routing — survives tmux failures).
