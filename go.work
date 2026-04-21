@@ -5,6 +5,7 @@ use (
 	./cmd/fetchpage
 	./cmd/linkari
 	./cmd/protonexport
+	./cmd/ts-go
 	./cmd/wasend
 	./cmd/workctl
 )
