@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval effiscore
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := fetchpage protonexport linkari wasend workctl ghwatch
+SEPARATE := fetchpage protonexport linkari wasend workctl ghwatch ts-go
 
 ALL := $(CORE) $(SEPARATE)
 
@@ -19,7 +19,7 @@ LIMA_VM        ?= lima-gvisor
 # containerd socket at {{.Dir}}/containerd.sock → ~/.lima/<name>/containerd.sock.
 LIMA_SOCKET    ?= $(HOME)/.lima/$(LIMA_VM)/containerd.sock
 
-.PHONY: all core build clean install test linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage \
+.PHONY: all core build clean install test test-ts-go linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage \
 	container-build container-push lima-start lima-test \
 	$(ALL)
 
@@ -148,6 +148,18 @@ logs-linkari:
 logs-linkari-tls:
 	@test -n "$(AWS_PROFILE)" || { echo "❌ AWS_PROFILE unset"; exit 1; }
 	@tok=$$($(FETCH_TOKEN)) && curl -sN "https://localhost:8080/logs/stream?token=$$tok"
+
+ts-go:
+	@echo "Building ts-go..."
+	@cd cmd/ts-go && go build $(LDFLAGS) -o ../../bin/ts-go .
+
+install-ts-go:
+	@echo "Installing ts-go → $(INSTALL_DIR)/ts-go"
+	@cd cmd/ts-go && go install $(LDFLAGS) .
+
+test-ts-go:
+	@echo "Running ts-go tests (requires C compiler for CGo)..."
+	@cd cmd/ts-go && go test -count=1 ./...
 
 wasend:
 	@echo "Building wasend..."
