@@ -528,14 +528,7 @@ func haikuEnv() []string {
 // The keys are logged to help debug subprocess behavior, not because they
 // are expected to be set. EPIC-080 M3.
 func logHaikuEnvKeys() {
-	keys := []string{"ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "CLAUDECODE"}
-	for _, k := range keys {
-		if os.Getenv(k) != "" {
-			slog.Warn("haiku env key present — unexpected for CLI-only auth", "key", k)
-		} else {
-			slog.Debug("haiku env key absent", "key", k)
-		}
-	}
+	slog.Debug("haiku env keys", "stripped", []string{"ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "CLAUDECODE"})
 }
 
 // claudeExecOpts configures the flag set for a `claude --print` invocation.
