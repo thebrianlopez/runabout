@@ -1,0 +1,16 @@
+#!/bin/sh
+# pre-push: validate claude CLI flag contract before push to origin.
+# Runs TestClaudeCLIFlagContract in cmd/linkari to catch incompatible flags
+# before they reach the remote. Skips gracefully when the claude binary is
+# absent (the test uses t.Skip, which exits 0).
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+echo "pre-push: running claude CLI flag contract test..."
+if ! (cd "$REPO_ROOT/cmd/linkari" && go test -run TestClaudeCLIFlagContract -count=1 -timeout 30s .); then
+    echo "pre-push: flag contract test FAILED -- push aborted"
+    echo "  Fix: update buildClaudeArgs or allBuildClaudeArgsFlags to match the installed claude binary."
+    exit 1
+fi
+echo "pre-push: flag contract OK"

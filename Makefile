@@ -39,6 +39,21 @@ clean:
 test:
 	go test ./...
 
+# Validate claude CLI flag contract against the installed binary.
+# Skips gracefully when claude is not on PATH.
+.PHONY: test-claude-contract
+test-claude-contract:
+	@echo "Running claude CLI flag contract test..."
+	@cd cmd/linkari && go test -run TestClaudeCLIFlagContract -count=1 -timeout 30s .
+
+# Install git hooks for local development. Run once after clone.
+.PHONY: install-hooks
+install-hooks:
+	@echo "Installing git hooks..."
+	@cp scripts/hooks/pre-push .git/hooks/pre-push
+	@chmod +x .git/hooks/pre-push
+	@echo "Git hooks installed (pre-push -> claude flag contract)"
+
 # --- Core tools (root module) ---
 
 $(CORE):
