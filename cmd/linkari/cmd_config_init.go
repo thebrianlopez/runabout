@@ -125,7 +125,7 @@ const serverYAMLTemplate = `server:
   # Verbose debug logging (also: --debug flag).
   debug: false
 
-  # --- EPIC-009: YouTube transcription ---
+  # --- EPIC-009 / EPIC-003: YouTube transcription and audio fallback ---
 
   # Directory where transcript markdown files are saved.
   # Default: ~/code/personal/docs/transcripts
@@ -133,6 +133,16 @@ const serverYAMLTemplate = `server:
 
   # Path to the yt-dlp binary. Defaults to "yt-dlp" on PATH.
   # ytdlp_path: ""
+
+  # Path to the ffmpeg binary. Defaults to "ffmpeg" on PATH.
+  # Used for audio conversion (YouTube fallback, voice notes).
+  # ffmpeg_path: ""
+
+  # YouTube audio fallback: when yt-dlp finds no subtitles, download the audio
+  # track and transcribe with whisper-cli. Enabled by default (EPIC-003 M5).
+  # Set to false to revert to the pre-EPIC-003 behavior (fail with yt_no_subtitles).
+  youtube:
+    fallback_to_audio: true
 
   # --- Prefilter: unsupported pipeline domains (EPIC-088 M4) ---
 

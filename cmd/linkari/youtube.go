@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -30,8 +31,8 @@ var ytTimeoutSeconds = 30
 // ytFallbackToAudio enables the audio-download fallback when yt-dlp finds no
 // subtitles. When true, scoreYouTubeAsync and transcribeYouTubeAsync attempt
 // yt-dlp audio download → ffmpeg → whisper before marking the row failed.
-// Default false for safe rollout. EPIC-001 M3.
-var ytFallbackToAudio = false
+// Default true (EPIC-003 M5). Overridable via server.yaml youtube.fallback_to_audio: false.
+var ytFallbackToAudio = true
 
 // execYtdlpAudio is the test seam for yt-dlp audio download invocation.
 // Replace in tests to inject mock output without spawning a real subprocess.
@@ -297,8 +298,12 @@ func runYtdlpAudioDownload(ctx context.Context, ytdlpPath, videoURL string) (aud
 // transcribes it via ffmpeg + whisper. Used when yt-dlp subtitle extraction
 // finds no subtitles (yt_no_subtitles). Returns the transcript string and
 // video metadata on success, or an error if any step fails.
-// EPIC-001 M3.
-func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, q *Queue, events *EventLogger) (string, ytVideoMeta, error) {
+// EPIC-001 M3. whisperModel is passed through to execWhisper (empty = default).
+// EPIC-005 M1: context.DeadlineExceeded from whisper is wrapped as yt_audio_timeout.
+// EPIC-005 M2: emits yt_audio_fallback_complete / yt_audio_fallback_failed with step/duration fields.
+func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, q *Queue, events *EventLogger, whisperModel string) (string, ytVideoMeta, error) {
+	start := time.Now()
+
 	slog.Info("yt_audio_fallback: start",
 		"event_type", "yt_audio_fallback_start",
 		"row_id", rowID,
@@ -312,11 +317,19 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 	// Step 1: download audio via yt-dlp.
 	audioPath, meta, dlErr := execYtdlpAudio(ctx, ytPath, videoURL)
 	if dlErr != nil {
-		slog.Warn("yt_audio_fallback: download failed",
-			"event_type", "yt_audio_fallback_download_failed",
+		slog.Warn("yt_audio_fallback_failed",
+			"event_type", "yt_audio_fallback_failed",
 			"row_id", rowID,
-			"error", dlErr,
+			"step", "download",
+			"error_reason", dlErr.Error(),
 		)
+		if events != nil {
+			_ = events.Emit("yt_audio_fallback_failed", map[string]interface{}{
+				"row_id":       rowID,
+				"step":         "download",
+				"error_reason": dlErr.Error(),
+			})
+		}
 		return "", ytVideoMeta{}, fmt.Errorf("audio download: %w", dlErr)
 	}
 	// Remove the downloaded audio dir on exit (both success and failure).
@@ -333,11 +346,19 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 	ffErr := execFfmpegConvert(ffmpegCtx, audioPath, wavPath)
 	ffmpegCancel()
 	if ffErr != nil {
-		slog.Warn("yt_audio_fallback: ffmpeg failed",
-			"event_type", "yt_audio_fallback_ffmpeg_failed",
+		slog.Warn("yt_audio_fallback_failed",
+			"event_type", "yt_audio_fallback_failed",
 			"row_id", rowID,
-			"error", ffErr,
+			"step", "ffmpeg",
+			"error_reason", ffErr.Error(),
 		)
+		if events != nil {
+			_ = events.Emit("yt_audio_fallback_failed", map[string]interface{}{
+				"row_id":       rowID,
+				"step":         "ffmpeg",
+				"error_reason": ffErr.Error(),
+			})
+		}
 		return "", meta, fmt.Errorf("ffmpeg: %w", ffErr)
 	}
 
@@ -346,30 +367,71 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 		q.SetProgress(rowID, "transcribing_audio")
 	}
 	whisperCtx, whisperCancel := context.WithTimeout(ctx, 300*time.Second)
-	transcript, whisperErr := execWhisper(whisperCtx, wavPath, "")
+	transcript, whisperErr := execWhisper(whisperCtx, wavPath, whisperModel)
 	whisperCancel()
 	if whisperErr != nil {
-		slog.Warn("yt_audio_fallback: whisper failed",
-			"event_type", "yt_audio_fallback_whisper_failed",
+		// EPIC-005 M1: wrap deadline exceeded as yt_audio_timeout so callers can
+		// surface a specific verdict rather than the generic yt_no_subtitles reason.
+		if errors.Is(whisperErr, context.DeadlineExceeded) {
+			slog.Warn("yt_audio_fallback_failed",
+				"event_type", "yt_audio_fallback_failed",
+				"row_id", rowID,
+				"step", "whisper",
+				"error_reason", "yt_audio_timeout",
+			)
+			if events != nil {
+				_ = events.Emit("yt_audio_fallback_failed", map[string]interface{}{
+					"row_id":       rowID,
+					"step":         "whisper",
+					"error_reason": "yt_audio_timeout",
+				})
+			}
+			return "", meta, fmt.Errorf("yt_audio_timeout: %w", whisperErr)
+		}
+		slog.Warn("yt_audio_fallback_failed",
+			"event_type", "yt_audio_fallback_failed",
 			"row_id", rowID,
-			"error", whisperErr,
+			"step", "whisper",
+			"error_reason", whisperErr.Error(),
 		)
+		if events != nil {
+			_ = events.Emit("yt_audio_fallback_failed", map[string]interface{}{
+				"row_id":       rowID,
+				"step":         "whisper",
+				"error_reason": whisperErr.Error(),
+			})
+		}
 		return "", meta, fmt.Errorf("whisper: %w", whisperErr)
 	}
 	if strings.TrimSpace(transcript) == "" {
+		slog.Warn("yt_audio_fallback_failed",
+			"event_type", "yt_audio_fallback_failed",
+			"row_id", rowID,
+			"step", "whisper",
+			"error_reason", "empty_transcript",
+		)
+		if events != nil {
+			_ = events.Emit("yt_audio_fallback_failed", map[string]interface{}{
+				"row_id":       rowID,
+				"step":         "whisper",
+				"error_reason": "empty_transcript",
+			})
+		}
 		return "", meta, fmt.Errorf("whisper: empty transcript")
 	}
 
-	slog.Info("yt_audio_fallback: transcribed",
-		"event_type", "yt_audio_fallback_transcribed",
+	elapsed := time.Since(start).Milliseconds()
+	slog.Info("yt_audio_fallback_complete",
+		"event_type", "yt_audio_fallback_complete",
 		"row_id", rowID,
-		"transcript_len", len(transcript),
+		"duration_ms", elapsed,
+		"subtitle_type", "audio",
 	)
 	if events != nil {
-		_ = events.Emit("yt_audio_fallback_transcribed", map[string]interface{}{
-			"row_id":         rowID,
-			"url":            videoURL,
-			"transcript_len": len(transcript),
+		_ = events.Emit("yt_audio_fallback_complete", map[string]interface{}{
+			"row_id":        rowID,
+			"duration_ms":   elapsed,
+			"subtitle_type": "audio",
 		})
 	}
 
@@ -387,8 +449,12 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 //  4. Evaluate via HaikuJSONEvaluator
 //  5. UpdateScore → status=scored
 //  6. EnqueueDigestIfDue → FCM push (content_type="youtube" for M5 title template)
-func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger, whisperModel string) {
+	outerTimeout := 120 * time.Second
+	if ytFallbackToAudio {
+		outerTimeout = 10 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), outerTimeout)
 	defer cancel()
 
 	rowID := req.QueueRowID
@@ -439,15 +505,22 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 		// before giving up. Only activated for yt_no_subtitles (not binary missing
 		// or extraction timeouts which imply a network or binary problem).
 		if verdict == "yt_no_subtitles" && ytFallbackToAudio {
-			transcript, meta, err = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events)
+			transcript, meta, err = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events, whisperModel)
 			if err == nil {
+				meta.SubtitleType = "audio"
 				// Fallback succeeded — continue with transcript below.
 				goto subtitleReady
 			}
+			// EPIC-005 M1: surface yt_audio_timeout specifically so the queue row
+			// verdict reflects the actual failure mode rather than yt_no_subtitles.
+			if strings.HasPrefix(err.Error(), "yt_audio_timeout") {
+				verdict = "yt_audio_timeout"
+			}
 			slog.Warn("score_youtube: audio fallback also failed",
-				"event_type", "yt_audio_fallback_failed",
+				"event_type", "score_youtube_fallback_failed",
 				"row_id", rowID,
 				"url", videoURL,
+				"verdict", verdict,
 				"error", err,
 			)
 		}
@@ -574,8 +647,12 @@ subtitleReady:
 //  1. yt-dlp extract → transcript + ytVideoMeta
 //  2. saveTranscriptFile (source="youtube", extended frontmatter)
 //  3. EnqueueTranscriptPush → FCM push with content_type="youtube_transcript"
-func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger, whisperModel string) {
+	outerTimeout := 120 * time.Second
+	if ytFallbackToAudio {
+		outerTimeout = 10 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), outerTimeout)
 	defer cancel()
 
 	rowID := req.QueueRowID
@@ -623,14 +700,20 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 		}
 		// EPIC-001 M3: same audio fallback gate as scoreYouTubeAsync.
 		if verdict == "yt_no_subtitles" && ytFallbackToAudio {
-			transcript, meta, err = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events)
+			transcript, meta, err = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events, whisperModel)
 			if err == nil {
+				meta.SubtitleType = "audio"
 				goto txSubtitleReady
 			}
+			// EPIC-005 M1: surface yt_audio_timeout specifically.
+			if strings.HasPrefix(err.Error(), "yt_audio_timeout") {
+				verdict = "yt_audio_timeout"
+			}
 			slog.Warn("transcribe_youtube: audio fallback also failed",
-				"event_type", "yt_audio_fallback_failed",
+				"event_type", "transcribe_youtube_fallback_failed",
 				"row_id", rowID,
 				"url", videoURL,
+				"verdict", verdict,
 				"error", err,
 			)
 		}

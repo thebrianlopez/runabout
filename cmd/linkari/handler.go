@@ -510,18 +510,19 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		if ytPath == "" {
 			ytPath = ytdlpBinaryPath
 		}
-		go transcribeYouTubeAsync(*req, r.queue, ytPath, r.events)
+		go transcribeYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel)
 		return "Fetching YouTube transcript — ready via FCM", nil
 	}
 
 	// EPIC-009 M4: YouTube URL shares route to scoreYouTubeAsync for yt-dlp
 	// transcription and Claude scoring. Must come before the audio branch.
-	if ac.ServerScore && req.Type == "url" && isYouTubeURL(req.URL) {
+	// EPIC-003 M3: also route when req.Type="" — Android/Chrome clients may omit type.
+	if ac.ServerScore && (req.Type == "url" || req.Type == "") && isYouTubeURL(req.URL) {
 		ytPath := r.ytdlpPath
 		if ytPath == "" {
 			ytPath = ytdlpBinaryPath
 		}
-		go scoreYouTubeAsync(*req, r.queue, ytPath, r.events)
+		go scoreYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel)
 		return "Transcribing YouTube — verdict via FCM", nil
 	}
 

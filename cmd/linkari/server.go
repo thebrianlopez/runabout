@@ -2089,6 +2089,19 @@ func validateRequest(req *ShareRequest) error {
 		if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
 			return fmt.Errorf("url must start with http:// or https://")
 		}
+	case "":
+		// EPIC-003 M3: Android/Chrome clients may omit the type field. Allow when
+		// a URL is present — handler.go routes to the correct pipeline (YouTube or
+		// generic scoreAsync). Validate the URL field identically to type="url".
+		if req.URL == "" {
+			return fmt.Errorf("url field required when type is omitted")
+		}
+		if len(req.URL) > 2048 {
+			return fmt.Errorf("url exceeds 2048 character limit")
+		}
+		if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
+			return fmt.Errorf("url must start with http:// or https://")
+		}
 	case "audio", "image", "document":
 		if req.AudioPath == "" {
 			return fmt.Errorf("file required for type=%s", req.Type)

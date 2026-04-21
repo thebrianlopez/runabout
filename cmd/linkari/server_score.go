@@ -164,7 +164,7 @@ var execFfmpegConvert = runFfmpegConvert
 
 // runFfmpegConvert invokes ffmpeg to convert an audio file to 16kHz mono WAV.
 func runFfmpegConvert(ctx context.Context, inputPath, outputPath string) error {
-	cmd := exec.CommandContext(ctx, "ffmpeg",
+	cmd := exec.CommandContext(ctx, ffmpegBinaryPath,
 		"-i", inputPath,
 		"-ar", "16000",
 		"-ac", "1",
@@ -215,7 +215,7 @@ func runFfmpegSegment(ctx context.Context, wavPath string, segmentSecs int) ([]s
 	base := strings.TrimSuffix(filepath.Base(wavPath), filepath.Ext(wavPath))
 	pattern := filepath.Join(dir, base+"_chunk_%03d.wav")
 
-	cmd := exec.CommandContext(ctx, "ffmpeg",
+	cmd := exec.CommandContext(ctx, ffmpegBinaryPath,
 		"-i", wavPath,
 		"-f", "segment",
 		"-segment_time", fmt.Sprintf("%d", segmentSecs),
@@ -2032,6 +2032,10 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 // ytdlpBinaryPath is the path to the yt-dlp binary. Defaults to "yt-dlp" (PATH lookup).
 // Overridden by ServerConfig.YtdlpPath via initClaudeConfig() at startup. EPIC-009 M1.
 var ytdlpBinaryPath = "yt-dlp"
+
+// ffmpegBinaryPath is the path to the ffmpeg binary. Defaults to "ffmpeg" (PATH lookup).
+// Overridden by ServerConfig.FfmpegPath via initClaudeConfig() at startup. EPIC-003 M2.
+var ffmpegBinaryPath = "ffmpeg"
 
 // transcriptDir is the directory where voice note transcripts are saved.
 // Default: ~/code/personal/docs/transcripts. Overridden by ServerConfig.TranscriptsDir

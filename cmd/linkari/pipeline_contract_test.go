@@ -467,7 +467,7 @@ func TestTranscribeYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		transcribeYouTubeAsync(req, q, "yt-dlp", nil)
+		transcribeYouTubeAsync(req, q, "yt-dlp", nil, "")
 	}()
 	select {
 	case <-finished:
@@ -558,5 +558,60 @@ func TestShareEndpointQueueRowGuarantee(t *testing.T) {
 		if count == 0 {
 			t.Error("expected a queue row for https://example.com/article, found none")
 		}
+	}
+}
+
+// ─── M3: handler.go:520 routing for YouTube URL with empty type ───────────────
+
+// TestHandleShare_YouTubeURL_EmptyType verifies that a YouTube URL posted with
+// req.Type="" routes to scoreYouTubeAsync (handler.go:520) rather than
+// scoreAsync or being rejected by unsupportedPipeline. EPIC-005 M3.
+func TestHandleShare_YouTubeURL_EmptyType(t *testing.T) {
+	isolateEventsDir(t)
+	installTestProfileDir(t, "eng")
+
+	// Capture whether scoreYouTubeAsync was reached via the execYtdlp seam.
+	// scoreYouTubeAsync calls execYtdlp as its first step; scoreAsync never does.
+	var scoreYTCalled bool
+	prevYtdlp := execYtdlp
+	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+		scoreYTCalled = true
+		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles — stop here")
+	}
+	t.Cleanup(func() { execYtdlp = prevYtdlp })
+
+	// Disable audio fallback so the goroutine terminates quickly after yt-dlp.
+	prevFallback := ytFallbackToAudio
+	ytFallbackToAudio = false
+	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
+
+	cfg := builtinConfig()
+	tmux := &TmuxRunner{}
+	router := NewRouterFromConfig(tmux, cfg, false)
+	q := newTestQueue(t)
+	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
+	mux := srv.Mux()
+
+	payload := map[string]string{
+		"type":   "",  // Missing type — the invariant under test at handler.go:520.
+		"url":    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		"action": "uinit_auto",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/share", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Give the goroutine time to call execYtdlp before we assert.
+	time.Sleep(200 * time.Millisecond)
+
+	if !scoreYTCalled {
+		t.Error("execYtdlp not called — YouTube URL with type=\"\" did not route to scoreYouTubeAsync (handler.go:520)")
 	}
 }
