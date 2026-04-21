@@ -508,6 +508,141 @@ func TestYtAudioFallback_TimeoutExpiry(t *testing.T) {
 	}
 }
 
+// TestScoreYouTubeAsync_AudioFallbackSubtitleType verifies that when yt-dlp
+// finds no subtitles and the audio fallback succeeds, the scored row's events
+// contain subtitle_type="audio". EPIC-006 M3.
+func TestScoreYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
+	installTestProfileDir(t, "eng")
+
+	prevFallback := ytFallbackToAudio
+	ytFallbackToAudio = true
+	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
+
+	installYtdlpNoSubtitlesStub(t)
+	installYtdlpAudioStub(t)
+
+	prevFfmpeg := execFfmpegConvert
+	execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
+	}
+	t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
+
+	installWhisperStubYT(t, "Audio fallback transcript.", nil)
+
+	prevHaikuJSON := execHaikuJSON
+	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+		v := TriageVerdict{Score: 70, Verdict: "interesting", Tags: "test", RubricScores: map[string]int{"overall": 70}}
+		return json.Marshal(v)
+	}
+	t.Cleanup(func() { execHaikuJSON = prevHaikuJSON })
+
+	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
+	evtLogger, err := NewEventLogger(evtPath)
+	if err != nil {
+		t.Fatalf("NewEventLogger: %v", err)
+	}
+	defer evtLogger.Close()
+
+	q := newTestQueue(t)
+	req := ShareRequest{
+		Type:    "url",
+		URL:     "https://www.youtube.com/watch?v=subtitletype",
+		Profile: "eng",
+	}
+	id, qErr := q.Enqueue(&req)
+	if qErr != nil {
+		t.Fatalf("Enqueue: %v", qErr)
+	}
+	if err := q.MarkRelayed(id); err != nil {
+		t.Fatalf("MarkRelayed: %v", err)
+	}
+	req.QueueRowID = id
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scoreYouTubeAsync(req, q, "yt-dlp", evtLogger, "")
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("scoreYouTubeAsync timed out")
+	}
+
+	evtLogger.Close()
+	rawEvents, readErr := os.ReadFile(evtPath)
+	if readErr != nil {
+		t.Fatalf("read events file: %v", readErr)
+	}
+	if !strings.Contains(string(rawEvents), `"subtitle_type":"audio"`) &&
+		!strings.Contains(string(rawEvents), `"subtitle_type": "audio"`) {
+		t.Errorf("expected subtitle_type=audio in events, got: %s", rawEvents)
+	}
+}
+
+// TestTranscribeYouTubeAsync_AudioFallbackSubtitleType verifies that when
+// yt-dlp finds no subtitles and the audio fallback succeeds,
+// transcribeYouTubeAsync emits subtitle_type="audio" in events. EPIC-006 M3.
+func TestTranscribeYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
+	prevFallback := ytFallbackToAudio
+	ytFallbackToAudio = true
+	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
+
+	installYtdlpNoSubtitlesStub(t)
+	installYtdlpAudioStub(t)
+
+	prevFfmpeg := execFfmpegConvert
+	execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
+	}
+	t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
+
+	installWhisperStubYT(t, "Audio transcript via whisper.", nil)
+
+	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
+	evtLogger, err := NewEventLogger(evtPath)
+	if err != nil {
+		t.Fatalf("NewEventLogger: %v", err)
+	}
+	defer evtLogger.Close()
+
+	q := newTestQueue(t)
+	req := ShareRequest{
+		Type:    "url",
+		URL:     "https://www.youtube.com/watch?v=txsubtitletype",
+		Profile: "eng",
+	}
+	id, qErr := q.Enqueue(&req)
+	if qErr != nil {
+		t.Fatalf("Enqueue: %v", qErr)
+	}
+	if err := q.MarkRelayed(id); err != nil {
+		t.Fatalf("MarkRelayed: %v", err)
+	}
+	req.QueueRowID = id
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		transcribeYouTubeAsync(req, q, "yt-dlp", evtLogger, "")
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("transcribeYouTubeAsync timed out")
+	}
+
+	evtLogger.Close()
+	rawEvents, readErr := os.ReadFile(evtPath)
+	if readErr != nil {
+		t.Fatalf("read events file: %v", readErr)
+	}
+	if !strings.Contains(string(rawEvents), `"subtitle_type":"audio"`) &&
+		!strings.Contains(string(rawEvents), `"subtitle_type": "audio"`) {
+		t.Errorf("expected subtitle_type=audio in events, got: %s", rawEvents)
+	}
+}
+
 // TestRouteYouTubeURL_MissingType verifies that a YouTube URL with req.Type=""
 // routes to scoreYouTubeAsync rather than scoreAsync. EPIC-003 M3.
 func TestRouteYouTubeURL_MissingType(t *testing.T) {

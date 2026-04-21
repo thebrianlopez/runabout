@@ -246,6 +246,7 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 	cmd := exec.CommandContext(ctx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
 		Model:        visionModelName,
 		MaxTurns:     "3",
+		MaxTokens:    "600",
 		AllowedTools: "Read",
 		OutputFormat: "json",
 		JSONSchema:   schema,

@@ -701,6 +701,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				slog.Info("linkari listening",
 					"event_type", "listener_up",
 					"port", port, "mode", "local", "tls", true,
+					"build_version", version, "build_commit", commit,
 				)
 				go func() {
 					errCh <- httpServer.ListenAndServeTLS(certFile, keyFile)
@@ -716,6 +717,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				slog.Info("linkari listening",
 					"event_type", "listener_up",
 					"port", port, "mode", "local", "tls", false,
+					"build_version", version, "build_commit", commit,
 				)
 				// Signal parent AFTER port is successfully bound.
 				signalDetachReady()
