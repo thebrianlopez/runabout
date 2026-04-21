@@ -347,3 +347,94 @@ func TestInitClaudeConfig_FallbackToAudio(t *testing.T) {
 	}
 }
 
+// TestBuildClaudeArgs verifies the flag assembly for claude --print invocations.
+// Regression: the Claude CLI removed --max-tokens (2026-04); buildClaudeArgs must
+// never emit it. See score_async_eval_error in server.log.
+func TestBuildClaudeArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		opts claudeExecOpts
+		want []string // substrings that MUST appear
+		deny []string // substrings that MUST NOT appear
+	}{
+		{
+			name: "json_scoring_path",
+			opts: claudeExecOpts{
+				Model:        "claude-haiku-4-5-20251001",
+				MaxTurns:     "3",
+				Tools:        "",
+				OutputFormat: "json",
+				JSONSchema:   `{"type":"object"}`,
+				SystemPrompt: "/tmp/sp.txt",
+			},
+			want: []string{
+				"--print",
+				"--model", "claude-haiku-4-5-20251001",
+				"--max-turns", "3",
+				"--tools", "",
+				"--output-format", "json",
+				"--json-schema",
+				"--system-prompt-file", "/tmp/sp.txt",
+				"--effort", "low",
+				"--no-session-persistence",
+			},
+			deny: []string{"--max-tokens"},
+		},
+		{
+			name: "vision_path_with_allowedTools",
+			opts: claudeExecOpts{
+				Model:        "claude-haiku-4-5-20251001",
+				MaxTurns:     "3",
+				AllowedTools: "Read",
+				OutputFormat: "json",
+				JSONSchema:   `{"type":"object"}`,
+				SystemPrompt: "/tmp/sp.txt",
+			},
+			want: []string{
+				"--allowedTools", "Read",
+				"--output-format", "json",
+			},
+			deny: []string{"--max-tokens"},
+		},
+		{
+			name: "minimal_plain_text",
+			opts: claudeExecOpts{
+				Model:        "claude-haiku-4-5-20251001",
+				MaxTurns:     "1",
+				Tools:        "",
+				SystemPrompt: "/tmp/sp.txt",
+			},
+			want: []string{"--print", "--model", "--max-turns", "1"},
+			deny: []string{"--max-tokens", "--output-format", "--json-schema"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := buildClaudeArgs(tt.opts)
+			joined := strings.Join(args, " ")
+
+			for _, w := range tt.want {
+				found := false
+				for _, a := range args {
+					if a == w {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected %q in args: %s", w, joined)
+				}
+			}
+
+			for _, d := range tt.deny {
+				for _, a := range args {
+					if a == d {
+						t.Errorf("deprecated flag %q must not appear in args: %s", d, joined)
+					}
+				}
+			}
+		})
+	}
+}
+

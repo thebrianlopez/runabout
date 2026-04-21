@@ -537,7 +537,6 @@ func logHaikuEnvKeys() {
 type claudeExecOpts struct {
 	Model          string // e.g. claudeModel or visionModelName
 	MaxTurns       string // "1" for plain text, "3" for JSON/vision
-	MaxTokens      string // "--max-tokens" value; empty omits the flag
 	Tools          string // "--tools" value; empty string disables all
 	AllowedTools   string // "--allowedTools" value; empty omits the flag
 	OutputFormat   string // "json" or empty (plain text)
@@ -547,6 +546,9 @@ type claudeExecOpts struct {
 
 // buildClaudeArgs returns the args slice for exec.CommandContext. The binary
 // path is NOT included — it's the first arg to CommandContext, not part of args.
+// When adding or removing flags, update allBuildClaudeArgsFlags() in
+// claude_contract_test.go — the contract test validates flags against the
+// installed claude binary.
 func buildClaudeArgs(opts claudeExecOpts) []string {
 	args := []string{
 		"--print",
@@ -566,9 +568,6 @@ func buildClaudeArgs(opts claudeExecOpts) []string {
 	}
 	if opts.JSONSchema != "" {
 		args = append(args, "--json-schema", opts.JSONSchema)
-	}
-	if opts.MaxTokens != "" {
-		args = append(args, "--max-tokens", opts.MaxTokens)
 	}
 	args = append(args,
 		"--system-prompt-file", opts.SystemPrompt,

@@ -192,7 +192,6 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 	cmd := exec.CommandContext(ctx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
 		Model:        claudeModel,
 		MaxTurns:     "3", // --output-format json + --json-schema uses internal tool-call turns to enforce schema; 1 is insufficient
-		MaxTokens:    "600",
 		Tools:        "",
 		OutputFormat: "json",
 		JSONSchema:   schema,
@@ -246,7 +245,6 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 	cmd := exec.CommandContext(ctx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
 		Model:        visionModelName,
 		MaxTurns:     "3",
-		MaxTokens:    "600",
 		AllowedTools: "Read",
 		OutputFormat: "json",
 		JSONSchema:   schema,
