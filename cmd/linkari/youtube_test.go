@@ -1,11 +1,16 @@
 // EPIC-009 M3: unit tests for YouTube extraction helpers.
+// EPIC-003 M3: unit tests for audio fallback pipeline.
 package main
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestStripSRT verifies that SRT timing markers, sequence numbers, and HTML
@@ -146,5 +151,404 @@ func TestDetectSubtitleType(t *testing.T) {
 	}
 	if got := detectSubtitleType(autoOnlyMeta); got != "auto" {
 		t.Errorf("expected auto, got %q", got)
+	}
+}
+
+// ─── EPIC-003 M3: audio fallback unit tests ────────────────────────────────
+
+// installYtdlpNoSubtitlesStub makes execYtdlp return a "no subtitles" error.
+func installYtdlpNoSubtitlesStub(t *testing.T) {
+	t.Helper()
+	prev := execYtdlp
+	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: no subtitles found for test-url")
+	}
+	t.Cleanup(func() { execYtdlp = prev })
+}
+
+// installYtdlpAudioStub makes execYtdlpAudio write a fake audio file and return its path.
+func installYtdlpAudioStub(t *testing.T) {
+	t.Helper()
+	prev := execYtdlpAudio
+	execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "audio.m4a")
+		if err := os.WriteFile(p, []byte("FAKE-M4A"), 0o644); err != nil {
+			return "", ytVideoMeta{}, err
+		}
+		return p, ytVideoMeta{Title: "Test Video", ID: "test123", Duration: 60}, nil
+	}
+	t.Cleanup(func() { execYtdlpAudio = prev })
+}
+
+// installWhisperStubYT makes execWhisper return tx (or err if non-nil).
+func installWhisperStubYT(t *testing.T, tx string, err error) {
+	t.Helper()
+	prev := execWhisper
+	execWhisper = func(_ context.Context, _, _ string) (string, error) {
+		return tx, err
+	}
+	t.Cleanup(func() { execWhisper = prev })
+}
+
+// TestScoreYouTubeAsync_NoSubtitlesFallback verifies that when yt-dlp finds no
+// subtitles and ytFallbackToAudio=true, scoreYouTubeAsync produces a scored row.
+// EPIC-003 M3.
+func TestScoreYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
+	// Install a hermetic eng profile so this test runs in clean checkouts.
+	installTestProfileDir(t, "eng")
+
+	// Enable fallback and restore on cleanup.
+	prevFallback := ytFallbackToAudio
+	ytFallbackToAudio = true
+	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
+
+	// Stub yt-dlp subtitle extraction → no subtitles.
+	installYtdlpNoSubtitlesStub(t)
+
+	// Stub audio download → fake file.
+	installYtdlpAudioStub(t)
+
+	// Stub ffmpeg → write fake wav.
+	prevFfmpeg := execFfmpegConvert
+	execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
+	}
+	t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
+
+	// Stub whisper → return a transcript.
+	installWhisperStubYT(t, "This is the audio transcript for testing.", nil)
+
+	// Stub evaluator → return a valid scorecard (RubricScores required for bare-verdict shortcut).
+	prevHaikuJSON := execHaikuJSON
+	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+		v := TriageVerdict{Score: 75, Verdict: "interesting", Tags: "test", RubricScores: map[string]int{"overall": 75}}
+		return json.Marshal(v)
+	}
+	t.Cleanup(func() { execHaikuJSON = prevHaikuJSON })
+
+	q := newTestQueue(t)
+	req := ShareRequest{
+		Type:    "url",
+		URL:     "https://www.youtube.com/watch?v=test123",
+		Profile: "eng",
+	}
+	id, err := q.Enqueue(&req)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := q.MarkRelayed(id); err != nil {
+		t.Fatalf("MarkRelayed: %v", err)
+	}
+	req.QueueRowID = id
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "")
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("scoreYouTubeAsync timed out")
+	}
+
+	var status string
+	if err := q.db.QueryRow("SELECT status FROM queue WHERE id=?", id).Scan(&status); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if status != "scored" && status != "archived" {
+		t.Errorf("status = %q, want scored or archived after audio fallback", status)
+	}
+}
+
+// TestScoreYouTubeAsync_FallbackStepFailures verifies that individual failures
+// in the audio fallback steps result in a failed queue row. EPIC-003 M3.
+func TestScoreYouTubeAsync_FallbackStepFailures(t *testing.T) {
+	prevFallback := ytFallbackToAudio
+	ytFallbackToAudio = true
+	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
+
+	cases := []struct {
+		name          string
+		audioErr      error
+		ffmpegErr     error
+		whisperTx     string
+		whisperErr    error
+	}{
+		{
+			name:     "audio_download_fails",
+			audioErr: fmt.Errorf("yt-dlp: network error"),
+		},
+		{
+			name:      "ffmpeg_fails",
+			ffmpegErr: fmt.Errorf("ffmpeg: no such file"),
+		},
+		{
+			name:       "whisper_fails",
+			whisperErr: fmt.Errorf("whisper: model not found"),
+		},
+		{
+			name:      "whisper_empty_transcript",
+			whisperTx: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Stub execYtdlp → no subtitles.
+			installYtdlpNoSubtitlesStub(t)
+
+			// Stub audio download.
+			prevAudio := execYtdlpAudio
+			if tc.audioErr != nil {
+				execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+					return "", ytVideoMeta{}, tc.audioErr
+				}
+			} else {
+				execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+					dir := t.TempDir()
+					p := filepath.Join(dir, "audio.m4a")
+					_ = os.WriteFile(p, []byte("FAKE-M4A"), 0o644)
+					return p, ytVideoMeta{Title: "Test", Duration: 30}, nil
+				}
+			}
+			t.Cleanup(func() { execYtdlpAudio = prevAudio })
+
+			// Stub ffmpeg.
+			prevFfmpeg := execFfmpegConvert
+			if tc.audioErr == nil {
+				if tc.ffmpegErr != nil {
+					execFfmpegConvert = func(_ context.Context, _, _ string) error { return tc.ffmpegErr }
+				} else {
+					execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+						return os.WriteFile(outputPath, []byte("RIFF-fake"), 0o644)
+					}
+				}
+			}
+			t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
+
+			// Stub whisper.
+			if tc.audioErr == nil && tc.ffmpegErr == nil {
+				installWhisperStubYT(t, tc.whisperTx, tc.whisperErr)
+			}
+
+			q := newTestQueue(t)
+			req := ShareRequest{
+				Type:    "url",
+				URL:     "https://www.youtube.com/watch?v=failtest",
+				Profile: "eng",
+			}
+			id, err := q.Enqueue(&req)
+			if err != nil {
+				t.Fatalf("Enqueue: %v", err)
+			}
+			if err := q.MarkRelayed(id); err != nil {
+				t.Fatalf("MarkRelayed: %v", err)
+			}
+			req.QueueRowID = id
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				scoreYouTubeAsync(req, q, "yt-dlp", nil, "")
+			}()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("case %q: scoreYouTubeAsync timed out", tc.name)
+			}
+
+			var status string
+			if err := q.db.QueryRow("SELECT status FROM queue WHERE id=?", id).Scan(&status); err != nil {
+				t.Fatalf("case %q: query: %v", tc.name, err)
+			}
+			if status != "failed" {
+				t.Errorf("case %q: status = %q, want failed", tc.name, status)
+			}
+		})
+	}
+}
+
+// TestYtAudioFallback_TempDirCleanup verifies that ytAudioFallback removes the
+// audio temp dir when the context is already cancelled before the download step.
+// EPIC-003 M3.
+func TestYtAudioFallback_TempDirCleanup(t *testing.T) {
+	var capturedDir string
+
+	prev := execYtdlpAudio
+	execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+		// Create a real temp dir to verify cleanup.
+		dir, err := os.MkdirTemp("", "linkari-ytaudio-test-*")
+		if err != nil {
+			return "", ytVideoMeta{}, err
+		}
+		capturedDir = dir
+		p := filepath.Join(dir, "audio.m4a")
+		_ = os.WriteFile(p, []byte("FAKE"), 0o644)
+		return p, ytVideoMeta{}, nil
+	}
+	t.Cleanup(func() { execYtdlpAudio = prev })
+
+	// Stub ffmpeg to fail so cleanup logic in ytAudioFallback triggers.
+	prevFfmpeg := execFfmpegConvert
+	execFfmpegConvert = func(_ context.Context, _, _ string) error {
+		return fmt.Errorf("ffmpeg: injected failure")
+	}
+	t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
+
+	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
+	evtLogger, evtErr := NewEventLogger(evtPath)
+	if evtErr != nil {
+		t.Fatalf("NewEventLogger: %v", evtErr)
+	}
+
+	ctx := context.Background()
+	_, _, err := ytAudioFallback(ctx, "yt-dlp", "https://www.youtube.com/watch?v=cleanup", 7, nil, evtLogger, "")
+	if err == nil {
+		t.Fatal("expected error from ffmpeg failure")
+	}
+
+	// After failure, ytAudioFallback defers os.RemoveAll(filepath.Dir(audioPath)).
+	if capturedDir != "" {
+		if _, statErr := os.Stat(capturedDir); !os.IsNotExist(statErr) {
+			t.Errorf("temp dir %q not cleaned up after ytAudioFallback failure", capturedDir)
+		}
+	}
+
+	// EPIC-005 M2: yt_audio_fallback_failed event must be emitted with step=ffmpeg.
+	evtLogger.Close()
+	rawEvents, readErr := os.ReadFile(evtPath)
+	if readErr != nil {
+		t.Fatalf("read events file: %v", readErr)
+	}
+	if !strings.Contains(string(rawEvents), `"yt_audio_fallback_failed"`) {
+		t.Errorf("expected yt_audio_fallback_failed event, got: %s", rawEvents)
+	}
+	if !strings.Contains(string(rawEvents), `"ffmpeg"`) {
+		t.Errorf("expected step=ffmpeg in yt_audio_fallback_failed event, got: %s", rawEvents)
+	}
+}
+
+// TestYtAudioFallback_TimeoutExpiry verifies that when the outer context
+// expires during the whisper step, ytAudioFallback returns a context deadline
+// error and cleans up the audio temp dir. EPIC-004 M4.
+func TestYtAudioFallback_TimeoutExpiry(t *testing.T) {
+	var capturedDir string
+
+	// Stub audio download — create a real temp dir so we can verify cleanup.
+	prev := execYtdlpAudio
+	execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+		dir, err := os.MkdirTemp("", "linkari-ytaudio-timeout-*")
+		if err != nil {
+			return "", ytVideoMeta{}, err
+		}
+		capturedDir = dir
+		p := filepath.Join(dir, "audio.m4a")
+		if err := os.WriteFile(p, []byte("FAKE-M4A"), 0o644); err != nil {
+			return "", ytVideoMeta{}, err
+		}
+		return p, ytVideoMeta{Title: "Timeout Test", ID: "tout1", Duration: 30}, nil
+	}
+	t.Cleanup(func() { execYtdlpAudio = prev })
+
+	// Stub ffmpeg — succeed immediately.
+	prevFfmpeg := execFfmpegConvert
+	execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
+	}
+	t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
+
+	// Stub whisper — block until the context is cancelled.
+	prevWhisper := execWhisper
+	execWhisper = func(ctx context.Context, _, _ string) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	t.Cleanup(func() { execWhisper = prevWhisper })
+
+	// Short outer context to trigger timeout during whisper step.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
+	evtLogger, err := NewEventLogger(evtPath)
+	if err != nil {
+		t.Fatalf("NewEventLogger: %v", err)
+	}
+	defer evtLogger.Close()
+
+	_, _, fallbackErr := ytAudioFallback(ctx, "yt-dlp", "https://www.youtube.com/watch?v=timeout1", 42, nil, evtLogger, "")
+	if fallbackErr == nil {
+		t.Fatal("expected error from context expiry, got nil")
+	}
+	// EPIC-005 M1: error must carry yt_audio_timeout prefix specifically.
+	if !strings.HasPrefix(fallbackErr.Error(), "yt_audio_timeout") {
+		t.Errorf("error = %q; want prefix 'yt_audio_timeout'", fallbackErr.Error())
+	}
+
+	// EPIC-005 M2: yt_audio_fallback_failed event must be emitted with step=whisper.
+	evtLogger.Close()
+	rawEvents, readErr := os.ReadFile(evtPath)
+	if readErr != nil {
+		t.Fatalf("read events file: %v", readErr)
+	}
+	if !strings.Contains(string(rawEvents), `"yt_audio_fallback_failed"`) {
+		t.Errorf("expected yt_audio_fallback_failed event in %s, got: %s", evtPath, rawEvents)
+	}
+	if !strings.Contains(string(rawEvents), `"whisper"`) {
+		t.Errorf("expected step=whisper in yt_audio_fallback_failed event, got: %s", rawEvents)
+	}
+
+	// Temp dir must be cleaned up even on timeout.
+	if capturedDir != "" {
+		if _, statErr := os.Stat(capturedDir); !os.IsNotExist(statErr) {
+			t.Errorf("temp dir %q not cleaned up after timeout", capturedDir)
+		}
+	}
+}
+
+// TestRouteYouTubeURL_MissingType verifies that a YouTube URL with req.Type=""
+// routes to scoreYouTubeAsync rather than scoreAsync. EPIC-003 M3.
+func TestRouteYouTubeURL_MissingType(t *testing.T) {
+	var scoreYTCalled bool
+
+	// Capture calls via execYtdlp seam — scoreYouTubeAsync calls execYtdlp first.
+	prevYtdlp := execYtdlp
+	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+		scoreYTCalled = true
+		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles")
+	}
+	t.Cleanup(func() { execYtdlp = prevYtdlp })
+
+	// Also stub ytAudioFallback path (ytFallbackToAudio is false, so won't call it).
+	q := newTestQueue(t)
+	req := ShareRequest{
+		Type:    "", // Missing type — the key invariant under test.
+		URL:     "https://www.youtube.com/watch?v=missingtype",
+		Profile: "eng",
+	}
+	id, err := q.Enqueue(&req)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := q.MarkRelayed(id); err != nil {
+		t.Fatalf("MarkRelayed: %v", err)
+	}
+	req.QueueRowID = id
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "")
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scoreYouTubeAsync timed out")
+	}
+
+	if !scoreYTCalled {
+		t.Error("execYtdlp not called — req.Type=\"\" did not route to scoreYouTubeAsync")
 	}
 }

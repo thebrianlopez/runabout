@@ -202,6 +202,20 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
+			// --- Check: ffmpeg binary (EPIC-003 M2) ---
+			{
+				ffPath := "ffmpeg"
+				if serverCfg != nil && serverCfg.FfmpegPath != "" {
+					ffPath = serverCfg.FfmpegPath
+				}
+				if resolved, err := exec.LookPath(ffPath); err != nil {
+					addCheck(warnCheck("ffmpeg",
+						fmt.Sprintf("ffmpeg not found at %q — audio conversion for YouTube fallback will fail (install ffmpeg or set ffmpeg_path in server.yaml)", ffPath)))
+				} else {
+					addCheck(okCheck("ffmpeg", resolved))
+				}
+			}
+
 			// --- Check 10: tsnet state directory ---
 			{
 				var tsnetStateDir string

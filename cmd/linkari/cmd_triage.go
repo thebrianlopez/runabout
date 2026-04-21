@@ -433,6 +433,9 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.YtdlpPath != "" {
 		ytdlpBinaryPath = cfg.YtdlpPath
 	}
+	if cfg != nil && cfg.FfmpegPath != "" {
+		ffmpegBinaryPath = cfg.FfmpegPath
+	}
 	// EPIC-090 M5: per-field YouTube tuning.
 	if cfg != nil && cfg.YouTube.SubtitleLangs != "" {
 		ytSubtitleLangs = cfg.YouTube.SubtitleLangs
@@ -440,8 +443,12 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.YouTube.TimeoutSeconds > 0 {
 		ytTimeoutSeconds = cfg.YouTube.TimeoutSeconds
 	}
-	if cfg != nil && cfg.YouTube.FallbackToAudio {
-		ytFallbackToAudio = true // EPIC-001 M3: enable audio fallback when no subtitles
+	if cfg != nil {
+		if cfg.YouTube.FallbackToAudio {
+			ytFallbackToAudio = true // EPIC-001 M3: enable audio fallback when no subtitles
+		} else {
+			ytFallbackToAudio = false // EPIC-004 M1: explicit false disables fallback
+		}
 	}
 	slog.Info("claude config resolved",
 		"event_type", "claude_config_init",
