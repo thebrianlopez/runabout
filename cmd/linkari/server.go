@@ -470,6 +470,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/google", s.handleAuthGoogle)
 	mux.HandleFunc("POST /auth/invite", s.handleAuthInvite)
 	mux.HandleFunc("POST /admin/invite", s.handleAdminInvite)
+	mux.HandleFunc("POST /telemetry", s.handleTelemetry)
 }
 
 // registerFunnelRoutes adds the public-facing route allowlist for the Funnel
@@ -493,6 +494,7 @@ func (s *Server) registerFunnelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/google", s.handleAuthGoogle)
 	mux.HandleFunc("POST /auth/invite", s.handleAuthInvite)
 	mux.HandleFunc("GET /health", s.handleHealthMinimal)
+	mux.HandleFunc("POST /telemetry", s.handleTelemetry)
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
@@ -1577,6 +1579,38 @@ func (s *Server) handleProfileStats(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+// handleTelemetry handles POST /telemetry (EPIC-002 M3).
+// Accepts {event, tags, value} and writes a structured slog line.
+func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
+	if !s.authenticateRequest(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadSize)
+	var req struct {
+		Event string            `json:"event"`
+		Tags  map[string]string `json:"tags"`
+		Value float64           `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+	if req.Event == "" {
+		writeError(w, http.StatusBadRequest, "event is required")
+		return
+	}
+
+	args := []any{"event_type", "client_telemetry", "event", req.Event, "value", req.Value}
+	for k, v := range req.Tags {
+		args = append(args, k, v)
+	}
+	slog.InfoContext(r.Context(), "telemetry", args...)
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // enqueueDigestPush is a thin server-side wrapper around

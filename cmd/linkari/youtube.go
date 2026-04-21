@@ -336,9 +336,19 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 	if q == nil {
 		return
 	}
+	if ytVerdict == "eval_failed" || ytVerdict == "template_missing" {
+		_ = q.UpdateFailedVerdict(rowID, ytVerdict)
+		_ = q.MarkFailedWithReason(rowID, ytVerdict)
+		slog.Warn("score_youtube: eval failed, row marked failed",
+			"event_type", "score_youtube_eval_failed",
+			"row_id", rowID,
+			"verdict", ytVerdict,
+		)
+		return
+	}
 	slug := fmt.Sprintf("yt-%d", rowID)
-	if err := q.UpdateScore(rowID, ytScore, ytTags, ytVerdict, slug, "", ""); err != nil {
-		slog.Warn("score_youtube: UpdateScore failed", "row_id", rowID, "error", err)
+	if _, err := q.ScoreByID(rowID, ytScore, ytTags, ytVerdict, slug, "", ""); err != nil {
+		slog.Warn("score_youtube: ScoreByID failed", "row_id", rowID, "error", err)
 		return
 	}
 
