@@ -1,6 +1,6 @@
 # Runabout
 
-Go devtools monorepo — nine CLI tools for shell optimization and personal workflows.
+Go devtools monorepo — ten CLI tools for shell optimization and personal workflows.
 
 ## Module
 
@@ -23,6 +23,7 @@ Satellite modules can't import `internal/` from the root module (Go visibility r
 | Module | Path | Heavy deps |
 |--------|------|-----------|
 | Root | `go.mod` | cobra only |
+| ts-go | `cmd/ts-go/go.mod` | go-tree-sitter, tree-sitter-go (CGo) |
 | wasend | `cmd/wasend/go.mod` | whatsmeow, sqlite3, protobuf |
 | protonexport | `cmd/protonexport/go.mod` | go-proton-api (vendored), gluon, crypto |
 
@@ -56,6 +57,13 @@ cmd/mdq/              # mdq CLI entry point (4 subcommands: query, table, extrac
 cmd/perfgate/         # perfgate CLI entry point (3 subcommands: run, compare, gate)
 cmd/shellprof/        # shellprof CLI entry point (3 subcommands: profile, trace, list)
 cmd/hookval/          # hookval CLI entry point (3 subcommands: validate, gen-docs, lint-schema)
+cmd/ts-go/            # ts-go CLI (separate module — tree-sitter CGo deps isolated)
+  parser.go           # shared tree-sitter parser init + defer Close() lifecycle
+  queries.go          # embedded tree-sitter query patterns
+  funcs.go            # funcs subcommand — function/method signature extraction
+  types.go            # types subcommand — type declaration extraction
+  extract.go          # extract subcommand — function body extraction
+  telemetry.go        # telemetry (copied from internal/telemetry)
 cmd/wasend/           # wasend CLI (separate module — whatsmeow/sqlite deps isolated)
   client.go           # WhatsApp client construction
   message.go          # message resolution and recipient parsing
@@ -69,7 +77,7 @@ internal/shellprof/   # fish instrumentation, profiling, call graph
 internal/hookval/     # schema parsing, signal validation, doc generation
 internal/telemetry/   # CLI telemetry via emit_jsonl (core tools)
 internal/version/     # shared version formatting (core tools)
-go.work               # Go workspace: root + cmd/protonexport + cmd/wasend
+go.work               # Go workspace: root + cmd/ts-go + cmd/protonexport + cmd/wasend
 ```
 
 ## Patterns
@@ -106,6 +114,27 @@ When completing work in this repo, emit Type 3 observation dispatches to `~/code
 **File naming:** `obs_runabout_<short_id>.json`
 
 **Schema:** See Type 3 in `~/.claude/rules/dispatch-system.md`.
+
+## ts-go: Tree-sitter Go Context Extraction
+
+For Go files >200 lines, use `ts-go funcs` before a full Read to orient on function signatures, then `ts-go extract` to read only the specific function body you need.
+
+```bash
+# Orientation: list all functions/methods with signatures and line ranges
+ts-go funcs <file>                      # JSON output (default)
+ts-go funcs --format compact <file>     # Compact tabular output (lower token cost)
+
+# Targeted read: extract a single function body + doc comments
+ts-go extract <file> <function_name>    # JSON output with body, line range, doc comment
+
+# Type overview: list type declarations with field counts
+ts-go types <file>                      # JSON output
+ts-go types --format compact <file>     # Compact tabular output
+```
+
+**Why tree-sitter over gopls:** Tree-sitter parses files in <5ms without a Go workspace or build context. gopls requires a running LSP server, module graph resolution, and type checking — unnecessary overhead for structural extraction. Phase 2 will integrate gopls for cross-file references.
+
+**Resource lifecycle:** `parseFile()` returns `(tree, src, parser, error)`. Callers must `defer tree.Close()` and `defer parser.Close()` — the tree-sitter C runtime allocates memory that Go's GC doesn't track.
 
 ## Tool Selection
 
