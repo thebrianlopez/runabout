@@ -161,20 +161,17 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 		)
 		fallbackSc, fbErr := HaikuJSONEvaluator{}.Evaluate(ctx, content, promptTemplate)
 		if fbErr != nil {
-			// EPIC-008 M4: both exec paths failed — return metadata-only scorecard
-			// instead of propagating error. The row gets a score=0 with an observable
-			// verdict rather than failing the entire scoring pipeline.
-			slog.Error("haiku-vision: all evaluators failed, returning metadata-only scorecard",
+			// EPIC-001 M2: both exec paths failed — propagate error so the caller
+			// (scoreAsync) can mark the row failed via MarkFailedWithReason. The
+			// former "metadata-only scorecard" return swallowed the failure and left
+			// the row scored=0 without signalling the pipeline error.
+			slog.Error("haiku-vision: all evaluators failed",
 				"event_type", "score_async_all_evaluators_failed",
 				"image_path", e.ImagePath,
 				"vision_error", err.Error(),
 				"json_error", fbErr.Error(),
 			)
-			return &Scorecard{
-				Score:   0,
-				Verdict: "eval_failed",
-				Backend: "metadata-only",
-			}, nil
+			return nil, fmt.Errorf("all evaluators failed: vision=%w; json=%v", err, fbErr)
 		}
 		fallbackSc.Backend = "claude-haiku-vision-fallback"
 		return fallbackSc, nil
@@ -189,18 +186,14 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 		)
 		fallbackSc, fbErr := HaikuJSONEvaluator{}.Evaluate(ctx, content, promptTemplate)
 		if fbErr != nil {
-			// EPIC-008 M4: both paths failed after parse error.
-			slog.Error("haiku-vision: all evaluators failed after parse error, returning metadata-only scorecard",
+			// EPIC-001 M2: both paths failed after parse error — propagate error.
+			slog.Error("haiku-vision: all evaluators failed after parse error",
 				"event_type", "score_async_all_evaluators_failed",
 				"image_path", e.ImagePath,
 				"parse_error", parseErr.Error(),
 				"json_error", fbErr.Error(),
 			)
-			return &Scorecard{
-				Score:   0,
-				Verdict: "eval_failed",
-				Backend: "metadata-only",
-			}, nil
+			return nil, fmt.Errorf("all evaluators failed: parse=%w; json=%v", parseErr, fbErr)
 		}
 		fallbackSc.Backend = "claude-haiku-vision-fallback"
 		return fallbackSc, nil

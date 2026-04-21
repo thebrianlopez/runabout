@@ -440,6 +440,9 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.YouTube.TimeoutSeconds > 0 {
 		ytTimeoutSeconds = cfg.YouTube.TimeoutSeconds
 	}
+	if cfg != nil && cfg.YouTube.FallbackToAudio {
+		ytFallbackToAudio = true // EPIC-001 M3: enable audio fallback when no subtitles
+	}
 	slog.Info("claude config resolved",
 		"event_type", "claude_config_init",
 		"claude_path", claudeBinaryPath,

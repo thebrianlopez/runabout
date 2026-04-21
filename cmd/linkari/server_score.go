@@ -36,10 +36,22 @@ var unsupportedPipelineRE = regexp.MustCompile(`(?i)(?:youtube\.com|youtu\.be|sp
 // EPIC-009 M2.
 var youTubeRE = regexp.MustCompile(`(?i)(?:youtube\.com/(?:watch|shorts|live|embed)|youtu\.be/)`)
 
+// youTubePostRE matches YouTube community post URLs. These are text/image
+// content (not video) and should bypass the unsupported-pipeline pre-filter
+// and be routed to Jina scoring. EPIC-001 M4.
+var youTubePostRE = regexp.MustCompile(`(?i)youtube\.com/post/`)
+
 // isYouTubeURL reports whether the given URL is a YouTube video that can be
 // routed to the yt-dlp transcription pipeline. EPIC-009 M2.
 func isYouTubeURL(u string) bool {
 	return youTubeRE.MatchString(u)
+}
+
+// isYouTubePostURL reports whether the URL is a YouTube community post.
+// These bypass the unsupported-pipeline pre-filter and are routed to Jina
+// scoring (text/image content, not video). EPIC-001 M4.
+func isYouTubePostURL(u string) bool {
+	return youTubePostRE.MatchString(u)
 }
 
 // setUnsupportedPipelineDomains rebuilds unsupportedPipelineRE from a custom
@@ -1901,7 +1913,14 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 				"row_id", rowID,
 				"error", evalErr,
 			)
-			audioVerdict = "eval_failed"
+			// EPIC-001 M2: early return so we don't proceed to synopsis generation
+			// or UpdateScore with a zero-score/eval_failed verdict. The row is
+			// explicitly failed so the RelayedWatchdog doesn't re-sweep it and
+			// EnqueueDigestIfDue skips push for eval_failed verdicts.
+			if q != nil {
+				q.MarkFailedWithReason(rowID, "eval_failed")
+			}
+			return
 		} else {
 			audioScore = sc.Score
 			audioVerdict = sc.Verdict

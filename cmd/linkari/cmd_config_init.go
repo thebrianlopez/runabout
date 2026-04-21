@@ -63,7 +63,7 @@ const serverYAMLTemplate = `server:
   # Send FCM push notifications when a share is prefiltered (rejected before
   # scoring). When true, the user gets a push explaining why the share was
   # skipped (e.g. "Video platform — not yet supported"). Default false.
-  notify_on_prefilter_skip: false
+  notify_on_prefilter_skip: true  # EPIC-001 M4: notify user when shares are pre-filtered
 
   # --- EPIC-051: Push gating ---
   # Per-profile throttle for digest pushes. The unified EnqueueDigestIfDue
