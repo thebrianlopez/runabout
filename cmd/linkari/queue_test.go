@@ -639,6 +639,27 @@ func TestUpdateOutcome(t *testing.T) {
 	}
 }
 
+func TestUpdateOutcomeIdempotent(t *testing.T) {
+	q := newTestQueue(t)
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://outcome-idem.test"})
+	q.UpdateScore(id, 80, "go", "good", "slug-idem", "", "")
+
+	if err := q.UpdateOutcome(id, "acted"); err != nil {
+		t.Fatalf("first UpdateOutcome: %v", err)
+	}
+	item1, _ := q.GetByID(id)
+
+	// Second POST with same outcome must succeed and leave the row unchanged.
+	if err := q.UpdateOutcome(id, "acted"); err != nil {
+		t.Fatalf("duplicate UpdateOutcome: %v", err)
+	}
+	item2, _ := q.GetByID(id)
+
+	if item2.OutcomeAt != item1.OutcomeAt {
+		t.Errorf("outcome_at changed on duplicate POST: %q -> %q", item1.OutcomeAt, item2.OutcomeAt)
+	}
+}
+
 func TestUpdateOutcomeValidation(t *testing.T) {
 	q := newTestQueue(t)
 	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://outcome-val.test"})

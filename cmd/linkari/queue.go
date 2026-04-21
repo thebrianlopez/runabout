@@ -467,6 +467,14 @@ func (q *Queue) SetProgress(id int64, progress string) error {
 	return err
 }
 
+// UpdateFailedVerdict writes the verdict column before a failure mark so that
+// failed rows carry a human-readable outcome for observability queries.
+// Call this immediately before MarkFailedWithReason when a verdict is known.
+func (q *Queue) UpdateFailedVerdict(id int64, verdict string) error {
+	_, err := q.db.Exec("UPDATE queue SET verdict=? WHERE id=?", verdict, id)
+	return err
+}
+
 // MarkFailedWithReason sets status=failed and records an error_reason.
 // EPIC-054 M3: used by the relayed-state watchdog to classify timeouts.
 func (q *Queue) MarkFailedWithReason(id int64, reason string) error {
@@ -703,12 +711,16 @@ func normalizeFeedback(feedback string) (string, error) {
 }
 
 // UpdateOutcome sets the outcome and outcome_at on a queue item.
+// Idempotent: if the row already carries the same outcome value, no write is performed.
 func (q *Queue) UpdateOutcome(id int64, outcome string) error {
 	if !validOutcomes[outcome] {
 		return fmt.Errorf("invalid outcome %q: must be acted, ignored, or deferred", outcome)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := q.db.Exec("UPDATE queue SET outcome=?, outcome_at=? WHERE id=?", outcome, now, id)
+	_, err := q.db.Exec(
+		"UPDATE queue SET outcome=?, outcome_at=? WHERE id=? AND (outcome IS NULL OR outcome != ?)",
+		outcome, now, id, outcome,
+	)
 	return err
 }
 
