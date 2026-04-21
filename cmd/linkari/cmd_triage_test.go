@@ -322,3 +322,28 @@ func TestTriageScorer_FakeHaiku(t *testing.T) {
 	}
 }
 
+// TestInitClaudeConfig_FallbackToAudio verifies that initClaudeConfig sets
+// ytFallbackToAudio from the config, covering both true and false branches.
+// EPIC-004 M1.
+func TestInitClaudeConfig_FallbackToAudio(t *testing.T) {
+	prev := ytFallbackToAudio
+	t.Cleanup(func() { ytFallbackToAudio = prev })
+
+	// false branch: config explicitly disables fallback.
+	ytFallbackToAudio = true
+	cfg := &ServerConfig{}
+	cfg.YouTube.FallbackToAudio = false
+	initClaudeConfig(cfg)
+	if ytFallbackToAudio {
+		t.Error("ytFallbackToAudio should be false when fallback_to_audio: false in config")
+	}
+
+	// true branch: config enables fallback.
+	ytFallbackToAudio = false
+	cfg.YouTube.FallbackToAudio = true
+	initClaudeConfig(cfg)
+	if !ytFallbackToAudio {
+		t.Error("ytFallbackToAudio should be true when fallback_to_audio: true in config")
+	}
+}
+

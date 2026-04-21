@@ -200,6 +200,7 @@ func TestDoctor_AllChecksPresent(t *testing.T) {
 		"jira_api_username", "jira_api_password", "jira_domain", "pagerduty_token",
 		"xdg_config_dir", "xdg_cache_dir", "xdg_state_dir",
 		"tsnet_state", "firebase_sa_cache", "log_file",
+		"ffmpeg", "ytdlp", "whisper_cli",
 	}
 	for _, name := range required {
 		if !checkNames[name] {
