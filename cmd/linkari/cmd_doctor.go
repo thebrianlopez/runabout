@@ -246,6 +246,18 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
+			// --- Check 11a: notify_on_prefilter_skip consistency (EPIC-001 M4) ---
+			// When FCM is configured but notify_on_prefilter_skip is false, users
+			// won't receive push notifications for pre-filtered shares (login walls,
+			// unsupported platforms). This is almost always a misconfiguration.
+			if serverCfg != nil && serverCfg.FirebaseSA != "" && !serverCfg.NotifyOnPrefilterSkip {
+				addCheck(doctorCheck{
+					Name:    "notify_on_prefilter_skip",
+					Status:  statusWarn,
+					Message: "FCM is configured but notify_on_prefilter_skip=false — pre-filtered shares will be silently dropped without a push notification. Set notify_on_prefilter_skip: true in server.yaml to enable transparency.",
+				})
+			}
+
 			// --- Check 11: log_file writable (if configured) ---
 			if serverCfg != nil && serverCfg.LogFile != "" {
 				logDir := filepath.Dir(serverCfg.LogFile)

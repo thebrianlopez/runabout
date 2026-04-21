@@ -21,12 +21,14 @@ const maxQueueSize = 200
 // validStatuses enumerates every legal status value a client may filter on.
 // Used by /queue and /archive query-param validation.
 var validStatuses = map[string]bool{
-	"pending":  true,
-	"relayed":  true,
-	"scored":   true,
-	"archived": true,
-	"failed":   true,
-	"all":      true,
+	"pending":    true,
+	"relayed":    true,
+	"scored":     true,
+	"archived":   true,
+	"failed":     true,
+	"eval_failed": true, // EPIC-001 M2: evaluator double-failure terminal status
+	"prefiltered": true, // EPIC-001 M4: pre-filter transparency queue rows
+	"all":        true,
 }
 
 // QueueItem represents a persisted share request.
@@ -381,6 +383,32 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 		"id", id,
 		"type", req.Type,
 		"classify_source", req.ClassifySource,
+	)
+	return id, nil
+}
+
+// EnqueuePrefiltered inserts a minimal queue row for a share that was rejected
+// before scoring. The row status is 'prefiltered' with the given reason stored
+// as the verdict. This satisfies the share→queue row guarantee (EPIC-001 M1)
+// and gives operators an audit trail of skipped shares.
+// EPIC-001 M4.
+func (q *Queue) EnqueuePrefiltered(req *ShareRequest, reason string) (int64, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := q.db.Exec(
+		`INSERT INTO queue (url, text, type, action, profile, status, verdict, queued_at, title, mime_type, calling_package, classify_source)
+		 VALUES (?, ?, ?, ?, ?, 'prefiltered', ?, ?, ?, ?, ?, ?)`,
+		req.URL, req.Text, req.Type, req.Action, req.Profile, reason, now, req.Title,
+		req.MimeType, req.CallingPackage, req.ClassifySource,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("enqueue prefiltered: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	slog.Debug("queue enqueued (prefiltered)",
+		"event_type", "queue_enqueue_prefiltered",
+		"id", id,
+		"reason", reason,
+		"type", req.Type,
 	)
 	return id, nil
 }
@@ -1307,6 +1335,12 @@ type EnqueueDigestResult struct {
 func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score int, slug, verdict, url string, gapSummary ...string) (EnqueueDigestResult, error) {
 	cfg := q.PushConfig()
 
+	// EPIC-001 M2: eval_failed verdict must never trigger an FCM push — the row
+	// was not scored, so there is nothing meaningful to notify the user about.
+	if verdict == "eval_failed" {
+		return EnqueueDigestResult{Reason: "eval_failed_skip"}, nil
+	}
+
 	// Uniform min-score floor (M1 decision).
 	if cfg.NotifyMinScore > 0 && score < cfg.NotifyMinScore {
 		return EnqueueDigestResult{Reason: "below_min_score"}, nil
@@ -1693,6 +1727,12 @@ func classifySkipReason(score int, verdict string) string {
 	if score > 0 || verdict == "" {
 		return ""
 	}
+	// EPIC-001 M2: eval_failed is a distinct pipeline error, not a content
+	// quality signal. Check it first so it doesn't fall through to "skipped".
+	if verdict == "eval_failed" {
+		return "eval_failed"
+	}
+
 	v := strings.ToLower(verdict)
 	switch {
 	case strings.Contains(v, "paywall"):

@@ -69,8 +69,9 @@ func (s ServerConfig) IsZero() bool {
 
 // YouTubeConfig holds per-field tuning for yt-dlp extraction. EPIC-090 M5.
 type YouTubeConfig struct {
-	SubtitleLangs  string `yaml:"subtitle_langs,omitempty"`  // yt-dlp --sub-langs value (default: "en.*,en")
-	TimeoutSeconds int    `yaml:"timeout_seconds,omitempty"` // extraction timeout in seconds (default: 30)
+	SubtitleLangs   string `yaml:"subtitle_langs,omitempty"`    // yt-dlp --sub-langs value (default: "en.*,en")
+	TimeoutSeconds  int    `yaml:"timeout_seconds,omitempty"`   // extraction timeout in seconds (default: 30)
+	FallbackToAudio bool   `yaml:"fallback_to_audio,omitempty"` // EPIC-001 M3: download audio + whisper when no subtitles (default: false)
 }
 
 // RelayedWatchdogConfig is the resolved runtime view of the watchdog knobs,

@@ -27,6 +27,17 @@ var ytSubtitleLangs = "en.*,en"
 // Overridden by ServerConfig.YouTube.TimeoutSeconds via initClaudeConfig().
 var ytTimeoutSeconds = 30
 
+// ytFallbackToAudio enables the audio-download fallback when yt-dlp finds no
+// subtitles. When true, scoreYouTubeAsync and transcribeYouTubeAsync attempt
+// yt-dlp audio download → ffmpeg → whisper before marking the row failed.
+// Default false for safe rollout. EPIC-001 M3.
+var ytFallbackToAudio = false
+
+// execYtdlpAudio is the test seam for yt-dlp audio download invocation.
+// Replace in tests to inject mock output without spawning a real subprocess.
+// EPIC-001 M3.
+var execYtdlpAudio = runYtdlpAudioDownload
+
 // ytVideoMeta is the subset of yt-dlp JSON output we care about.
 // EPIC-090 M4: added Duration and SubtitleType.
 type ytVideoMeta struct {
@@ -198,6 +209,173 @@ func runYtdlpExtract(ctx context.Context, ytdlpPath, videoURL string) (transcrip
 	return transcript, meta, nil
 }
 
+// runYtdlpAudioDownload downloads the best-available audio track for a YouTube
+// URL using yt-dlp and returns a path to the downloaded file along with basic
+// video metadata. The caller is responsible for removing the returned file.
+// Timeout is 3 minutes (audio downloads are slower than subtitle extraction).
+//
+// Flags used:
+//   - --format bestaudio[ext=m4a]/bestaudio : prefer m4a; fall back to any audio
+//   - --no-playlist                          : single video only
+//   - -o <template>                          : output to temp dir
+//   - -j                                     : dump JSON metadata to stdout
+//
+// EPIC-001 M3.
+func runYtdlpAudioDownload(ctx context.Context, ytdlpPath, videoURL string) (audioPath string, meta ytVideoMeta, err error) {
+	if ytdlpPath == "" {
+		ytdlpPath = "yt-dlp"
+	}
+	if _, lookErr := exec.LookPath(ytdlpPath); lookErr != nil {
+		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp not found at %q: %w", ytdlpPath, lookErr)
+	}
+
+	tmpDir, tmpErr := os.MkdirTemp("", "linkari-ytaudio-*")
+	if tmpErr != nil {
+		return "", ytVideoMeta{}, fmt.Errorf("create temp dir: %w", tmpErr)
+	}
+	// NOTE: caller is responsible for removing the audio file, not the entire
+	// dir. We remove tmpDir here only if we are returning an error (no file to
+	// preserve). On success, tmpDir is left on disk; caller cleans it up via
+	// defer os.RemoveAll(filepath.Dir(audioPath)).
+	var success bool
+	defer func() {
+		if !success {
+			os.RemoveAll(tmpDir)
+		}
+	}()
+
+	// 3-minute timeout: audio downloads are slower than subtitle extraction.
+	dlCtx, dlCancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer dlCancel()
+
+	outTemplate := filepath.Join(tmpDir, "%(id)s.%(ext)s")
+	cmd := exec.CommandContext(dlCtx, ytdlpPath,
+		"--format", "bestaudio[ext=m4a]/bestaudio",
+		"--no-playlist",
+		"-j",
+		"-o", outTemplate,
+		videoURL,
+	)
+
+	jsonOut, runErr := cmd.Output()
+
+	// Parse metadata from JSON stdout (best-effort).
+	if len(jsonOut) > 0 {
+		var raw ytRawMeta
+		if jerr := json.Unmarshal(jsonOut, &raw); jerr == nil {
+			meta.Title = raw.Title
+			meta.ID = raw.ID
+			meta.Duration = raw.Duration
+		}
+	}
+
+	// Find the downloaded audio file.
+	entries, dirErr := os.ReadDir(tmpDir)
+	if dirErr != nil || len(entries) == 0 {
+		if runErr != nil {
+			return "", meta, fmt.Errorf("yt-dlp audio download failed: %w", runErr)
+		}
+		return "", meta, fmt.Errorf("yt-dlp audio download: no file written to %s", tmpDir)
+	}
+
+	// Take the first (and only) file yt-dlp wrote.
+	for _, e := range entries {
+		if !e.IsDir() {
+			audioPath = filepath.Join(tmpDir, e.Name())
+			break
+		}
+	}
+	if audioPath == "" {
+		return "", meta, fmt.Errorf("yt-dlp audio download: no audio file in %s", tmpDir)
+	}
+
+	success = true
+	return audioPath, meta, nil
+}
+
+// ytAudioFallback downloads the audio track for a YouTube video URL and
+// transcribes it via ffmpeg + whisper. Used when yt-dlp subtitle extraction
+// finds no subtitles (yt_no_subtitles). Returns the transcript string and
+// video metadata on success, or an error if any step fails.
+// EPIC-001 M3.
+func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, q *Queue, events *EventLogger) (string, ytVideoMeta, error) {
+	slog.Info("yt_audio_fallback: start",
+		"event_type", "yt_audio_fallback_start",
+		"row_id", rowID,
+		"url", videoURL,
+	)
+
+	if q != nil {
+		q.SetProgress(rowID, "downloading_audio")
+	}
+
+	// Step 1: download audio via yt-dlp.
+	audioPath, meta, dlErr := execYtdlpAudio(ctx, ytPath, videoURL)
+	if dlErr != nil {
+		slog.Warn("yt_audio_fallback: download failed",
+			"event_type", "yt_audio_fallback_download_failed",
+			"row_id", rowID,
+			"error", dlErr,
+		)
+		return "", ytVideoMeta{}, fmt.Errorf("audio download: %w", dlErr)
+	}
+	// Remove the downloaded audio dir on exit (both success and failure).
+	defer os.RemoveAll(filepath.Dir(audioPath))
+
+	// Step 2: ffmpeg convert to wav (16kHz mono for whisper).
+	if q != nil {
+		q.SetProgress(rowID, "converting_audio")
+	}
+	wavPath := audioPath + ".wav"
+	defer os.Remove(wavPath)
+
+	ffmpegCtx, ffmpegCancel := context.WithTimeout(ctx, 60*time.Second)
+	ffErr := execFfmpegConvert(ffmpegCtx, audioPath, wavPath)
+	ffmpegCancel()
+	if ffErr != nil {
+		slog.Warn("yt_audio_fallback: ffmpeg failed",
+			"event_type", "yt_audio_fallback_ffmpeg_failed",
+			"row_id", rowID,
+			"error", ffErr,
+		)
+		return "", meta, fmt.Errorf("ffmpeg: %w", ffErr)
+	}
+
+	// Step 3: whisper transcribe.
+	if q != nil {
+		q.SetProgress(rowID, "transcribing_audio")
+	}
+	whisperCtx, whisperCancel := context.WithTimeout(ctx, 300*time.Second)
+	transcript, whisperErr := execWhisper(whisperCtx, wavPath, "")
+	whisperCancel()
+	if whisperErr != nil {
+		slog.Warn("yt_audio_fallback: whisper failed",
+			"event_type", "yt_audio_fallback_whisper_failed",
+			"row_id", rowID,
+			"error", whisperErr,
+		)
+		return "", meta, fmt.Errorf("whisper: %w", whisperErr)
+	}
+	if strings.TrimSpace(transcript) == "" {
+		return "", meta, fmt.Errorf("whisper: empty transcript")
+	}
+
+	slog.Info("yt_audio_fallback: transcribed",
+		"event_type", "yt_audio_fallback_transcribed",
+		"row_id", rowID,
+		"transcript_len", len(transcript),
+	)
+	if events != nil {
+		_ = events.Emit("yt_audio_fallback_transcribed", map[string]interface{}{
+			"row_id":         rowID,
+			"url":            videoURL,
+			"transcript_len": len(transcript),
+		})
+	}
+
+	return transcript, meta, nil
+}
+
 // scoreYouTubeAsync runs the full YouTube transcription + scoring pipeline in a
 // goroutine. It mirrors processVoiceNoteAsync but uses yt-dlp for extraction
 // instead of ffmpeg/whisper. EPIC-009 M4. EPIC-090 M3/M4/M5.
@@ -256,14 +434,31 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 				"error":   errStr,
 			})
 		}
+		// EPIC-001 M3: audio fallback — when subtitles are unavailable and the
+		// config gate is enabled, attempt yt-dlp audio download → ffmpeg → whisper
+		// before giving up. Only activated for yt_no_subtitles (not binary missing
+		// or extraction timeouts which imply a network or binary problem).
+		if verdict == "yt_no_subtitles" && ytFallbackToAudio {
+			transcript, meta, err = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events)
+			if err == nil {
+				// Fallback succeeded — continue with transcript below.
+				goto subtitleReady
+			}
+			slog.Warn("score_youtube: audio fallback also failed",
+				"event_type", "yt_audio_fallback_failed",
+				"row_id", rowID,
+				"url", videoURL,
+				"error", err,
+			)
+		}
 		if q != nil {
 			q.MarkFailedWithReason(rowID, verdict)
-			// EPIC-090 M3: push failure notification so the user knows why
-			// their YouTube share wasn't scored.
+			// Defer push to here so fallback path doesn't trigger a premature notification.
 			enqueuePrefilterPush(q, &req, verdict)
 		}
 		return
 	}
+subtitleReady:
 
 	slog.Info("score_youtube: extracted",
 		"event_type", "yt_transcript_extracted",
@@ -426,12 +621,26 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 				"error":   errStr,
 			})
 		}
+		// EPIC-001 M3: same audio fallback gate as scoreYouTubeAsync.
+		if verdict == "yt_no_subtitles" && ytFallbackToAudio {
+			transcript, meta, err = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events)
+			if err == nil {
+				goto txSubtitleReady
+			}
+			slog.Warn("transcribe_youtube: audio fallback also failed",
+				"event_type", "yt_audio_fallback_failed",
+				"row_id", rowID,
+				"url", videoURL,
+				"error", err,
+			)
+		}
 		if q != nil {
 			q.MarkFailedWithReason(rowID, verdict)
 			enqueuePrefilterPush(q, &req, verdict)
 		}
 		return
 	}
+txSubtitleReady:
 
 	slog.Info("transcribe_youtube: extracted",
 		"event_type", "yt_transcript_extracted",

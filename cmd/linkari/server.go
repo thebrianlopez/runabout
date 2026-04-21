@@ -102,13 +102,15 @@ type ShareRequest struct {
 // override the profile after this response is sent; the final classify_source
 // is surfaced via /queue/{id} (EPIC-077 M6).
 type ShareResponse struct {
-	Status         string `json:"status"`
-	Message        string `json:"message"`
-	Timestamp      string `json:"timestamp"`
-	ID             int64  `json:"id,omitempty"`              // queue row id for client correlation (U1)
-	Slug           string `json:"slug,omitempty"`            // URL slug for /archive polling (U1)
-	ClassifySource string `json:"classify_source,omitempty"` // EPIC-076: pre-goroutine routing signal; absent on async ServerScore path
-	Duplicate      bool   `json:"duplicate,omitempty"`       // EPIC-078 M5: true when a recent identical file share was found
+	Status          string `json:"status"`
+	Message         string `json:"message"`
+	Timestamp       string `json:"timestamp"`
+	ID              int64  `json:"id,omitempty"`               // queue row id for client correlation (U1)
+	Slug            string `json:"slug,omitempty"`             // URL slug for /archive polling (U1)
+	ClassifySource  string `json:"classify_source,omitempty"`  // EPIC-076: pre-goroutine routing signal; absent on async ServerScore path
+	Duplicate       bool   `json:"duplicate,omitempty"`        // EPIC-078 M5: true when a recent identical file share was found
+	Prefiltered     bool   `json:"prefiltered,omitempty"`      // EPIC-001 M4: true when share was rejected before scoring
+	PrefilterReason string `json:"prefilter_reason,omitempty"` // EPIC-001 M4: machine-readable reason for pre-filter skip
 }
 
 // RingLog is a thread-safe ring buffer that captures log lines and
@@ -1036,13 +1038,18 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 				"phase": "pre_enqueue",
 			})
 		}
+		var pfID int64
 		if s.queue != nil {
+			pfID, _ = s.queue.EnqueuePrefiltered(&req, "login_wall_domain")
 			enqueuePrefilterPush(s.queue, &req, "login_wall_domain")
 		}
 		writeJSON(w, http.StatusOK, ShareResponse{
-			Status:    "ok",
-			Message:   "Login-walled site — not scored",
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Status:          "ok",
+			Message:         "Login-walled site — not scored",
+			Timestamp:       time.Now().UTC().Format(time.RFC3339),
+			ID:              pfID,
+			Prefiltered:     true,
+			PrefilterReason: "login_wall_domain",
 		})
 		return
 	}
@@ -1052,7 +1059,11 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	// orphaned queue rows are created and the client gets an honest response.
 	// EPIC-009 M2: YouTube URLs bypass this gate — they match youTubeRE and
 	// are routed to scoreYouTubeAsync by handleTemplate instead of being rejected.
-	if req.Type == "url" && !isYouTubeURL(req.URL) && unsupportedPipelineRE.MatchString(req.URL) {
+	// EPIC-001 M4: YouTube /post/ URLs are community posts (text/image, not video).
+	// They bypass the yt-dlp pipeline AND the unsupported-pipeline pre-filter so
+	// that Jina can score their text content. isYouTubePostURL is checked here so
+	// the pre-filter never gates on them.
+	if req.Type == "url" && !isYouTubeURL(req.URL) && !isYouTubePostURL(req.URL) && unsupportedPipelineRE.MatchString(req.URL) {
 		slog.InfoContext(ctx, "share: unsupported pipeline pre-filtered",
 			"event_type", "share_prefilter_unsupported_pipeline",
 			"url", req.URL,
@@ -1064,13 +1075,18 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 				"phase": "pre_enqueue",
 			})
 		}
+		var pfID int64
 		if s.queue != nil {
+			pfID, _ = s.queue.EnqueuePrefiltered(&req, "unsupported_pipeline")
 			enqueuePrefilterPush(s.queue, &req, "unsupported_pipeline")
 		}
 		writeJSON(w, http.StatusOK, ShareResponse{
-			Status:    "ok",
-			Message:   "Video platform — not yet supported",
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Status:          "ok",
+			Message:         "Video platform — not yet supported",
+			Timestamp:       time.Now().UTC().Format(time.RFC3339),
+			ID:              pfID,
+			Prefiltered:     true,
+			PrefilterReason: "unsupported_pipeline",
 		})
 		return
 	}
