@@ -27,6 +27,18 @@ func NewMetricsCollector(cfg *ServerConfig) *MetricsCollector {
 	return &MetricsCollector{enabled: true}
 }
 
+// RecordPrefilterDrop records a share that was pre-filtered before scoring.
+// Reason is the machine-readable skip tag (e.g. "login_wall_domain",
+// "unsupported_pipeline"). EPIC-001 M6: stub — no-op until metrics backend
+// is configured.
+func (m *MetricsCollector) RecordPrefilterDrop(reason string) {
+	if m == nil || !m.enabled {
+		return
+	}
+	// TODO(GAP-08): emit linkari.prefilter.drop counter with tag reason=reason
+	// Example: statsd.Incr("linkari.prefilter.drop", tags{reason}, 1)
+}
+
 // RecordScoringCost captures per-call LLM cost and image token data after
 // UpdateScoringCost persists the row. This is the intended source for the
 // future linkari.llm.cost_usd metric stream.
