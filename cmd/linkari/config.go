@@ -71,7 +71,7 @@ func (s ServerConfig) IsZero() bool {
 type YouTubeConfig struct {
 	SubtitleLangs   string `yaml:"subtitle_langs,omitempty"`    // yt-dlp --sub-langs value (default: "en.*,en")
 	TimeoutSeconds  int    `yaml:"timeout_seconds,omitempty"`   // extraction timeout in seconds (default: 30)
-	FallbackToAudio bool   `yaml:"fallback_to_audio,omitempty"` // EPIC-001 M3: download audio + whisper when no subtitles (default: false)
+	FallbackToAudio bool   `yaml:"fallback_to_audio,omitempty"` // EPIC-001 M3: download audio + whisper when no subtitles (default: true via package var)
 }
 
 // RelayedWatchdogConfig is the resolved runtime view of the watchdog knobs,
