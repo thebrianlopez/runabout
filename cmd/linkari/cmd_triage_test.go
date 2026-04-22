@@ -323,22 +323,23 @@ func TestTriageScorer_FakeHaiku(t *testing.T) {
 }
 
 // TestInitClaudeConfig_FallbackToAudio verifies that initClaudeConfig sets
-// ytFallbackToAudio from the config, covering both true and false branches.
-// EPIC-004 M1.
+// ytFallbackToAudio from the config. Absent YAML (Go zero-value false) must
+// preserve the package default (true), not override it to false. POMO fix.
 func TestInitClaudeConfig_FallbackToAudio(t *testing.T) {
 	prev := ytFallbackToAudio
 	t.Cleanup(func() { ytFallbackToAudio = prev })
 
-	// false branch: config explicitly disables fallback.
+	// Absent/zero config must NOT override the package default (true).
+	// This was the POMO bug: Go bool zero-value killed the default.
 	ytFallbackToAudio = true
 	cfg := &ServerConfig{}
-	cfg.YouTube.FallbackToAudio = false
+	cfg.YouTube.FallbackToAudio = false // simulates absent YAML field
 	initClaudeConfig(cfg)
-	if ytFallbackToAudio {
-		t.Error("ytFallbackToAudio should be false when fallback_to_audio: false in config")
+	if !ytFallbackToAudio {
+		t.Error("ytFallbackToAudio should remain true when fallback_to_audio is absent/false in config (package default preserved)")
 	}
 
-	// true branch: config enables fallback.
+	// Explicit true in config: sets ytFallbackToAudio = true.
 	ytFallbackToAudio = false
 	cfg.YouTube.FallbackToAudio = true
 	initClaudeConfig(cfg)
