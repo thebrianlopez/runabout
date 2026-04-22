@@ -21,6 +21,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -122,4 +123,58 @@ func TestYouTubeAudioFallback_Integration(t *testing.T) {
 	}
 	t.Logf("audio fallback OK: title=%q duration=%ds transcript_len=%d",
 		meta.Title, meta.Duration, len(transcript))
+}
+
+// TestRunYtdlpAudioDownload_RG2_FileWritten is the regression guard for
+// POMO ytdlp-audio-download-simulate-flag. It calls the real
+// runYtdlpAudioDownload (not the mocked seam) and asserts that:
+//  1. An audio file is actually written to the temp directory
+//  2. The file has non-zero size
+//  3. Video metadata (title, ID) is populated from JSON output
+//
+// This catches the -j vs --print-json bug: -j implies --simulate, so yt-dlp
+// prints JSON but writes no file. --print-json downloads AND prints JSON.
+//
+// Run with: go test -tags=integration ./cmd/linkari/... -run TestRunYtdlpAudioDownload_RG2
+func TestRunYtdlpAudioDownload_RG2_FileWritten(t *testing.T) {
+	videoURL := os.Getenv("LINKARI_INTEGRATION_AUDIO_URL")
+	if videoURL == "" {
+		t.Skip("LINKARI_INTEGRATION_AUDIO_URL not set — skipping integration test")
+	}
+
+	ytPath := os.Getenv("YTDLP_PATH")
+	if ytPath == "" {
+		ytPath = "yt-dlp"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	audioPath, meta, err := runYtdlpAudioDownload(ctx, ytPath, videoURL)
+	if err != nil {
+		t.Fatalf("runYtdlpAudioDownload: %v", err)
+	}
+	defer os.RemoveAll(filepath.Dir(audioPath))
+
+	// RG-2a: file must exist.
+	info, statErr := os.Stat(audioPath)
+	if statErr != nil {
+		t.Fatalf("audio file not found at %q: %v (regression: -j flag prevents download)", audioPath, statErr)
+	}
+
+	// RG-2b: file must have non-zero size.
+	if info.Size() == 0 {
+		t.Fatalf("audio file at %q has zero bytes", audioPath)
+	}
+
+	// RG-2c: metadata must be populated from --print-json output.
+	if meta.ID == "" {
+		t.Error("meta.ID is empty — JSON metadata not parsed from yt-dlp output")
+	}
+	if meta.Title == "" {
+		t.Error("meta.Title is empty — JSON metadata not parsed from yt-dlp output")
+	}
+
+	t.Logf("RG-2 OK: file=%q size=%d title=%q id=%q duration=%d",
+		audioPath, info.Size(), meta.Title, meta.ID, meta.Duration)
 }
