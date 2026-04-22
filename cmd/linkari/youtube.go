@@ -472,7 +472,13 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 		q.SetProgress(rowID, "extracting")
 	}
 
-	// Step 1: yt-dlp extraction.
+	// Step 1: normalize URL (resolve redirect wrappers to canonical YouTube form).
+	// EPIC-006 M3: inserted before execYtdlp so yt-dlp always receives a canonical URL.
+	if normalized, normErr := execNormalizeURL(ctx, videoURL); normErr == nil {
+		videoURL = normalized
+	}
+
+	// Step 2: yt-dlp extraction.
 	transcript, meta, err := execYtdlp(ctx, ytPath, videoURL)
 	if err != nil {
 		errStr := err.Error()
@@ -555,14 +561,14 @@ subtitleReady:
 		})
 	}
 
-	// Step 2: backfill queue text.
+	// Step 3: backfill queue text.
 	if q != nil {
 		if err := q.SetText(rowID, transcript); err != nil {
 			slog.Warn("score_youtube: SetText failed", "row_id", rowID, "error", err)
 		}
 	}
 
-	// Step 3: save transcript file. EPIC-090 M4: pass video_id, duration, subtitle_type.
+	// Step 4: save transcript file. EPIC-090 M4: pass video_id, duration, subtitle_type.
 	txPath, err := saveTranscriptFile(rowID, profile, "", transcript, "youtube", videoURL, meta.Title, meta.ID, meta.Duration, meta.SubtitleType)
 	if err != nil {
 		slog.Warn("score_youtube: save transcript failed", "row_id", rowID, "error", err)
@@ -575,7 +581,7 @@ subtitleReady:
 		)
 	}
 
-	// Step 4: rubric scoring.
+	// Step 5: rubric scoring.
 	if q != nil {
 		q.SetProgress(rowID, "scoring")
 	}
@@ -600,7 +606,7 @@ subtitleReady:
 		ytVerdict = "template_missing"
 	}
 
-	// Step 5: persist score.
+	// Step 6: persist score.
 	if q == nil {
 		return
 	}
@@ -620,7 +626,7 @@ subtitleReady:
 		return
 	}
 
-	// Step 6: FCM push. EPIC-090 M5: tag content_type="youtube" so sendOutboxFCM
+	// Step 7: FCM push. EPIC-090 M5: tag content_type="youtube" so sendOutboxFCM
 	// can render a YouTube-specific notification title.
 	resolvePushConfigOnce(q)
 	result, _ := q.EnqueueDigestIfDue(context.Background(), profile, ytScore, slug, ytVerdict, videoURL)
@@ -670,7 +676,13 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 		q.SetProgress(rowID, "extracting")
 	}
 
-	// Step 1: yt-dlp extraction.
+	// Step 1: normalize URL (resolve redirect wrappers to canonical YouTube form).
+	// EPIC-006 M3: inserted before execYtdlp so yt-dlp always receives a canonical URL.
+	if normalized, normErr := execNormalizeURL(ctx, videoURL); normErr == nil {
+		videoURL = normalized
+	}
+
+	// Step 2: yt-dlp extraction.
 	transcript, meta, err := execYtdlp(ctx, ytPath, videoURL)
 	if err != nil {
 		errStr := err.Error()
@@ -747,7 +759,7 @@ txSubtitleReady:
 		})
 	}
 
-	// Step 2: save transcript file.
+	// Step 3: save transcript file.
 	txPath, err := saveTranscriptFile(rowID, profile, "", transcript, "youtube", videoURL, meta.Title, meta.ID, meta.Duration, meta.SubtitleType)
 	if err != nil {
 		slog.Warn("transcribe_youtube: save transcript failed", "row_id", rowID, "error", err)
@@ -760,7 +772,7 @@ txSubtitleReady:
 		)
 	}
 
-	// Step 3: FCM push via EnqueueTranscriptPush — bypasses min-score floor
+	// Step 4: FCM push via EnqueueTranscriptPush — bypasses min-score floor
 	// and throttle. Verdict "transcribed" is the notification body. EPIC-090 M2.
 	if q != nil {
 		slug := fmt.Sprintf("yt-tx-%d", rowID)
