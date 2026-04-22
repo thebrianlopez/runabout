@@ -443,12 +443,11 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.YouTube.TimeoutSeconds > 0 {
 		ytTimeoutSeconds = cfg.YouTube.TimeoutSeconds
 	}
-	if cfg != nil {
-		if cfg.YouTube.FallbackToAudio {
-			ytFallbackToAudio = true // EPIC-001 M3: enable audio fallback when no subtitles
-		} else {
-			ytFallbackToAudio = false // EPIC-004 M1: explicit false disables fallback
-		}
+	// EPIC-001 M3: enable audio fallback when no subtitles.
+	// Only override the package default (true) when config explicitly sets true.
+	// An absent YAML field (Go zero-value false) must NOT kill the default.
+	if cfg != nil && cfg.YouTube.FallbackToAudio {
+		ytFallbackToAudio = true
 	}
 	slog.Info("claude config resolved",
 		"event_type", "claude_config_init",

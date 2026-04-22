@@ -253,7 +253,7 @@ func runYtdlpAudioDownload(ctx context.Context, ytdlpPath, videoURL string) (aud
 	cmd := exec.CommandContext(dlCtx, ytdlpPath,
 		"--format", "bestaudio[ext=m4a]/bestaudio",
 		"--no-playlist",
-		"-j",
+		"--print-json",
 		"-o", outTemplate,
 		videoURL,
 	)
