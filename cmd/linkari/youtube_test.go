@@ -73,6 +73,17 @@ func TestIsYouTubeURL(t *testing.T) {
 	}
 }
 
+// TestIsYouTubeURL_RG2_GoogleRedirect is a regression guard (RG-2) ensuring
+// that isYouTubeURL matches Google redirect URLs that wrap a YouTube link in a
+// query parameter. If this test starts failing, a regex tightening that broke
+// the redirect case must be fixed before the change merges. EPIC-006 M1.
+func TestIsYouTubeURL_RG2_GoogleRedirect(t *testing.T) {
+	u := "https://www.google.com/url?sa=t&url=https://www.youtube.com/watch?v=X"
+	if !isYouTubeURL(u) {
+		t.Errorf("RG-2: isYouTubeURL(%q) = false, want true — Google redirect must match", u)
+	}
+}
+
 // TestRunYtdlpExtract_MockExec verifies the extraction path using a mock seam.
 // EPIC-090 M4: seam now returns ytVideoMeta instead of a bare title string.
 func TestRunYtdlpExtract_MockExec(t *testing.T) {
@@ -685,5 +696,118 @@ func TestRouteYouTubeURL_MissingType(t *testing.T) {
 
 	if !scoreYTCalled {
 		t.Error("execYtdlp not called — req.Type=\"\" did not route to scoreYouTubeAsync")
+	}
+}
+
+// ─── EPIC-006 M3: BT-1 / BT-2 — normalization wired into async pipelines ────
+
+// TestScoreYouTubeAsync_BT1_NormalizationWired verifies that scoreYouTubeAsync
+// passes the canonical URL (not the original redirect wrapper) to execYtdlp.
+// EPIC-006 M3.
+func TestScoreYouTubeAsync_BT1_NormalizationWired(t *testing.T) {
+	canonical := "https://www.youtube.com/watch?v=bt1test"
+	redirectURL := "https://redirect.example.com/url?url=" + canonical
+
+	// Stub normalizer: maps redirectURL → canonical.
+	prevNorm := execNormalizeURL
+	execNormalizeURL = func(_ context.Context, rawURL string) (string, error) {
+		if rawURL == redirectURL {
+			return canonical, nil
+		}
+		return rawURL, nil
+	}
+	t.Cleanup(func() { execNormalizeURL = prevNorm })
+
+	// Capture the URL that execYtdlp actually receives.
+	var capturedURL string
+	prevYtdlp := execYtdlp
+	execYtdlp = func(_ context.Context, _, videoURL string) (string, ytVideoMeta, error) {
+		capturedURL = videoURL
+		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles")
+	}
+	t.Cleanup(func() { execYtdlp = prevYtdlp })
+
+	q := newTestQueue(t)
+	req := ShareRequest{
+		Type:    "url",
+		URL:     redirectURL,
+		Profile: "eng",
+	}
+	id, err := q.Enqueue(&req)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := q.MarkRelayed(id); err != nil {
+		t.Fatalf("MarkRelayed: %v", err)
+	}
+	req.QueueRowID = id
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "")
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scoreYouTubeAsync timed out")
+	}
+
+	if capturedURL != canonical {
+		t.Errorf("BT-1: execYtdlp received %q, want canonical %q", capturedURL, canonical)
+	}
+}
+
+// TestTranscribeYouTubeAsync_BT2_NormalizationWired verifies that
+// transcribeYouTubeAsync passes the canonical URL to execYtdlp. EPIC-006 M3.
+func TestTranscribeYouTubeAsync_BT2_NormalizationWired(t *testing.T) {
+	canonical := "https://www.youtube.com/watch?v=bt2test"
+	redirectURL := "https://redirect.example.com/url?url=" + canonical
+
+	prevNorm := execNormalizeURL
+	execNormalizeURL = func(_ context.Context, rawURL string) (string, error) {
+		if rawURL == redirectURL {
+			return canonical, nil
+		}
+		return rawURL, nil
+	}
+	t.Cleanup(func() { execNormalizeURL = prevNorm })
+
+	var capturedURL string
+	prevYtdlp := execYtdlp
+	execYtdlp = func(_ context.Context, _, videoURL string) (string, ytVideoMeta, error) {
+		capturedURL = videoURL
+		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles")
+	}
+	t.Cleanup(func() { execYtdlp = prevYtdlp })
+
+	q := newTestQueue(t)
+	req := ShareRequest{
+		Type:    "url",
+		URL:     redirectURL,
+		Profile: "eng",
+	}
+	id, err := q.Enqueue(&req)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := q.MarkRelayed(id); err != nil {
+		t.Fatalf("MarkRelayed: %v", err)
+	}
+	req.QueueRowID = id
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		transcribeYouTubeAsync(req, q, "yt-dlp", nil, "")
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("transcribeYouTubeAsync timed out")
+	}
+
+	if capturedURL != canonical {
+		t.Errorf("BT-2: execYtdlp received %q, want canonical %q", capturedURL, canonical)
 	}
 }
