@@ -150,6 +150,11 @@ Use built-in tools first, bash commands last:
 
 Only use bash for: `go` commands, `git` operations, `make`, fish functions (`epic-claim-milestone`, `dispatch-complete`, etc.).
 
+**Go file analysis (>200 lines):** Use `ts-go` before a full Read to minimize context burn:
+1. `ts-go funcs <file>` — orient on signatures and line ranges first
+2. `ts-go extract <file> <name>` — read only the function you need
+3. Fall back to `Read` with `offset`/`limit` only if `ts-go` output is insufficient
+
 ## Model Selection
 
 Default model: **Sonnet**. Use Haiku for simple file lookups. Escalate to Opus only for multi-constraint architectural tradeoffs across 3+ competing concerns.
