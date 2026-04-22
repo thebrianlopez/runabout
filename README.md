@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/blo-grindr/runabout/actions/workflows/test.yml/badge.svg)](https://github.com/blo-grindr/runabout/actions/workflows/test.yml)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://go.dev)
-![Tools](https://img.shields.io/badge/tools-11_CLIs-blue)
+![Tools](https://img.shields.io/badge/tools-12_CLIs-blue)
 
-Go devtools monorepo — eleven CLI tools for shell optimization and personal workflows.
+Go devtools monorepo — twelve CLI tools for shell optimization and personal workflows.
 
 These tools occupy the **Go CLI layer** of an [automation knowledge topology](https://github.com/blo-grindr/infra-knowledge) — they represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
 
@@ -19,6 +19,7 @@ These tools occupy the **Go CLI layer** of an [automation knowledge topology](ht
 - **protonexport** — export ProtonMail conversations to markdown
 - **workctl** — fetch and export Atlassian & GitHub work data (weekly/quarterly summaries, career reports)
 - **ghwatch** — stream GitHub repository activity to the terminal (push, PRs, workflow runs)
+- **ts-go** — tree-sitter-based structural Go source analysis (signatures, types, body extraction, search, rewrite)
 
 **Last Updated:** 2026-04-19
 
@@ -389,10 +390,37 @@ ghwatch --repo owner/repo --since 4h               # lookback window on first ru
 
 Requires `$GITHUB_TOKEN` or `--token`.
 
+## ts-go
+
+Structural Go source analysis using tree-sitter. Parses files in <5ms without a Go workspace or build context — use it to orient on large files before reading.
+
+```bash
+# List all function/method signatures with line ranges
+ts-go funcs cmd/linkari/handler.go
+ts-go funcs --format compact cmd/linkari/handler.go   # lower token cost
+
+# Extract a single function body + doc comments by name
+ts-go extract cmd/linkari/handler.go handleShare
+
+# List type declarations (structs, interfaces, aliases) with field counts
+ts-go types cmd/linkari/queue.go
+ts-go types --format compact cmd/linkari/queue.go
+
+# Search files for a tree-sitter S-expression pattern
+ts-go search '(function_declaration name: (identifier) @name)' 'cmd/linkari/*.go'
+ts-go search '(call_expression function: (identifier) @fn (#eq? @fn "slog.Info"))' 'cmd/**/*.go'
+
+# Rewrite source by matching a pattern and applying a template
+ts-go rewrite '(function_declaration name: (identifier) @name)' 'func renamed_@name()' '*.go' --diff
+ts-go rewrite '(comment) @c' '' 'main.go' --write
+```
+
+Output formats: `json` (default), `compact`. `--diff` and `--write` flags available for `rewrite`. Separate module (`cmd/ts-go/go.mod`) to isolate CGo tree-sitter dependencies from the root module.
+
 ## Build
 
 ```bash
-make build    # builds all 11 binaries to bin/
+make build    # builds all 12 binaries to bin/
 make install  # go install → ~/go/bin
 make core     # builds mdq, perfgate, shellprof, hookval, effiscore
 make clean    # removes bin/
@@ -403,7 +431,7 @@ cd cmd/protonexport && go test ./... # protonexport (separate module)
 cd cmd/workctl && go test ./...    # workctl + ghwatch (separate module)
 ```
 
-Version, commit, and build date are injected at build time via ldflags. The Go workspace (`go.work`) ties the root module to five separate-module satellites: linkari, fetchpage, wasend, protonexport, and workctl.
+Version, commit, and build date are injected at build time via ldflags. The Go workspace (`go.work`) ties the root module to six separate-module satellites: linkari, fetchpage, ts-go, wasend, protonexport, and workctl.
 
 **Container images** (linkari sandbox runtime):
 
@@ -432,6 +460,7 @@ cmd/shellprof/        # shellprof entry point (root module)
 cmd/hookval/          # hookval entry point (root module)
 cmd/effiscore/        # effiscore entry point (root module)
 cmd/fetchpage/        # fetchpage entry point (separate module)
+cmd/ts-go/            # ts-go entry point (separate module — tree-sitter CGo deps isolated)
 cmd/linkari/          # linkari entry point (separate module, ~80 files)
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
