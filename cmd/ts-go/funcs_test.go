@@ -199,6 +199,23 @@ func normal() {}
 	}
 }
 
+// CT-not_go_file: non-Go file must return exit 1, not null + exit 0.
+func TestParseFileNotGoFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ts")
+	if err := os.WriteFile(path, []byte("const x = 1;"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := parseFile(path)
+	if err == nil {
+		t.Fatal("expected error for non-Go file, got nil")
+	}
+	want := "not a Go file: " + path
+	if err.Error() != want {
+		t.Errorf("expected error %q, got %q", want, err.Error())
+	}
+}
+
 func TestCompactOutputTokenCost(t *testing.T) {
 	// Write a realistic Go file to temp dir and verify compact output is under 800 bytes
 	src := `package example
