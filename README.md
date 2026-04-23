@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/blo-grindr/runabout/actions/workflows/test.yml/badge.svg)](https://github.com/blo-grindr/runabout/actions/workflows/test.yml)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://go.dev)
-![Tools](https://img.shields.io/badge/tools-12_CLIs-blue)
+![Tools](https://img.shields.io/badge/tools-13_CLIs-blue)
 
-Go devtools monorepo — twelve CLI tools for shell optimization and personal workflows.
+Go devtools monorepo — thirteen CLI tools for shell optimization and personal workflows.
 
 These tools occupy the **Go CLI layer** of an [automation knowledge topology](https://github.com/blo-grindr/infra-knowledge) — they represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
 
@@ -417,6 +417,27 @@ ts-go rewrite '(comment) @c' '' 'main.go' --write
 
 Output formats: `json` (default), `compact`. `--diff` and `--write` flags available for `rewrite`. Separate module (`cmd/ts-go/go.mod`) to isolate CGo tree-sitter dependencies from the root module.
 
+## bmux
+
+Remote tmux session manager over SSH. Manages persistent tmux sessions on remote hosts via a local daemon, with auto-reconnect on disconnect.
+
+```bash
+bmux start            # start the local daemon
+bmux serve            # serve a remote tmux session over SSH
+bmux attach           # attach to a running session
+bmux status           # show daemon and session status
+bmux stop             # stop the daemon
+bmux doctor           # validate config and SSH connectivity
+bmux config           # manage config file (~/.config/bmux/config.yaml)
+bmux completion fish  # generate fish completions
+```
+
+Separate module (`cmd/bmux/go.mod`) to isolate `golang.org/x/crypto` SSH dependencies from the root module. Internal packages (`config`, `ssh`, `daemon`, `pane`, `bridge`, `reconnect`) live under `cmd/bmux/internal/`.
+
+```bash
+make install-bmux-completions   # install + register fish completions
+```
+
 ## Build
 
 ```bash
@@ -454,6 +475,8 @@ This telemetry feeds topology consumers like `agrad` (graduation signals) and `a
 ## Layout
 
 ```
+cmd/bmux/             # bmux entry point (separate module — golang.org/x/crypto SSH deps isolated)
+  internal/           # config, ssh, daemon, pane, bridge, reconnect, io packages
 cmd/mdq/              # mdq entry point (root module)
 cmd/perfgate/         # perfgate entry point (root module)
 cmd/shellprof/        # shellprof entry point (root module)
@@ -477,3 +500,13 @@ internal/telemetry/   # CLI telemetry via emit_jsonl
 internal/version/     # shared version formatting
 container/            # Dockerfiles for gVisor sandbox runtime (ffmpeg, whisper, claude-sandbox)
 ```
+
+## Status
+
+Active development. Thirteen tools building and passing tests.
+
+- Integrated `bmux` (remote tmux session manager) from standalone repo into `cmd/bmux/` as a satellite module
+- ts-go extended with `search` and `rewrite` subcommands (tree-sitter pattern matching)
+- YouTube audio fallback and vision scoring paths stable in linkari
+
+**Last Updated:** 2026-04-23

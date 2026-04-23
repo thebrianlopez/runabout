@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval effiscore
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := fetchpage protonexport linkari wasend workctl ghwatch ts-go
+SEPARATE := bmux fetchpage protonexport linkari wasend workctl ghwatch ts-go
 
 ALL := $(CORE) $(SEPARATE)
 
@@ -21,6 +21,7 @@ LIMA_SOCKET    ?= $(HOME)/.lima/$(LIMA_VM)/containerd.sock
 
 .PHONY: all core build clean install test test-ts-go linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage \
 	container-build container-push lima-start lima-test \
+	install-bmux-completions install-linkari-completions \
 	$(ALL)
 
 # --- Aggregate targets ---
@@ -82,6 +83,19 @@ fetchpage: setup-fetchpage
 install-fetchpage: setup-fetchpage
 	@echo "Installing fetchpage → $(INSTALL_DIR)/fetchpage"
 	@cd cmd/fetchpage && go install $(LDFLAGS) .
+
+bmux:
+	@echo "Building bmux..."
+	@cd cmd/bmux && go build $(LDFLAGS) -o ../../bin/bmux .
+
+install-bmux:
+	@echo "Installing bmux → $(INSTALL_DIR)/bmux"
+	@cd cmd/bmux && go install $(LDFLAGS) .
+
+install-bmux-completions: install-bmux
+	@mkdir -p $(HOME)/.config/fish/completions
+	@$(INSTALL_DIR)/bmux completion fish > $(HOME)/.config/fish/completions/bmux.fish
+	@echo "Installed fish completions → $(HOME)/.config/fish/completions/bmux.fish"
 
 protonexport:
 	@echo "Building protonexport..."
