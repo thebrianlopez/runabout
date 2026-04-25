@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -816,9 +817,14 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 				tmp.Close()
 				if err != nil {
 					os.Remove(tmp.Name())
-					slog.ErrorContext(ctx, "share rejected: write temp file failed", "error", err)
-					// MaxBytesReader returns a specific error on overflow.
-					writeError(w, http.StatusRequestEntityTooLarge, "file too large")
+					var maxBytesErr *http.MaxBytesError
+					if errors.As(err, &maxBytesErr) {
+						slog.ErrorContext(ctx, "share rejected: file too large", "error_class", "upload_max_bytes", "error", err)
+						writeError(w, http.StatusRequestEntityTooLarge, "file too large")
+					} else {
+						slog.ErrorContext(ctx, "share rejected: upload failed", "error_class", "upload_io_error", "error", err)
+						writeError(w, http.StatusRequestTimeout, "upload timed out or connection lost")
+					}
 					return
 				}
 				req.AudioPath = tmp.Name()
