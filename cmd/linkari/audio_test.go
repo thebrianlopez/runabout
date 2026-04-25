@@ -9,10 +9,15 @@ package main
 //   4. validateRequest audio case — valid and invalid inputs.
 //   5. Queue.SetText — backfills transcript on queue row.
 //   6. Multipart parsing in handleShare — happy path + oversized rejection.
+//
+// Regression guards (POMO: audio-upload-io-timeout):
+//   RG-1: upload io error → 408 RequestTimeout (not 413)
+//   RG-2: upload exceeds maxAudioSize → 413 RequestEntityTooLarge (not 408)
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -536,5 +541,98 @@ func TestQueueSetProgress(t *testing.T) {
 	item, _ = q.GetByID(id)
 	if item.Progress != "evaluating" {
 		t.Errorf("progress = %q, want %q", item.Progress, "evaluating")
+	}
+}
+
+// RG-1: An upload that errors mid-stream (i/o timeout, unexpected EOF) must
+// return 408 RequestTimeout, not 413 RequestEntityTooLarge.
+// POMO: PERSONAL_20260424T191613Z_POMO_audio-upload-io-timeout.md
+func TestHandleShare_RG1_UploadIOError_Returns408(t *testing.T) {
+	isolateEventsDir(t)
+
+	cfg := builtinConfig()
+	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
+	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
+
+	// Use a pipe so we can inject a read error mid-upload, simulating
+	// what happens when a Tailscale connection hits a read deadline.
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	ct := mw.FormDataContentType()
+
+	go func() {
+		mw.WriteField("action", "vnote_auto")
+		part, _ := mw.CreateFormFile("audio", "memo.m4a")
+		part.Write([]byte("partial-audio-data"))
+		// Simulate i/o timeout: close the pipe with an error before the
+		// multipart boundary is written, so io.Copy(tmp, part) returns an error
+		// that is NOT *http.MaxBytesError.
+		pw.CloseWithError(errors.New("i/o timeout"))
+	}()
+
+	req := httptest.NewRequest(http.MethodPost, "/share", pr)
+	req.Header.Set("Content-Type", ct)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rr := httptest.NewRecorder()
+
+	srv.Mux().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestTimeout {
+		t.Errorf("RG-1: status = %d, want 408 (RequestTimeout); body = %s", rr.Code, rr.Body.String())
+	}
+}
+
+// infiniteZeroReader produces an unlimited stream of zero bytes.
+// Used to exceed maxAudioSize in RG-2 without allocating a 200MB buffer.
+type infiniteZeroReader struct{}
+
+func (infiniteZeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
+}
+
+// RG-2: An upload that genuinely exceeds maxAudioSize (200MB) must return 413
+// RequestEntityTooLarge, not 408. Validates that the MaxBytesError branch is
+// still reachable after the RG-1 fix.
+// POMO: PERSONAL_20260424T191613Z_POMO_audio-upload-io-timeout.md
+//
+// Note: this test pumps maxAudioSize+1 bytes through an in-memory pipe into a
+// temp file to trigger http.MaxBytesReader. It is IO-intensive (~200MB to disk)
+// and skipped under -short.
+func TestHandleShare_RG2_MaxBytesExceeded_Returns413(t *testing.T) {
+	if testing.Short() {
+		t.Skip("RG-2: skipping IO-intensive 200MB overflow test in short mode")
+	}
+	isolateEventsDir(t)
+
+	cfg := builtinConfig()
+	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
+	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
+
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	ct := mw.FormDataContentType()
+
+	go func() {
+		mw.WriteField("action", "vnote_auto")
+		part, _ := mw.CreateFormFile("audio", "huge.m4a")
+		// Write maxAudioSize+1 bytes to exceed the limit applied by
+		// http.MaxBytesReader in handleShare.
+		io.Copy(part, io.LimitReader(infiniteZeroReader{}, maxAudioSize+1))
+		mw.Close()
+		pw.Close()
+	}()
+
+	req := httptest.NewRequest(http.MethodPost, "/share", pr)
+	req.Header.Set("Content-Type", ct)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rr := httptest.NewRecorder()
+
+	srv.Mux().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("RG-2: status = %d, want 413 (RequestEntityTooLarge); body = %s", rr.Code, rr.Body.String())
 	}
 }

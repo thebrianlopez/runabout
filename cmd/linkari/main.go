@@ -685,11 +685,11 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				listenHost = "127.0.0.1"
 			}
 			httpServer := &http.Server{
-				Addr:         fmt.Sprintf("%s:%d", listenHost, port),
-				Handler:      srv.Mux(),
-				ReadTimeout:  5 * time.Second,
-				WriteTimeout: 10 * time.Second,
-				IdleTimeout:  60 * time.Second,
+				Addr:              fmt.Sprintf("%s:%d", listenHost, port),
+				Handler:           srv.Mux(),
+				ReadHeaderTimeout: 5 * time.Second,
+				WriteTimeout:      10 * time.Second,
+				IdleTimeout:       60 * time.Second,
 			}
 
 			errCh := make(chan error, 2)
@@ -744,11 +744,11 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					tsnetClose = cleanup
 					srv.SetTsnetAddr(fqdn)
 					tsnetHTTPServer = &http.Server{
-						Handler:      srv.FunnelMux(),
-						ReadTimeout:  10 * time.Second,
-						WriteTimeout: 30 * time.Second,
-						IdleTimeout:  120 * time.Second,
-						ConnContext:  funnelConnContext,
+						Handler:           srv.FunnelMux(),
+						ReadHeaderTimeout: 10 * time.Second,
+						WriteTimeout:      30 * time.Second,
+						IdleTimeout:       120 * time.Second,
+						ConnContext:       funnelConnContext,
 					}
 					go func() {
 						errCh <- tsnetHTTPServer.Serve(ln)
