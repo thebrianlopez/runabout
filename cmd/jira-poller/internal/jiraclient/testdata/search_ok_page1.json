@@ -1,0 +1,52 @@
+{
+  "startAt": 0,
+  "maxResults": 2,
+  "total": 3,
+  "issues": [
+    {
+      "key": "PROJ-1",
+      "self": "https://jira.example.com/rest/api/3/issue/PROJ-1",
+      "fields": {
+        "summary": "First issue",
+        "issuetype": {"name": "Bug"},
+        "assignee": {"accountId": "user1", "displayName": "Alice", "emailAddress": "alice@example.com"},
+        "labels": ["backend"],
+        "changelog": {}
+      },
+      "changelog": {
+        "histories": [
+          {
+            "id": "hist-1",
+            "created": "2026-04-28T10:00:00.000+0000",
+            "author": {"accountId": "user1", "displayName": "Alice", "emailAddress": "alice@example.com"},
+            "items": [
+              {"field": "status", "fromString": "To Do", "toString": "In Progress"}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "key": "PROJ-2",
+      "self": "https://jira.example.com/rest/api/3/issue/PROJ-2",
+      "fields": {
+        "summary": "Second issue",
+        "issuetype": {"name": "Story"},
+        "labels": [],
+        "changelog": {}
+      },
+      "changelog": {
+        "histories": [
+          {
+            "id": "hist-2",
+            "created": "2026-04-28T11:00:00.000+0000",
+            "author": {"accountId": "user2", "displayName": "Bob"},
+            "items": [
+              {"field": "status", "fromString": "In Progress", "toString": "Done"}
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
