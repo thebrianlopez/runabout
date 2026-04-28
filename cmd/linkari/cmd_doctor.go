@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/spf13/cobra"
 
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/secrets"
+	"github.com/blo-grindr/runabout/internal/secrets"
 	"github.com/blo-grindr/runabout/cmd/linkari/internal/xdgpath"
 )
 
