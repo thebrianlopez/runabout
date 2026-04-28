@@ -10,3 +10,20 @@ use (
 	./cmd/wasend
 	./cmd/workctl
 )
+
+replace (
+	// EPIC-016: Resolve workspace cloud.google.com/go ambiguity.
+	// Old grpc transitive chain (grpc@v1.19/v1.23/v1.33 → go-control-plane → genproto)
+	// pulls cloud.google.com/go@v0.26.0 which still embeds compute/metadata inline.
+	// cmd/linkari uses the split cloud.google.com/go/compute/metadata@v0.9.0 submodule.
+	// Redirect the old monorepo version to a post-split stub that no longer provides
+	// compute/metadata as a package, eliminating the ambiguous-import error.
+	cloud.google.com/go v0.26.0 => cloud.google.com/go v0.115.0
+	// EPIC-016: Resolve workspace genproto split ambiguity.
+	// cmd/protonexport/go-proton-api uses the old genproto monorepo
+	// (v0.0.0-20230410155749) which still provides googleapis/rpc/status as a
+	// package. cmd/linkari uses the split google.golang.org/genproto/googleapis/rpc
+	// module for the same package. Redirect the old version to the post-split
+	// stub so the workspace resolver sees a single package provider.
+	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 => google.golang.org/genproto v0.0.0-20260414002931-afd174a4e478
+)

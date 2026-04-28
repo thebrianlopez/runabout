@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -8,11 +9,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 // defaultGoogleJWKSURL is the public endpoint for Google's OAuth2 signing keys.
@@ -216,4 +221,64 @@ func (v *GoogleTokenVerifier) Verify(idToken string) (*GoogleClaims, error) {
 	}
 
 	return &claims, nil
+}
+
+// youtubeTokenExchanger is a seam for testing token refresh without real HTTP.
+type youtubeTokenExchanger func(ctx context.Context, refreshToken string) (*oauth2.Token, error)
+
+// mockInvalidGrantExchanger simulates an invalid_grant response from Google.
+func mockInvalidGrantExchanger(_ context.Context, _ string) (*oauth2.Token, error) {
+	return nil, errors.New("invalid_grant")
+}
+
+// youtubeTokenSource returns a self-refreshing oauth2.TokenSource for YouTube API access.
+// Returns youtube_auth_missing when no refresh token is stored.
+// Returns youtube_token_revoked when the stored token gets invalid_grant from Google.
+func youtubeTokenSource(ctx context.Context, profile string, q *Queue) (oauth2.TokenSource, error) {
+	return youtubeTokenSourceWithExchanger(ctx, profile, q, nil)
+}
+
+func youtubeTokenSourceWithExchanger(ctx context.Context, profile string, q *Queue, exchanger youtubeTokenExchanger) (oauth2.TokenSource, error) {
+	refreshToken, expiresAt, err := q.GetYouTubeRefreshToken(profile)
+	if err != nil {
+		return nil, fmt.Errorf("youtube_auth_missing: %w", err)
+	}
+	if refreshToken == "" {
+		slog.Warn("youtube auth missing", "event_type", "youtube_auth_missing", "profile", profile, "error_class", "youtube_auth_missing")
+		return nil, errors.New("youtube_auth_missing")
+	}
+
+	tok := &oauth2.Token{
+		RefreshToken: refreshToken,
+		Expiry:       time.Unix(expiresAt, 0),
+	}
+
+	cfg := &oauth2.Config{
+		Scopes:   []string{"https://www.googleapis.com/auth/youtube.readonly", "https://www.googleapis.com/auth/youtube"},
+		Endpoint: google.Endpoint,
+	}
+	ts := cfg.TokenSource(ctx, tok)
+
+	if exchanger != nil {
+		newTok, err := exchanger(ctx, refreshToken)
+		if err != nil {
+			if strings.Contains(err.Error(), "invalid_grant") {
+				slog.Warn("youtube token revoked", "event_type", "youtube_token_revoked", "profile", profile, "error_class", "youtube_token_revoked")
+				return nil, errors.New("youtube_token_revoked")
+			}
+			return nil, err
+		}
+		_ = newTok
+	}
+
+	return ts, nil
+}
+
+// storeYouTubeToken persists a YouTube refresh token and emits a youtube_token_stored event.
+func storeYouTubeToken(q *Queue, profile, refreshToken string, expiresAt int64) error {
+	if err := q.SetYouTubeRefreshToken(profile, refreshToken, expiresAt); err != nil {
+		return err
+	}
+	slog.Info("youtube token stored", "event_type", "youtube_token_stored", "profile", profile, "expires_at", expiresAt)
+	return nil
 }

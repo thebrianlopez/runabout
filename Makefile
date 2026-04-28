@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval effiscore
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := bmux fetchpage protonexport linkari wasend workctl ghwatch ts-go
+SEPARATE := bmux fetchpage protonexport linkari linkari-labeler wasend workctl ghwatch ts-go
 
 ALL := $(CORE) $(SEPARATE)
 
@@ -19,7 +19,7 @@ LIMA_VM        ?= lima-gvisor
 # containerd socket at {{.Dir}}/containerd.sock → ~/.lima/<name>/containerd.sock.
 LIMA_SOCKET    ?= $(HOME)/.lima/$(LIMA_VM)/containerd.sock
 
-.PHONY: all core build clean install test test-ts-go linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage \
+.PHONY: all core build clean install test test-ts-go linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage linkari-labeler install-linkari-labeler \
 	container-build container-push lima-start lima-test \
 	install-bmux-completions install-linkari-completions \
 	$(ALL)
@@ -119,6 +119,14 @@ install-linkari-completions: install-linkari
 	@mkdir -p $(HOME)/.config/fish/completions
 	@$(INSTALL_DIR)/linkari completion fish > $(HOME)/.config/fish/completions/linkari.fish
 	@echo "Installed fish completions → $(HOME)/.config/fish/completions/linkari.fish"
+
+linkari-labeler:
+	@echo "Building linkari-labeler..."
+	@cd cmd/linkari-labeler && go build $(LDFLAGS) -o ../../bin/linkari-labeler .
+
+install-linkari-labeler:
+	@echo "Installing linkari-labeler → $(INSTALL_DIR)/linkari-labeler"
+	@cd cmd/linkari-labeler && go install $(LDFLAGS) .
 
 AWS_PROFILE ?= brianonpoint
 AWS_REGION ?= us-east-2
