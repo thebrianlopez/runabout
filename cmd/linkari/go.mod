@@ -3,6 +3,7 @@ module github.com/blo-grindr/runabout/cmd/linkari
 go 1.26.1
 
 require (
+	github.com/blo-grindr/runabout v0.0.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.5
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10

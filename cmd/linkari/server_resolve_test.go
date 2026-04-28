@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/secrets"
+	"github.com/blo-grindr/runabout/internal/secrets"
 )
 
 type fakeSM map[string]string

@@ -5,7 +5,7 @@ import (
 	"log"
 	"testing"
 
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/secrets"
+	"github.com/blo-grindr/runabout/internal/secrets"
 )
 
 // TestProvenanceLogFormat pins the canonical line format from EPIC-047

@@ -19,7 +19,7 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/blo-grindr/runabout/cmd/linkari/internal/linklog"
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/secrets"
+	"github.com/blo-grindr/runabout/internal/secrets"
 	"github.com/blo-grindr/runabout/cmd/linkari/internal/xdgpath"
 )
 
