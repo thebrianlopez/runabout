@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval effiscore
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := bmux fetchpage protonexport linkari linkari-labeler wasend workctl ghwatch ts-go
+SEPARATE := bmux fetchpage protonexport linkari linkari-labeler wasend workctl ghwatch ts-go jira-poller
 
 ALL := $(CORE) $(SEPARATE)
 
@@ -19,9 +19,10 @@ LIMA_VM        ?= lima-gvisor
 # containerd socket at {{.Dir}}/containerd.sock → ~/.lima/<name>/containerd.sock.
 LIMA_SOCKET    ?= $(HOME)/.lima/$(LIMA_VM)/containerd.sock
 
-.PHONY: all core build clean install test test-ts-go linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage linkari-labeler install-linkari-labeler \
+.PHONY: all core build clean install test test-ts-go test-jira-poller linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage linkari-labeler install-linkari-labeler \
 	container-build container-push lima-start lima-test \
 	install-bmux-completions install-linkari-completions \
+	jira-poller install-jira-poller run-jira-poller lint-jira-poller \
 	$(ALL)
 
 # --- Aggregate targets ---
@@ -39,6 +40,7 @@ clean:
 
 test:
 	go test ./...
+	cd cmd/jira-poller && go test ./...
 
 # Validate claude CLI flag contract against the installed binary.
 # Skips gracefully when claude is not on PATH.
@@ -182,6 +184,28 @@ install-ts-go:
 test-ts-go:
 	@echo "Running ts-go tests (requires C compiler for CGo)..."
 	@cd cmd/ts-go && go test -count=1 ./...
+
+# ─── jira-poller targets ────────────────────────────────────────────────────
+
+jira-poller:
+	@echo "Building jira-poller..."
+	@cd cmd/jira-poller && go build $(LDFLAGS) -o ../../bin/jira-poller .
+
+install-jira-poller:
+	@echo "Installing jira-poller → $(INSTALL_DIR)/jira-poller"
+	@cd cmd/jira-poller && go install $(LDFLAGS) .
+
+run-jira-poller: jira-poller
+	@echo "Running jira-poller..."
+	@bin/jira-poller
+
+lint-jira-poller:
+	@echo "Linting jira-poller..."
+	@cd cmd/jira-poller && golangci-lint run ./...
+
+test-jira-poller:
+	@echo "Testing jira-poller..."
+	@cd cmd/jira-poller && go test -count=1 ./...
 
 wasend:
 	@echo "Building wasend..."
