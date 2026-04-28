@@ -62,6 +62,8 @@ type QueueItem struct {
 	ClassifySource string `json:"classify_source,omitempty"` // EPIC-077 M1
 	IsScreenshot   bool   `json:"is_screenshot,omitempty"`   // EPIC-078 M4
 	FileSize       int64  `json:"file_size,omitempty"`        // EPIC-078 M5
+	IsShorts       bool   `json:"is_shorts,omitempty"`        // EPIC-012 M3
+	Source         string `json:"source,omitempty"`           // EPIC-016 M2: firehose source tracking
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -203,6 +205,10 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		// EPIC-088 M3: per-call scoring cost and vision token persistence.
 		"ALTER TABLE queue ADD COLUMN scoring_cost_usd REAL DEFAULT NULL",
 		"ALTER TABLE queue ADD COLUMN image_tokens_estimated INTEGER DEFAULT NULL",
+		// EPIC-012 M2: YouTube Shorts detection flag.
+		"ALTER TABLE queue ADD COLUMN is_shorts INTEGER NOT NULL DEFAULT 0",
+		// EPIC-016 M2: Firehose source tracking.
+		"ALTER TABLE queue ADD COLUMN source TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -216,6 +222,19 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		synthesis  TEXT DEFAULT '',
 		formed_at  TEXT NOT NULL,
 		item_count INTEGER NOT NULL DEFAULT 0
+	)`)
+
+	// EPIC-016 M2: Firehose subscription tables.
+	db.Exec(`CREATE TABLE IF NOT EXISTS firehose_subscriptions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		profile TEXT NOT NULL,
+		keyword TEXT NOT NULL,
+		created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+		UNIQUE(profile, keyword)
+	)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS firehose_events (
+		seq INTEGER PRIMARY KEY,
+		event_cbor BLOB
 	)`)
 
 	// EPIC-045 M1: push_outbox and devices tables.
@@ -303,8 +322,34 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		return nil, fmt.Errorf("create auth tables: %w", err)
 	}
 
+	// EPIC-018 M2: Watch Later video dedup table.
+	db.Exec(`CREATE TABLE IF NOT EXISTS youtube_watchlater_videos (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		video_id     TEXT NOT NULL UNIQUE,
+		discovered_at INTEGER NOT NULL,
+		scored_at    INTEGER,
+		queue_id     INTEGER
+	)`)
+
+	// EPIC-019 M3: monitored subscription videos dedup table.
+	db.Exec(`CREATE TABLE IF NOT EXISTS youtube_monitored_videos (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		channel_id   TEXT NOT NULL,
+		video_id     TEXT NOT NULL UNIQUE,
+		discovered_at INTEGER NOT NULL,
+		scored_at    INTEGER,
+		queue_id     INTEGER
+	)`)
+
 	// EPIC-001: add user_id column to devices for session association.
 	db.Exec("ALTER TABLE devices ADD COLUMN user_id INTEGER DEFAULT NULL")
+	// EPIC-013 M2: Bluesky session persistence.
+	db.Exec("ALTER TABLE users ADD COLUMN bluesky_session_json TEXT DEFAULT NULL")
+	// EPIC-015 M2: Bluesky publish opt-in flag.
+	db.Exec("ALTER TABLE users ADD COLUMN bluesky_publish_opt_in INTEGER NOT NULL DEFAULT 0")
+	// EPIC-014 M2: YouTube OAuth token persistence.
+	db.Exec("ALTER TABLE users ADD COLUMN youtube_refresh_token TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE users ADD COLUMN youtube_token_expires_at INTEGER NOT NULL DEFAULT 0")
 
 	// FTS5 full-text search index over queue content.
 	// EPIC-072 M5: includes topic_tags column. Version sentinel triggers drop+recreate
@@ -440,7 +485,7 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0)"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,'')"
 
 // Pending returns all items with status=pending, ordered by id ASC (FIFO).
 func (q *Queue) Pending() ([]QueueItem, error) {
@@ -635,7 +680,7 @@ func (q *Queue) UpdateScore(id int64, score int, tags, verdict, slug, promptHash
 		}
 	}
 	_, err := q.db.Exec(
-		"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=?, prompt_hash=?, prompt_version=? WHERE id=?",
+		"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=?, prompt_hash=?, prompt_version=?, progress='' WHERE id=?",
 		score, tags, verdict, slug, now, rubricJSON, promptHashVal, promptVersionVal, id,
 	)
 	return err
@@ -1433,7 +1478,7 @@ func (q *Queue) EnqueueTranscriptPush(profile, slug, verdict, url string) error 
 	now := time.Now().Unix()
 	_, err := q.db.Exec(
 		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, gap_summary, content_type, classify_source, status, attempts, next_attempt, created_at, updated_at)
-		 VALUES (0, ?, ?, ?, 'digest', ?, '', 'youtube_transcript', '', 'pending', 0, ?, ?, ?)`,
+		 VALUES (0, ?, ?, ?, 'transcript', ?, '', 'youtube_transcript', '', 'pending', 0, ?, ?, ?)`,
 		slug, verdict, url, profile, now, now, now,
 	)
 	return err
@@ -1445,6 +1490,14 @@ func (q *Queue) EnqueueTranscriptPush(profile, slug, verdict, url string) error 
 // EPIC-090 M5.
 func (q *Queue) SetPushContentType(id int64, contentType string) error {
 	_, err := q.db.Exec(`UPDATE push_outbox SET content_type = ? WHERE id = ?`, contentType, id)
+	return err
+}
+
+// SetIsShorts marks a queue row as a YouTube Short (is_shorts=1) or clears
+// the flag (is_shorts=0). Called by scoreYouTubeAsync after detectShorts.
+// EPIC-012 M3.
+func (q *Queue) SetIsShorts(rowID int64, isShorts bool) error {
+	_, err := q.db.Exec(`UPDATE queue SET is_shorts = ? WHERE id = ?`, boolToInt(isShorts), rowID)
 	return err
 }
 
@@ -1708,6 +1761,84 @@ func (q *Queue) SeedInviteCodes(codes []string) (int, error) {
 	return seeded, nil
 }
 
+// PersistBlueskySession stores a Bluesky session as JSON for the given user.
+// EPIC-013 M2.
+func (q *Queue) PersistBlueskySession(userID int64, data BlueskySessionData) error {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal bluesky session: %w", err)
+	}
+	_, err = q.db.Exec("UPDATE users SET bluesky_session_json=? WHERE id=?", string(b), userID)
+	return err
+}
+
+// LoadBlueskySession reads the persisted Bluesky session for the given user.
+// Returns nil, nil when no session is stored.
+func (q *Queue) LoadBlueskySession(userID int64) (*BlueskySessionData, error) {
+	var raw sql.NullString
+	if err := q.db.QueryRow("SELECT bluesky_session_json FROM users WHERE id=?", userID).Scan(&raw); err != nil {
+		return nil, err
+	}
+	if !raw.Valid || raw.String == "" {
+		return nil, nil
+	}
+	var data BlueskySessionData
+	if err := json.Unmarshal([]byte(raw.String), &data); err != nil {
+		return nil, fmt.Errorf("unmarshal bluesky session: %w", err)
+	}
+	return &data, nil
+}
+
+// UpdateBlueskySession replaces the stored Bluesky session (called on token refresh).
+func (q *Queue) UpdateBlueskySession(userID int64, data BlueskySessionData) error {
+	return q.PersistBlueskySession(userID, data)
+}
+
+// SetBlueskyPublishOptIn sets the bluesky_publish_opt_in flag for the given user.
+// EPIC-015 M2.
+func (q *Queue) SetBlueskyPublishOptIn(userID int64, optIn bool) error {
+	v := 0
+	if optIn {
+		v = 1
+	}
+	_, err := q.db.Exec("UPDATE users SET bluesky_publish_opt_in=? WHERE id=?", v, userID)
+	return err
+}
+
+// GetBlueskyPublishOptIn returns the bluesky_publish_opt_in flag for the given user.
+// Returns false on DB error (default-safe — opt-out is the safe default).
+// EPIC-015 M2.
+func (q *Queue) GetBlueskyPublishOptIn(userID int64) (bool, error) {
+	var v int
+	err := q.db.QueryRow("SELECT COALESCE(bluesky_publish_opt_in,0) FROM users WHERE id=?", userID).Scan(&v)
+	if err != nil {
+		return false, nil // default-safe
+	}
+	return v == 1, nil
+}
+
+// GetYouTubeRefreshToken returns the stored YouTube refresh token and expiry for user_id=1.
+// Returns ("", 0, nil) when no token is stored.
+func (q *Queue) GetYouTubeRefreshToken(profile string) (token string, expiresAt int64, err error) {
+	err = q.db.QueryRow(
+		`SELECT COALESCE(youtube_refresh_token,''), COALESCE(youtube_token_expires_at,0)
+         FROM users WHERE id=1`,
+	).Scan(&token, &expiresAt)
+	if err == sql.ErrNoRows {
+		return "", 0, nil
+	}
+	return token, expiresAt, err
+}
+
+// SetYouTubeRefreshToken persists a YouTube refresh token for user_id=1 (single-user).
+func (q *Queue) SetYouTubeRefreshToken(profile, token string, expiresAt int64) error {
+	_, err := q.db.Exec(
+		`UPDATE users SET youtube_refresh_token=?, youtube_token_expires_at=? WHERE id=1`,
+		token, expiresAt,
+	)
+	return err
+}
+
 // generateInviteCode returns a cryptographically random 8-char alphanumeric string.
 func generateInviteCode() string {
 	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
@@ -1765,16 +1896,219 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 	for rows.Next() {
 		var it QueueItem
 		var score int
-		var isScreenshotInt int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize); err != nil {
+		var isScreenshotInt, isShortsInt int
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source); err != nil {
 			return nil, err
 		}
 		if score != 0 {
 			it.Score = &score
 		}
 		it.IsScreenshot = isScreenshotInt != 0
+		it.IsShorts = isShortsInt != 0
 		it.SkipReason = classifySkipReason(score, it.Verdict)
 		items = append(items, it)
 	}
 	return items, rows.Err()
+}
+
+// --- EPIC-016: Firehose subscription management ---
+
+// AddFirehoseSubscription adds a keyword subscription for a profile.
+// Idempotent: duplicate (profile, keyword) pairs are silently ignored.
+func (q *Queue) AddFirehoseSubscription(profile, keyword string) error {
+	_, err := q.db.Exec(
+		"INSERT OR IGNORE INTO firehose_subscriptions (profile, keyword) VALUES (?,?)",
+		profile, strings.ToLower(keyword),
+	)
+	return err
+}
+
+// RemoveFirehoseSubscription removes a keyword subscription for a profile.
+func (q *Queue) RemoveFirehoseSubscription(profile, keyword string) error {
+	_, err := q.db.Exec(
+		"DELETE FROM firehose_subscriptions WHERE profile=? AND keyword=?",
+		profile, strings.ToLower(keyword),
+	)
+	return err
+}
+
+// ListFirehoseSubscriptions returns all keywords subscribed for a profile.
+func (q *Queue) ListFirehoseSubscriptions(profile string) ([]string, error) {
+	rows, err := q.db.Query("SELECT keyword FROM firehose_subscriptions WHERE profile=?", profile)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keywords []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		keywords = append(keywords, k)
+	}
+	return keywords, rows.Err()
+}
+
+// PersistFirehoseSeq records the latest firehose sequence number.
+// eventCBOR may be nil — the seq is the only required value for cursor resume.
+func (q *Queue) PersistFirehoseSeq(seq int64, eventCBOR []byte) error {
+	_, err := q.db.Exec(
+		"INSERT OR REPLACE INTO firehose_events (seq, event_cbor) VALUES (?,?)",
+		seq, eventCBOR,
+	)
+	return err
+}
+
+// LoadLastFirehoseSeq returns the highest persisted firehose sequence number,
+// or 0 if no events have been recorded yet.
+func (q *Queue) LoadLastFirehoseSeq() (int64, error) {
+	var seq int64
+	err := q.db.QueryRow("SELECT COALESCE(MAX(seq),0) FROM firehose_events").Scan(&seq)
+	return seq, err
+}
+
+// EnqueueWithSource inserts a share request with an explicit source tag.
+// Used by the firehose worker to mark rows as source='firehose'.
+func (q *Queue) EnqueueWithSource(req *ShareRequest, source string) (int64, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := q.db.Exec(
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size, slug, source)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.URL, req.Text, req.Type, req.Action, req.Profile, now, req.Title,
+		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename, req.ClassifySource,
+		boolToInt(req.IsScreenshot), req.FileSize, urlToSlug(req.URL), source,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("enqueue with source: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	return id, nil
+}
+
+// --- EPIC-018 M3: Watch Later dedup methods ---
+
+// InsertWatchLaterVideo records a newly discovered Watch Later video.
+// Ignores duplicate video_id (UNIQUE constraint) — returns nil on conflict.
+func (q *Queue) InsertWatchLaterVideo(videoID string, discoveredAt int64) error {
+	_, err := q.db.Exec(
+		`INSERT OR IGNORE INTO youtube_watchlater_videos (video_id, discovered_at) VALUES (?, ?)`,
+		videoID, discoveredAt,
+	)
+	return err
+}
+
+// MarkWatchLaterScored links a queue row to a Watch Later video row and records scored_at.
+func (q *Queue) MarkWatchLaterScored(videoID string, scoredAt int64, queueID int64) error {
+	_, err := q.db.Exec(
+		`UPDATE youtube_watchlater_videos SET scored_at=?, queue_id=? WHERE video_id=?`,
+		scoredAt, queueID, videoID,
+	)
+	return err
+}
+
+// IsWatchLaterVideoScored returns true if the video has already been scored
+// (scored_at IS NOT NULL).
+func (q *Queue) IsWatchLaterVideoScored(videoID string) (bool, error) {
+	var count int
+	err := q.db.QueryRow(
+		`SELECT COUNT(*) FROM youtube_watchlater_videos WHERE video_id=? AND scored_at IS NOT NULL`,
+		videoID,
+	).Scan(&count)
+	return count > 0, err
+}
+
+// --- EPIC-019 M4: Monitored subscription video dedup methods ---
+
+// InsertMonitoredVideo records a newly discovered subscription video.
+// Ignores duplicate video_id — returns nil on conflict.
+func (q *Queue) InsertMonitoredVideo(channelID, videoID string, discoveredAt int64) error {
+	_, err := q.db.Exec(
+		`INSERT OR IGNORE INTO youtube_monitored_videos (channel_id, video_id, discovered_at) VALUES (?, ?, ?)`,
+		channelID, videoID, discoveredAt,
+	)
+	return err
+}
+
+// MarkMonitoredVideoScored links a queue row to a monitored video row and records scored_at.
+func (q *Queue) MarkMonitoredVideoScored(videoID string, scoredAt int64, queueID int64) error {
+	_, err := q.db.Exec(
+		`UPDATE youtube_monitored_videos SET scored_at=?, queue_id=? WHERE video_id=?`,
+		scoredAt, queueID, videoID,
+	)
+	return err
+}
+
+// IsMonitoredVideoKnown returns true if the video_id has already been inserted
+// (regardless of whether it has been scored).
+func (q *Queue) IsMonitoredVideoKnown(videoID string) (bool, error) {
+	var count int
+	err := q.db.QueryRow(
+		`SELECT COUNT(*) FROM youtube_monitored_videos WHERE video_id=?`,
+		videoID,
+	).Scan(&count)
+	return count > 0, err
+}
+
+// CountScoredMonitoredVideosToday returns how many monitored videos scored today
+// crossed the worth-watching threshold (score >= 60) vs. below it.
+func (q *Queue) CountScoredMonitoredVideosToday(profile string) (worthWatching int, skipped int, err error) {
+	const threshold = 60
+	now := time.Now().UTC()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Unix()
+
+	rows, err := q.db.Query(`
+		SELECT q.score
+		FROM youtube_monitored_videos ymv
+		JOIN queue q ON q.id = ymv.queue_id
+		WHERE q.profile = ?
+		  AND ymv.scored_at >= ?
+		  AND q.score IS NOT NULL`,
+		profile, startOfDay,
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var score int
+		if err := rows.Scan(&score); err != nil {
+			return 0, 0, err
+		}
+		if score >= threshold {
+			worthWatching++
+		} else {
+			skipped++
+		}
+	}
+	return worthWatching, skipped, rows.Err()
+}
+
+// --- EPIC-019 M5: Subscription digest push ---
+
+// EnqueueSubscriptionDigest writes a push_outbox row with kind='subscription_digest'.
+// At-most-once-per-day: returns nil (not an error) when a row already exists today.
+// This method is independent of EnqueueDigestIfDue — it uses its own kind value
+// and its own throttle query so the two paths never interfere with each other.
+func (q *Queue) EnqueueSubscriptionDigest(profile, body string, worthWatching, skipped int) error {
+	now := time.Now().Unix()
+	startOfDay := now - (now % 86400) // floor to midnight UTC
+
+	var last sql.NullInt64
+	if err := q.db.QueryRow(
+		`SELECT MAX(created_at) FROM push_outbox WHERE kind='subscription_digest' AND profile=?`,
+		profile,
+	).Scan(&last); err != nil {
+		return fmt.Errorf("query last subscription_digest: %w", err)
+	}
+	if last.Valid && last.Int64 >= startOfDay {
+		return nil // already sent today
+	}
+
+	_, err := q.db.Exec(
+		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, gap_summary, content_type, classify_source, status, attempts, next_attempt, created_at, updated_at)
+		 VALUES (?, '', ?, '', 'subscription_digest', ?, ?, 'youtube_subscriptions', '', 'pending', 0, ?, ?, ?)`,
+		worthWatching, body, profile, body, now, now, now,
+	)
+	return err
 }

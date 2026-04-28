@@ -242,6 +242,62 @@ func TestQueueUpdateScore(t *testing.T) {
 	}
 }
 
+// TestUpdateScore_VerdictStoredNotTags is a regression guard for the
+// arg-order transposition bug (RG-1 from POMO: audio-score-verdict-transposition)
+// where audioVerdict was passed as tags and synopsis as verdict.
+func TestUpdateScore_VerdictStoredNotTags(t *testing.T) {
+	q := newTestQueue(t)
+
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://test.com", Profile: "eng"})
+	q.MarkRelayed(id)
+
+	if err := q.UpdateScore(id, 42, "topic-tag", "this is the real verdict", "slug-rg1", "", ""); err != nil {
+		t.Fatalf("UpdateScore: %v", err)
+	}
+
+	item, err := q.GetByID(id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if item.Verdict != "this is the real verdict" {
+		t.Errorf("verdict = %q, want %q", item.Verdict, "this is the real verdict")
+	}
+	if item.Tags != "topic-tag" {
+		t.Errorf("tags = %q, want %q", item.Tags, "topic-tag")
+	}
+	if item.Status != "scored" {
+		t.Errorf("status = %q, want scored", item.Status)
+	}
+}
+
+// TestUpdateScore_ProgressCleared is a regression guard ensuring UpdateScore
+// clears the progress field (RG-2 from POMO: audio-score-verdict-transposition).
+func TestUpdateScore_ProgressCleared(t *testing.T) {
+	q := newTestQueue(t)
+
+	id, _ := q.Enqueue(&ShareRequest{Type: "url", URL: "https://test.com", Profile: "eng"})
+	q.MarkRelayed(id)
+
+	if err := q.SetProgress(id, "summarizing"); err != nil {
+		t.Fatalf("SetProgress: %v", err)
+	}
+
+	if err := q.UpdateScore(id, 18, "", "some verdict", "slug-rg2", "", ""); err != nil {
+		t.Fatalf("UpdateScore: %v", err)
+	}
+
+	item, err := q.GetByID(id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if item.Progress != "" {
+		t.Errorf("progress = %q, want empty string (should be cleared by UpdateScore)", item.Progress)
+	}
+	if item.Status != "scored" {
+		t.Errorf("status = %q, want scored", item.Status)
+	}
+}
+
 func TestQueueArchive(t *testing.T) {
 	q := newTestQueue(t)
 

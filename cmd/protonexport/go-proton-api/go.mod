@@ -73,4 +73,10 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/go-resty/resty/v2 => github.com/ProtonMail/resty/v2 v2.0.0-20250929142426-e3dc6308c80b
+replace (
+	github.com/go-resty/resty/v2 => github.com/ProtonMail/resty/v2 v2.0.0-20250929142426-e3dc6308c80b
+	// Workspace conflict: old monorepo genproto conflicts with split genproto/googleapis/rpc module.
+	// Replace with the stub version that doesn't include googleapis/rpc packages.
+	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 => google.golang.org/genproto v0.0.0-20260414002931-afd174a4e478
+)
+

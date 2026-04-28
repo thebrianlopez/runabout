@@ -1,0 +1,248 @@
+package main
+
+// EPIC-016: Bluesky Firehose Monitoring
+//
+// Connects to the Bluesky firehose (com.atproto.sync.subscribeRepos) via
+// WebSocket, decodes CBOR commit events, and enqueues matching posts based
+// on configured keyword subscriptions. Uses kind='notify' push rows — never
+// kind='digest' — to avoid consuming the per-profile digest throttle window.
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"math"
+	"strings"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/fxamacker/cbor/v2"
+)
+
+// firehosePost represents a decoded Bluesky post from the firehose.
+type firehosePost struct {
+	AtURI string
+	Text  string
+	Repo  string
+	Seq   int64
+}
+
+// firehoseHeader is the first element of a CBOR firehose message.
+type firehoseHeader struct {
+	Op int    `cbor:"op"`
+	T  string `cbor:"t"`
+}
+
+// firehoseBody is the second element for #commit events.
+type firehoseBody struct {
+	Seq  int64  `cbor:"seq"`
+	Repo string `cbor:"repo"`
+	Ops  []struct {
+		Action string `cbor:"action"`
+		Path   string `cbor:"path"`
+	} `cbor:"ops"`
+}
+
+// processFirehoseMessage decodes a raw WebSocket message and dispatches post
+// records. Returns nil (skip) on malformed CBOR — never propagates decode errors
+// so the worker stays alive. CT-4 contract.
+func processFirehoseMessage(ctx context.Context, q *Queue, msg []byte) error {
+	// CBOR array: [header, body]
+	var parts []cbor.RawMessage
+	if err := cbor.Unmarshal(msg, &parts); err != nil {
+		slog.Warn("firehose decode error",
+			"event_type", "firehose_decode_error",
+			"error_class", "cbor_decode",
+		)
+		return nil // CT-4: skip malformed
+	}
+	if len(parts) < 2 {
+		return nil
+	}
+
+	var header firehoseHeader
+	if err := cbor.Unmarshal(parts[0], &header); err != nil || header.T != "#commit" {
+		return nil
+	}
+
+	var body firehoseBody
+	if err := cbor.Unmarshal(parts[1], &body); err != nil {
+		slog.Warn("firehose decode error",
+			"event_type", "firehose_decode_error",
+			"seq", 0,
+			"error_class", "body_decode",
+		)
+		return nil
+	}
+
+	// Persist seq for cursor resume (best-effort).
+	_ = q.PersistFirehoseSeq(body.Seq, nil)
+
+	for _, op := range body.Ops {
+		if op.Action != "create" || !strings.Contains(op.Path, "app.bsky.feed.post") {
+			continue
+		}
+		// MVP: use repo+path as AT URI. Full text requires CAR block parsing.
+		atURI := "at://" + body.Repo + "/" + op.Path
+		post := &firehosePost{
+			AtURI: atURI,
+			Text:  "", // CAR block text extraction deferred to full impl
+			Repo:  body.Repo,
+			Seq:   body.Seq,
+		}
+		if err := handleFirehosePost(ctx, q, post); err != nil {
+			slog.Warn("firehose post handle error",
+				"seq", body.Seq,
+				"error", err,
+			)
+		}
+	}
+	return nil
+}
+
+// handleFirehosePost checks keyword subscriptions and enqueues matching posts.
+// Uses kind='notify' push rows — NOT kind='digest' — per EPIC-016 invariant.
+func handleFirehosePost(ctx context.Context, q *Queue, post *firehosePost) error {
+	// Dedup guard: skip if same AT URI seen in last 5 minutes (BT-1, BT-4).
+	var count int
+	q.db.QueryRow(
+		`SELECT COUNT(*) FROM queue WHERE url=? AND source='firehose' AND queued_at > datetime('now','-5 minutes')`,
+		post.AtURI,
+	).Scan(&count)
+	if count > 0 {
+		return nil
+	}
+
+	// Fetch all subscriptions.
+	rows, err := q.db.Query("SELECT profile, keyword FROM firehose_subscriptions")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	textLower := strings.ToLower(post.Text + " " + post.AtURI)
+	for rows.Next() {
+		var profile, keyword string
+		if err := rows.Scan(&profile, &keyword); err != nil {
+			continue
+		}
+		if !strings.Contains(textLower, keyword) {
+			continue
+		}
+
+		req := &ShareRequest{
+			URL:     post.AtURI,
+			Profile: profile,
+			Type:    "url",
+		}
+		rowID, err := q.EnqueueWithSource(req, "firehose")
+		if err != nil {
+			slog.Warn("firehose enqueue error", "error", err)
+			continue
+		}
+
+		// Enqueue notify push — NOT digest — to avoid throttle window consumption.
+		_, err = q.EnqueuePushWithProfile("notify", profile, 0,
+			fmt.Sprintf("firehose-%d", rowID), "Firehose Match", post.AtURI, "")
+		if err != nil {
+			slog.Warn("firehose push error", "error", err)
+		}
+		slog.Info("firehose commit matched",
+			"event_type", "firehose_commit_matched",
+			"seq", post.Seq,
+			"at_uri", post.AtURI,
+			"keyword", keyword,
+			"profile", profile,
+			"queue_id", rowID,
+		)
+	}
+	return rows.Err()
+}
+
+// execConnectAndRead is the production WebSocket connect+read function,
+// exposed as a variable so tests can inject a stub (RG-2 seam).
+var execConnectAndRead = connectAndRead
+
+// connectAndRead opens a WebSocket connection to url and reads messages until
+// the context is cancelled or an error occurs.
+func connectAndRead(ctx context.Context, q *Queue, url string) error {
+	conn, _, err := websocket.Dial(ctx, url, nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	slog.Info("firehose connected",
+		"event_type", "firehose_connected",
+		"relay_url", url,
+	)
+
+	for {
+		_, msg, err := conn.Read(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil // normal shutdown
+			}
+			return err
+		}
+		if err := processFirehoseMessage(ctx, q, msg); err != nil {
+			slog.Warn("firehose process error", "error", err)
+		}
+	}
+}
+
+// runFirehoseWorker connects to the Bluesky firehose and processes commits.
+// Reconnects with exponential backoff (1s → 5min max). Exits only on ctx.Done().
+// M5: started by serve command when bskyClient != nil.
+func runFirehoseWorker(ctx context.Context, q *Queue, bskyClient *BlueskyClient, logger *slog.Logger) {
+	relayURL := "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos"
+	backoff := time.Second
+	maxBackoff := 5 * time.Minute
+
+	lastSeq, _ := q.LoadLastFirehoseSeq()
+	connectURL := relayURL
+	if lastSeq > 0 {
+		connectURL = fmt.Sprintf("%s?cursor=%d", relayURL, lastSeq)
+	}
+	slog.Info("firehose worker started",
+		"event_type", "firehose_worker_started",
+		"relay_url", connectURL,
+		"cursor", lastSeq,
+	)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		err := execConnectAndRead(ctx, q, connectURL)
+		if ctx.Err() != nil {
+			return // context cancelled — normal shutdown
+		}
+
+		if err != nil {
+			slog.Warn("firehose disconnected",
+				"event_type", "firehose_disconnected",
+				"error_class", "websocket_error",
+				"backoff_secs", int(backoff.Seconds()),
+			)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		backoff = time.Duration(math.Min(float64(backoff*2), float64(maxBackoff)))
+
+		// Update cursor for reconnect.
+		lastSeq, _ = q.LoadLastFirehoseSeq()
+		connectURL = relayURL
+		if lastSeq > 0 {
+			connectURL = fmt.Sprintf("%s?cursor=%d", relayURL, lastSeq)
+		}
+	}
+}

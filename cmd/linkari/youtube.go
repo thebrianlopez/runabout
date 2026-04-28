@@ -41,11 +41,14 @@ var execYtdlpAudio = runYtdlpAudioDownload
 
 // ytVideoMeta is the subset of yt-dlp JSON output we care about.
 // EPIC-090 M4: added Duration and SubtitleType.
+// EPIC-012 M4: added IsShorts and ChannelID.
 type ytVideoMeta struct {
 	Title        string `json:"title"`
 	ID           string `json:"id"`
 	Duration     int    `json:"duration"` // seconds
+	ChannelID    string `json:"channel_id"`
 	SubtitleType string // "manual" | "auto" — detected from yt-dlp JSON
+	IsShorts     bool   // set by detectShorts after meta is populated
 }
 
 // ytRawMeta is used to parse the subtitle availability fields from yt-dlp JSON
@@ -55,8 +58,27 @@ type ytRawMeta struct {
 	Title             string                     `json:"title"`
 	ID                string                     `json:"id"`
 	Duration          int                        `json:"duration"`
+	ChannelID         string                     `json:"channel_id"`
 	Subtitles         map[string]json.RawMessage `json:"subtitles"`
 	AutomaticCaptions map[string]json.RawMessage `json:"automatic_captions"`
+}
+
+// detectShorts reports whether the given YouTube video is a Short.
+// A video is a Short if its URL contains /shorts/ or its duration is 1–60s.
+// Duration=0 (unknown) is never classified as a Short to avoid false positives.
+func detectShorts(videoURL string, durationSec int) bool {
+	if strings.Contains(videoURL, "/shorts/") {
+		return true
+	}
+	return durationSec > 0 && durationSec <= 60
+}
+
+// selectShortsRubric returns shortsTemplate when non-empty, otherwise fallback.
+func selectShortsRubric(shortsTemplate, fallback string) string {
+	if shortsTemplate != "" {
+		return shortsTemplate
+	}
+	return fallback
 }
 
 // detectSubtitleType returns "manual" when the yt-dlp JSON reports at least
@@ -160,18 +182,21 @@ func runYtdlpExtract(ctx context.Context, ytdlpPath, videoURL string) (transcrip
 
 	// Parse metadata from JSON stdout (best-effort; tolerate empty).
 	// EPIC-090 M4: parse ytRawMeta to detect Duration and SubtitleType.
+	// EPIC-012 M6: extract ChannelID and detect Shorts after meta population.
 	if len(jsonOut) > 0 {
 		var raw ytRawMeta
 		if jerr := json.Unmarshal(jsonOut, &raw); jerr == nil {
 			meta.Title = raw.Title
 			meta.ID = raw.ID
 			meta.Duration = raw.Duration
+			meta.ChannelID = raw.ChannelID
 			meta.SubtitleType = detectSubtitleType(raw)
 		}
 	}
 	if meta.SubtitleType == "" {
 		meta.SubtitleType = "auto" // safe default
 	}
+	meta.IsShorts = detectShorts(videoURL, meta.Duration)
 
 	// Find the .srt file written to tmpDir.
 	entries, dirErr := os.ReadDir(tmpDir)
@@ -561,7 +586,26 @@ subtitleReady:
 		})
 	}
 
-	// Step 3: backfill queue text.
+	// Step 3a: persist Shorts detection. EPIC-012 M8/M11.
+	if q != nil && rowID > 0 {
+		if err := q.SetIsShorts(rowID, meta.IsShorts); err != nil {
+			slog.Warn("score_youtube: SetIsShorts failed", "row_id", rowID, "error", err)
+		}
+	}
+	if meta.IsShorts {
+		detectionMethod := "duration"
+		if strings.Contains(videoURL, "/shorts/") {
+			detectionMethod = "url_pattern"
+		}
+		slog.Info("score_youtube: shorts detected",
+			"event_type", "shorts_detected",
+			"row_id", rowID,
+			"url", videoURL,
+			"detection_method", detectionMethod,
+		)
+	}
+
+	// Step 3b: backfill queue text.
 	if q != nil {
 		if err := q.SetText(rowID, transcript); err != nil {
 			slog.Warn("score_youtube: SetText failed", "row_id", rowID, "error", err)
@@ -589,7 +633,24 @@ subtitleReady:
 	_, sysPrompt, tmplErr := loadProfileTemplateForModeJSON(profile, "url")
 	var ytScore int
 	var ytVerdict, ytTags string
+	var rubricSource string
 	if tmplErr == nil {
+		// EPIC-012 M8: Shorts rubric substitution.
+		if meta.IsShorts {
+			if req.ShortsRubricTemplate != "" {
+				sysPrompt = req.ShortsRubricTemplate
+				rubricSource = "shorts_template"
+			} else {
+				rubricSource = "default"
+				slog.Info("score_youtube: shorts rubric missing",
+					"event_type", "shorts_rubric_missing",
+					"row_id", rowID,
+					"profile", profile,
+				)
+			}
+		} else {
+			rubricSource = "default"
+		}
 		rubricCtx, rubricCancel := context.WithTimeout(ctx, 60*time.Second)
 		sc, evalErr := eval.Evaluate(rubricCtx, transcript, sysPrompt)
 		rubricCancel()
@@ -628,10 +689,31 @@ subtitleReady:
 
 	// Step 7: FCM push. EPIC-090 M5: tag content_type="youtube" so sendOutboxFCM
 	// can render a YouTube-specific notification title.
+	// EPIC-012 M8: use "youtube_shorts" for Shorts so FCM title reads "Short: ...".
 	resolvePushConfigOnce(q)
-	result, _ := q.EnqueueDigestIfDue(context.Background(), profile, ytScore, slug, ytVerdict, videoURL)
-	if result.Enqueued && result.ID > 0 {
-		_ = q.SetPushContentType(result.ID, "youtube")
+	result, pushErr := q.EnqueueDigestIfDue(context.Background(), profile, ytScore, slug, ytVerdict, videoURL)
+	if pushErr != nil {
+		slog.Warn("score_youtube: EnqueueDigestIfDue failed", "row_id", rowID, "error", pushErr)
+	} else if !result.Enqueued {
+		slog.Info("score_youtube: push skipped", "event_type", "score_youtube_push_skipped",
+			"row_id", rowID, "reason", result.Reason,
+			"seconds_until_allowed", result.SecondsUntilAllowed)
+	} else if result.ID > 0 {
+		contentType := "youtube"
+		if meta.IsShorts {
+			contentType = "youtube_shorts"
+		}
+		_ = q.SetPushContentType(result.ID, contentType)
+	}
+
+	// EPIC-012 M11: Shorts scoring complete log.
+	if meta.IsShorts {
+		slog.Info("score_youtube: shorts scoring complete",
+			"event_type", "shorts_scoring_complete",
+			"row_id", rowID,
+			"rubric_source", rubricSource,
+			"score", ytScore,
+		)
 	}
 
 	slog.Info("score_youtube: complete",

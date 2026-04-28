@@ -163,6 +163,109 @@ func TestAutoScoreDoesNotWritePushOutbox(t *testing.T) {
 	}
 }
 
+// TestTranscriptKindDoesNotConsumeDigestThrottle verifies that a push_outbox
+// row with kind='transcript' does NOT trigger the throttle window checked by
+// EnqueueDigestIfDue. Before the M1 fix, EnqueueTranscriptPush inserted
+// kind='digest', causing subsequent scoreYouTubeAsync pushes to be silently
+// throttled within the same window.
+func TestTranscriptKindDoesNotConsumeDigestThrottle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	q, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+
+	// Simulate EnqueueTranscriptPush (kind='transcript').
+	if err := q.EnqueueTranscriptPush("eng", "yt-transcript-1", "transcribed", "https://youtube.com/watch?v=abc"); err != nil {
+		t.Fatalf("EnqueueTranscriptPush: %v", err)
+	}
+
+	// Configure push so score floor and throttle are reachable.
+	q.SetPushConfig(&PushConfig{
+		NotifyMinScore: 0,
+		DigestThrottleDefault: 1 * time.Hour,
+	})
+
+	// EnqueueDigestIfDue within the throttle window should NOT be blocked —
+	// the transcript row must not count against the digest throttle.
+	result, err := q.EnqueueDigestIfDue(context.Background(), "eng", 80, "yt-score-1", "worth it", "https://youtube.com/watch?v=abc")
+	if err != nil {
+		t.Fatalf("EnqueueDigestIfDue: %v", err)
+	}
+	if !result.Enqueued {
+		t.Errorf("expected push to be enqueued (transcript row must not block digest throttle), got reason=%q seconds_until=%d",
+			result.Reason, result.SecondsUntilAllowed)
+	}
+}
+
+// TestScoreYouTubePushAfterTranscript verifies that after EnqueueTranscriptPush
+// writes a kind='transcript' row, a subsequent EnqueueDigestIfDue call writes a
+// kind='digest' row with the correct content_type set by SetPushContentType.
+func TestScoreYouTubePushAfterTranscript(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	q, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+
+	q.SetPushConfig(&PushConfig{
+		NotifyMinScore: 0,
+		DigestThrottleDefault: 1 * time.Hour,
+	})
+
+	// Step 1: transcript push (kind='transcript').
+	if err := q.EnqueueTranscriptPush("eng", "yt-abc", "transcribed", "https://youtube.com/watch?v=abc"); err != nil {
+		t.Fatalf("EnqueueTranscriptPush: %v", err)
+	}
+
+	// Step 2: score push (kind='digest') — must not be throttled by transcript row.
+	result, err := q.EnqueueDigestIfDue(context.Background(), "eng", 85, "yt-abc", "worth it", "https://youtube.com/watch?v=abc")
+	if err != nil {
+		t.Fatalf("EnqueueDigestIfDue: %v", err)
+	}
+	if !result.Enqueued {
+		t.Fatalf("digest push was not enqueued; reason=%q", result.Reason)
+	}
+	if result.ID == 0 {
+		t.Fatal("expected non-zero row ID from EnqueueDigestIfDue")
+	}
+
+	// Step 3: tag content_type='youtube' (mirrors scoreYouTubeAsync).
+	if err := q.SetPushContentType(result.ID, "youtube"); err != nil {
+		t.Fatalf("SetPushContentType: %v", err)
+	}
+
+	// Assert: pending pushes contain exactly one digest row with content_type='youtube'.
+	pushes, err := q.PendingPushes(10)
+	if err != nil {
+		t.Fatalf("PendingPushes: %v", err)
+	}
+	var digestRows []PushItem
+	for _, p := range pushes {
+		if p.Kind == "digest" {
+			digestRows = append(digestRows, p)
+		}
+	}
+	if len(digestRows) != 1 {
+		t.Fatalf("expected 1 digest row, got %d (all pushes: %+v)", len(digestRows), pushes)
+	}
+	if digestRows[0].ContentType != "youtube" {
+		t.Errorf("content_type=%q want youtube", digestRows[0].ContentType)
+	}
+}
+
 // repoRoot walks up from the cmd/linkari test cwd until it finds the
 // runabout go.mod, returning its directory.
 func repoRoot(t *testing.T) string {
