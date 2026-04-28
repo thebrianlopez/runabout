@@ -4,6 +4,7 @@ use (
 	.
 	./cmd/bmux
 	./cmd/fetchpage
+	./cmd/jira-poller
 	./cmd/linkari
 	./cmd/linkari-labeler
 	./cmd/protonexport
