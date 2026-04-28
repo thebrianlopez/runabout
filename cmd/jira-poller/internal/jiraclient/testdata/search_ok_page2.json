@@ -1,0 +1,19 @@
+{
+  "startAt": 2,
+  "maxResults": 1,
+  "total": 3,
+  "issues": [
+    {
+      "key": "PROJ-3",
+      "self": "https://jira.example.com/rest/api/3/issue/PROJ-3",
+      "fields": {
+        "summary": "Third issue",
+        "issuetype": {"name": "Task"},
+        "labels": []
+      },
+      "changelog": {
+        "histories": []
+      }
+    }
+  ]
+}
