@@ -5,6 +5,7 @@ use (
 	./cmd/bmux
 	./cmd/fetchpage
 	./cmd/linkari
+	./cmd/linkari-labeler
 	./cmd/protonexport
 	./cmd/ts-go
 	./cmd/wasend
