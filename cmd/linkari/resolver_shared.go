@@ -12,7 +12,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/secrets"
+	"github.com/blo-grindr/runabout/internal/secrets"
 )
 
 // SecretResolution holds the resolved result of a single secret field.
