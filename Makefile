@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval effiscore
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := bmux fetchpage protonexport linkari linkari-labeler wasend workctl ghwatch ts-go jira-poller
+SEPARATE := bmux fetchpage protonexport linkari linkari-labeler plaid-service wasend workctl ghwatch ts-go jira-poller
 
 ALL := $(CORE) $(SEPARATE)
 
@@ -98,6 +98,14 @@ install-bmux-completions: install-bmux
 	@mkdir -p $(HOME)/.config/fish/completions
 	@$(INSTALL_DIR)/bmux completion fish > $(HOME)/.config/fish/completions/bmux.fish
 	@echo "Installed fish completions → $(HOME)/.config/fish/completions/bmux.fish"
+
+plaid-service:
+	@echo "Building plaid-service..."
+	@cd cmd/plaid-service && go build $(LDFLAGS) -o ../../bin/plaid-service .
+
+install-plaid-service:
+	@echo "Installing plaid-service → $(INSTALL_DIR)/plaid-service"
+	@cd cmd/plaid-service && go install $(LDFLAGS) .
 
 protonexport:
 	@echo "Building protonexport..."
