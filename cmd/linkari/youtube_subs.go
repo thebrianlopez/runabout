@@ -125,7 +125,7 @@ func execYouTubePlaylistItemsListReal(ctx context.Context, ts oauth2.TokenSource
 // watchSubscriptionsAsync polls all subscription channels and enqueues new
 // videos for scoring. Designed to run as a periodic background worker.
 // EPIC-019 M6 + M10.
-func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger) {
+func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("watchSubscriptionsAsync panic", "recover", r)
@@ -143,7 +143,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger) {
 		})
 	}
 
-	ts, err := youtubeTokenSource(ctx, profile, q)
+	ts, err := youtubeTokenSource(ctx, profile, q, clientID, clientSecret)
 	if err != nil {
 		slog.Warn("watchSubscriptionsAsync: auth error",
 			"event_type", "subscriptions_api_error",

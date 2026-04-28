@@ -210,8 +210,10 @@ type Server struct {
 	shield *Shield // nil when shield is not configured
 
 	// EPIC-001: Google Sign-In support.
-	googleVerifier *GoogleTokenVerifier // nil when Google Sign-In is not configured
-	sessionTTLDays int                  // session token TTL; 0 = use default (90 days)
+	googleVerifier     *GoogleTokenVerifier // nil when Google Sign-In is not configured
+	googleClientID     string               // resolved at startup; used for YouTube token refresh
+	googleClientSecret string               // resolved at startup; used for YouTube token refresh
+	sessionTTLDays     int                  // session token TTL; 0 = use default (90 days)
 
 	// EPIC-013 M3: Bluesky AT Protocol session. nil until POST /auth/bluesky succeeds.
 	bskyClient *BlueskyClient
@@ -2255,7 +2257,7 @@ func (s *Server) handleSyncWatchLater(w http.ResponseWriter, r *http.Request) {
 			watchLaterSyncing = false
 			watchLaterSyncMu.Unlock()
 		}()
-		syncWatchLaterAsync(profile, s.queue, s.events)
+		syncWatchLaterAsync(profile, s.queue, s.events, s.googleClientID, s.googleClientSecret)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
