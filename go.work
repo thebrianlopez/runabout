@@ -7,6 +7,7 @@ use (
 	./cmd/jira-poller
 	./cmd/linkari
 	./cmd/linkari-labeler
+	./cmd/plaid-service
 	./cmd/protonexport
 	./cmd/ts-go
 	./cmd/wasend
