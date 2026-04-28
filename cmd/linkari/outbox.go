@@ -74,6 +74,12 @@ func (s *Server) StartPushWorker(ctx context.Context) {
 				// can answer "is the worker alive but idle?" via a query.
 				if drained == 0 {
 					idleCycles++
+					if idleCycles == 1 {
+						slog.InfoContext(ctx, "push outbox idle",
+							"event_type", "push_outbox_idle",
+							"poll_interval", pushPollInterval.String(),
+						)
+					}
 					if idleCycles%idleEmitEvery == 0 {
 						emitPushEvent("push_outbox_idle_metric", map[string]interface{}{
 							"idle_cycles":   idleCycles,
@@ -130,6 +136,11 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 			emitPushEvent("push_outbox_parked_missing_token", map[string]interface{}{
 				"id": p.ID, "age_seconds": int64(age.Seconds()),
 			})
+			slog.WarnContext(ctx, "push row parked: missing device token or FCM source",
+				"event_type", "push_outbox_parked_missing_token",
+				"id", p.ID,
+				"age_seconds", int64(age.Seconds()),
+			)
 			continue
 		}
 		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary, p.ContentType, p.ClassifySource); err != nil {
@@ -255,6 +266,10 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 		default:
 			title = fmt.Sprintf("YouTube · Skip — %d/100", score)
 		}
+	case "youtube_shorts":
+		// EPIC-012 M8: YouTube Shorts — abbreviated title prefixed with "Short:".
+		notifBody = firstSentence(verdict, 120)
+		title = fmt.Sprintf("Short: %s", firstSentence(verdict, 60))
 	default:
 		notifBody = slug
 		if verdict != "" {

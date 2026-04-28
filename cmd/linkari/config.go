@@ -219,6 +219,7 @@ type ActionConfig struct {
 	AutoLaunch          bool `yaml:"auto_launch,omitempty"`          // EPIC-058 M3: auto-launch ginit when gate passes (requires confidence_threshold > 0)
 	ServerScore         bool `yaml:"server_score,omitempty"`         // EPIC-060: score uinit_* actions server-side via Jina+Haiku (no tmux window)
 	ForceContentClassify bool `yaml:"force_content_classify,omitempty"` // EPIC-084 M3: always run content-LLM classification even when cascade produces a profile
+	ShortsRubricTemplate string `yaml:"shorts_rubric_template,omitempty"` // EPIC-012 M7: rubric override for YouTube Shorts scoring
 
 	// Parsed fields (not in YAML)
 	compiledTemplate *template.Template

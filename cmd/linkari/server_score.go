@@ -916,6 +916,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		_, _ = q.EnqueueDigestIfDue(context.Background(),
 			itemProfile, *itemScore, itemSlug, itemVerdict, itemURL,
 			sc.GapSummary(3), "", classifySource)
+		// EPIC-015 M4: Bluesky verdict reply — fire-and-forget; never blocks FCM.
+		_ = publishVerdictReply(context.Background(), bskyClientForScoring, itemURL, *itemScore, itemVerdict, q, 1)
 	}
 
 	slog.Info("score_async: complete",
@@ -1999,8 +2001,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		return
 	}
 	slug := fmt.Sprintf("vnote-%d", rowID)
-	_ = audioTopicTags // topic tags available for future use
-	if err := q.UpdateScore(rowID, audioScore, audioVerdict, synopsis, slug, "", ""); err != nil {
+	if err := q.UpdateScore(rowID, audioScore, audioTopicTags, audioVerdict, slug, "", ""); err != nil {
 		slog.Warn("score_audio: UpdateScore failed",
 			"event_type", "score_audio_queue_error",
 			"row_id", rowID,

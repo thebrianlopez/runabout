@@ -64,6 +64,43 @@ var (
 	date    = "unknown"
 )
 
+// backgroundWorker encapsulates a periodic task with a fixed interval.
+// EPIC-019 M2.
+type backgroundWorker struct {
+	interval time.Duration
+	fn       func(ctx context.Context)
+}
+
+// backgroundWorkerPool runs a collection of backgroundWorkers on independent tickers.
+type backgroundWorkerPool struct {
+	workers []backgroundWorker
+}
+
+// AddWorker registers a new periodic worker in the pool.
+func (p *backgroundWorkerPool) AddWorker(interval time.Duration, fn func(ctx context.Context)) {
+	p.workers = append(p.workers, backgroundWorker{interval: interval, fn: fn})
+}
+
+// Start launches all registered workers as goroutines. Each worker fires on
+// its own ticker and stops when ctx is cancelled.
+func (p *backgroundWorkerPool) Start(ctx context.Context) {
+	for _, w := range p.workers {
+		w := w
+		go func() {
+			ticker := time.NewTicker(w.interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					w.fn(ctx)
+				}
+			}
+		}()
+	}
+}
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use:     "linkari",
@@ -587,6 +624,17 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			if serverFileCfg != nil && serverFileCfg.SessionTTLDays > 0 {
 				srv.sessionTTLDays = serverFileCfg.SessionTTLDays
 			}
+
+			// EPIC-013 M3: resume persisted Bluesky session on startup.
+			if queue != nil {
+				resumeBlueskySessionsOnStartup(cmd.Context(), queue, srv)
+				// EPIC-015 M4: expose the bskyClient to scoreAsync via package-level var.
+				bskyClientForScoring = srv.bskyClient
+			}
+			// EPIC-016 M5: Firehose worker — started only when Bluesky auth is configured.
+			if queue != nil && srv.bskyClient != nil {
+				go runFirehoseWorker(cmd.Context(), queue, srv.bskyClient, slog.Default())
+			}
 			if serverFileCfg != nil {
 				srv.SetBlocklist(serverFileCfg.Blocklist)
 				srv.SetCORSOrigins(serverFileCfg.CORSOrigins)
@@ -652,6 +700,15 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				relayedWatchdog = NewRelayedWatchdog(queue, srv.events, wdCfg)
 				go relayedWatchdog.Run(cmd.Context())
 			}
+
+			// EPIC-019 M7: YouTube subscription feed background worker.
+			workerPool := &backgroundWorkerPool{}
+			if queue != nil {
+				workerPool.AddWorker(1*time.Hour, func(ctx context.Context) {
+					watchSubscriptionsAsync("default", queue, srv.events)
+				})
+			}
+			workerPool.Start(cmd.Context())
 
 			// Periodic VACUUM INTO snapshot — point-in-time recovery baseline
 			// if queue.db becomes corrupt (2026-04-13 incident). Defaults to

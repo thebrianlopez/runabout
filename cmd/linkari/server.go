@@ -90,6 +90,7 @@ type ShareRequest struct {
 	OriginalFilename string `json:"-"` // EPIC-071: original filename from multipart upload
 	ClassifySource       string `json:"-"` // EPIC-077 M1: cascade stage that won pre-enqueue classification
 	ForceContentClassify bool   `json:"-"` // EPIC-085 M2: per-action flag to always run content-LLM reclassification
+	ShortsRubricTemplate string `json:"-"` // EPIC-012 M8: Shorts-specific rubric override from ActionConfig
 }
 
 // ShareResponse is the structured JSON response.
@@ -211,6 +212,9 @@ type Server struct {
 	// EPIC-001: Google Sign-In support.
 	googleVerifier *GoogleTokenVerifier // nil when Google Sign-In is not configured
 	sessionTTLDays int                  // session token TTL; 0 = use default (90 days)
+
+	// EPIC-013 M3: Bluesky AT Protocol session. nil until POST /auth/bluesky succeeds.
+	bskyClient *BlueskyClient
 	// EPIC-051 M3: lastDigestPush deleted — throttle state lives in SQL via
 	// Queue.EnqueueDigestIfDue. Do not re-add in-memory throttle state here.
 
@@ -472,8 +476,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// EPIC-001: auth endpoints.
 	mux.HandleFunc("POST /auth/google", s.handleAuthGoogle)
 	mux.HandleFunc("POST /auth/invite", s.handleAuthInvite)
+	mux.HandleFunc("POST /auth/bluesky", s.handleAuthBluesky) // EPIC-013 M4
 	mux.HandleFunc("POST /admin/invite", s.handleAdminInvite)
 	mux.HandleFunc("POST /telemetry", s.handleTelemetry)
+	// EPIC-018 M5: Watch Later sync trigger.
+	mux.HandleFunc("POST /sync/youtube-watchlater", s.handleSyncWatchLater)
 }
 
 // registerFunnelRoutes adds the public-facing route allowlist for the Funnel
@@ -968,8 +975,10 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 
 	// EPIC-085 M2: thread per-action ForceContentClassify into the request so
 	// scoreAsync can gate content-LLM reclassification on it.
+	// EPIC-012 M8: thread ShortsRubricTemplate for Shorts-specific rubric override.
 	if ac := s.router.LookupAction(req.Action); ac != nil {
 		req.ForceContentClassify = ac.ForceContentClassify
+		req.ShortsRubricTemplate = ac.ShortsRubricTemplate
 	}
 
 	// EPIC-077 M1: synchronous fast-cascade classification pre-enqueue.
@@ -2211,4 +2220,43 @@ func (rl *rateLimiter) allow(key string) bool {
 
 	rl.clients[key] = append(times, now)
 	return true
+}
+
+// watchLaterSyncMu guards the watchLaterSyncing flag.
+var watchLaterSyncMu sync.Mutex
+var watchLaterSyncing bool
+
+// handleSyncWatchLater triggers a Watch Later playlist sync in a background
+// goroutine. Returns 409 if a sync is already running, 202 otherwise.
+// EPIC-018 M5.
+func (s *Server) handleSyncWatchLater(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	watchLaterSyncMu.Lock()
+	if watchLaterSyncing {
+		watchLaterSyncMu.Unlock()
+		http.Error(w, `{"error":"sync already in progress"}`, http.StatusConflict)
+		return
+	}
+	watchLaterSyncing = true
+	watchLaterSyncMu.Unlock()
+
+	profile := r.URL.Query().Get("profile")
+	if profile == "" {
+		profile = "default"
+	}
+
+	go func() {
+		defer func() {
+			watchLaterSyncMu.Lock()
+			watchLaterSyncing = false
+			watchLaterSyncMu.Unlock()
+		}()
+		syncWatchLaterAsync(profile, s.queue, s.events)
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
 }
