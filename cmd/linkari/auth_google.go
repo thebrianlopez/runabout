@@ -234,11 +234,11 @@ func mockInvalidGrantExchanger(_ context.Context, _ string) (*oauth2.Token, erro
 // youtubeTokenSource returns a self-refreshing oauth2.TokenSource for YouTube API access.
 // Returns youtube_auth_missing when no refresh token is stored.
 // Returns youtube_token_revoked when the stored token gets invalid_grant from Google.
-func youtubeTokenSource(ctx context.Context, profile string, q *Queue) (oauth2.TokenSource, error) {
-	return youtubeTokenSourceWithExchanger(ctx, profile, q, nil)
+func youtubeTokenSource(ctx context.Context, profile string, q *Queue, clientID, clientSecret string) (oauth2.TokenSource, error) {
+	return youtubeTokenSourceWithExchanger(ctx, profile, q, clientID, clientSecret, nil)
 }
 
-func youtubeTokenSourceWithExchanger(ctx context.Context, profile string, q *Queue, exchanger youtubeTokenExchanger) (oauth2.TokenSource, error) {
+func youtubeTokenSourceWithExchanger(ctx context.Context, profile string, q *Queue, clientID, clientSecret string, exchanger youtubeTokenExchanger) (oauth2.TokenSource, error) {
 	refreshToken, expiresAt, err := q.GetYouTubeRefreshToken(profile)
 	if err != nil {
 		return nil, fmt.Errorf("youtube_auth_missing: %w", err)
@@ -254,8 +254,10 @@ func youtubeTokenSourceWithExchanger(ctx context.Context, profile string, q *Que
 	}
 
 	cfg := &oauth2.Config{
-		Scopes:   []string{"https://www.googleapis.com/auth/youtube.readonly", "https://www.googleapis.com/auth/youtube"},
-		Endpoint: google.Endpoint,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Scopes:       []string{"https://www.googleapis.com/auth/youtube.readonly", "https://www.googleapis.com/auth/youtube"},
+		Endpoint:     google.Endpoint,
 	}
 	ts := cfg.TokenSource(ctx, tok)
 

@@ -58,7 +58,7 @@ func execYouTubePlaylistItemsReal(ctx context.Context, ts oauth2.TokenSource, pl
 // syncWatchLaterAsync fetches the Watch Later playlist and enqueues unseen
 // videos for scoring. Runs in a goroutine; errors are logged, not returned.
 // EPIC-018 M4 + M8.
-func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger) {
+func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("syncWatchLaterAsync panic", "recover", r)
@@ -76,7 +76,7 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger) {
 		})
 	}
 
-	ts, err := youtubeTokenSource(ctx, profile, q)
+	ts, err := youtubeTokenSource(ctx, profile, q, clientID, clientSecret)
 	if err != nil {
 		slog.Warn("syncWatchLaterAsync: auth error",
 			"event_type", "watchlater_api_error",

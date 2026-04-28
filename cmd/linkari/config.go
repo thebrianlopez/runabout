@@ -301,7 +301,8 @@ type ServerConfig struct {
 	YouTube        YouTubeConfig `yaml:"youtube,omitempty"`         // EPIC-090 M5: per-field YouTube tuning
 
 	// EPIC-001: Google Sign-In config.
-	GoogleClientID string   `yaml:"google_client_id"` // secretsmanager:// URI or literal; resolved via resolveField pipeline
+	GoogleClientID     string `yaml:"google_client_id"`     // secretsmanager:// URI or literal; resolved via resolveField pipeline
+	GoogleClientSecret string `yaml:"google_client_secret"` // secretsmanager:// URI or literal; required for YouTube API token refresh
 	SessionTTLDays int      `yaml:"session_ttl_days"` // session token TTL in days (default 90)
 	InviteCodes    []string `yaml:"invite_codes"`     // static invite codes seeded into DB at startup
 
