@@ -69,7 +69,7 @@ func TestWatchLaterCT2_SyncOnePage(t *testing.T) {
 		}, "", nil
 	}
 
-	syncWatchLaterAsync("default", q, nil)
+	syncWatchLaterAsync("default", q, nil, "", "")
 
 	if !called {
 		t.Fatal("execYouTubePlaylistItems was not called")
@@ -189,7 +189,7 @@ func TestWatchLaterCT5_Pagination(t *testing.T) {
 		}
 	}
 
-	syncWatchLaterAsync("default", q, nil)
+	syncWatchLaterAsync("default", q, nil, "", "")
 
 	if pageCount != 2 {
 		t.Fatalf("expected 2 pages fetched, got %d", pageCount)
@@ -225,7 +225,7 @@ func TestWatchLaterBT1_PlaylistIDIsWL(t *testing.T) {
 		return nil, "", nil
 	}
 
-	syncWatchLaterAsync("default", q, nil)
+	syncWatchLaterAsync("default", q, nil, "", "")
 
 	if gotPlaylistID != "WL" {
 		t.Fatalf("expected PlaylistId=WL, got %q", gotPlaylistID)
@@ -274,7 +274,7 @@ func TestWatchLaterBT3_QuotaExhaustion(t *testing.T) {
 	}
 	defer el.Close()
 
-	syncWatchLaterAsync("default", q, el)
+	syncWatchLaterAsync("default", q, el, "", "")
 
 	// Page 1 item should be enqueued.
 	items, err := q.Pending()

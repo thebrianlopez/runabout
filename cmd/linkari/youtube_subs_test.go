@@ -120,7 +120,7 @@ func TestSubsCT3_WatchEnqueues(t *testing.T) {
 		return []ytPlaylistItem{{VideoID: "newvid1", Title: "New Video"}}, nil
 	}
 
-	watchSubscriptionsAsync("default", q, nil)
+	watchSubscriptionsAsync("default", q, nil, "", "")
 
 	items, err := q.Pending()
 	if err != nil {
@@ -222,7 +222,7 @@ func TestSubsCT5_ChannelErrorSkipped(t *testing.T) {
 		return []ytPlaylistItem{{VideoID: "ok-vid1"}}, nil
 	}
 
-	watchSubscriptionsAsync("default", q, nil)
+	watchSubscriptionsAsync("default", q, nil, "", "")
 
 	// ch_ok videos should still be enqueued.
 	items, err := q.Pending()
@@ -270,7 +270,7 @@ func TestSubsBT1_APICallOrder(t *testing.T) {
 		return nil, nil
 	}
 
-	watchSubscriptionsAsync("default", q, nil)
+	watchSubscriptionsAsync("default", q, nil, "", "")
 
 	if len(callOrder) < 3 {
 		t.Fatalf("expected 3 API calls, got %d: %v", len(callOrder), callOrder)
@@ -332,7 +332,7 @@ func TestSubsBT2_ChannelBatching(t *testing.T) {
 		return nil, nil
 	}
 
-	watchSubscriptionsAsync("default", q, nil)
+	watchSubscriptionsAsync("default", q, nil, "", "")
 
 	// All 100 channel IDs must have been passed to the channels list seam.
 	if len(receivedIDs) != 100 {
@@ -376,7 +376,7 @@ func TestSubsBT3_SubscriptionsQuotaExceeded(t *testing.T) {
 	}
 	defer el.Close()
 
-	watchSubscriptionsAsync("default", q, el)
+	watchSubscriptionsAsync("default", q, el, "", "")
 
 	if channelsCallCount != 0 {
 		t.Fatalf("expected 0 channels.list calls, got %d", channelsCallCount)
@@ -536,7 +536,7 @@ func TestSubscriptionIntegration(t *testing.T) {
 		return []ytPlaylistItem{{VideoID: "integ-sub-vid1", Title: "Integration Sub Video"}}, nil
 	}
 
-	watchSubscriptionsAsync("default", q, nil)
+	watchSubscriptionsAsync("default", q, nil, "", "")
 
 	// Assert youtube_monitored_videos row inserted.
 	var count int
@@ -570,7 +570,7 @@ func TestSubscriptionIntegration(t *testing.T) {
 	execYouTubePlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, _ string) ([]ytPlaylistItem, error) {
 		return nil, nil // no new videos
 	}
-	watchSubscriptionsAsync("default", q, nil)
+	watchSubscriptionsAsync("default", q, nil, "", "")
 
 	// Assert push_outbox row with kind='subscription_digest'.
 	var digestCount int

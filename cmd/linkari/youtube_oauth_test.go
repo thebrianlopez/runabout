@@ -27,7 +27,7 @@ func setupTestQueue(t *testing.T) (*Queue, *sql.DB, func()) {
 func TestYouTubeCT1_AuthMissing(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
-	_, err := youtubeTokenSource(context.Background(), "default", q)
+	_, err := youtubeTokenSource(context.Background(), "default", q, "", "")
 	if err == nil {
 		t.Fatal("expected error for missing token")
 	}
@@ -59,7 +59,7 @@ func TestYouTubeCT3_TokenRevoked(t *testing.T) {
 	if err := q.SetYouTubeRefreshToken("default", "bad-token", 0); err != nil {
 		t.Fatal(err)
 	}
-	_, err := youtubeTokenSourceWithExchanger(context.Background(), "default", q, mockInvalidGrantExchanger)
+	_, err := youtubeTokenSourceWithExchanger(context.Background(), "default", q, "", "", mockInvalidGrantExchanger)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -128,7 +128,7 @@ func TestYouTubeBT3_ValidToken(t *testing.T) {
 	if err := q.SetYouTubeRefreshToken("default", "valid-tok", futureExpiry); err != nil {
 		t.Fatal(err)
 	}
-	ts, err := youtubeTokenSource(context.Background(), "default", q)
+	ts, err := youtubeTokenSource(context.Background(), "default", q, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestYouTubeIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ts, err := youtubeTokenSource(context.Background(), "default", q)
+	ts, err := youtubeTokenSource(context.Background(), "default", q, "", "")
 	if err != nil {
 		t.Fatalf("youtubeTokenSource failed: %v", err)
 	}

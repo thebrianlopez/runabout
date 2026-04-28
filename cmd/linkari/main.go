@@ -578,10 +578,12 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				sandboxCfg = serverFileCfg.Sandbox
 			}
 			_ = NewExecutionRuntimeWithPing(cmd.Context(), sandboxCfg)
-			// EPIC-001: resolve google_client_id for Google Sign-In.
-			var googleClientID string
+			// EPIC-001: resolve google_client_id and google_client_secret for Google Sign-In + YouTube token refresh.
+			var googleClientID, googleClientSecret string
 			googleClientID, _ = resolveField("google_client_id", "", os.Getenv("LINKARI_GOOGLE_CLIENT_ID"), "",
 				func(s *ServerConfig) string { return s.GoogleClientID })
+			googleClientSecret, _ = resolveField("google_client_secret", "", os.Getenv("LINKARI_GOOGLE_CLIENT_SECRET"), "",
+				func(s *ServerConfig) string { return s.GoogleClientSecret })
 
 			// EPIC-073: create shield middleware for Funnel client identity enforcement.
 			var shield *Shield
@@ -619,6 +621,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// EPIC-001: wire Google Sign-In verifier when client ID is configured.
 			if googleClientID != "" {
 				srv.googleVerifier = NewGoogleTokenVerifier(googleClientID)
+				srv.googleClientID = googleClientID
+				srv.googleClientSecret = googleClientSecret
 				slog.Info("google sign-in enabled", "client_id_len", len(googleClientID))
 			}
 			if serverFileCfg != nil && serverFileCfg.SessionTTLDays > 0 {
@@ -705,7 +709,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			workerPool := &backgroundWorkerPool{}
 			if queue != nil {
 				workerPool.AddWorker(1*time.Hour, func(ctx context.Context) {
-					watchSubscriptionsAsync("default", queue, srv.events)
+					watchSubscriptionsAsync("default", queue, srv.events, googleClientID, googleClientSecret)
 				})
 			}
 			workerPool.Start(cmd.Context())
