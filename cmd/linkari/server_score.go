@@ -179,6 +179,28 @@ func runFfmpegConvert(ctx context.Context, inputPath, outputPath string) error {
 	return nil
 }
 
+// execLiteParse is the function var for extracting text from documents via LiteParse.
+// Tests override this to avoid real lit invocation.
+var execLiteParse = runLiteParse
+
+// runLiteParse extracts text from a document at path using the lit CLI.
+// Tries --no-ocr first; retries with built-in OCR if the result is empty.
+// Returns the extracted text, whether OCR was used, and any error.
+func runLiteParse(ctx context.Context, path string) (string, bool, error) {
+	out, err := exec.CommandContext(ctx, liteparseBinaryPath, "parse", "--no-ocr", "-q", path).Output()
+	if err != nil {
+		return "", false, fmt.Errorf("lit parse: %w", err)
+	}
+	if text := strings.TrimSpace(string(out)); text != "" {
+		return text, false, nil
+	}
+	out, err = exec.CommandContext(ctx, liteparseBinaryPath, "parse", "-q", path).Output()
+	if err != nil {
+		return "", true, fmt.Errorf("lit parse (ocr): %w", err)
+	}
+	return strings.TrimSpace(string(out)), true, nil
+}
+
 // execWhisper is the function var for running whisper-cli. Tests override this
 // to avoid real transcription. Same pattern as execHaiku.
 var execWhisper = runWhisperCLI
@@ -498,36 +520,57 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			}
 		}
 	} else {
-		// File share: synthesize content from metadata.
-		var parts []string
-		if req.ExtraSubject != "" {
-			parts = append(parts, "Subject: "+req.ExtraSubject)
-		}
-		if req.ExtraText != "" {
-			parts = append(parts, "Text: "+req.ExtraText)
-		}
-		if req.Filename != "" {
-			parts = append(parts, "Filename: "+req.Filename)
-		}
-		if req.MimeType != "" {
-			parts = append(parts, "Type: "+req.MimeType)
-		}
-		// EPIC-081 M3: include file size in content synthesis.
-		if req.FileSize > 0 {
-			parts = append(parts, fmt.Sprintf("FileSize: %d bytes", req.FileSize))
-		}
-		content = strings.Join(parts, "\n")
-		if strings.TrimSpace(content) == "" {
-			slog.Info("score_async: no metadata",
-				"event_type", "score_async_skip",
-				"type", req.Type,
-				"reason", "no_metadata",
-			)
-			if q != nil && req.QueueRowID > 0 {
-				_ = q.MarkFailedWithReason(req.QueueRowID, "no_metadata")
-				enqueuePrefilterPush(q, req, "no_metadata")
+		// type=document → lit parse text extraction, metadata fallback.
+		if req.Type == "document" {
+			text, ocrUsed, err := execLiteParse(ctx, req.AudioPath)
+			if err != nil {
+				slog.Warn("score_async: pdf text extraction failed",
+					"event_type", "pdf_extract_failed",
+					"row_id", req.QueueRowID,
+					"error", err,
+				)
+			} else if text != "" {
+				slog.Info("score_async: pdf text extracted",
+					"event_type", "pdf_text_extracted",
+					"row_id", req.QueueRowID,
+					"char_count", len(text),
+					"ocr_used", ocrUsed,
+				)
+				content = text
 			}
-			return
+		}
+		if content == "" {
+			// File share: synthesize content from metadata.
+			var parts []string
+			if req.ExtraSubject != "" {
+				parts = append(parts, "Subject: "+req.ExtraSubject)
+			}
+			if req.ExtraText != "" {
+				parts = append(parts, "Text: "+req.ExtraText)
+			}
+			if req.Filename != "" {
+				parts = append(parts, "Filename: "+req.Filename)
+			}
+			if req.MimeType != "" {
+				parts = append(parts, "Type: "+req.MimeType)
+			}
+			// EPIC-081 M3: include file size in content synthesis.
+			if req.FileSize > 0 {
+				parts = append(parts, fmt.Sprintf("FileSize: %d bytes", req.FileSize))
+			}
+			content = strings.Join(parts, "\n")
+			if strings.TrimSpace(content) == "" {
+				slog.Info("score_async: no metadata",
+					"event_type", "score_async_skip",
+					"type", req.Type,
+					"reason", "no_metadata",
+				)
+				if q != nil && req.QueueRowID > 0 {
+					_ = q.MarkFailedWithReason(req.QueueRowID, "no_metadata")
+					enqueuePrefilterPush(q, req, "no_metadata")
+				}
+				return
+			}
 		}
 
 		// EPIC-079 M1: stage-6 LLM classify for file shares that had no
@@ -816,6 +859,22 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		"score", sc.Score,
 		"classify_source", classifySource,
 	)
+
+	if req.Type == "document" && content != "" {
+		if _, err := saveTranscriptFile(req.QueueRowID, profile, req.Filename, content, "pdf", "", "", "", 0, ""); err != nil {
+			slog.Warn("score_async: transcript save failed", "event_type", "transcript_save_failed", "type", req.Type, "row_id", req.QueueRowID, "error", err)
+		}
+	}
+	if isURLShare && !req.IsScreenshot && content != "" {
+		if _, err := saveTranscriptFile(req.QueueRowID, profile, deriveSlugFromURL(rawURL), content, "url", rawURL, "", "", 0, ""); err != nil {
+			slog.Warn("score_async: transcript save failed", "event_type", "transcript_save_failed", "type", req.Type, "row_id", req.QueueRowID, "error", err)
+		}
+	}
+	if req.Type == "image" && sc.Verdict != "" {
+		if _, err := saveTranscriptFile(req.QueueRowID, profile, req.Filename, sc.Verdict, "img", "", "", "", 0, ""); err != nil {
+			slog.Warn("score_async: transcript save failed", "event_type", "transcript_save_failed", "type", req.Type, "row_id", req.QueueRowID, "error", err)
+		}
+	}
 
 	if q == nil {
 		return
@@ -1861,7 +1920,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			"phase":           "audio_async", // EPIC-083 M5-1
 		})
 	}
-	txPath, err := saveTranscriptFile(rowID, profile, originalFilename, transcript, "voice_note", "", "", "", 0, "")
+	txPath, err := saveTranscriptFile(rowID, profile, originalFilename, transcript, "m4a", "", "", "", 0, "")
 	if err != nil {
 		slog.Warn("score_audio: save transcript failed",
 			"row_id", rowID,
@@ -2038,6 +2097,10 @@ var ytdlpBinaryPath = "yt-dlp"
 // Overridden by ServerConfig.FfmpegPath via initClaudeConfig() at startup. EPIC-003 M2.
 var ffmpegBinaryPath = "ffmpeg"
 
+// liteparseBinaryPath is the path to the lit binary. Defaults to "lit" (PATH lookup).
+// Overridden by ServerConfig.LiteParseePath via initClaudeConfig() at startup. EPIC-007 M2.
+var liteparseBinaryPath = "lit"
+
 // transcriptDir is the directory where voice note transcripts are saved.
 // Default: ~/code/personal/docs/transcripts. Overridden by ServerConfig.TranscriptsDir
 // via initClaudeConfig() at startup. EPIC-009 M1.
@@ -2051,9 +2114,9 @@ var transcriptDir = func() string {
 // EPIC-071 M2. EPIC-009 M4: extended with source, sourceURL, videoTitle.
 // EPIC-090 M4: extended with videoID, duration, subtitleType.
 //
-// source: "voice_note" | "youtube" | "" (empty = voice_note legacy behavior)
-// sourceURL: original YouTube URL (empty for voice notes)
-// videoTitle: YouTube video title (empty for voice notes); drives YT filename pattern
+// source: "pdf" | "img" | "url" | "voice_note" | "m4a" | "youtube" | "" (empty = legacy)
+// sourceURL: original YouTube or URL share URL (empty for file types)
+// videoTitle: YouTube video title (empty for non-YouTube); drives YT filename pattern
 // videoID: YouTube video ID (empty for non-YouTube)
 // duration: video duration in seconds (0 when unknown)
 // subtitleType: "manual" | "auto" | "" (empty for non-YouTube)
@@ -2067,16 +2130,42 @@ func saveTranscriptFile(rowID int64, profile, originalFilename, transcript, sour
 	ts := now.Format("20060102T150405Z")
 
 	var filename string
-	if source == "youtube" && videoTitle != "" {
-		// EPIC-009 M4: YouTube filename pattern: YYYYMMDD_<rowID>_YT_<sanitized_title>.md
+	switch source {
+	case "youtube":
 		safeTitle := sanitizeTranscriptFilename(videoTitle)
 		if safeTitle == "" {
 			safeTitle = "untitled"
 		}
 		safeTitle = strings.TrimSuffix(safeTitle, filepath.Ext(safeTitle))
-		filename = fmt.Sprintf("%s_%d_YT_%s.md", date, rowID, safeTitle)
-	} else {
-		// Voice note / legacy: YYYYMMDD_<rowID>_<filename>.md
+		filename = fmt.Sprintf("%s_YT_%d_%s.md", date, rowID, safeTitle)
+	case "pdf":
+		safeName := sanitizeTranscriptFilename(originalFilename)
+		if safeName == "" {
+			safeName = "untitled"
+		}
+		safeName = strings.TrimSuffix(safeName, filepath.Ext(safeName))
+		filename = fmt.Sprintf("%s_pdf_%d_%s.md", date, rowID, safeName)
+	case "img":
+		safeName := sanitizeTranscriptFilename(originalFilename)
+		if safeName == "" {
+			safeName = "untitled"
+		}
+		safeName = strings.TrimSuffix(safeName, filepath.Ext(safeName))
+		filename = fmt.Sprintf("%s_img_%d_%s.md", date, rowID, safeName)
+	case "url":
+		slug := sanitizeTranscriptFilename(originalFilename)
+		if slug == "" {
+			slug = "untitled"
+		}
+		filename = fmt.Sprintf("%s_url_%d_%s.md", date, rowID, slug)
+	case "voice_note", "m4a":
+		safeName := sanitizeTranscriptFilename(originalFilename)
+		if safeName == "" {
+			safeName = "untitled"
+		}
+		safeName = strings.TrimSuffix(safeName, filepath.Ext(safeName))
+		filename = fmt.Sprintf("%s_m4a_%d_%s.md", date, rowID, safeName)
+	default:
 		safeName := sanitizeTranscriptFilename(originalFilename)
 		if safeName == "" {
 			safeName = "untitled"

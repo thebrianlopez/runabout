@@ -77,9 +77,9 @@ type ShareRequest struct {
 	IsScreenshot   bool   `json:"is_screenshot,omitempty"`
 	ExtraSubject   string `json:"extra_subject,omitempty"`
 	ExtraText      string `json:"extra_text,omitempty"`
-	// FileSize is the file size in bytes from MediaStore. Telemetry-only —
-	// not used in classification or scoring decisions. Retained for future
-	// use (e.g., early rejection of oversized non-audio document shares).
+	// FileSize is the file size in bytes from MediaStore. Used by the LiteParse
+	// path for document shares; also available for future early-rejection of
+	// oversized non-audio shares.
 	FileSize int64 `json:"file_size,omitempty"`
 	RelativePath   string `json:"relative_path,omitempty"`
 	Filename       string `json:"filename,omitempty"`
