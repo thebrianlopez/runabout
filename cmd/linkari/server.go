@@ -483,6 +483,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /telemetry", s.handleTelemetry)
 	// EPIC-018 M5: Watch Later sync trigger.
 	mux.HandleFunc("POST /sync/youtube-watchlater", s.handleSyncWatchLater)
+	mux.HandleFunc("POST /sync/youtube-likedvideos", s.handleSyncLikedVideos)
 }
 
 // registerFunnelRoutes adds the public-facing route allowlist for the Funnel
@@ -2228,6 +2229,10 @@ func (rl *rateLimiter) allow(key string) bool {
 var watchLaterSyncMu sync.Mutex
 var watchLaterSyncing bool
 
+// likedVideosSyncMu guards the likedVideosSyncing flag.
+var likedVideosSyncMu sync.Mutex
+var likedVideosSyncing bool
+
 // handleSyncWatchLater triggers a Watch Later playlist sync in a background
 // goroutine. Returns 409 if a sync is already running, 202 otherwise.
 // EPIC-018 M5.
@@ -2258,6 +2263,40 @@ func (s *Server) handleSyncWatchLater(w http.ResponseWriter, r *http.Request) {
 			watchLaterSyncMu.Unlock()
 		}()
 		syncWatchLaterAsync(profile, s.queue, s.events, s.googleClientID, s.googleClientSecret)
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleSyncLikedVideos triggers a Liked Videos playlist sync in a background
+// goroutine. Returns 409 if a sync is already running, 202 otherwise.
+func (s *Server) handleSyncLikedVideos(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	likedVideosSyncMu.Lock()
+	if likedVideosSyncing {
+		likedVideosSyncMu.Unlock()
+		http.Error(w, `{"error":"sync already in progress"}`, http.StatusConflict)
+		return
+	}
+	likedVideosSyncing = true
+	likedVideosSyncMu.Unlock()
+
+	profile := r.URL.Query().Get("profile")
+	if profile == "" {
+		profile = "default"
+	}
+
+	go func() {
+		defer func() {
+			likedVideosSyncMu.Lock()
+			likedVideosSyncing = false
+			likedVideosSyncMu.Unlock()
+		}()
+		syncLikedVideosAsync(profile, s.queue, s.events, s.googleClientID, s.googleClientSecret)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
