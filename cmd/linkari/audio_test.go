@@ -102,6 +102,16 @@ func installWhisperStub(t *testing.T, transcript string, err error) {
 	t.Cleanup(func() { execWhisper = prev })
 }
 
+// installLiteParseStub overrides execLiteParse for the duration of the test.
+func installLiteParseStub(t *testing.T, text string, ocrUsed bool, err error) {
+	t.Helper()
+	prev := execLiteParse
+	execLiteParse = func(_ context.Context, _ string) (string, bool, error) {
+		return text, ocrUsed, err
+	}
+	t.Cleanup(func() { execLiteParse = prev })
+}
+
 // --- helper: run scoreAudioAsync synchronously ------------------------------
 
 // installHaikuSynopsisStub stubs execHaikuSynopsisJSON (synopsis path) and

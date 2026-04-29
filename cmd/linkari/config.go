@@ -64,7 +64,8 @@ func (s ServerConfig) IsZero() bool {
 		s.YouTube.SubtitleLangs == "" && s.YouTube.TimeoutSeconds == 0 &&
 		s.GoogleClientID == "" && s.SessionTTLDays == 0 &&
 		!s.Sandbox.Enabled &&
-		s.ImageNoiseGateMaxBytes == 0 && s.MaxScoringCostUSD == 0
+		s.ImageNoiseGateMaxBytes == 0 && s.MaxScoringCostUSD == 0 &&
+		s.LiteParseePath == ""
 }
 
 // YouTubeConfig holds per-field tuning for yt-dlp extraction. EPIC-090 M5.
@@ -298,6 +299,9 @@ type ServerConfig struct {
 	// EPIC-009: YouTube transcription config.
 	TranscriptsDir string       `yaml:"transcripts_dir,omitempty"` // directory for transcript markdown files (default: ~/code/personal/docs/transcripts)
 	YtdlpPath      string       `yaml:"ytdlp_path,omitempty"`      // path to yt-dlp binary (default: yt-dlp on PATH)
+
+	// EPIC-007: PDF document content extraction via LiteParse.
+	LiteParseePath string `yaml:"liteparse_path,omitempty"` // path to lit binary (default: lit on PATH; install: brew install llamaindex-liteparse)
 	YouTube        YouTubeConfig `yaml:"youtube,omitempty"`         // EPIC-090 M5: per-field YouTube tuning
 
 	// EPIC-001: Google Sign-In config.

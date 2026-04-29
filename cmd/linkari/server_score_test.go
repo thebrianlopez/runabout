@@ -1057,6 +1057,338 @@ func TestIsCameraPhoto(t *testing.T) {
 }
 
 // TestCameraTimestampRE verifies the camera timestamp regex patterns.
+func TestSaveTranscriptFile(t *testing.T) {
+	type tc struct {
+		name         string
+		rowID        int64
+		profile      string
+		origFilename string
+		transcript   string
+		source       string
+		sourceURL    string
+		videoTitle   string
+		videoID      string
+		duration     int
+		subtitleType string
+		// assertions
+		wantFrontmatter []string
+		wantAbsent      []string
+		wantFileSuffix  string // filename must contain this substring
+	}
+	cases := []tc{
+		{
+			name:         "YouTube audio fallback",
+			rowID:        502,
+			profile:      "eng",
+			origFilename: "",
+			transcript:   "Hello world transcript.",
+			source:       "youtube",
+			sourceURL:    "https://www.youtube.com/watch?v=abc123",
+			videoTitle:   "My Test Video",
+			videoID:      "abc123",
+			duration:     180,
+			subtitleType: "audio",
+			wantFrontmatter: []string{
+				`row_id: 502`,
+				`profile: "eng"`,
+				`source: "youtube"`,
+				`source_url: "https://www.youtube.com/watch?v=abc123"`,
+				`video_title: "My Test Video"`,
+				`video_id: "abc123"`,
+				`duration: 180`,
+				`subtitle_type: "audio"`,
+				"Hello world transcript.",
+			},
+			wantAbsent:     []string{"original_filename"},
+			wantFileSuffix: "_YT_502_My_Test_Video.md",
+		},
+		{
+			name:         "YouTube subtitle — subtitle_type manual",
+			rowID:        100,
+			profile:      "default",
+			origFilename: "",
+			transcript:   "Subtitle text.",
+			source:       "youtube",
+			sourceURL:    "https://www.youtube.com/watch?v=xyz",
+			videoTitle:   "Another Video",
+			videoID:      "xyz",
+			duration:     60,
+			subtitleType: "manual",
+			wantFrontmatter: []string{
+				`subtitle_type: "manual"`,
+				`video_id: "xyz"`,
+			},
+			wantFileSuffix: "_YT_100_Another_Video.md",
+		},
+		{
+			name:         "YouTube no subtitle_type — field omitted",
+			rowID:        200,
+			profile:      "default",
+			transcript:   "Body.",
+			source:       "youtube",
+			videoTitle:   "Untitled Clip",
+			videoID:      "vid99",
+			subtitleType: "",
+			wantFrontmatter: []string{
+				`video_id: "vid99"`,
+			},
+			wantAbsent:     []string{"subtitle_type"},
+			wantFileSuffix: "_YT_200_Untitled_Clip.md",
+		},
+		{
+			name:         "Voice note — original_filename present, no video fields",
+			rowID:        300,
+			profile:      "personal",
+			origFilename: "Voice 260425.m4a",
+			transcript:   "Voice note text.",
+			source:       "voice_note",
+			sourceURL:    "",
+			videoTitle:   "",
+			videoID:      "",
+			duration:     45,
+			subtitleType: "",
+			wantFrontmatter: []string{
+				`original_filename: "Voice 260425.m4a"`,
+				`duration: 45`,
+				`source: "voice_note"`,
+			},
+			wantAbsent:     []string{"video_id", "subtitle_type", "source_url"},
+			wantFileSuffix: "_m4a_300_Voice_260425.md",
+		},
+		{
+			name:         "PDF source — pdf_ prefix",
+			rowID:        401,
+			profile:      "eng",
+			origFilename: "report.pdf",
+			transcript:   "PDF extracted text.",
+			source:       "pdf",
+			wantFrontmatter: []string{
+				`source: "pdf"`,
+				`original_filename: "report.pdf"`,
+				"PDF extracted text.",
+			},
+			wantFileSuffix: "_pdf_401_report.md",
+		},
+		{
+			name:         "Image source — img_ prefix",
+			rowID:        402,
+			profile:      "eng",
+			origFilename: "photo.jpg",
+			transcript:   "Image OCR text.",
+			source:       "img",
+			wantFrontmatter: []string{
+				`source: "img"`,
+				`original_filename: "photo.jpg"`,
+			},
+			wantFileSuffix: "_img_402_photo.md",
+		},
+		{
+			name:         "URL source — url_ prefix with slug",
+			rowID:        403,
+			profile:      "eng",
+			origFilename: "example-article",
+			transcript:   "Article body.",
+			source:       "url",
+			sourceURL:    "https://example.com/article",
+			wantFrontmatter: []string{
+				`source: "url"`,
+				`source_url: "https://example.com/article"`,
+			},
+			wantFileSuffix: "_url_403_example_article.md",
+		},
+		{
+			name:         "m4a source — m4a_ prefix",
+			rowID:        404,
+			profile:      "eng",
+			origFilename: "recording.m4a",
+			transcript:   "Audio transcript.",
+			source:       "m4a",
+			wantFrontmatter: []string{
+				`source: "m4a"`,
+				`original_filename: "recording.m4a"`,
+			},
+			wantFileSuffix: "_m4a_404_recording.md",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prev := transcriptDir
+			transcriptDir = filepath.Join(t.TempDir(), "transcripts")
+			t.Cleanup(func() { transcriptDir = prev })
+
+			path, err := saveTranscriptFile(
+				c.rowID, c.profile, c.origFilename, c.transcript,
+				c.source, c.sourceURL, c.videoTitle, c.videoID,
+				c.duration, c.subtitleType,
+			)
+			if err != nil {
+				t.Fatalf("saveTranscriptFile returned error: %v", err)
+			}
+			if path == "" {
+				t.Fatal("saveTranscriptFile returned empty path")
+			}
+
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("cannot read written file %q: %v", path, err)
+			}
+			content := string(data)
+
+			for _, want := range c.wantFrontmatter {
+				if !strings.Contains(content, want) {
+					t.Errorf("missing in file: %q\nfile content:\n%s", want, content)
+				}
+			}
+			for _, absent := range c.wantAbsent {
+				if strings.Contains(content, absent) {
+					t.Errorf("unexpected field %q found in file:\n%s", absent, content)
+				}
+			}
+			if c.wantFileSuffix != "" && !strings.HasSuffix(filepath.Base(path), c.wantFileSuffix) {
+				t.Errorf("filename %q does not end with %q", filepath.Base(path), c.wantFileSuffix)
+			}
+		})
+	}
+}
+
+// EPIC-008 M3: transcript persistence tests for PDF, URL, and image share types.
+
+func TestScoreAsync_PDFTranscriptSaved(t *testing.T) {
+	isolateEventsDir(t)
+
+	prevDir := transcriptDir
+	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
+	t.Cleanup(func() { transcriptDir = prevDir })
+
+	installLiteParseStub(t, "Extracted PDF text content", false, nil)
+
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	req := &ShareRequest{
+		Type:     "document",
+		Filename: "report.pdf",
+		Profile:  "eng",
+	}
+	id, err := q.Enqueue(req)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	req.QueueRowID = id
+
+	eval := &stubEvaluator{score: 75, verdict: "Interesting document"}
+	runScoreFileAsyncSync(t, req, q, eval)
+
+	entries, err := os.ReadDir(transcriptDir)
+	if err != nil {
+		t.Fatalf("read transcriptDir: %v", err)
+	}
+	var found bool
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "_pdf_") {
+			found = true
+			data, _ := os.ReadFile(filepath.Join(transcriptDir, e.Name()))
+			if !strings.Contains(string(data), "Extracted PDF text content") {
+				t.Errorf("transcript body missing expected content; got:\n%s", data)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no transcript file with _pdf_ prefix found in %s", transcriptDir)
+	}
+}
+
+func TestScoreAsync_URLTranscriptSaved(t *testing.T) {
+	isolateEventsDir(t)
+
+	prevDir := transcriptDir
+	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
+	t.Cleanup(func() { transcriptDir = prevDir })
+
+	const pageContent = "Great article about machine learning and neural networks."
+	srv := jinaBodyServer(t, http.StatusOK, pageContent)
+	installJinaServer(t, srv)
+
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	req := &ShareRequest{
+		Type:    "url",
+		URL:     "https://example.com/article",
+		Profile: "eng",
+	}
+	id, err := q.Enqueue(req)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if err := q.MarkRelayed(id); err != nil {
+		t.Fatalf("mark relayed: %v", err)
+	}
+	req.QueueRowID = id
+
+	eval := &stubEvaluator{score: 80, verdict: "Worth reading"}
+	runScoreFileAsyncSync(t, req, q, eval)
+
+	entries, err := os.ReadDir(transcriptDir)
+	if err != nil {
+		t.Fatalf("read transcriptDir: %v", err)
+	}
+	var found bool
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "_url_") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no transcript file with _url_ prefix found in %s", transcriptDir)
+	}
+}
+
+func TestScoreAsync_ImageTranscriptSaved(t *testing.T) {
+	isolateEventsDir(t)
+
+	prevDir := transcriptDir
+	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
+	t.Cleanup(func() { transcriptDir = prevDir })
+
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	req := &ShareRequest{
+		Type:     "image",
+		Filename: "photo.jpg",
+		MimeType: "image/jpeg",
+		Profile:  "life",
+	}
+	id, err := q.Enqueue(req)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	req.QueueRowID = id
+
+	eval := &stubEvaluator{score: 65, verdict: "Beautiful landscape photo"}
+	runScoreFileAsyncSync(t, req, q, eval)
+
+	entries, err := os.ReadDir(transcriptDir)
+	if err != nil {
+		t.Fatalf("read transcriptDir: %v", err)
+	}
+	var found bool
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "_img_") {
+			found = true
+			data, _ := os.ReadFile(filepath.Join(transcriptDir, e.Name()))
+			if !strings.Contains(string(data), "Beautiful landscape photo") {
+				t.Errorf("transcript body missing verdict; got:\n%s", data)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no transcript file with _img_ prefix found in %s", transcriptDir)
+	}
+}
+
 func TestCameraTimestampRE(t *testing.T) {
 	matches := []string{
 		"IMG_20260419_123456.jpg",
@@ -1080,5 +1412,112 @@ func TestCameraTimestampRE(t *testing.T) {
 		if cameraTimestampRE.MatchString(f) {
 			t.Errorf("expected %q NOT to match cameraTimestampRE", f)
 		}
+	}
+}
+
+// EPIC-007 M4: document share test coverage.
+
+// TestScoreAsync_Document_LiteParse verifies that a document share with text
+// extracted by LiteParse reaches eval and is persisted as scored.
+func TestScoreAsync_Document_LiteParse(t *testing.T) {
+	isolateEventsDir(t)
+
+	tmpFile := filepath.Join(t.TempDir(), "paper.pdf")
+	if err := os.WriteFile(tmpFile, []byte("fake-pdf"), 0o644); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+
+	installLiteParseStub(t, "Interesting content about machine learning and transformers.", false, nil)
+
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	req := &ShareRequest{
+		Type:      "document",
+		Filename:  "paper.pdf",
+		MimeType:  "application/pdf",
+		Profile:   "eng",
+		AudioPath: tmpFile,
+	}
+	id, err := q.Enqueue(req)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	req.QueueRowID = id
+
+	eval := &stubEvaluator{score: 75, verdict: "Interesting ML paper"}
+	runScoreFileAsyncSync(t, req, q, eval)
+
+	if calls := atomic.LoadInt32(&eval.calls); calls != 1 {
+		t.Errorf("eval.calls = %d, want 1", calls)
+	}
+
+	items, err := q.List("", 20)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found bool
+	for _, it := range items {
+		if it.ID == id && (it.Status == "scored" || it.Status == "archived") {
+			found = true
+			if it.Score == nil || *it.Score != 75 {
+				t.Errorf("row score = %v, want 75", it.Score)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected scored/archived row for document share")
+	}
+}
+
+// TestScoreAsync_Document_EmptyText verifies that a document share where
+// LiteParse returns empty text falls through to metadata synthesis without
+// crashing, and the queue row is still scored.
+func TestScoreAsync_Document_EmptyText(t *testing.T) {
+	isolateEventsDir(t)
+
+	tmpFile := filepath.Join(t.TempDir(), "paper.pdf")
+	if err := os.WriteFile(tmpFile, []byte("fake-pdf"), 0o644); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+
+	installLiteParseStub(t, "", false, nil)
+
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	req := &ShareRequest{
+		Type:         "document",
+		Filename:     "paper.pdf",
+		MimeType:     "application/pdf",
+		Profile:      "eng",
+		ExtraSubject: "A research paper about transformers",
+		AudioPath:    tmpFile,
+	}
+	id, err := q.Enqueue(req)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	req.QueueRowID = id
+
+	eval := &stubEvaluator{score: 60, verdict: "Paper on transformers"}
+	runScoreFileAsyncSync(t, req, q, eval)
+
+	if calls := atomic.LoadInt32(&eval.calls); calls != 1 {
+		t.Errorf("eval.calls = %d, want 1 (metadata synthesis should reach eval)", calls)
+	}
+
+	items, err := q.List("", 20)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found bool
+	for _, it := range items {
+		if it.ID == id && (it.Status == "scored" || it.Status == "archived") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected scored/archived row for document share with empty LiteParse text")
 	}
 }
