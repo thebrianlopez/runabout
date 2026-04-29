@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -213,6 +214,41 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 						fmt.Sprintf("ffmpeg not found at %q — audio conversion for YouTube fallback will fail (install ffmpeg or set ffmpeg_path in server.yaml)", ffPath)))
 				} else {
 					addCheck(okCheck("ffmpeg", resolved))
+				}
+			}
+
+			// --- Check: lit (LiteParse) binary (EPIC-007 M3) ---
+			{
+				litPath := liteparseBinaryPath
+				if serverCfg != nil && serverCfg.LiteParseePath != "" {
+					litPath = serverCfg.LiteParseePath
+				}
+				if _, err := exec.LookPath(litPath); err != nil {
+					addCheck(warnCheck("lit",
+						fmt.Sprintf("not found — brew install llamaindex-liteparse")))
+				} else {
+					ver := ""
+					if out, err := exec.Command(litPath, "--version").Output(); err == nil {
+						ver = strings.TrimSpace(string(out))
+					}
+					if ver == "" {
+						ver = litPath
+					}
+					addCheck(okCheck("lit", ver))
+				}
+			}
+
+			// --- Check: lit binary (EPIC-007 M3) ---
+			{
+				litPath := liteparseBinaryPath
+				if serverCfg != nil && serverCfg.LiteParseePath != "" {
+					litPath = serverCfg.LiteParseePath
+				}
+				if resolved, err := exec.LookPath(litPath); err != nil {
+					addCheck(warnCheck("lit",
+						fmt.Sprintf("lit not found at %q — brew install llamaindex-liteparse", litPath)))
+				} else {
+					addCheck(okCheck("lit", resolved))
 				}
 			}
 

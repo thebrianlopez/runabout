@@ -534,10 +534,11 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		return "Transcribing — synopsis via FCM", nil
 	}
 
-	// EPIC-077 M5: image, document, and URL shares all route to scoreAsync.
-	// scoreAsync branches on req.Type for content acquisition only:
+	// image, document, and URL shares all route to scoreAsync.
+	// scoreAsync branches on req.Type for content acquisition:
 	//   - "url": Jina fetch (or screenshot metadata)
-	//   - "image"/"document": metadata synthesis
+	//   - "document": lit parse text extraction, metadata fallback
+	//   - "image": metadata synthesis
 	if ac.ServerScore && (req.Type == "image" || req.Type == "document" || req.Type == "url" || req.Type == "") {
 		go scoreAsync(req, r.queue, HaikuJSONEvaluator{}, r.events)
 		switch req.Type {

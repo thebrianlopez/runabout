@@ -436,6 +436,9 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.FfmpegPath != "" {
 		ffmpegBinaryPath = cfg.FfmpegPath
 	}
+	if cfg != nil && cfg.LiteParseePath != "" {
+		liteparseBinaryPath = cfg.LiteParseePath
+	}
 	// EPIC-090 M5: per-field YouTube tuning.
 	if cfg != nil && cfg.YouTube.SubtitleLangs != "" {
 		ytSubtitleLangs = cfg.YouTube.SubtitleLangs
