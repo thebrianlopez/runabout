@@ -331,6 +331,15 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		queue_id     INTEGER
 	)`)
 
+	// Liked Videos dedup table — mirrors youtube_watchlater_videos for LL playlist.
+	db.Exec(`CREATE TABLE IF NOT EXISTS youtube_liked_videos (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		video_id     TEXT NOT NULL UNIQUE,
+		discovered_at INTEGER NOT NULL,
+		scored_at    INTEGER,
+		queue_id     INTEGER
+	)`)
+
 	// EPIC-019 M3: monitored subscription videos dedup table.
 	db.Exec(`CREATE TABLE IF NOT EXISTS youtube_monitored_videos (
 		id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2013,6 +2022,29 @@ func (q *Queue) IsWatchLaterVideoScored(videoID string) (bool, error) {
 	var count int
 	err := q.db.QueryRow(
 		`SELECT COUNT(*) FROM youtube_watchlater_videos WHERE video_id=? AND scored_at IS NOT NULL`,
+		videoID,
+	).Scan(&count)
+	return count > 0, err
+}
+
+// --- Liked Videos dedup methods ---
+
+// InsertLikedVideo records a newly discovered Liked Videos entry.
+// Ignores duplicate video_id (UNIQUE constraint) — returns nil on conflict.
+func (q *Queue) InsertLikedVideo(videoID string, discoveredAt int64) error {
+	_, err := q.db.Exec(
+		`INSERT OR IGNORE INTO youtube_liked_videos (video_id, discovered_at) VALUES (?, ?)`,
+		videoID, discoveredAt,
+	)
+	return err
+}
+
+// IsLikedVideoScored returns true if the video has already been scored
+// (scored_at IS NOT NULL).
+func (q *Queue) IsLikedVideoScored(videoID string) (bool, error) {
+	var count int
+	err := q.db.QueryRow(
+		`SELECT COUNT(*) FROM youtube_liked_videos WHERE video_id=? AND scored_at IS NOT NULL`,
 		videoID,
 	).Scan(&count)
 	return count > 0, err
