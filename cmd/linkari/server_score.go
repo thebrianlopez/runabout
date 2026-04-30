@@ -54,6 +54,14 @@ func isYouTubePostURL(u string) bool {
 	return youTubePostRE.MatchString(u)
 }
 
+// pkgDomainRouter is the process-level DomainRouter installed at server startup.
+// nil until SetDomainRouter is called (existing Jina fallback path used).
+var pkgDomainRouter *DomainRouter
+
+// setDomainRouter installs the process-level domain router. Called once at
+// startup via Router.SetDomainRouter. Safe for single-writer startup pattern.
+func setDomainRouter(dr *DomainRouter) { pkgDomainRouter = dr }
+
 // setUnsupportedPipelineDomains rebuilds unsupportedPipelineRE from a custom
 // domain list sourced from server.yaml. Each entry is treated as a literal
 // domain substring (case-insensitive). Called once at startup from initClaudeConfig.
@@ -475,11 +483,15 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			}
 			content = screenshotContent
 		} else {
-			// Jina fetch for normal URL shares.
+			// Jina fetch for normal URL shares — routed via DomainRouter when available.
 			fetchCtx, fetchCancel := context.WithTimeout(ctx, 30*time.Second)
 			defer fetchCancel()
 			var err error
-			content, err = fetchJinaContent(fetchCtx, rawURL)
+			if pkgDomainRouter != nil {
+				content, _, err = pkgDomainRouter.FetchWithFallback(fetchCtx, rawURL)
+			} else {
+				content, err = fetchJinaContent(fetchCtx, rawURL)
+			}
 			if err != nil {
 				slog.Warn("score_async: fetch failed",
 					"event_type", "score_async_fetch_error",
