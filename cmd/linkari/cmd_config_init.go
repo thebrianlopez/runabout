@@ -93,6 +93,11 @@ const serverYAMLTemplate = `server:
   # API token for PagerDuty integration.
   pagerduty_token: secretsmanager://linkari/jira-webhook#PAGERDUTY_API_TOKEN
 
+  # Domain API clients — token fields support secretsmanager:// URIs (resolved at startup).
+  github_token: secretsmanager://linkari/github-pat
+  google_service_account_path: ""
+  atlassian_confluence_token: secretsmanager://linkari/confluence-token
+
   # --- TLS (local-only mode) ---
 
   # When tsnet is enabled (default), Tailscale handles TLS automatically and
