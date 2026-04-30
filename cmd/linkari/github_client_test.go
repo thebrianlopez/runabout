@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -211,5 +213,135 @@ func TestParseGitHubURL_IssueURL(t *testing.T) {
 	_, _, _, err := ParseGitHubURL("https://github.com/owner/repo/issues/1213")
 	if err != ErrUnsupportedURL {
 		t.Errorf("got %v, want ErrUnsupportedURL", err)
+	}
+}
+
+// BT-1: X-RateLimit-Remaining: 50 on a 200 response emits github_quota_warning but returns content successfully.
+func TestGitHubClientFetch_QuotaWarning(t *testing.T) {
+	const readmeContent = "# Quota Warning Test"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "50")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(mockContentResponse(readmeContent))
+	}))
+	defer srv.Close()
+
+	var events []string
+	u, _ := url.Parse("https://github.com/owner/repo")
+	c := NewGitHubClient("test-token")
+	c.client = srv.Client()
+	c.apiBaseURL = srv.URL
+	c.onEvent = func(eventType string, _ map[string]interface{}) {
+		events = append(events, eventType)
+	}
+
+	content, _, err := c.Fetch(context.Background(), u)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if content != readmeContent {
+		t.Errorf("content: got %q, want %q", content, readmeContent)
+	}
+
+	found := false
+	for _, e := range events {
+		if e == "github_quota_warning" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected github_quota_warning event, got: %v", events)
+	}
+}
+
+// BT-2: URL with /blob/main/docs/api.md routes to /contents/docs/api.md not /readme.
+func TestGitHubClientFetch_FilePathRouting(t *testing.T) {
+	var capturedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(mockContentResponse("# File Content"))
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse("https://github.com/owner/repo/blob/main/docs/api.md")
+	c := NewGitHubClient("test-token")
+	c.client = srv.Client()
+	c.apiBaseURL = srv.URL
+
+	_, _, err := c.Fetch(context.Background(), u)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "/repos/owner/repo/contents/docs/api.md"
+	if capturedPath != want {
+		t.Errorf("API path: got %q, want %q", capturedPath, want)
+	}
+}
+
+// BT-3: Token value never appears in any emitted event field.
+func TestGitHubClientFetch_TokenRedacted(t *testing.T) {
+	const secret = "super-secret-token"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(mockContentResponse("# Content"))
+	}))
+	defer srv.Close()
+
+	var allFields []string
+	u, _ := url.Parse("https://github.com/owner/repo")
+	c := NewGitHubClient(secret)
+	c.client = srv.Client()
+	c.apiBaseURL = srv.URL
+	c.onEvent = func(_ string, metadata map[string]interface{}) {
+		for _, v := range metadata {
+			allFields = append(allFields, fmt.Sprintf("%v", v))
+		}
+	}
+
+	if _, _, err := c.Fetch(context.Background(), u); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, f := range allFields {
+		if strings.Contains(f, secret) {
+			t.Errorf("token leaked in event field: %q", f)
+		}
+	}
+}
+
+// RG-1: ParseGitHubURL with SSH URL without .git suffix returns (owner, repo, "", nil) and never panics.
+func TestParseGitHubURL_SSH_NoGitSuffix(t *testing.T) {
+	owner, repo, fp, err := ParseGitHubURL("git@github.com:owner/repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if owner != "owner" || repo != "repo" || fp != "" {
+		t.Errorf("got (%q, %q, %q), want (\"owner\", \"repo\", \"\")", owner, repo, fp)
+	}
+}
+
+// RG-2: DomainRouter with a stubbed GitHubClient returning ErrGitHubRateLimited falls back to jinaFetch.
+func TestDomainRouter_RateLimitFallsBackToJina(t *testing.T) {
+	stub := &mockDomainClient{
+		fetchFn: func(_ context.Context, _ *url.URL) (string, ContentType, error) {
+			return "", ContentTypePlain, ErrGitHubRateLimited
+		},
+	}
+	jinaStub := func(_ context.Context, _ string) (string, error) {
+		return "jina content", nil
+	}
+
+	dr := NewDomainRouter(map[string]DomainClient{"github.com": stub}, jinaStub)
+	content, _, err := dr.FetchWithFallback(context.Background(), "https://github.com/owner/repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if content != "jina content" {
+		t.Errorf("got %q, want \"jina content\"", content)
 	}
 }
