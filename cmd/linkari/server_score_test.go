@@ -454,8 +454,9 @@ func TestClassifyURLProfile(t *testing.T) {
 }
 
 // EPIC-061 M3: classificationPreamble format.
+// EPIC-015 M2: updated to pass ContentTypePlain (zero regression — output unchanged).
 func TestClassificationPreamble(t *testing.T) {
-	p := classificationPreamble("eng", "https://github.com/golang/go", "url_domain")
+	p := classificationPreamble("eng", "https://github.com/golang/go", "url_domain", ContentTypePlain)
 	if !strings.Contains(p, "eng") || !strings.Contains(p, "github.com") || !strings.Contains(p, "url_domain") {
 		t.Errorf("preamble should contain profile, URL, and source: %q", p)
 	}
