@@ -282,15 +282,30 @@ const audioChunkSizeThreshold = 50 << 20
 // classificationPreamble returns a preamble to prepend to the evaluator
 // prompt when the profile was auto-classified from a URL. This tells the
 // LLM which profile rubric to apply and why.
-func classificationPreamble(profile, rawURL string, source string) string {
+//
+// EPIC-015 M2: accepts ContentType so the LLM knows the format of the fetched
+// content. ContentTypePlain produces byte-identical output to the pre-EPIC-015
+// implementation (CT-1 regression guarantee).
+func classificationPreamble(profile, rawURL string, source string, ct ContentType) string {
 	if source == "" {
 		source = "url"
 	}
-	return fmt.Sprintf(
+	base := fmt.Sprintf(
 		"[Auto-classified profile: %s (source: %s, URL: %s)]\n"+
 			"Score this content using the %s profile rubric.\n\n",
 		profile, source, rawURL, profile,
 	)
+	switch ct {
+	case ContentTypeMarkdown:
+		return base + "This content is a GitHub README in markdown format — evaluate structure, documentation quality, and technical depth alongside the profile rubric.\n\n"
+	case ContentTypeADF:
+		return base + "This content is from a Confluence page — evaluate for structured knowledge sharing, completeness, and actionability.\n\n"
+	case ContentTypeJSON:
+		return base + "This content is structured JSON — evaluate the data's relevance and signal quality for the profile rubric.\n\n"
+	default:
+		// ContentTypePlain: return base unchanged (CT-1 byte-identical guarantee).
+		return base
+	}
 }
 
 // scoreAsync is the unified server-side scoring pipeline for URL and file
@@ -317,6 +332,10 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	var prefilterStage string
 	var evalSkipped = true // assume skipped until eval actually runs
 	var costUSD float64
+	// EPIC-015 M2: tracks the content format returned by FetchWithFallback so
+	// classificationPreamble can emit a format-specific hint to the evaluator.
+	// Defaults to Plain; updated in the URL fetch path when DomainRouter is used.
+	var contentType ContentType // = ContentTypePlain (zero value)
 	defer func() {
 		if events != nil {
 			events.Emit("score_prefilter_summary", map[string]any{
@@ -487,8 +506,10 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			fetchCtx, fetchCancel := context.WithTimeout(ctx, 30*time.Second)
 			defer fetchCancel()
 			var err error
+			// contentType is declared at function scope (EPIC-015 M2); it remains
+			// ContentTypePlain when the Jina fallback executes.
 			if pkgDomainRouter != nil {
-				content, _, err = pkgDomainRouter.FetchWithFallback(fetchCtx, rawURL)
+				content, contentType, err = pkgDomainRouter.FetchWithFallback(fetchCtx, rawURL)
 			} else {
 				content, err = fetchJinaContent(fetchCtx, rawURL)
 			}
@@ -641,7 +662,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		return
 	}
 	if autoClassified {
-		sysPrompt = classificationPreamble(profile, rawURL, classifySource) + sysPrompt
+		sysPrompt = classificationPreamble(profile, rawURL, classifySource, contentType) + sysPrompt
 	}
 
 	// EPIC-079 M3: use vision evaluator for image shares with a readable file.
