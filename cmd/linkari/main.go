@@ -705,6 +705,19 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				} else {
 					slog.Warn("domain_client_unconfigured", "field", "jira_domain/jira_api_username/jira_api_password", "effect", "atlassian.net falls back to Jina")
 				}
+				// F5: Google Drive read client for drive.google.com and docs.google.com.
+				if serverFileCfg != nil && serverFileCfg.GoogleOAuthToken != "" {
+					googleClient, googleErr := NewGoogleAPIsClient(serverFileCfg.GoogleClientID, serverFileCfg.GoogleClientSecret, serverFileCfg.GoogleOAuthToken)
+					if googleErr != nil {
+						slog.Warn("domain_client_unconfigured", "field", "google_oauth_token", "error", googleErr.Error(), "effect", "drive.google.com falls back to Jina")
+					} else {
+						googleClient.EmitVia(events)
+						dr.RegisterClient("drive.google.com", googleClient)
+						dr.RegisterClient("docs.google.com", googleClient)
+					}
+				} else {
+					slog.Warn("domain_client_unconfigured", "field", "google_oauth_token", "effect", "drive.google.com falls back to Jina")
+				}
 				router.SetDomainRouter(dr)
 				slog.Info("event logging enabled", "path", eventsPath)
 			}
