@@ -503,10 +503,10 @@ container/            # Dockerfiles for gVisor sandbox runtime (ffmpeg, whisper,
 
 ## Status
 
-Active development. Thirteen tools building and passing tests.
+Active development. Fourteen tools building and passing tests. `plaid-service` Phase 1 + 2 shipped and live.
 
-- Integrated `bmux` (remote tmux session manager) from standalone repo into `cmd/bmux/` as a satellite module
-- ts-go extended with `search` and `rewrite` subcommands (tree-sitter pattern matching)
-- YouTube audio fallback and vision scoring paths stable in linkari
+- `plaid-service` running on personal Tailnet — hourly Plaid sync, 390+ transactions in SQLite, `GET /health` at `http://plaid-service/health`
+- tsnet outbound client injected (F5) — all Plaid API traffic routes through Tailnet node `plaid-service`
+- jira-poller added as satellite module alongside plaid-service
 
-**Last Updated:** 2026-04-23
+**Last Updated:** 2026-04-30
