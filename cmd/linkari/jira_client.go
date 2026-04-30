@@ -1,24 +1,174 @@
 package main
 
 // EPIC-072 M10: Jira draft ticket creation client.
-// Uses Jira REST API v3 with basic auth (email:API token).
+// EPIC-013 M1: DomainClient implementation for Jira issues and Confluence pages.
+// Uses Jira REST API v3 (create) and v2 (read) with basic auth.
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 )
 
-// JiraClient creates draft issues via Jira REST API v3.
+var (
+	ErrAtlassianAuth        = errors.New("atlassian_auth_error")
+	ErrAtlassianNotFound    = errors.New("atlassian_not_found")
+	ErrAtlassianUnsupported = errors.New("atlassian_unsupported_url")
+)
+
+var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
+
+// JiraClient creates draft issues via Jira REST API v3 and reads issues/pages via v2.
 type JiraClient struct {
-	Domain   string // e.g. "yourorg.atlassian.net"
-	Username string // email
-	Password string // API token
+	Domain     string // e.g. "yourorg.atlassian.net"
+	Username   string // email
+	Password   string // API token
+	baseURL    string // override for tests; empty = "https://<Domain>"
+	httpClient *http.Client
+}
+
+// compile-time assertion
+var _ DomainClient = (*JiraClient)(nil)
+
+func (c *JiraClient) base() string {
+	if c.baseURL != "" {
+		return c.baseURL
+	}
+	return "https://" + c.Domain
+}
+
+func (c *JiraClient) client() *http.Client {
+	if c.httpClient != nil {
+		return c.httpClient
+	}
+	return http.DefaultClient
+}
+
+// ParseAtlassianURL extracts (issueKey, pageID) from *.atlassian.net URLs.
+// Exactly one of issueKey/pageID is non-empty on success.
+func ParseAtlassianURL(u *url.URL) (issueKey, pageID string, err error) {
+	path := u.Path
+	// /browse/{KEY}
+	if rest, ok := strings.CutPrefix(path, "/browse/"); ok {
+		key := strings.SplitN(rest, "/", 2)[0]
+		if key == "" {
+			return "", "", ErrAtlassianUnsupported
+		}
+		return key, "", nil
+	}
+	// /wiki/spaces/{S}/pages/{ID}[/...]
+	if rest, ok := strings.CutPrefix(path, "/wiki/spaces/"); ok {
+		parts := strings.SplitN(rest, "/", 5) // [S, "pages", ID, ...]
+		if len(parts) >= 3 && parts[1] == "pages" && parts[2] != "" {
+			return "", parts[2], nil
+		}
+	}
+	return "", "", ErrAtlassianUnsupported
+}
+
+// Fetch implements DomainClient.
+func (c *JiraClient) Fetch(ctx context.Context, u *url.URL) (string, ContentType, error) {
+	issueKey, pageID, err := ParseAtlassianURL(u)
+	if err != nil {
+		return "", ContentTypePlain, err
+	}
+	if issueKey != "" {
+		content, err := c.FetchIssue(ctx, issueKey)
+		return content, ContentTypePlain, err
+	}
+	content, err := c.FetchConfluencePage(ctx, pageID)
+	return content, ContentTypePlain, err
+}
+
+// FetchIssue returns "SUMMARY\n\nDESCRIPTION" via Jira REST API v2.
+func (c *JiraClient) FetchIssue(ctx context.Context, issueKey string) (string, error) {
+	endpoint := fmt.Sprintf("%s/rest/api/2/issue/%s?fields=summary,description", c.base(), issueKey)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("jira_fetch_issue: %w", err)
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return "", fmt.Errorf("jira_fetch_issue: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "", ErrAtlassianAuth
+	case http.StatusNotFound:
+		return "", ErrAtlassianNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("jira_fetch_issue: status %d", resp.StatusCode)
+	}
+
+	var body struct {
+		Fields struct {
+			Summary     string  `json:"summary"`
+			Description *string `json:"description"`
+		} `json:"fields"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("jira_fetch_issue: decode: %w", err)
+	}
+
+	result := body.Fields.Summary
+	if body.Fields.Description != nil && *body.Fields.Description != "" {
+		result += "\n\n" + *body.Fields.Description
+	}
+	return result, nil
+}
+
+// FetchConfluencePage returns plain text via Confluence REST API.
+func (c *JiraClient) FetchConfluencePage(ctx context.Context, pageID string) (string, error) {
+	endpoint := fmt.Sprintf("%s/wiki/rest/api/content/%s?expand=body.view", c.base(), pageID)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("confluence_fetch_page: %w", err)
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return "", fmt.Errorf("confluence_fetch_page: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "", ErrAtlassianAuth
+	case http.StatusNotFound:
+		return "", ErrAtlassianNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("confluence_fetch_page: status %d", resp.StatusCode)
+	}
+
+	var body struct {
+		Body struct {
+			View struct {
+				Value string `json:"value"`
+			} `json:"view"`
+		} `json:"body"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("confluence_fetch_page: decode: %w", err)
+	}
+
+	plain := htmlTagRe.ReplaceAllString(body.Body.View.Value, "")
+	plain = strings.Join(strings.Fields(plain), " ")
+	return plain, nil
 }
 
 // JiraIssue represents the response from creating an issue.

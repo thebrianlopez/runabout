@@ -694,6 +694,17 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 						slog.Warn("domain_client_sa_missing", "path", cfgGoogleSAPath, "effect", "google APIs fall back to Jina")
 					}
 				}
+				// F4: Jira/Confluence read client for the configured org domain.
+				if serverFileCfg != nil && serverFileCfg.JiraDomain != "" && serverFileCfg.JiraAPIUsername != "" && serverFileCfg.JiraAPIPassword != "" {
+					jiraReadClient := &JiraClient{
+						Domain:   serverFileCfg.JiraDomain,
+						Username: serverFileCfg.JiraAPIUsername,
+						Password: serverFileCfg.JiraAPIPassword,
+					}
+					dr.RegisterClient(serverFileCfg.JiraDomain, jiraReadClient)
+				} else {
+					slog.Warn("domain_client_unconfigured", "field", "jira_domain/jira_api_username/jira_api_password", "effect", "atlassian.net falls back to Jina")
+				}
 				router.SetDomainRouter(dr)
 				slog.Info("event logging enabled", "path", eventsPath)
 			}
