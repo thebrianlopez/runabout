@@ -115,6 +115,12 @@ func (r *Router) SetEvents(e *EventLogger) {
 	r.mu.Unlock()
 }
 
+// SetDomainRouter installs the domain router for URL fetch routing (EPIC-010 M5).
+// Called after router construction in main.go during server init.
+func (r *Router) SetDomainRouter(dr *DomainRouter) {
+	setDomainRouter(dr)
+}
+
 // Handler processes a share request and returns a result message.
 type Handler interface {
 	Handle(req *ShareRequest, tmux *TmuxRunner) (string, error)

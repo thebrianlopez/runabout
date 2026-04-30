@@ -664,6 +664,10 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			} else {
 				srv.events = events
 				router.SetEvents(events) // EPIC-076 M1: wire into scoring goroutines
+				// EPIC-010 M5: domain router — no clients registered yet; all URLs fall through to Jina.
+				dr := NewDomainRouter(nil, fetchJinaContent)
+				dr.EmitVia(events)
+				router.SetDomainRouter(dr)
 				slog.Info("event logging enabled", "path", eventsPath)
 			}
 			// GAP-08: metrics collector — gated on metrics.enabled (default: true).
@@ -708,6 +712,9 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// EPIC-019 M7: YouTube subscription feed background worker.
 			workerPool := &backgroundWorkerPool{}
 			if queue != nil {
+				if router.LookupAction("uinit_auto") == nil {
+					slog.Warn("subscription poller requires action=uinit_auto but it is not registered — subscription videos will fail at replay; add uinit_auto to actions.yaml")
+				}
 				workerPool.AddWorker(1*time.Hour, func(ctx context.Context) {
 					watchSubscriptionsAsync("default", queue, srv.events, googleClientID, googleClientSecret)
 				})
