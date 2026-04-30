@@ -345,6 +345,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				"latency_ms":      time.Since(scoreStart).Milliseconds(),
 				"cost_usd":        costUSD,
 				"type":            req.Type,
+				"content_type":    contentType.String(), // EPIC-015 M3
 			})
 		}
 	}()
