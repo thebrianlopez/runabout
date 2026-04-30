@@ -668,10 +668,32 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				dr := NewDomainRouter(nil, fetchJinaContent)
 				dr.EmitVia(events)
 				// EPIC-011 M5: register GitHub REST client for github.com URLs.
-				ghToken := os.Getenv("GITHUB_TOKEN")
+				// F3: config field is primary; env var is local-dev fallback.
+				var cfgGitHubToken, cfgAtlassianToken, cfgGoogleSAPath string
+				if serverFileCfg != nil {
+					cfgGitHubToken = serverFileCfg.GitHubToken
+					cfgAtlassianToken = serverFileCfg.AtlassianConfluenceToken
+					cfgGoogleSAPath = serverFileCfg.GoogleServiceAccountPath
+				}
+				ghToken := cfgGitHubToken
+				if ghToken == "" {
+					ghToken = os.Getenv("GITHUB_TOKEN")
+				}
 				ghClient := NewGitHubClient(ghToken)
 				ghClient.EmitVia(events)
 				dr.RegisterClient("github.com", ghClient)
+				// F3: startup warnings for unconfigured domain clients (non-fatal).
+				if cfgGitHubToken == "" && os.Getenv("GITHUB_TOKEN") == "" {
+					slog.Warn("domain_client_unconfigured", "field", "github_token", "effect", "github.com falls back to Jina")
+				}
+				if cfgAtlassianToken == "" {
+					slog.Warn("domain_client_unconfigured", "field", "atlassian_confluence_token", "effect", "atlassian.net falls back to Jina")
+				}
+				if cfgGoogleSAPath != "" {
+					if _, statErr := os.Stat(cfgGoogleSAPath); os.IsNotExist(statErr) {
+						slog.Warn("domain_client_sa_missing", "path", cfgGoogleSAPath, "effect", "google APIs fall back to Jina")
+					}
+				}
 				router.SetDomainRouter(dr)
 				slog.Info("event logging enabled", "path", eventsPath)
 			}
