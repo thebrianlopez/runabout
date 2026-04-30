@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,15 +30,17 @@ var (
 type tsnetLike interface {
 	Up(ctx context.Context) error
 	HTTPClient() *http.Client
+	Listen(network, addr string) (net.Listener, error)
 	Close() error
 }
 
 // tsnetAdapter adapts *tsnet.Server (whose Up returns (*netip.AddrPort, error)) to tsnetLike.
 type tsnetAdapter struct{ s *tsnet.Server }
 
-func (a *tsnetAdapter) Up(ctx context.Context) error { _, err := a.s.Up(ctx); return err }
-func (a *tsnetAdapter) HTTPClient() *http.Client     { return a.s.HTTPClient() }
-func (a *tsnetAdapter) Close() error                  { return a.s.Close() }
+func (a *tsnetAdapter) Up(ctx context.Context) error                        { _, err := a.s.Up(ctx); return err }
+func (a *tsnetAdapter) HTTPClient() *http.Client                            { return a.s.HTTPClient() }
+func (a *tsnetAdapter) Listen(network, addr string) (net.Listener, error)   { return a.s.Listen(network, addr) }
+func (a *tsnetAdapter) Close() error                                         { return a.s.Close() }
 
 func newTsnetServer() tsnetLike {
 	s := &tsnet.Server{
@@ -96,6 +99,16 @@ func serveCmd() *cobra.Command {
 				return fmt.Errorf("tailnet join failed: %w", err)
 			}
 			defer ts.Close()
+
+			ln, err := ts.Listen("tcp", ":80")
+			if err != nil {
+				return fmt.Errorf("health listener: %w", err)
+			}
+			go http.Serve(ln, healthHandler(db))
+
+			ctx, cancel := context.WithCancel(cmd.Context())
+			defer cancel()
+			go runWeeklyPrune(ctx, db)
 
 			client := newPlaidClient(ts.HTTPClient(), secrets, db)
 			sched := newScheduler(db, client, secrets)

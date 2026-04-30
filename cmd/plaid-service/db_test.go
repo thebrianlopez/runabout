@@ -85,8 +85,8 @@ func TestCT2_UserVersion(t *testing.T) {
 	db := mustOpenDB(t)
 	var v int
 	db.QueryRow("PRAGMA user_version").Scan(&v)
-	if v != 2 {
-		t.Errorf("user_version: got %d, want 2", v)
+	if v != 3 {
+		t.Errorf("user_version: got %d, want 3", v)
 	}
 }
 
@@ -265,8 +265,8 @@ func TestBT2_MigrateIdempotent(t *testing.T) {
 
 	var v int
 	db.QueryRow("PRAGMA user_version").Scan(&v)
-	if v != 2 {
-		t.Errorf("user_version after re-migrate: got %d, want 2", v)
+	if v != 3 {
+		t.Errorf("user_version after re-migrate: got %d, want 3", v)
 	}
 }
 
