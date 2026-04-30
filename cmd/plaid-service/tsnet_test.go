@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -18,7 +19,10 @@ type mockTsnet struct {
 
 func (m *mockTsnet) Up(_ context.Context) error { m.upCalled = true; return m.upErr }
 func (m *mockTsnet) HTTPClient() *http.Client   { return m.client }
-func (m *mockTsnet) Close() error               { m.closed = true; return nil }
+func (m *mockTsnet) Listen(_, _ string) (net.Listener, error) {
+	return net.Listen("tcp", "127.0.0.1:0")
+}
+func (m *mockTsnet) Close() error { m.closed = true; return nil }
 
 // ── CT-1: newPlaidClient accepts tsnet HTTP client ───────────────────────────
 
