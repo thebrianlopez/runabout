@@ -11,6 +11,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 )
 
+// ErrInfraAuth signals that the AWS credential chain failed mid-sync.
+// Distinct from secret_not_found (secret absent from ASM).
+// Callers must not escalate item status to login_required on this error.
+var ErrInfraAuth = errors.New("infra auth failed")
+
 // tokenSecret is the JSON shape stored in ASM.
 type tokenSecret struct {
 	AccessToken string `json:"access_token"`
@@ -88,14 +93,19 @@ func (s *TokenStore) StoreToken(ctx context.Context, itemID, accessToken string)
 }
 
 // GetToken retrieves the access token for an item.
-// Returns an error if the secret is missing (item cannot sync).
+// Returns secret_not_found (ResourceNotFoundException) if the secret is absent.
+// Returns ErrInfraAuth for all other ASM errors (expired credentials, permission denied, etc.).
 func (s *TokenStore) GetToken(ctx context.Context, itemID string) (string, error) {
 	name := s.secretName(itemID)
 	out, err := s.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
 		SecretId: &name,
 	})
 	if err != nil {
-		return "", fmt.Errorf("secret not found for item %s: %w", itemID, err)
+		var notFound *types.ResourceNotFoundException
+		if errors.As(err, &notFound) {
+			return "", fmt.Errorf("secret not found for item %s: %w", itemID, err)
+		}
+		return "", fmt.Errorf("%w: get secret for item %s: %v", ErrInfraAuth, itemID, err)
 	}
 
 	var ts tokenSecret

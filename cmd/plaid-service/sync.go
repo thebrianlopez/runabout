@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -53,10 +54,10 @@ type Account struct {
 	Mask         string
 }
 
-// SyncError wraps a Plaid API error with its mapped event_class.
+// SyncError wraps a sync error with its mapped event_class.
 // Callers use errors.As(err, &syncErr) to extract EventClass for event routing.
 type SyncError struct {
-	EventClass string // vendor_auth_required | vendor_unavailable | vendor_rate_limited | cursor_corrupted
+	EventClass string // vendor_auth_required | vendor_unavailable | vendor_rate_limited | cursor_corrupted | infra_auth_failed
 	PlaidCode  string
 	Err        error
 }
@@ -152,6 +153,9 @@ const maxSyncPages = 200
 func (c *plaidClientImpl) SyncTransactions(ctx context.Context, itemID string) (*SyncResult, error) {
 	accessToken, err := c.secrets.GetToken(ctx, itemID)
 	if err != nil {
+		if errors.Is(err, ErrInfraAuth) {
+			return nil, &SyncError{EventClass: "infra_auth_failed", Err: err}
+		}
 		return nil, &SyncError{EventClass: "vendor_auth_required", Err: err}
 	}
 
