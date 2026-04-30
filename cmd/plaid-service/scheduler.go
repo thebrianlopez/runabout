@@ -125,6 +125,20 @@ func (s *Scheduler) tick() {
 
 	wg.Wait()
 	emitServiceHealth(tickRunID, len(items), synced, deferred, loginRequired, computeOldestUnsyncedHrs(s.db), 0)
+	s.writeHealthMetrics(items)
+}
+
+// writeHealthMetrics persists one health_metrics row per active item after a tick.
+func (s *Scheduler) writeHealthMetrics(itemIDs []string) {
+	cutoff := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
+	for _, itemID := range itemIDs {
+		var lastSync sql.NullString
+		s.db.QueryRow(`SELECT last_sync_at FROM plaid_sync_state WHERE item_id = ?`, itemID).Scan(&lastSync)
+		var txCount int
+		s.db.QueryRow(`SELECT COUNT(*) FROM plaid_transactions_raw WHERE item_id = ? AND ingested_at > ?`,
+			itemID, cutoff).Scan(&txCount)
+		writeHealthMetric(s.db, itemID, lastSync.String, txCount, 0)
+	}
 }
 
 // computeOldestUnsyncedHrs returns hours since the oldest last_sync_at across active items.

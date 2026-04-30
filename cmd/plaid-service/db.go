@@ -9,7 +9,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 // openDB opens (or creates) the SQLite database and runs migrations.
 func openDB(path string) (*sql.DB, error) {
@@ -37,7 +37,8 @@ func migrate(db *sql.DB) error {
 		return nil
 	}
 
-	_, err := db.Exec(`
+	if current < 2 {
+		if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS plaid_items (
   item_id        TEXT PRIMARY KEY,
   institution_id TEXT NOT NULL,
@@ -90,8 +91,30 @@ CREATE TABLE IF NOT EXISTS plaid_transactions_raw (
 );
 
 PRAGMA user_version = 2;
-`)
-	return err
+`); err != nil {
+			return err
+		}
+		current = 2
+	}
+
+	if current < 3 {
+		if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS health_metrics (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  sampled_at   TEXT NOT NULL,
+  item_id      TEXT NOT NULL,
+  last_sync_at TEXT,
+  tx_count_24h INTEGER NOT NULL DEFAULT 0,
+  errors_24h   INTEGER NOT NULL DEFAULT 0
+);
+
+PRAGMA user_version = 3;
+`); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // writeJournalEntry appends a completed sync run record to plaid_sync_journal.
