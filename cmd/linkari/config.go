@@ -248,7 +248,10 @@ type ServerConfig struct {
 	JiraAPIUsername string `yaml:"jira_api_username"` // secretsmanager://linkari/jira-webhook#JIRA_API_USERNAME or literal
 	JiraAPIPassword string `yaml:"jira_api_password"` // secretsmanager://linkari/jira-webhook#JIRA_API_PASSWORD or literal
 	JiraDomain      string `yaml:"jira_domain"`       // secretsmanager://linkari/jira-webhook#JIRA_DOMAIN or literal
-	PagerDutyToken  string `yaml:"pagerduty_token"`   // secretsmanager://linkari/jira-webhook#PAGERDUTY_API_TOKEN or literal
+	PagerDutyToken              string `yaml:"pagerduty_token"`               // secretsmanager://linkari/jira-webhook#PAGERDUTY_API_TOKEN or literal
+	GitHubToken                 string `yaml:"github_token"`                  // secretsmanager://linkari/github-pat or literal PAT
+	GoogleServiceAccountPath    string `yaml:"google_service_account_path"`   // path to service account JSON; secretsmanager:// writes to cache dir
+	AtlassianConfluenceToken    string `yaml:"atlassian_confluence_token"`    // secretsmanager://linkari/confluence-token or literal
 	QueueDB        string `yaml:"queue_db"`
 	FirebaseSA     string `yaml:"firebase_sa"`
 	LogFile        string `yaml:"log_file"`
