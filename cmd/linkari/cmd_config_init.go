@@ -97,6 +97,7 @@ const serverYAMLTemplate = `server:
   github_token: secretsmanager://linkari/github-pat
   google_service_account_path: ""
   atlassian_confluence_token: secretsmanager://linkari/confluence-token
+  google_oauth_token: secretsmanager://linkari/google-oauth-token
 
   # --- TLS (local-only mode) ---
 

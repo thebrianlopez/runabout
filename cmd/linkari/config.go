@@ -252,6 +252,7 @@ type ServerConfig struct {
 	GitHubToken                 string `yaml:"github_token"`                  // secretsmanager://linkari/github-pat or literal PAT
 	GoogleServiceAccountPath    string `yaml:"google_service_account_path"`   // path to service account JSON; secretsmanager:// writes to cache dir
 	AtlassianConfluenceToken    string `yaml:"atlassian_confluence_token"`    // secretsmanager://linkari/confluence-token or literal
+	GoogleOAuthToken            string `yaml:"google_oauth_token"`            // secretsmanager://linkari/google-oauth-token or serialized oauth2.Token JSON
 	QueueDB        string `yaml:"queue_db"`
 	FirebaseSA     string `yaml:"firebase_sa"`
 	LogFile        string `yaml:"log_file"`
