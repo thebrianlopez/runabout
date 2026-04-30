@@ -232,6 +232,16 @@ func (c *GitHubClient) Fetch(ctx context.Context, u *url.URL) (string, ContentTy
 	return string(decoded), ContentTypeMarkdown, nil
 }
 
+// EmitVia wires a production EventLogger into the client's event pipeline.
+func (c *GitHubClient) EmitVia(logger *EventLogger) {
+	if logger == nil {
+		return
+	}
+	c.onEvent = func(eventType string, metadata map[string]interface{}) {
+		_ = logger.Emit(eventType, metadata)
+	}
+}
+
 func (c *GitHubClient) emitEvent(eventType string, metadata map[string]interface{}) {
 	if c.onEvent != nil {
 		c.onEvent(eventType, metadata)

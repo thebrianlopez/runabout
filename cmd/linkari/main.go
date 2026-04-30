@@ -664,9 +664,14 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			} else {
 				srv.events = events
 				router.SetEvents(events) // EPIC-076 M1: wire into scoring goroutines
-				// EPIC-010 M5: domain router — no clients registered yet; all URLs fall through to Jina.
+				// EPIC-010 M5: domain router — github.com wired via EPIC-011 M5.
 				dr := NewDomainRouter(nil, fetchJinaContent)
 				dr.EmitVia(events)
+				// EPIC-011 M5: register GitHub REST client for github.com URLs.
+				ghToken := os.Getenv("GITHUB_TOKEN")
+				ghClient := NewGitHubClient(ghToken)
+				ghClient.EmitVia(events)
+				dr.RegisterClient("github.com", ghClient)
 				router.SetDomainRouter(dr)
 				slog.Info("event logging enabled", "path", eventsPath)
 			}
