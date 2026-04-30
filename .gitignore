@@ -3,6 +3,8 @@ bin/
 *.test
 *.out
 /linkari
+/linkari-labeler
+.claude/worktrees/
 cmd/plaid-service/plaid-service
 .DS_Store
 
