@@ -46,6 +46,17 @@ func (m *mockTransactionsAPI) exchangePublicToken(ctx context.Context, publicTok
 	return "item_exchanged", "access-sandbox-test-token", nil
 }
 
+// mustInfraAuthTokenStore returns a TokenStore whose GetToken returns ErrInfraAuth.
+// Simulates mid-sync AWS credential expiry (not a missing secret).
+func mustInfraAuthTokenStore(t *testing.T) *TokenStore {
+	t.Helper()
+	return newTokenStoreFromClient(&mockSecretsClient{
+		getSecretValue: func(_ context.Context, _ *secretsmanager.GetSecretValueInput, _ ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error) {
+			return nil, errors.New("ExpiredTokenException: credentials have expired")
+		},
+	})
+}
+
 // mustTokenStore builds a TokenStore that always returns the given access token.
 func mustTokenStore(t *testing.T, token string) *TokenStore {
 	t.Helper()
@@ -369,6 +380,28 @@ func TestCT8_UnknownErrorCursorCorrupted(t *testing.T) {
 	}
 }
 
+// ── RG-3: item stays active when GetToken returns ErrInfraAuth ───────────────
+// Source: POMO asm-plaid-auth-misclassification
+
+func TestRG3_InfraAuthItemStaysActive(t *testing.T) {
+	db := mustOpenDB(t)
+	seedItem(t, db, "item_1")
+
+	client := newPlaidClientFromParts(&mockTransactionsAPI{
+		syncPageFn: func(_ context.Context, _, _ string) (plaid.TransactionsSyncResponse, error) {
+			return plaid.TransactionsSyncResponse{}, nil
+		},
+	}, mustInfraAuthTokenStore(t), db)
+
+	client.SyncTransactions(context.Background(), "item_1") //nolint:errcheck
+
+	var status string
+	db.QueryRow(`SELECT status FROM plaid_items WHERE item_id = 'item_1'`).Scan(&status)
+	if status != "active" {
+		t.Errorf("plaid_items.status should remain 'active' on infra_auth_failed, got %q", status)
+	}
+}
+
 // ── BT-2: multi-page accumulates Added/Modified/Removed counts ────────────────
 
 func TestBT2_MultiPageCounts(t *testing.T) {
@@ -478,6 +511,38 @@ func TestRG1_CursorNeverCommittedOnError(t *testing.T) {
 				t.Errorf("cursor should remain 'pre_test_cur' after page-%d error, got %q", errorPage, dbCursor)
 			}
 		})
+	}
+}
+
+// ── CT-9: infra_auth_failed on ErrInfraAuth from GetToken ────────────────────
+
+func TestCT9_InfraAuthFailedEventClass(t *testing.T) {
+	db := mustOpenDB(t)
+	seedItem(t, db, "item_1")
+
+	client := newPlaidClientFromParts(&mockTransactionsAPI{
+		syncPageFn: func(_ context.Context, _, _ string) (plaid.TransactionsSyncResponse, error) {
+			return plaid.TransactionsSyncResponse{}, nil
+		},
+	}, mustInfraAuthTokenStore(t), db)
+
+	_, err := client.SyncTransactions(context.Background(), "item_1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	var syncErr *SyncError
+	if !errors.As(err, &syncErr) {
+		t.Fatalf("error should be *SyncError, got %T: %v", err, err)
+	}
+	if syncErr.EventClass != "infra_auth_failed" {
+		t.Errorf("EventClass: got %q, want %q", syncErr.EventClass, "infra_auth_failed")
+	}
+
+	var status string
+	db.QueryRow(`SELECT status FROM plaid_items WHERE item_id = 'item_1'`).Scan(&status)
+	if status != "active" {
+		t.Errorf("plaid_items.status: got %q, want 'active'", status)
 	}
 }
 
