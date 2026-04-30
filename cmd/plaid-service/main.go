@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"tailscale.com/tsnet"
 )
 
 var (
@@ -21,6 +24,29 @@ var (
 	stateDir string
 	debug    bool
 )
+
+// tsnetLike abstracts *tsnet.Server for testability.
+type tsnetLike interface {
+	Up(ctx context.Context) error
+	HTTPClient() *http.Client
+	Close() error
+}
+
+// tsnetAdapter adapts *tsnet.Server (whose Up returns (*netip.AddrPort, error)) to tsnetLike.
+type tsnetAdapter struct{ s *tsnet.Server }
+
+func (a *tsnetAdapter) Up(ctx context.Context) error { _, err := a.s.Up(ctx); return err }
+func (a *tsnetAdapter) HTTPClient() *http.Client     { return a.s.HTTPClient() }
+func (a *tsnetAdapter) Close() error                  { return a.s.Close() }
+
+func newTsnetServer() tsnetLike {
+	s := &tsnet.Server{
+		Hostname: "plaid-service",
+		AuthKey:  getenv("TS_AUTHKEY"),
+		Dir:      filepath.Join(stateDir, "tsnet"),
+	}
+	return &tsnetAdapter{s}
+}
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -65,7 +91,13 @@ func serveCmd() *cobra.Command {
 				return fmt.Errorf("init secrets: %w", err)
 			}
 
-			client := newPlaidClient(secrets, db)
+			ts := newTsnetServer()
+			if err := ts.Up(cmd.Context()); err != nil {
+				return fmt.Errorf("tailnet join failed: %w", err)
+			}
+			defer ts.Close()
+
+			client := newPlaidClient(ts.HTTPClient(), secrets, db)
 			sched := newScheduler(db, client, secrets)
 
 			if err := sched.Start(); err != nil {
@@ -98,7 +130,13 @@ func linkStartCmd() *cobra.Command {
 				return fmt.Errorf("init secrets: %w", err)
 			}
 
-			client := newPlaidClient(secrets, db)
+			ts := newTsnetServer()
+			if err := ts.Up(cmd.Context()); err != nil {
+				return fmt.Errorf("tailnet join failed: %w", err)
+			}
+			defer ts.Close()
+
+			client := newPlaidClient(ts.HTTPClient(), secrets, db)
 			return runLinkStart(cmd.Context(), db, client)
 		},
 	}
@@ -121,7 +159,13 @@ func linkCompleteCmd() *cobra.Command {
 				return fmt.Errorf("init secrets: %w", err)
 			}
 
-			client := newPlaidClient(secrets, db)
+			ts := newTsnetServer()
+			if err := ts.Up(cmd.Context()); err != nil {
+				return fmt.Errorf("tailnet join failed: %w", err)
+			}
+			defer ts.Close()
+
+			client := newPlaidClient(ts.HTTPClient(), secrets, db)
 			return runLinkComplete(cmd.Context(), db, client, secrets, args[0])
 		},
 	}

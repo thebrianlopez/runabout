@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -74,11 +75,13 @@ type plaidClientImpl struct {
 }
 
 // newPlaidClient creates the live client backed by plaid-go.
-func newPlaidClient(secrets *TokenStore, db *sql.DB) PlaidClient {
+// httpClient is injected so all Plaid traffic routes through tsnet (F5).
+func newPlaidClient(httpClient *http.Client, secrets *TokenStore, db *sql.DB) PlaidClient {
 	cfg := plaid.NewConfiguration()
 	cfg.AddDefaultHeader("PLAID-CLIENT-ID", envOrDie("PLAID_CLIENT_ID"))
 	cfg.AddDefaultHeader("PLAID-SECRET", envOrDie("PLAID_SECRET"))
 	cfg.UseEnvironment(plaid.Sandbox)
+	cfg.HTTPClient = httpClient
 	svc := plaid.NewAPIClient(cfg).PlaidApi
 	return &plaidClientImpl{api: &plaidAPIAdapter{svc: svc}, secrets: secrets, db: db}
 }
