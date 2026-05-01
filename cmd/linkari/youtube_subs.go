@@ -125,7 +125,7 @@ func execYouTubePlaylistItemsListReal(ctx context.Context, ts oauth2.TokenSource
 // watchSubscriptionsAsync polls all subscription channels and enqueues new
 // videos for scoring. Designed to run as a periodic background worker.
 // EPIC-019 M6 + M10.
-func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string) {
+func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("watchSubscriptionsAsync panic", "recover", r)
@@ -158,7 +158,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 				"error":       err.Error(),
 			})
 		}
-		return
+		return err
 	}
 
 	// Step 1: fetch all subscription channels.
@@ -168,23 +168,24 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 		if isQuotaExhausted(err) {
 			errClass = "quota_exceeded"
 		}
+		evType := "subscriptions_api_error"
+		if errClass == "quota_exceeded" {
+			evType = "subscriptions_quota_exceeded"
+		}
 		slog.Warn("watchSubscriptionsAsync: subscriptions.list failed",
-			"event_type", "subscriptions_quota_exceeded",
+			"event_type", evType,
 			"profile", profile,
 			"error_class", errClass,
+			"error", err,
 		)
 		if events != nil {
-			evType := "subscriptions_api_error"
-			if errClass == "quota_exceeded" {
-				evType = "subscriptions_quota_exceeded"
-			}
 			_ = events.Emit(evType, map[string]interface{}{
 				"profile":     profile,
 				"error_class": errClass,
 				"error":       err.Error(),
 			})
 		}
-		return
+		return err
 	}
 
 	if len(subs) == 0 {
@@ -216,7 +217,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 				"error":       err.Error(),
 			})
 		}
-		return
+		return err
 	}
 
 	// Step 3: for each channel, fetch recent uploads and enqueue new videos.
@@ -346,4 +347,5 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 			"profile": profile,
 		})
 	}
+	return nil
 }
