@@ -1,8 +1,8 @@
 // resolver_shared.go — side-effect-free secret resolution helper.
 //
 // resolveAllSecrets runs the EPIC-047 resolver pipeline for the eight secret
-// fields (token, firebase_sa, tsnet_authkey, jira_token, jira_api_username,
-// jira_api_password, jira_domain, pagerduty_token) without any side effects: no
+// fields (token, firebase_sa, tsnet_authkey, jira_token, atlassian_email,
+// atlassian_api_token, jira_domain, pagerduty_token) without any side effects: no
 // materialization, no file writes, no listener binding. Used by both
 // `linkari doctor` (direct consumer) and available for future callers that
 // need resolved values before any server bring-up.
@@ -28,7 +28,7 @@ type SecretResolution struct {
 }
 
 // resolveAllSecrets resolves token, firebase_sa, tsnet_authkey, jira_token,
-// jira_api_username, jira_api_password, jira_domain, and pagerduty_token
+// atlassian_email, atlassian_api_token, jira_domain, and pagerduty_token
 // through the EPIC-047 resolver pipeline. Resolution order for each field:
 //
 //	env > server.yaml literal > server.yaml secretsmanager:// URI > (no default)
@@ -68,13 +68,13 @@ func resolveAllSecrets(ctx context.Context, r *secrets.Resolver, cfg *ServerConf
 			yamlFn: func(s *ServerConfig) string { return s.JiraToken },
 		},
 		{
-			field:  "jira_api_username",
-			env:    os.Getenv("LINKARI_JIRA_API_USERNAME"),
+			field:  "atlassian_email",
+			env:    os.Getenv("LINKARI_ATLASSIAN_EMAIL"),
 			yamlFn: func(s *ServerConfig) string { return s.JiraAPIUsername },
 		},
 		{
-			field:  "jira_api_password",
-			env:    os.Getenv("LINKARI_JIRA_API_PASSWORD"),
+			field:  "atlassian_api_token",
+			env:    os.Getenv("LINKARI_ATLASSIAN_API_TOKEN"),
 			yamlFn: func(s *ServerConfig) string { return s.JiraAPIPassword },
 		},
 		{
