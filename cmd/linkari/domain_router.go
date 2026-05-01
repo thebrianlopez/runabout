@@ -78,6 +78,21 @@ func (r *DomainRouter) RegisterClient(hostname string, client DomainClient) {
 func (r *DomainRouter) FetchWithFallback(ctx context.Context, rawURL string) (string, ContentType, error) {
 	start := time.Now()
 
+	// Emit fetch_start before any dispatch so callers can correlate with fetch_end via event stream.
+	{
+		host, _ := MatchHost(rawURL)
+		_, clientRegistered := r.clients[host]
+		// YouTube bypass skips the client map — client_registered is always false for YouTube URLs.
+		if IsYouTube(rawURL) {
+			clientRegistered = false
+		}
+		r.emit("domain_router_fetch_start", map[string]interface{}{
+			"url":               rawURL,
+			"domain":            host,
+			"client_registered": clientRegistered,
+		})
+	}
+
 	// Fast-path: YouTube bypass.
 	if IsYouTube(rawURL) {
 		content, err := r.jinaFetch(ctx, rawURL)
