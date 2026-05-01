@@ -68,7 +68,7 @@ var (
 // EPIC-019 M2.
 type backgroundWorker struct {
 	interval time.Duration
-	fn       func(ctx context.Context)
+	fn       func(ctx context.Context) error
 }
 
 // backgroundWorkerPool runs a collection of backgroundWorkers on independent tickers.
@@ -77,24 +77,41 @@ type backgroundWorkerPool struct {
 }
 
 // AddWorker registers a new periodic worker in the pool.
-func (p *backgroundWorkerPool) AddWorker(interval time.Duration, fn func(ctx context.Context)) {
+func (p *backgroundWorkerPool) AddWorker(interval time.Duration, fn func(ctx context.Context) error) {
 	p.workers = append(p.workers, backgroundWorker{interval: interval, fn: fn})
 }
 
 // Start launches all registered workers as goroutines. Each worker fires on
-// its own ticker and stops when ctx is cancelled.
+// its own timer and stops when ctx is cancelled. On error, the next fire is
+// delayed by interval * 2^consecutiveFailures, capped at 4 hours.
 func (p *backgroundWorkerPool) Start(ctx context.Context) {
+	const maxBackoff = 4 * time.Hour
 	for _, w := range p.workers {
 		w := w
 		go func() {
-			ticker := time.NewTicker(w.interval)
-			defer ticker.Stop()
+			consecutive := 0
 			for {
+				delay := w.interval
+				if consecutive > 0 {
+					delay = w.interval * (1 << min(consecutive, 4))
+					if delay > maxBackoff {
+						delay = maxBackoff
+					}
+				}
 				select {
 				case <-ctx.Done():
 					return
-				case <-ticker.C:
-					w.fn(ctx)
+				case <-time.After(delay):
+				}
+				if err := w.fn(ctx); err != nil {
+					consecutive++
+					slog.Warn("background worker error",
+						"consecutive_failures", consecutive,
+						"next_delay", min(w.interval*(1<<min(consecutive, 4)), maxBackoff).String(),
+						"error", err,
+					)
+				} else {
+					consecutive = 0
 				}
 			}
 		}()
@@ -256,9 +273,9 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 
 			// Outbound Jira API + PagerDuty credentials (linkari/jira-webhook secret).
 			// All optional — empty = integration disabled.
-			jiraAPIUsername, _ = resolveField("jira_api_username", "", os.Getenv("LINKARI_JIRA_API_USERNAME"), "",
+			jiraAPIUsername, _ = resolveField("atlassian_email", "", os.Getenv("LINKARI_ATLASSIAN_EMAIL"), "",
 				func(s *ServerConfig) string { return s.JiraAPIUsername })
-			jiraAPIPassword, _ = resolveField("jira_api_password", "", os.Getenv("LINKARI_JIRA_API_PASSWORD"), "",
+			jiraAPIPassword, _ = resolveField("atlassian_api_token", "", os.Getenv("LINKARI_ATLASSIAN_API_TOKEN"), "",
 				func(s *ServerConfig) string { return s.JiraAPIPassword })
 			jiraDomain, _ = resolveField("jira_domain", "", os.Getenv("LINKARI_JIRA_DOMAIN"), "",
 				func(s *ServerConfig) string { return s.JiraDomain })
@@ -703,7 +720,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					}
 					dr.RegisterClient(serverFileCfg.JiraDomain, jiraReadClient)
 				} else {
-					slog.Warn("domain_client_unconfigured", "field", "jira_domain/jira_api_username/jira_api_password", "effect", "atlassian.net falls back to Jina")
+					slog.Warn("domain_client_unconfigured", "field", "jira_domain/atlassian_email/atlassian_api_token", "effect", "atlassian.net falls back to Jina")
 				}
 				// F5: Google Drive read client for drive.google.com and docs.google.com.
 				if serverFileCfg != nil && serverFileCfg.GoogleOAuthToken != "" {
@@ -766,8 +783,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				if router.LookupAction("uinit_auto") == nil {
 					slog.Warn("subscription poller requires action=uinit_auto but it is not registered — subscription videos will fail at replay; add uinit_auto to actions.yaml")
 				}
-				workerPool.AddWorker(1*time.Hour, func(ctx context.Context) {
-					watchSubscriptionsAsync("default", queue, srv.events, googleClientID, googleClientSecret)
+				workerPool.AddWorker(1*time.Hour, func(ctx context.Context) error {
+					return watchSubscriptionsAsync("default", queue, srv.events, googleClientID, googleClientSecret)
 				})
 			}
 			workerPool.Start(cmd.Context())
