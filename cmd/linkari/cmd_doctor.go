@@ -57,8 +57,8 @@ Checks:
   firebase_sa      — firebase service account resolvable
   tsnet_authkey    — tsnet auth key resolvable
   jira_token       — Jira bearer token resolvable (optional)
-  jira_api_username — Jira API username resolvable (optional)
-  jira_api_password — Jira API password resolvable (optional)
+  atlassian_email — Atlassian email resolvable (optional)
+  atlassian_api_token — Atlassian API token resolvable (optional)
   jira_domain       — Jira domain resolvable (optional)
   pagerduty_token   — PagerDuty API token resolvable (optional)
   aws_identity     — AWS STS caller identity (only when SM URIs present)
