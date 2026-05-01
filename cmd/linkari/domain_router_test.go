@@ -459,6 +459,91 @@ func TestDomain_RG1_YouTubeNeverIntercepted(t *testing.T) {
 	}
 }
 
+// CT-13: domain_router_fetch_start is emitted before domain_router_fetch_end on every call.
+// Fields: domain (hostname), client_registered (bool), url (raw input URL).
+func TestDomain_CT13_FetchStartEventEmitted(t *testing.T) {
+	type emittedEvent struct {
+		eventType string
+		metadata  map[string]interface{}
+	}
+
+	cases := []struct {
+		name             string
+		url              string
+		clientRegistered bool
+	}{
+		{"registered client", "https://github.com/owner/repo", true},
+		{"unknown domain (Jina)", "https://example.com/page", false},
+		{"YouTube bypass", "https://youtube.com/watch?v=X", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var events []emittedEvent
+			mock := &mockDomainClient{fetchFn: func(_ context.Context, _ *url.URL) (string, ContentType, error) {
+				return "client-content", ContentTypeMarkdown, nil
+			}}
+			clients := map[string]DomainClient{"github.com": mock}
+			r := NewDomainRouter(clients, jinaOK)
+			r.onEvent = func(eventType string, metadata map[string]interface{}) {
+				events = append(events, emittedEvent{eventType, metadata})
+			}
+
+			_, _, err := r.FetchWithFallback(context.Background(), tc.url)
+			if err != nil {
+				t.Fatalf("CT-13 %s: unexpected error: %v", tc.name, err)
+			}
+
+			// Verify fetch_start was emitted.
+			startIdx := -1
+			endIdx := -1
+			for i, ev := range events {
+				switch ev.eventType {
+				case "domain_router_fetch_start":
+					startIdx = i
+				case "domain_router_fetch_end":
+					endIdx = i
+				}
+			}
+			if startIdx == -1 {
+				t.Fatalf("CT-13 %s: domain_router_fetch_start not emitted; got events: %v",
+					tc.name, func() []string {
+						var types []string
+						for _, e := range events {
+							types = append(types, e.eventType)
+						}
+						return types
+					}())
+			}
+			if endIdx == -1 {
+				t.Fatalf("CT-13 %s: domain_router_fetch_end not emitted", tc.name)
+			}
+			if startIdx >= endIdx {
+				t.Errorf("CT-13 %s: fetch_start (idx=%d) must appear before fetch_end (idx=%d)", tc.name, startIdx, endIdx)
+			}
+
+			// Verify required fields on fetch_start.
+			startMeta := events[startIdx].metadata
+			for _, field := range []string{"domain", "client_registered", "url"} {
+				if _, ok := startMeta[field]; !ok {
+					t.Errorf("CT-13 %s: missing field %q in domain_router_fetch_start event", tc.name, field)
+				}
+			}
+			if got, ok := startMeta["client_registered"].(bool); ok {
+				if got != tc.clientRegistered {
+					t.Errorf("CT-13 %s: client_registered=%v, want %v", tc.name, got, tc.clientRegistered)
+				}
+			} else {
+				t.Errorf("CT-13 %s: client_registered field is not a bool", tc.name)
+			}
+			// url field must be present and match the raw input
+			if gotURL, ok := startMeta["url"].(string); !ok || gotURL == "" {
+				t.Errorf("CT-13 %s: url field missing or empty in fetch_start event", tc.name)
+			}
+		})
+	}
+}
+
 // RG-2: Domain router must not silently drop requests on client failure.
 // Source: FDD F1 fallback invariant.
 func TestDomain_RG2_ClientFailureFallsBackToJina(t *testing.T) {
