@@ -245,8 +245,8 @@ type ServerConfig struct {
 	Port           int    `yaml:"port"`
 	Token          string `yaml:"token"`           // discouraged: prefer LINKARI_TOKEN env
 	JiraToken      string `yaml:"jira_token"`      // EPIC-057: scoped bearer for ginit_* actions; secretsmanager:// URI or literal
-	JiraAPIUsername string `yaml:"jira_api_username"` // secretsmanager://linkari/jira-webhook#JIRA_API_USERNAME or literal
-	JiraAPIPassword string `yaml:"jira_api_password"` // secretsmanager://linkari/jira-webhook#JIRA_API_PASSWORD or literal
+	JiraAPIUsername string `yaml:"atlassian_email"`     // secretsmanager://linkari/jira-webhook#ATLASSIAN_EMAIL or literal
+	JiraAPIPassword string `yaml:"atlassian_api_token"` // secretsmanager://linkari/jira-webhook#ATLASSIAN_API_TOKEN or literal
 	JiraDomain      string `yaml:"jira_domain"`       // secretsmanager://linkari/jira-webhook#JIRA_DOMAIN or literal
 	PagerDutyToken              string `yaml:"pagerduty_token"`               // secretsmanager://linkari/jira-webhook#PAGERDUTY_API_TOKEN or literal
 	GitHubToken                 string `yaml:"github_token"`                  // secretsmanager://linkari/github-pat or literal PAT

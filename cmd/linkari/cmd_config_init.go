@@ -82,10 +82,10 @@ const serverYAMLTemplate = `server:
 
   # Credentials for outbound Jira REST API calls.
   # All four fields below are sourced from the same SM secret with JSON key selectors.
-  # Break-glass: use literal values or LINKARI_JIRA_API_USERNAME / LINKARI_JIRA_API_PASSWORD /
+  # Break-glass: use literal values or LINKARI_ATLASSIAN_EMAIL / LINKARI_ATLASSIAN_API_TOKEN /
   #              LINKARI_JIRA_DOMAIN / LINKARI_PAGERDUTY_TOKEN env vars.
-  jira_api_username: secretsmanager://linkari/jira-webhook#JIRA_API_USERNAME
-  jira_api_password: secretsmanager://linkari/jira-webhook#JIRA_API_PASSWORD
+  atlassian_email: secretsmanager://linkari/jira-webhook#ATLASSIAN_EMAIL
+  atlassian_api_token: secretsmanager://linkari/jira-webhook#ATLASSIAN_API_TOKEN
   jira_domain: secretsmanager://linkari/jira-webhook#JIRA_DOMAIN
 
   # --- PagerDuty ---
