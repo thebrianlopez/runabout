@@ -336,16 +336,19 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// classificationPreamble can emit a format-specific hint to the evaluator.
 	// Defaults to Plain; updated in the URL fetch path when DomainRouter is used.
 	var contentType ContentType // = ContentTypePlain (zero value)
+	// EPIC-016: domain fetch latency attribution. Stays 0 for non-URL shares.
+	var domainFetchMs int64
 	defer func() {
 		if events != nil {
 			events.Emit("score_prefilter_summary", map[string]any{
-				"row_id":          req.QueueRowID,
-				"prefilter_stage": prefilterStage,
-				"eval_skipped":    evalSkipped,
-				"latency_ms":      time.Since(scoreStart).Milliseconds(),
-				"cost_usd":        costUSD,
-				"type":            req.Type,
-				"content_type":    contentType.String(), // EPIC-015 M3
+				"row_id":                  req.QueueRowID,
+				"prefilter_stage":         prefilterStage,
+				"eval_skipped":            evalSkipped,
+				"latency_ms":              time.Since(scoreStart).Milliseconds(),
+				"cost_usd":                costUSD,
+				"type":                    req.Type,
+				"content_type":            contentType.String(), // EPIC-015 M3
+				"domain_client_latency_ms": domainFetchMs,       // EPIC-016
 			})
 		}
 	}()
@@ -509,11 +512,13 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			var err error
 			// contentType is declared at function scope (EPIC-015 M2); it remains
 			// ContentTypePlain when the Jina fallback executes.
+			fetchStart := time.Now()
 			if pkgDomainRouter != nil {
 				content, contentType, err = pkgDomainRouter.FetchWithFallback(fetchCtx, rawURL)
 			} else {
 				content, err = fetchJinaContent(fetchCtx, rawURL)
 			}
+			domainFetchMs = time.Since(fetchStart).Milliseconds()
 			if err != nil {
 				slog.Warn("score_async: fetch failed",
 					"event_type", "score_async_fetch_error",
