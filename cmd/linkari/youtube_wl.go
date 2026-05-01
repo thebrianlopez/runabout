@@ -110,6 +110,7 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 					"profile", profile,
 					"page", pageNum,
 					"error_class", errClass,
+					"error", err,
 				)
 				if events != nil {
 					_ = events.Emit("watchlater_quota_exhausted", map[string]interface{}{

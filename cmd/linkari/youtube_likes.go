@@ -66,6 +66,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 					"profile", profile,
 					"page", pageNum,
 					"error_class", errClass,
+					"error", err,
 				)
 				if events != nil {
 					_ = events.Emit("likedvideos_quota_exhausted", map[string]interface{}{
