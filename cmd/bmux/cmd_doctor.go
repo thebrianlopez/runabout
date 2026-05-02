@@ -35,6 +35,16 @@ func defaultChecks(paths *config.Paths) []DoctorCheck {
 			},
 		},
 		{
+			Name: "node-binary",
+			Run: func() DoctorResult {
+				path, err := exec.LookPath("node")
+				if err != nil {
+					return DoctorResult{OK: false, Message: "node not found in PATH (required for xterm headless mirror — install Node.js ≥18)"}
+				}
+				return DoctorResult{OK: true, Message: "node found at " + path}
+			},
+		},
+		{
 			Name: "config-file",
 			Run: func() DoctorResult {
 				cfgPath := paths.ConfigFile()

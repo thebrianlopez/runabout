@@ -75,6 +75,7 @@ func newRootCmd() *cobra.Command {
 		newConfigCmd(paths),
 		newDoctorCmd(paths),
 		newServeCmd(paths, &socketName, &configPath),
+		newGatewayCmd(paths, &configPath),
 	)
 
 	root.AddCommand(newAttachCmd(paths, &socketName))
