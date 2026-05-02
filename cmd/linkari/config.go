@@ -634,7 +634,7 @@ func builtinConfig() *Config {
 				ProfileMap: "prefix", ArchiveThreshold: 70},
 			{ID: "ginit", Label: "ginit", Icon: "work", Type: "text", Target: "JIRA:0", Kind: KindRegex,
 				Pattern: `[A-Z][A-Z0-9]+-[0-9]+`, CommandTemplate: "ginit {{.Match}} --yolo",
-				Condition: "env:ATLASSIAN_DOMAIN=grindr.atlassian.net"},
+				Condition: "env:ATLASSIAN_DOMAIN"},
 		},
 	}
 	// Compile templates/regexes.

@@ -4,7 +4,7 @@ Go devtools monorepo — six CLI tools for shell optimization and personal workf
 
 ## Module
 
-- Root module: `github.com/blo-grindr/runabout`
+- Root module: `github.com/thebrianlopez/runabout`
 - Go: 1.25
 - Core dependency: `github.com/spf13/cobra`
 

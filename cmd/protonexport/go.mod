@@ -1,4 +1,4 @@
-module github.com/blo-grindr/runabout/cmd/protonexport
+module github.com/thebrianlopez/runabout/cmd/protonexport
 
 go 1.25.0
 

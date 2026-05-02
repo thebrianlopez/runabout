@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/blo-grindr/runabout/internal/effiscore"
-	"github.com/blo-grindr/runabout/internal/telemetry"
-	versionpkg "github.com/blo-grindr/runabout/internal/version"
+	"github.com/thebrianlopez/runabout/internal/effiscore"
+	"github.com/thebrianlopez/runabout/internal/telemetry"
+	versionpkg "github.com/thebrianlopez/runabout/internal/version"
 	"github.com/spf13/cobra"
 )
 

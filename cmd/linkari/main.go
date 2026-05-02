@@ -18,9 +18,9 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/linklog"
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/secrets"
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/xdgpath"
+	"github.com/thebrianlopez/runabout/cmd/linkari/internal/linklog"
+	"github.com/thebrianlopez/runabout/cmd/linkari/internal/secrets"
+	"github.com/thebrianlopez/runabout/cmd/linkari/internal/xdgpath"
 )
 
 // provenanceEntry buffers a (field, source, fingerprint, tier) tuple resolved

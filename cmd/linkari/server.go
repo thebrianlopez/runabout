@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/linklog"
+	"github.com/thebrianlopez/runabout/cmd/linkari/internal/linklog"
 )
 
 // maxPayloadSize limits request body to 64KB.
@@ -991,7 +991,8 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 }
 
 // fcmEndpoint is the FCM HTTP v1 API endpoint (used by the push outbox worker).
-const fcmEndpoint = "https://fcm.googleapis.com/v1/projects/bloinlagr/messages:send"
+// FCM project ID is read from LINKARI_FCM_PROJECT_ID environment variable at startup.
+var fcmEndpoint = "https://fcm.googleapis.com/v1/projects/" + os.Getenv("LINKARI_FCM_PROJECT_ID") + "/messages:send"
 
 // firstSentence extracts the first sentence from text, truncating to maxLen.
 // It splits on ". ", "— ", or newline boundaries to find a natural break.
