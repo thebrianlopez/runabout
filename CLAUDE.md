@@ -1,13 +1,13 @@
 
-# runabout — jira-activity-watcher
+# runabout — bmux-go
 
 ## Repo Context
 
 | Field | Value |
 |-------|-------|
 | **Repo** | `runabout` |
-| **Role** | `go` |
-| **Workspace** | `jira-activity-watcher` |
+| **Role** | `backend` |
+| **Workspace** | `bmux-go` |
 | **Workspace manifest** | `../CLAUDE.md` |
 
 Read `../CLAUDE.md` for workspace-level context, sibling repos, and environment facts.
@@ -16,7 +16,7 @@ Read `../CLAUDE.md` for workspace-level context, sibling repos, and environment 
 
 ## Role — What This Repo Owns
 
-This repo serves the **go** role in the `jira-activity-watcher` workspace.
+This repo serves the **backend** role in the `bmux-go` workspace.
 
 Scope your changes to this role. If work requires changes in a sibling repo, coordinate via the workspace manifest — do not cross-commit.
 
