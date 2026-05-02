@@ -31,7 +31,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/xdgpath"
+	"github.com/thebrianlopez/runabout/cmd/linkari/internal/xdgpath"
 )
 
 const detachPipeFDEnv = "LINKARI_DETACH_PIPE_FD"

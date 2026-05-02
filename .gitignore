@@ -3,6 +3,9 @@ bin/
 *.test
 *.out
 /linkari
+cmd/linkari/linkari
+cmd/linkari/sharehook
+cmd/protonexport/protonexport
 .DS_Store
 
 docs/
