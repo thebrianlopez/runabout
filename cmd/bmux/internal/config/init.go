@@ -23,6 +23,19 @@ reconnect:
 log:
   format: text           # text | json
   level: info            # debug | info | warn | error
+
+# Mobile WebSocket gateway (Phase 2) — omit or set enabled: false to disable
+gateway:
+  enabled: false
+  port: 8765             # TCP port to listen on (default 8765)
+  host: 127.0.0.1        # bind address; use 0.0.0.0 for LAN access (logs warning)
+  auth:
+    token: ""            # 64-char hex token — run: bmux gateway token generate
+
+# xterm headless mirror settings (used when gateway is enabled)
+xterm:
+  scrollback_lines: 1000  # lines of scrollback kept per pane mirror
+  idle_timeout_sec: 3600  # seconds before an idle pane mirror is destroyed
 `
 
 // InitConfig scaffolds a commented config.yaml at path.
