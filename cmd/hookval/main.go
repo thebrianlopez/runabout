@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/blo-grindr/runabout/internal/telemetry"
-	versionpkg "github.com/blo-grindr/runabout/internal/version"
+	"github.com/thebrianlopez/runabout/internal/telemetry"
+	versionpkg "github.com/thebrianlopez/runabout/internal/version"
 	"github.com/spf13/cobra"
 )
 

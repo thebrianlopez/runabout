@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/blo-grindr/runabout/internal/hookval"
+	"github.com/thebrianlopez/runabout/internal/hookval"
 	"github.com/spf13/cobra"
 )
 

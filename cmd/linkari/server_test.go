@@ -160,7 +160,7 @@ func TestActionsReturnsProfileTagged(t *testing.T) {
 	}
 
 	// Expect uinit_eng, uinit_life, uinit_travel, uinit_fashion, uinit_music, uinit_finance, uinit_dining.
-	// ginit is only present when ATLASSIAN_DOMAIN=grindr.atlassian.net.
+	// ginit is only present when ATLASSIAN_DOMAIN is set.
 	wantIDs := map[string]string{
 		"uinit_eng":     "eng",
 		"uinit_life":    "life",
