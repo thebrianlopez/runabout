@@ -147,9 +147,9 @@ Webhook service that bridges Android share actions to tmux sessions with AI-powe
 **First run (fresh host):**
 
 ```bash
-# 1. Scaffold ~/.config/linkari/server.yaml with secretsmanager:// defaults
+# 1. Scaffold ~/.config/linkari/config.toml with ${secretsmanager:...} defaults
 linkari config init
-# 2. Edit secret URIs as needed, then validate
+# 2. Edit secret references as needed, then validate
 linkari doctor
 # 3. Zero-flag production boot
 linkari serve
@@ -170,7 +170,7 @@ kill $(cat ~/.local/state/linkari/linkari.pid)
 linkari serve --local
 LINKARI_LOCAL=1 linkari serve
 
-# Break-glass (all flags; no server.yaml required)
+# Break-glass (all flags; no config.toml required)
 linkari serve --tsnet --tsnet-authkey $TS_AUTHKEY --token $LINKARI_TOKEN \
   --firebase-sa ~/.config/linkari/firebase-sa.json --notify-min-score 10 --debug
 ```
@@ -183,7 +183,7 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 
 **Auth model (permanent):** All LLM scoring shells out to the `claude` CLI binary, which authenticates via the user's own Claude Code subscription (OAuth2 device flow). Linkari does not support Anthropic API keys, API client libraries, or direct Anthropic HTTP calls. Each user installs and runs Linkari on their own laptop — there is no shared API key deployment model.
 
-**Execution runtime:** Three runtime implementations — `LocalRuntime` (default, subprocess), `ContainerRuntime` (gVisor-sandboxed via containerd for ffmpeg/whisper), and `HybridRuntime` (routes ffmpeg/whisper through containers but keeps claude CLI local for OAuth2 reasons). Controlled by `sandbox.enabled` in `server.yaml`.
+**Execution runtime:** Three runtime implementations — `LocalRuntime` (default, subprocess), `ContainerRuntime` (gVisor-sandboxed via containerd for ffmpeg/whisper), and `HybridRuntime` (routes ffmpeg/whisper through containers but keeps claude CLI local for OAuth2 reasons). Controlled by `sandbox.enabled` in `config.toml`.
 
 **Shield:** `X-Linkari-Client` header validation on the Funnel mux. Two modes: `log` (default, debug logging) and `enforce` (403 on invalid/missing headers). CORS preflight (OPTIONS) is always exempt.
 
@@ -238,7 +238,7 @@ When any gate fires, vision eval is skipped and the share falls through to metad
 
 | Reason Code | Trigger | Queue Effect | User-Facing Verdict |
 |-------------|---------|-------------|---------------------|
-| `unsupported_pipeline` | URL matches streaming domains (YouTube, Spotify, TikTok, Twitch, SoundCloud, Netflix, Vimeo, Rumble, Dailymotion). Domain list configurable via `unsupported_pipeline_domains` in server.yaml. | **Pre-enqueue (primary):** no queue row created, `score_prefilter_skip` event emitted (`phase: "pre_enqueue"`). **Safety-net in scoreAsync:** `MarkFailedWithReason` (fires only when `scoreAsync` is called directly, bypassing the HTTP handler). | "Video platform — not yet supported" |
+| `unsupported_pipeline` | URL matches streaming domains (YouTube, Spotify, TikTok, Twitch, SoundCloud, Netflix, Vimeo, Rumble, Dailymotion). Domain list configurable via `unsupported_pipeline_domains` in `config.toml`. | **Pre-enqueue (primary):** no queue row created, `score_prefilter_skip` event emitted (`phase: "pre_enqueue"`). **Safety-net in scoreAsync:** `MarkFailedWithReason` (fires only when `scoreAsync` is called directly, bypassing the HTTP handler). | "Video platform — not yet supported" |
 | `login_wall_domain` | URL matches login-walled domains (Instagram, X/Twitter, Facebook, LinkedIn non-`/pulse/`) | No queue row created (pre-enqueue) | "Login-walled site — can't access content" |
 | `screenshot_no_text` | Screenshot with empty ExtraSubject + ExtraText | `MarkFailedWithReason` | "Screenshot had no extractable text" |
 | `fetch_failed` | Jina Reader HTTP error | `MarkFailedWithReason` | "Could not fetch page content" |
@@ -266,7 +266,7 @@ When any gate fires, vision eval is skipped and the share falls through to metad
 | `empty_transcript` | Whisper produces empty output |
 | `template_load_failed` | Voice note synopsis template missing |
 
-FCM push for prefiltered shares is controlled by `notify_on_prefilter_skip` in `server.yaml` (default `false`; Go runtime default is `true` but the YAML zero-value override wins when the key is absent). Reasons not in the `prefilterVerdicts` map fall back to "Share could not be scored".
+FCM push for prefiltered shares is controlled by `notify_on_prefilter_skip` in `config.toml` (default `false`; Go runtime default is `true` but the TOML zero-value override wins when the key is absent). Reasons not in the `prefilterVerdicts` map fall back to "Share could not be scored".
 
 **Vision telemetry:** The `claude` CLI's `--output-format json` envelope reports `input_tokens` reflecting only text tokens from the CLI wrapper, not image tokens. `ImageTokensEstimated` is back-calculated when `InputTokens < 100 && CostUSD > 0.01` using Haiku 4.5 pricing ($1.00/MTok input, $5.00/MTok output): `imageCost = totalCost - (inputTokens × $1/MTok + outputTokens × $5/MTok)`, then `imageTokensEstimated = imageCost / $1/MTok`. This value is emitted in `vision_token_correction` events and slog but is **not persisted to SQLite** (known limitation).
 
@@ -286,14 +286,14 @@ FCM push for prefiltered shares is controlled by `notify_on_prefilter_skip` in `
 
 **Queue & replay:** Every share is persisted to SQLite before routing. If tmux is unavailable, the request returns `"queued"` and a background goroutine replays pending items every 30s when tmux comes back. A `RelayedWatchdog` marks rows stuck in `relayed` status past a configurable max age as `failed` with `scoring_timeout`. A `SnapshotWorker` periodically writes a clean copy of `queue.db` via `VACUUM INTO` for crash recovery.
 
-**Scoring & archiving:** `POST /queue/{id}/score` accepts a score (0-100), tags, and slug. Items auto-archive when score meets the profile threshold (80 default, 70 for finance/dining, disabled for life). Archived high-score items trigger an FCM digest push at most once per hour (configurable per-profile throttle via `server.yaml`). Push delivery uses a durable outbox pattern (`push_outbox` table) with exponential backoff and a 24h TTL.
+**Scoring & archiving:** `POST /queue/{id}/score` accepts a score (0-100), tags, and slug. Items auto-archive when score meets the profile threshold (80 default, 70 for finance/dining, disabled for life). Archived high-score items trigger an FCM digest push at most once per hour (configurable per-profile throttle via `config.toml`). Push delivery uses a durable outbox pattern (`push_outbox` table) with exponential backoff and a 24h TTL.
 
 **CLI subcommands:**
 
 | Subcommand | Description |
 |------------|-------------|
 | `serve` | Start the webhook HTTP server (local + optional Tailscale Funnel) |
-| `config init` | Scaffold `~/.config/linkari/server.yaml` |
+| `config init` | Scaffold `~/.config/linkari/config.toml` |
 | `doctor` | Validate secrets and directories without booting |
 | `score <url>` | Run the triage scoring pipeline against a single URL |
 | `score-write` | Write a pre-computed score directly (legacy/scripting) |
