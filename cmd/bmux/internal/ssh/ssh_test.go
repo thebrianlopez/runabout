@@ -2,9 +2,12 @@ package ssh
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -80,7 +83,48 @@ func rejectExecHandler(ch gossh.Channel, reqs <-chan *gossh.Request) {
 	}
 }
 
+// echoInputAsOutputHandler accepts exec, reads one input block, and writes it
+// back as a %output control mode event so BT-3 can observe it on sess.Events().
+func echoInputAsOutputHandler(ch gossh.Channel, reqs <-chan *gossh.Request) {
+	defer ch.Close()
+	for req := range reqs {
+		switch req.Type {
+		case "pty-req":
+			if req.WantReply {
+				_ = req.Reply(true, nil)
+			}
+		case "exec", "shell":
+			if req.WantReply {
+				_ = req.Reply(true, nil)
+			}
+			buf := make([]byte, 256)
+			n, _ := ch.Read(buf)
+			if n > 0 {
+				encoded := base64.StdEncoding.EncodeToString(buf[:n])
+				_, _ = fmt.Fprintf(ch, "%%output %%1 %s\n%%exit\n", encoded)
+			}
+			return
+		default:
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+		}
+	}
+}
+
 // --- Contract Tests ---
+
+// CT-1: Connect succeeds on a valid host and returns a Connected session.
+func TestConnect_Succeeds(t *testing.T) {
+	srv := newTestServer(t, func(s *testSSHServer) { s.sessionHandler = blockingSessionHandler })
+	host := hostFromAddr(t, srv.addr())
+
+	m := newManagerWithDialer(&acceptHostKeyDialer{})
+	sess, err := m.Connect(context.Background(), host)
+	require.NoError(t, err)
+	assert.Equal(t, StatusConnected, sess.Status())
+	_ = sess.Close()
+}
 
 // CT-2: ssh_host_unreachable on TCP failure.
 func TestConnect_HostUnreachable(t *testing.T) {
@@ -244,5 +288,74 @@ func TestSession_ExitEventDisconnects(t *testing.T) {
 		assert.Equal(t, StatusDisconnected, sess.Status())
 	case <-time.After(testTimeout):
 		t.Fatal("session did not close after exit event")
+	}
+}
+
+// BT-1: Multiple hosts connect concurrently — all sessions Connected within 3s.
+func TestManager_ConnectConcurrent(t *testing.T) {
+	const n = 3
+	hosts := make([]config.HostConfig, n)
+	for i := range hosts {
+		srv := newTestServer(t, func(s *testSSHServer) { s.sessionHandler = blockingSessionHandler })
+		h := hostFromAddr(t, srv.addr())
+		h.Name = fmt.Sprintf("host%d", i)
+		hosts[i] = h
+	}
+
+	m := newManagerWithDialer(&acceptHostKeyDialer{})
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i, h := range hosts {
+		wg.Add(1)
+		go func(i int, h config.HostConfig) {
+			defer wg.Done()
+			_, errs[i] = m.Connect(context.Background(), h)
+		}(i, h)
+	}
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("concurrent connects did not complete within 3s")
+	}
+
+	for i, err := range errs {
+		assert.NoError(t, err, "host%d connect failed", i)
+	}
+	sessions := m.Sessions()
+	assert.Len(t, sessions, n)
+	for _, s := range sessions {
+		assert.Equal(t, StatusConnected, s.Status())
+	}
+}
+
+// BT-3: SendInput is forwarded to the remote pane and appears on sess.Events().
+func TestSession_SendInputForwarded(t *testing.T) {
+	srv := newTestServer(t, func(s *testSSHServer) { s.sessionHandler = echoInputAsOutputHandler })
+	host := hostFromAddr(t, srv.addr())
+
+	m := newManagerWithDialer(&acceptHostKeyDialer{})
+	sess, err := m.Connect(context.Background(), host)
+	require.NoError(t, err)
+
+	require.NoError(t, sess.SendInput([]byte("echo hi\n")))
+
+	deadline := time.NewTimer(testTimeout)
+	defer deadline.Stop()
+	for {
+		select {
+		case ev, ok := <-sess.Events():
+			if !ok {
+				t.Fatal("events channel closed before receiving output event")
+			}
+			if ev.Type == PaneOutput {
+				assert.Contains(t, string(ev.Data), "echo hi")
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("no PaneOutput event received within timeout")
+		}
 	}
 }
