@@ -274,7 +274,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				return err
 			}
 			if token == "" {
-				return fmt.Errorf("bearer token required: set --token, LINKARI_TOKEN, or server.yaml token")
+				return fmt.Errorf("bearer token required: set --token, LINKARI_TOKEN, or server.token in config.toml")
 			}
 
 			// EPIC-057: jira_token — optional scoped bearer for ginit_* actions.
@@ -1008,7 +1008,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 	cmd.Flags().IntVar(&notifyMinScore, "notify-min-score", 0, "minimum score for /notify FCM push (0 = use per-profile default, or LINKARI_NOTIFY_MIN_SCORE)")
 	cmd.Flags().StringVar(&shell, "shell", "", "shell binary for tmux windows (default fish, or LINKARI_SHELL)")
 	cmd.Flags().StringVar(&shellArgs, "shell-args", "", "shell command flag for tmux windows (default -c, or LINKARI_SHELL_ARGS)")
-	cmd.Flags().StringVar(&configFile, "config", "", "path to actions.yaml config (default ~/.config/linkari/actions.yaml, or LINKARI_CONFIG)")
+	cmd.Flags().StringVar(&configFile, "config", "", "path to config.toml (default ~/.config/linkari/config.toml, or LINKARI_CONFIG)")
 	cmd.Flags().BoolVar(&detach, "detach", false, "fork to background (POSIX only); PID written to ~/.local/state/linkari/linkari.pid")
 	cmd.Flags().StringVar(&logFormat, "log-format", "", "log output format: text (default, human-friendly) or json (automation-metrics envelope)")
 	cmd.Flags().StringVar(&logLevel, "log-level", "", "log level: debug|info|warn|error (default info; --debug forces debug)")
