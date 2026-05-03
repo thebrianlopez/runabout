@@ -26,8 +26,8 @@ func TestResolveServerField(t *testing.T) {
 	}{
 		{"flag wins", "F", "E", "Y", "D", "F", "flag", "literal"},
 		{"env wins", "", "E", "Y", "D", "E", "env", "literal"},
-		{"yaml literal", "", "", "Y", "D", "Y", "yaml-literal", "literal"},
-		{"yaml sm", "", "", "secretsmanager://x", "D", "from-sm", "yaml-sm", "secretsmanager"},
+		{"yaml literal", "", "", "Y", "D", "Y", "toml-literal", "literal"},
+		{"yaml sm", "", "", "secretsmanager://x", "D", "from-sm", "toml-sm", "secretsmanager"},
 		{"default", "", "", "", "D", "D", "default", "literal"},
 		{"all empty", "", "", "", "", "", "default", ""},
 	}

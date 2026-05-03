@@ -315,7 +315,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				if err != nil {
 					return fmt.Errorf("resolve firebase_sa: %w", err)
 				}
-				if value != "" && tier == "yaml-sm" {
+				if value != "" && tier == "toml-sm" {
 					// Materialize JSON content into cache and treat the cache
 					// path as the firebase service account file going forward.
 					cacheDir, cacheErr := xdgpath.CacheDir()
