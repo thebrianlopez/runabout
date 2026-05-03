@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 )
 
@@ -134,80 +135,71 @@ func TestResolveStringField(t *testing.T) {
 	}
 }
 
-// TestLoadServerFile_NewFields pins yaml.v3 round-trip semantics for the
+// TestLoadConfig_NewFields pins TOML round-trip semantics for the
 // EPIC-048 schema additions. Three fixtures cover the three *bool states.
-func TestLoadServerFile_NewFields(t *testing.T) {
+func TestLoadConfig_NewFields(t *testing.T) {
 	t.Run("tsnet-true", func(t *testing.T) {
-		cfg, err := LoadServerFile("testdata/tsnet_true.yaml")
+		cfg, err := LoadConfig(context.Background(), "testdata/tsnet_true.toml")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg == nil {
-			t.Fatal("expected non-nil cfg")
-		}
-		if cfg.Tsnet == nil {
+		sc := cfg.Server
+		if sc.Tsnet == nil {
 			t.Fatal("Tsnet: want non-nil *bool, got nil")
 		}
-		if !*cfg.Tsnet {
-			t.Errorf("*Tsnet=%v want true", *cfg.Tsnet)
+		if !*sc.Tsnet {
+			t.Errorf("*Tsnet=%v want true", *sc.Tsnet)
 		}
-		if cfg.TsnetHostname != "linkari-test" {
-			t.Errorf("TsnetHostname=%q want %q", cfg.TsnetHostname, "linkari-test")
+		if sc.TsnetHostname != "linkari-test" {
+			t.Errorf("TsnetHostname=%q want %q", sc.TsnetHostname, "linkari-test")
 		}
-		if cfg.TsnetStateDir != "/tmp/tsnet-test" {
-			t.Errorf("TsnetStateDir=%q want %q", cfg.TsnetStateDir, "/tmp/tsnet-test")
+		if sc.TsnetStateDir != "/tmp/tsnet-test" {
+			t.Errorf("TsnetStateDir=%q want %q", sc.TsnetStateDir, "/tmp/tsnet-test")
 		}
-		if cfg.LogFile != "/tmp/linkari-test.log" {
-			t.Errorf("LogFile=%q want %q", cfg.LogFile, "/tmp/linkari-test.log")
+		if sc.LogFile != "/tmp/linkari-test.log" {
+			t.Errorf("LogFile=%q want %q", sc.LogFile, "/tmp/linkari-test.log")
 		}
-		if !cfg.Debug {
-			t.Errorf("Debug=%v want true", cfg.Debug)
+		if !sc.Debug {
+			t.Errorf("Debug=%v want true", sc.Debug)
 		}
-		if cfg.NotifyMinScore != 5 {
-			t.Errorf("NotifyMinScore=%d want 5", cfg.NotifyMinScore)
+		if sc.NotifyMinScore != 5 {
+			t.Errorf("NotifyMinScore=%d want 5", sc.NotifyMinScore)
 		}
 	})
 
 	t.Run("tsnet-false", func(t *testing.T) {
-		cfg, err := LoadServerFile("testdata/tsnet_false.yaml")
+		cfg, err := LoadConfig(context.Background(), "testdata/tsnet_false.toml")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg == nil {
-			t.Fatal("expected non-nil cfg")
-		}
-		if cfg.Tsnet == nil {
+		sc := cfg.Server
+		if sc.Tsnet == nil {
 			t.Fatal("Tsnet: want non-nil *bool (explicit false), got nil")
 		}
-		if *cfg.Tsnet {
-			t.Errorf("*Tsnet=%v want false", *cfg.Tsnet)
+		if *sc.Tsnet {
+			t.Errorf("*Tsnet=%v want false", *sc.Tsnet)
 		}
 	})
 
 	t.Run("tsnet-absent", func(t *testing.T) {
-		cfg, err := LoadServerFile("testdata/tsnet_absent.yaml")
+		cfg, err := LoadConfig(context.Background(), "testdata/tsnet_absent.toml")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg == nil {
-			t.Fatal("expected non-nil cfg")
+		sc := cfg.Server
+		// Key absent → TOML decoder leaves the pointer nil.
+		if sc.Tsnet != nil {
+			t.Errorf("Tsnet: want nil (absent key), got %v", *sc.Tsnet)
 		}
-		// Key absent → yaml.v3 leaves the pointer nil.
-		if cfg.Tsnet != nil {
-			t.Errorf("Tsnet: want nil (absent key), got %v", *cfg.Tsnet)
-		}
-		if cfg.Token != "test-token" {
-			t.Errorf("Token=%q want %q", cfg.Token, "test-token")
+		if sc.Token != "test-token" {
+			t.Errorf("Token=%q want %q", sc.Token, "test-token")
 		}
 	})
 
-	t.Run("file-not-found-returns-nil", func(t *testing.T) {
-		cfg, err := LoadServerFile("testdata/does_not_exist.yaml")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cfg != nil {
-			t.Errorf("expected nil cfg for missing file, got non-nil")
+	t.Run("file-not-found-returns-error", func(t *testing.T) {
+		_, err := LoadConfig(context.Background(), "testdata/does_not_exist.toml")
+		if err == nil {
+			t.Error("expected error for missing file, got nil")
 		}
 	})
 }

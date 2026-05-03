@@ -227,13 +227,27 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				return err
 			}
 
-			// EPIC-047 M3: load ~/.config/linkari/server.yaml (new file wins).
-			// If absent, fall through to actions.yaml[server:] (deprecated).
-			serverFilePath := defaultServerConfigPath()
-			serverFileCfg, err := LoadServerFile(serverFilePath)
-			if err != nil {
-				return fmt.Errorf("load server.yaml: %w", err)
+			// Load config.toml early so server config fields are available for
+			// the flag-override resolution pipeline below.
+			if configFile == "" {
+				configFile = os.Getenv("LINKARI_CONFIG")
 			}
+			var (
+				cfg    *Config
+				cfgErr error
+			)
+			cfg, cfgErr = LoadConfig(ctx, configFile)
+			if cfgErr != nil && configFile != "" {
+				return fmt.Errorf("load config: %w", cfgErr)
+			}
+			if cfg == nil {
+				// No config file present — use builtins with empty ServerConfig.
+				cfg = builtinConfig()
+			}
+			serverFileCfg := &cfg.Server
+
+			// err is used throughout this function for assignment without :=.
+			var err error
 
 			// Build the resolver early — it lazily wires AWS SDK on first
 			// secretsmanager:// URI, so cost is zero when no SM URIs are used.
@@ -244,10 +258,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// Helper closure: resolve a single field through the pipeline and
 			// record provenance. Hard-fail on resolver error (locked decision #2).
 			resolveField := func(field, flag, env, def string, yamlVal func(*ServerConfig) string) (string, error) {
-				var y string
-				if serverFileCfg != nil {
-					y = yamlVal(serverFileCfg)
-				}
+				y := yamlVal(serverFileCfg)
 				v, tier, src, err := resolveServerField(ctx, resolver, flag, env, y, def)
 				if err != nil {
 					return "", fmt.Errorf("resolve %s: %w", field, err)
@@ -531,29 +542,14 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 			tmux := &TmuxRunner{Debug: debug, Shell: shell, ShellArgs: shellArgs}
 
-			// Load action config if available.
-			if configFile == "" {
-				configFile = os.Getenv("LINKARI_CONFIG")
-			}
+			// Wire the router from the already-loaded config.
 			var router *Router
-			cfg, cfgErr := LoadConfig(configFile)
 			if cfgErr != nil {
-				if configFile != "" {
-					// Explicit config path was set — fail if it can't be loaded.
-					return fmt.Errorf("load config: %w", cfgErr)
-				}
 				slog.Info("no action config found, using built-in defaults", "error", cfgErr)
 				router = NewRouterFromConfig(tmux, builtinConfig(), debug)
 			} else {
 				slog.Info("loaded actions from config", "count", len(cfg.Actions))
 				router = NewRouterFromConfig(tmux, cfg, debug)
-
-				// EPIC-047 M3: deprecation warning when [server:] block in
-				// actions.yaml is present. server.yaml is the new home; the
-				// actions.yaml block remains as a back-compat fallback only.
-				if !cfg.Server.IsZero() {
-					slog.Warn("actions.yaml [server:] block is deprecated", "migrate_to", serverFilePath)
-				}
 
 				// EPIC-042 M7: apply [server] section as the lowest-precedence
 				// fallback layer. Flag > env > config > default. Anything that
@@ -590,11 +586,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// EPIC-038 M6: probe container runtime at startup; fall back to local
 			// exec if the CRI socket is unreachable. SandboxConfig is zero-valued
 			// (Enabled: false) when not configured, so LocalRuntime is the default.
-			var sandboxCfg SandboxConfig
-			if serverFileCfg != nil {
-				sandboxCfg = serverFileCfg.Sandbox
-			}
-			_ = NewExecutionRuntimeWithPing(cmd.Context(), sandboxCfg)
+			_ = NewExecutionRuntimeWithPing(cmd.Context(), serverFileCfg.Sandbox)
 			// EPIC-001: resolve google_client_id and google_client_secret for Google Sign-In + YouTube token refresh.
 			var googleClientID, googleClientSecret string
 			googleClientID, _ = resolveField("google_client_id", "", os.Getenv("LINKARI_GOOGLE_CLIENT_ID"), "",
@@ -605,10 +597,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// EPIC-073: create shield middleware for Funnel client identity enforcement.
 			var shield *Shield
 			{
-				shieldMode := "log" // default
-				if serverFileCfg != nil {
-					shieldMode = serverFileCfg.ShieldConfig()
-				}
+				shieldMode := serverFileCfg.ShieldConfig()
 				shield = NewShield(shieldMode)
 				slog.Info("shield started", "event_type", "shield_started", "mode", shieldMode)
 			}
@@ -634,8 +623,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				slog.Info("domain routes loaded", "count", len(cfg.DomainRoutes))
 			}
 
-			// EPIC-001: seed static invite codes from server.yaml.
-			if serverFileCfg != nil && len(serverFileCfg.InviteCodes) > 0 && queue != nil {
+			// EPIC-001: seed static invite codes from config.toml.
+			if len(serverFileCfg.InviteCodes) > 0 && queue != nil {
 				n, err := queue.SeedInviteCodes(serverFileCfg.InviteCodes)
 				if err != nil {
 					slog.Error("seed invite codes", "error", err)
@@ -651,7 +640,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				srv.googleClientSecret = googleClientSecret
 				slog.Info("google sign-in enabled", "client_id_len", len(googleClientID))
 			}
-			if serverFileCfg != nil && serverFileCfg.SessionTTLDays > 0 {
+			if serverFileCfg.SessionTTLDays > 0 {
 				srv.sessionTTLDays = serverFileCfg.SessionTTLDays
 			}
 
@@ -665,19 +654,17 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			if queue != nil && srv.bskyClient != nil {
 				go runFirehoseWorker(cmd.Context(), queue, srv.bskyClient, slog.Default())
 			}
-			if serverFileCfg != nil {
-				srv.SetBlocklist(serverFileCfg.Blocklist)
-				srv.SetCORSOrigins(serverFileCfg.CORSOrigins)
-			}
+			srv.SetBlocklist(serverFileCfg.Blocklist)
+			srv.SetCORSOrigins(serverFileCfg.CORSOrigins)
 
 			// EPIC-051 M3/M4: install the live push config on the queue so
 			// EnqueueDigestIfDue honors notify_min_score + per-profile
 			// throttle durations for every writer path (HTTP + CLI).
 			if queue != nil {
-				pcfg := &PushConfig{NotifyMinScore: notifyMinScore}
-				if serverFileCfg != nil {
-					pcfg.DigestThrottle = serverFileCfg.Push.DigestThrottle.Durations()
-					pcfg.DigestThrottleDefault = serverFileCfg.Push.DigestThrottleDefault.Duration()
+				pcfg := &PushConfig{
+					NotifyMinScore:        notifyMinScore,
+					DigestThrottle:        serverFileCfg.Push.DigestThrottle.Durations(),
+					DigestThrottleDefault: serverFileCfg.Push.DigestThrottleDefault.Duration(),
 				}
 				queue.SetPushConfig(pcfg)
 			}
@@ -695,12 +682,9 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				dr.EmitVia(events)
 				// EPIC-011 M5: register GitHub REST client for github.com URLs.
 				// F3: config field is primary; env var is local-dev fallback.
-				var cfgGitHubToken, cfgAtlassianToken, cfgGoogleSAPath string
-				if serverFileCfg != nil {
-					cfgGitHubToken = serverFileCfg.GitHubToken
-					cfgAtlassianToken = serverFileCfg.AtlassianConfluenceToken
-					cfgGoogleSAPath = serverFileCfg.GoogleServiceAccountPath
-				}
+				cfgGitHubToken := serverFileCfg.GitHubToken
+				cfgAtlassianToken := serverFileCfg.AtlassianConfluenceToken
+				cfgGoogleSAPath := serverFileCfg.GoogleServiceAccountPath
 				ghToken := cfgGitHubToken
 				if ghToken == "" {
 					ghToken = os.Getenv("GITHUB_TOKEN")
@@ -733,7 +717,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					slog.Warn("domain_client_unconfigured", "field", "jira_domain/atlassian_email/atlassian_api_token", "effect", "atlassian.net falls back to Jina")
 				}
 				// F5: Google Drive read client for drive.google.com and docs.google.com.
-				if serverFileCfg != nil && serverFileCfg.GoogleOAuthToken != "" {
+				if serverFileCfg.GoogleOAuthToken != "" {
 					googleClient, googleErr := NewGoogleAPIsClient(serverFileCfg.GoogleClientID, serverFileCfg.GoogleClientSecret, serverFileCfg.GoogleOAuthToken)
 					if googleErr != nil {
 						slog.Warn("domain_client_unconfigured", "field", "google_oauth_token", "error", googleErr.Error(), "effect", "drive.google.com falls back to Jina")
@@ -754,7 +738,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			if metricsCollector != nil {
 				slog.Info("metrics collector enabled")
 			} else {
-				slog.Info("metrics collector disabled (metrics.enabled=false in server.yaml)")
+				slog.Info("metrics collector disabled (metrics.enabled=false in config.toml)")
 			}
 
 			if fcmTokenSource != nil {
@@ -776,13 +760,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// Config is hot-reloadable via SIGHUP.
 			var relayedWatchdog *RelayedWatchdog
 			if queue != nil {
-				// Default through a zero-valued ServerConfig so RelayedWatchdog()
-				// fills in UrlWorkDir from env/home and other EPIC-055 defaults.
-				defaultSC := &ServerConfig{}
-				wdCfg := defaultSC.RelayedWatchdog()
-				if serverFileCfg != nil {
-					wdCfg = serverFileCfg.RelayedWatchdog()
-				}
+				wdCfg := serverFileCfg.RelayedWatchdog()
 				relayedWatchdog = NewRelayedWatchdog(queue, srv.events, wdCfg)
 				go relayedWatchdog.Run(cmd.Context())
 			}
@@ -801,13 +779,9 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 
 			// Periodic VACUUM INTO snapshot — point-in-time recovery baseline
 			// if queue.db becomes corrupt (2026-04-13 incident). Defaults to
-			// 1h interval writing <queue_db>.bak; configurable via server.yaml.
+			// 1h interval writing <queue_db>.bak; configurable via config.toml.
 			if queue != nil {
-				sc := &ServerConfig{}
-				if serverFileCfg != nil {
-					sc = serverFileCfg
-				}
-				snapInterval, snapPath := sc.SnapshotConfig(queueDB)
+				snapInterval, snapPath := serverFileCfg.SnapshotConfig(queueDB)
 				snapWorker := NewSnapshotWorker(queue, snapInterval, snapPath)
 				go snapWorker.Run(cmd.Context())
 			}
@@ -816,7 +790,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			initClaudeConfig(serverFileCfg)
 
 			// EPIC-009 M2: wire yt-dlp path for YouTube transcription.
-			if router != nil && serverFileCfg != nil {
+			if router != nil {
 				router.SetYtdlpPath(serverFileCfg.YtdlpPath)
 			}
 
@@ -918,7 +892,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 						}
 
 						// Hot-reload action config.
-						newCfg, reloadErr := LoadConfig(configFile)
+						newCfg, reloadErr := LoadConfig(ctx, configFile)
 						if reloadErr != nil {
 							slog.Error("SIGHUP config reload failed", "error", reloadErr)
 							continue
@@ -936,18 +910,17 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 						var pushCfg *PushConfig
 						var wdCfg RelayedWatchdogCfg
 						if queue != nil {
-							if sf, sfErr := LoadServerFile(serverFilePath); sfErr == nil && sf != nil {
-								pushCfg = sf.PushConfig()
-								queue.SetPushConfig(pushCfg)
-								wdCfg = sf.RelayedWatchdog()
-								if relayedWatchdog != nil {
-									relayedWatchdog.SetConfig(wdCfg)
-								}
-								// EPIC-073: hot-reload shield mode.
-								if shield != nil {
-									newShieldMode = sf.ShieldConfig()
-									shield.Reload(newShieldMode)
-								}
+							newSC := &newCfg.Server
+							pushCfg = newSC.PushConfig()
+							queue.SetPushConfig(pushCfg)
+							wdCfg = newSC.RelayedWatchdog()
+							if relayedWatchdog != nil {
+								relayedWatchdog.SetConfig(wdCfg)
+							}
+							// EPIC-073: hot-reload shield mode.
+							if shield != nil {
+								newShieldMode = newSC.ShieldConfig()
+								shield.Reload(newShieldMode)
 							}
 						}
 
@@ -955,7 +928,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 						logAttrs := []any{
 							"event_type", "config_reloaded",
 							"trigger", "SIGHUP",
-							"config_path", serverFilePath,
+							"config_path", configFile,
 							"actions_count", len(newCfg.Actions),
 							"duration_ms", dur.Milliseconds(),
 						}

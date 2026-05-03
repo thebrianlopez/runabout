@@ -1,32 +1,38 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-const testConfigYAML = `
-default_archive_threshold: 80
-actions:
-  - id: uinit_auto
-    label: "Score (override)"
-    archive_threshold: 90
-  - id: ginit_auto
-    label: "Build (override)"
-  - id: clipboard
-    label: Clipboard
-    icon: paste
-    type: text
-    target: "local:0"
-    kind: literal
+const testConfigTOML = `
+default_archive_threshold = 80
+
+[[actions]]
+id = "uinit_auto"
+label = "Score (override)"
+archive_threshold = 90
+
+[[actions]]
+id = "ginit_auto"
+label = "Build (override)"
+
+[[actions]]
+id = "clipboard"
+label = "Clipboard"
+icon = "paste"
+type = "text"
+target = "local:0"
+kind = "literal"
 `
 
 func writeTestConfig(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "actions.yaml")
-	if err := os.WriteFile(path, []byte(testConfigYAML), 0o644); err != nil {
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(testConfigTOML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -34,7 +40,7 @@ func writeTestConfig(t *testing.T) string {
 
 func TestLoadConfig(t *testing.T) {
 	path := writeTestConfig(t)
-	cfg, err := LoadConfig(path)
+	cfg, err := LoadConfig(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,22 +60,22 @@ func TestLoadConfigValidation(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		yaml    string
+		toml    string
 		wantErr string
 	}{
-		{"missing id", `actions: [{kind: template, command_template: "echo"}]`, "id is required"},
-		{"duplicate id", `actions: [{id: a, kind: template, command_template: "x"}, {id: a, kind: template, command_template: "y"}]`, "duplicate action id"},
-		{"missing template", `actions: [{id: a, kind: template}]`, "command_template required"},
-		{"missing pattern", `actions: [{id: a, kind: regex, command_template: "x"}]`, "pattern required"},
-		{"bad regex", `actions: [{id: a, kind: regex, pattern: "[invalid", command_template: "x"}]`, "invalid pattern"},
-		{"unknown kind", `actions: [{id: a, kind: foo}]`, "unknown kind"},
+		{"missing id", "[[actions]]\nkind = \"template\"\ncommand_template = \"echo\"\n", "id is required"},
+		{"duplicate id", "[[actions]]\nid = \"a\"\nkind = \"template\"\ncommand_template = \"x\"\n[[actions]]\nid = \"a\"\nkind = \"template\"\ncommand_template = \"y\"\n", "duplicate action id"},
+		{"missing template", "[[actions]]\nid = \"a\"\nkind = \"template\"\n", "command_template required"},
+		{"missing pattern", "[[actions]]\nid = \"a\"\nkind = \"regex\"\ncommand_template = \"x\"\n", "pattern required"},
+		{"bad regex", "[[actions]]\nid = \"a\"\nkind = \"regex\"\npattern = \"[invalid\"\ncommand_template = \"x\"\n", "invalid pattern"},
+		{"unknown kind", "[[actions]]\nid = \"a\"\nkind = \"foo\"\n", "unknown kind"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(dir, tt.name+".yaml")
-			os.WriteFile(path, []byte(tt.yaml), 0o644)
-			_, err := LoadConfig(path)
+			path := filepath.Join(dir, tt.name+".toml")
+			os.WriteFile(path, []byte(tt.toml), 0o644)
+			_, err := LoadConfig(context.Background(), path)
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -204,6 +210,44 @@ func contains(s, substr string) bool {
 	return false
 }
 
+// expandConfigRefs tests.
+
+func TestExpandConfigRefsEnvScheme(t *testing.T) {
+	t.Setenv("EXPAND_TEST_FOO", "bar")
+	got := expandConfigRefs(context.Background(), "${env:EXPAND_TEST_FOO}")
+	if got != "bar" {
+		t.Errorf("got %q want %q", got, "bar")
+	}
+}
+
+func TestExpandConfigRefsPlainEnvCompat(t *testing.T) {
+	t.Setenv("EXPAND_TEST_PLAIN", "plain_val")
+	got := expandConfigRefs(context.Background(), "${EXPAND_TEST_PLAIN}")
+	if got != "plain_val" {
+		t.Errorf("got %q want %q", got, "plain_val")
+	}
+}
+
+func TestExpandConfigRefsFileScheme(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "expand_test_*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("  file_content  \n")
+	f.Close()
+	got := expandConfigRefs(context.Background(), "${file:"+f.Name()+"}")
+	if got != "file_content" {
+		t.Errorf("got %q want %q", got, "file_content")
+	}
+}
+
+func TestExpandConfigRefsUnknownScheme(t *testing.T) {
+	got := expandConfigRefs(context.Background(), "${unknown:val}")
+	if got != "" {
+		t.Errorf("got %q want empty string for unknown scheme", got)
+	}
+}
+
 // EPIC-061: ginit_auto has AutoScore=true; uinit_auto has ServerScore=true.
 
 func TestBuiltinAutoScoreAndServerScore(t *testing.T) {
@@ -228,25 +272,25 @@ func TestBuiltinAutoScoreAndServerScore(t *testing.T) {
 	}
 }
 
-func TestAutoScoreFieldParsesFromYAML(t *testing.T) {
-	yamlStr := `
-actions:
-  - id: test_auto
-    kind: template
-    command_template: "echo"
-    auto_score: true
+func TestAutoScoreFieldParsesFromTOML(t *testing.T) {
+	tomlStr := `
+[[actions]]
+id = "test_auto"
+kind = "template"
+command_template = "echo"
+auto_score = true
 `
 	dir := t.TempDir()
-	path := filepath.Join(dir, "auto.yaml")
-	os.WriteFile(path, []byte(yamlStr), 0o644)
-	cfg, err := LoadConfig(path)
+	path := filepath.Join(dir, "auto.toml")
+	os.WriteFile(path, []byte(tomlStr), 0o644)
+	cfg, err := LoadConfig(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, a := range cfg.Actions {
 		if a.ID == "test_auto" {
 			if !a.AutoScore {
-				t.Error("auto_score should be true after YAML parse")
+				t.Error("auto_score should be true after TOML parse")
 			}
 			return
 		}
@@ -256,32 +300,35 @@ actions:
 
 // EPIC-051 M4: per-profile throttle config tests.
 
-func TestServerConfig_PushYAML_Parses(t *testing.T) {
-	yamlStr := `
-server:
-  notify_min_score: 10
-  push:
-    digest_throttle_default: 30m
-    digest_throttle:
-      eng: 1h
-      dining: 24h
+func TestServerConfig_PushTOML_Parses(t *testing.T) {
+	tomlStr := `
+[server]
+notify_min_score = 10
+
+[server.push]
+digest_throttle_default = "30m"
+
+[server.push.digest_throttle]
+eng = "1h"
+dining = "24h"
 `
 	dir := t.TempDir()
-	path := filepath.Join(dir, "server.yaml")
-	if err := os.WriteFile(path, []byte(yamlStr), 0644); err != nil {
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(tomlStr), 0644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	cfg, err := LoadServerFile(path)
+	cfg, err := LoadConfig(context.Background(), path)
 	if err != nil || cfg == nil {
-		t.Fatalf("LoadServerFile: %v cfg=%v", err, cfg)
+		t.Fatalf("LoadConfig: %v cfg=%v", err, cfg)
 	}
-	if cfg.NotifyMinScore != 10 {
-		t.Errorf("NotifyMinScore=%d want 10", cfg.NotifyMinScore)
+	sc := cfg.Server
+	if sc.NotifyMinScore != 10 {
+		t.Errorf("NotifyMinScore=%d want 10", sc.NotifyMinScore)
 	}
-	if got := cfg.Push.DigestThrottleDefault.Duration(); got != 30*60*1e9 {
+	if got := sc.Push.DigestThrottleDefault.Duration(); got != 30*60*1e9 {
 		t.Errorf("default=%v want 30m", got)
 	}
-	durs := cfg.Push.DigestThrottle.Durations()
+	durs := sc.Push.DigestThrottle.Durations()
 	if durs["eng"].String() != "1h0m0s" {
 		t.Errorf("eng throttle=%v", durs["eng"])
 	}

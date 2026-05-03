@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -47,7 +48,7 @@ func completionCmd(root *cobra.Command) *cobra.Command {
 // the legacy hardcoded set if config can't be loaded — completions should never
 // crash the shell.
 func completeProfiles(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	cfg, err := LoadConfig(os.Getenv("LINKARI_CONFIG"))
+	cfg, err := LoadConfig(context.Background(), os.Getenv("LINKARI_CONFIG"))
 	if err != nil {
 		// Fallback to built-in profile set so completions still work without config.
 		cfg = builtinConfig()

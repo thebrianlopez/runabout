@@ -1,15 +1,14 @@
-// resolver_shared.go — side-effect-free secret resolution helper.
+// resolver_shared.go — side-effect-free field resolution helper.
 //
-// resolveAllSecrets runs the EPIC-047 resolver pipeline for the eight secret
-// fields (token, firebase_sa, tsnet_authkey, jira_token, atlassian_email,
-// atlassian_api_token, jira_domain, pagerduty_token) without any side effects: no
-// materialization, no file writes, no listener binding. Used by both
-// `linkari doctor` (direct consumer) and available for future callers that
-// need resolved values before any server bring-up.
+// resolveAllSecrets runs a simple flag-override pipeline for the secret
+// fields. Pre-parse config ref expansion (expandConfigRefs) already
+// resolves ${env:VAR}, ${secretsmanager:name#field}, and ${file:/path}
+// before TOML decoding, so by the time ServerConfig reaches this function
+// all values are plain strings. This function only applies flag overrides
+// on top of what the loaded config already contains.
 package main
 
 import (
-	"context"
 	"os"
 
 	"github.com/blo-grindr/runabout/internal/secrets"
@@ -29,18 +28,13 @@ type SecretResolution struct {
 
 // resolveAllSecrets resolves token, firebase_sa, tsnet_authkey, jira_token,
 // atlassian_email, atlassian_api_token, jira_domain, and pagerduty_token
-// through the EPIC-047 resolver pipeline. Resolution order for each field:
+// using flag-only overrides on top of the already-expanded ServerConfig values.
+// Environment variables are checked as a fallback for any field that is still
+// empty after TOML loading (covers the case where config.toml is absent).
 //
-//	env > server.yaml literal > server.yaml secretsmanager:// URI > (no default)
-//
-// There are no CLI-flag inputs here — doctor has no serve flags. Callers that
-// need flag-layer resolution (i.e. serveCmd) should keep using resolveServerField
-// directly within RunE.
-//
-// No side effects: firebase_sa JSON content is NOT materialized to cache.
-// The returned Value for firebase_sa will be the raw secret value (JSON string)
-// if sourced from SM, or a file path if sourced from env/literal/file://.
-func resolveAllSecrets(ctx context.Context, r *secrets.Resolver, cfg *ServerConfig) []SecretResolution {
+// No AWS SDK calls are made — secrets were already resolved by expandConfigRefs
+// at config parse time.
+func resolveAllSecrets(cfg *ServerConfig) []SecretResolution {
 	type fieldSpec struct {
 		field  string
 		env    string
@@ -91,17 +85,26 @@ func resolveAllSecrets(ctx context.Context, r *secrets.Resolver, cfg *ServerConf
 
 	results := make([]SecretResolution, 0, len(specs))
 	for _, spec := range specs {
+		var value, tier string
 		var yamlVal string
 		if cfg != nil {
 			yamlVal = spec.yamlFn(cfg)
 		}
-		value, tier, src, err := resolveServerField(ctx, r, "", spec.env, yamlVal, "")
+		switch {
+		case yamlVal != "":
+			value = yamlVal
+			tier = "yaml-literal"
+		case spec.env != "":
+			value = spec.env
+			tier = "env"
+		default:
+			tier = "default"
+		}
 		results = append(results, SecretResolution{
 			Field: spec.field,
 			Value: value,
 			Tier:  tier,
-			Src:   src,
-			Err:   err,
+			Src:   secrets.Source{Scheme: "literal", ID: "<literal>"},
 		})
 	}
 	return results

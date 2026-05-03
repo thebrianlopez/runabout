@@ -7,15 +7,15 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"github.com/BurntSushi/toml"
 )
 
-// pinned reference struct that configInitCmd's generated template must decode into.
-// If the ServerConfig struct gains new fields, add them here and update the template.
+// referenceServerConfig pins the expected field values in the generated template.
+// Secret fields hold the raw ${secretsmanager:...} ref strings (not resolved values).
 var referenceServerConfig = ServerConfig{
-	Token:          "secretsmanager://linkari/bearer-token",
-	TSNetAuthKey:   "secretsmanager://linkari/tsnet-authkey",
-	FirebaseSA:     "secretsmanager://linkari/firebase-sa",
+	Token:          "${secretsmanager:linkari/bearer-token}",
+	TSNetAuthKey:   "${secretsmanager:linkari/tsnet-authkey}",
+	FirebaseSA:     "${secretsmanager:linkari/firebase-sa}",
 	NotifyMinScore: 10,
 	Port:           8080,
 	TsnetHostname:  "linkari",
@@ -27,13 +27,13 @@ var referenceTsnetTrue = true
 // TestConfigInit_RoundTrip parses the generated template and checks it round-trips
 // into a ServerConfig with all populated fields matching the pinned reference.
 func TestConfigInit_RoundTrip(t *testing.T) {
-	var sf ServerFile
-	if err := yaml.Unmarshal([]byte(serverYAMLTemplate), &sf); err != nil {
+	var cfg Config
+	if _, err := toml.Decode(serverYAMLTemplate, &cfg); err != nil {
 		t.Fatalf("template parse error: %v", err)
 	}
-	got := sf.Server
+	got := cfg.Server
 
-	// Secret fields.
+	// Secret fields (raw refs, not resolved).
 	if got.Token != referenceServerConfig.Token {
 		t.Errorf("Token = %q, want %q", got.Token, referenceServerConfig.Token)
 	}
@@ -55,7 +55,7 @@ func TestConfigInit_RoundTrip(t *testing.T) {
 		t.Errorf("TsnetHostname = %q, want %q", got.TsnetHostname, referenceServerConfig.TsnetHostname)
 	}
 
-	// Tsnet *bool: template sets tsnet: true → pointer to true.
+	// Tsnet *bool: template sets tsnet = true → pointer to true.
 	if got.Tsnet == nil {
 		t.Error("Tsnet = nil, want *true")
 	} else if *got.Tsnet != referenceTsnetTrue {
@@ -71,7 +71,7 @@ func TestConfigInit_RoundTrip(t *testing.T) {
 // TestConfigInit_WritesFile covers the default write path.
 func TestConfigInit_WritesFile(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "server.yaml")
+	target := filepath.Join(dir, "config.toml")
 
 	cmd := configInitCmd()
 	var out bytes.Buffer
@@ -88,7 +88,7 @@ func TestConfigInit_WritesFile(t *testing.T) {
 	if string(data) != serverYAMLTemplate {
 		t.Errorf("file content mismatch\ngot:\n%s\nwant:\n%s", data, serverYAMLTemplate)
 	}
-	if !strings.Contains(out.String(), "server.yaml written to") {
+	if !strings.Contains(out.String(), "written to") {
 		t.Errorf("expected written message, got: %q", out.String())
 	}
 
@@ -105,9 +105,9 @@ func TestConfigInit_WritesFile(t *testing.T) {
 // TestConfigInit_Idempotent verifies no-op when file exists without --force.
 func TestConfigInit_Idempotent(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "server.yaml")
+	target := filepath.Join(dir, "config.toml")
 
-	existing := "server:\n  port: 9999\n"
+	existing := "[server]\nport = 9999\n"
 	if err := os.WriteFile(target, []byte(existing), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -135,9 +135,9 @@ func TestConfigInit_Idempotent(t *testing.T) {
 // TestConfigInit_Force verifies the file is overwritten and a backup created.
 func TestConfigInit_Force(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "server.yaml")
+	target := filepath.Join(dir, "config.toml")
 
-	existing := "server:\n  port: 9999\n"
+	existing := "[server]\nport = 9999\n"
 	if err := os.WriteFile(target, []byte(existing), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestConfigInit_Force(t *testing.T) {
 	}
 	var backupFound bool
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "server.yaml.backup-") {
+		if strings.HasPrefix(e.Name(), "config.toml.backup-") {
 			backupFound = true
 			backupData, _ := os.ReadFile(filepath.Join(dir, e.Name()))
 			if string(backupData) != existing {
@@ -185,7 +185,7 @@ func TestConfigInit_Force(t *testing.T) {
 // TestConfigInit_DryRun verifies stdout output and no disk write.
 func TestConfigInit_DryRun(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "server.yaml")
+	target := filepath.Join(dir, "config.toml")
 
 	cmd := configInitCmd()
 	var out bytes.Buffer
@@ -206,7 +206,7 @@ func TestConfigInit_DryRun(t *testing.T) {
 // TestConfigInit_CreatesParentDir verifies missing parent directories are created.
 func TestConfigInit_CreatesParentDir(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "nested", "deep", "server.yaml")
+	target := filepath.Join(dir, "nested", "deep", "config.toml")
 
 	cmd := configInitCmd()
 	var out bytes.Buffer

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -35,7 +36,7 @@ func loadArchiveThresholdConfig() *Config {
 	if archiveThresholdCfg != nil {
 		return archiveThresholdCfg
 	}
-	loaded, err := LoadConfig("")
+	loaded, err := LoadConfig(context.Background(), "")
 	if err != nil {
 		loaded = builtinConfig()
 	}
@@ -43,11 +44,11 @@ func loadArchiveThresholdConfig() *Config {
 	return archiveThresholdCfg
 }
 
-// ReloadArchiveThresholdConfig re-parses actions.yaml and atomically swaps
+// ReloadArchiveThresholdConfig re-parses config.toml and atomically swaps
 // the cached config. Safe to call from a signal handler — the write is
 // guarded by the same mutex readers use.  EPIC-051 M6.
 func ReloadArchiveThresholdConfig() error {
-	loaded, err := LoadConfig("")
+	loaded, err := LoadConfig(context.Background(), "")
 	if err != nil {
 		return fmt.Errorf("reload archive threshold: %w", err)
 	}
