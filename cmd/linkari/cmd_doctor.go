@@ -126,7 +126,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					}
 					continue
 				}
-				if r.Tier == "yaml-sm" {
+				if r.Tier == "toml-sm" {
 					hasSMURI = true
 				}
 				fp := secrets.Fingerprint(r.Value)

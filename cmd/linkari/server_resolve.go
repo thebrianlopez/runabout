@@ -12,9 +12,9 @@
 //
 //	flag         — non-empty CLI flag value won
 //	env          — non-empty env var value won
-//	yaml-literal — yaml value won and was a plain literal
-//	yaml-sm      — yaml value won and was a secretsmanager:// URI
-//	yaml-file    — yaml value won and was a file:// URI
+//	toml-literal — toml value won and was a plain literal (pre-parse expansion already resolved any ${...} refs)
+//	toml-sm      — toml value won and was a secretsmanager:// URI (legacy; pre-parse expansion preferred)
+//	toml-file    — toml value won and was a file:// URI (legacy; ${file:} syntax preferred)
 //	default      — every layer was empty; built-in default returned
 //
 // An empty default with all layers empty returns ("", "default", Source{}, nil).
@@ -47,11 +47,11 @@ func resolveServerField(
 		raw = yamlVal
 		switch {
 		case strings.HasPrefix(yamlVal, "secretsmanager://"):
-			tier = "yaml-sm"
+			tier = "toml-sm"
 		case strings.HasPrefix(yamlVal, "file://"):
-			tier = "yaml-file"
+			tier = "toml-file"
 		default:
-			tier = "yaml-literal"
+			tier = "toml-literal"
 		}
 	default:
 		raw, tier = def, "default"
