@@ -247,6 +247,82 @@ func TestCLI_Attach_UnknownHost(t *testing.T) {
 	assert.Equal(t, "attach_unknown_host", be.Code)
 }
 
+// CT-13: attach to a host that is not connected returns attach_host_not_ready.
+func TestCLI_Attach_HostNotReady(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "config"))
+	stateDir := filepath.Join(tmpDir, "state", "bmux")
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmpDir, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmpDir, "cache"))
+
+	require.NoError(t, os.MkdirAll(stateDir, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(stateDir, "bmux.pid"),
+		[]byte(fmt.Sprintf("%d\n", os.Getpid())),
+		0o600,
+	))
+	status := &daemon.DaemonStatus{
+		PID:   os.Getpid(),
+		Hosts: []daemon.HostStatus{{Name: "ubuntu", Status: "disconnected"}},
+	}
+	require.NoError(t, daemon.WriteStatus(filepath.Join(stateDir, "status.json"), status))
+
+	root := newRootCmd()
+	root.SetArgs([]string{"attach", "ubuntu"})
+	root.SilenceUsage = true
+	err := root.Execute()
+	require.Error(t, err)
+
+	var be *attachError
+	require.ErrorAs(t, err, &be)
+	assert.Equal(t, "attach_host_not_ready", be.Code)
+	assert.Contains(t, be.Message, "disconnected")
+}
+
+// RG-1: attach normalizes TERM=tmux-* to xterm-256color in the exec environment.
+func TestCLI_Attach_NormalizesTERM(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "config"))
+	stateDir := filepath.Join(tmpDir, "state", "bmux")
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmpDir, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmpDir, "cache"))
+	t.Setenv("TERM", "tmux-256color")
+
+	require.NoError(t, os.MkdirAll(stateDir, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(stateDir, "bmux.pid"),
+		[]byte(fmt.Sprintf("%d\n", os.Getpid())),
+		0o600,
+	))
+	status := &daemon.DaemonStatus{
+		PID:   os.Getpid(),
+		Hosts: []daemon.HostStatus{{Name: "dev", Status: "connected"}},
+	}
+	require.NoError(t, daemon.WriteStatus(filepath.Join(stateDir, "status.json"), status))
+
+	var capturedEnv []string
+	origExecFn := execFn
+	t.Cleanup(func() { execFn = origExecFn })
+	execFn = func(argv0 string, argv []string, envv []string) error {
+		capturedEnv = envv
+		return nil
+	}
+
+	root := newRootCmd()
+	root.SetArgs([]string{"attach", "dev"})
+	root.SilenceUsage = true
+	require.NoError(t, root.Execute())
+
+	require.NotNil(t, capturedEnv, "execFn should have been called")
+	var termVal string
+	for _, e := range capturedEnv {
+		if strings.HasPrefix(e, "TERM=") {
+			termVal = strings.TrimPrefix(e, "TERM=")
+		}
+	}
+	assert.Equal(t, "xterm-256color", termVal, "TERM=tmux-* must be normalized to xterm-256color")
+}
+
 // CT-12: completion fish outputs a non-empty script.
 func TestCLI_Completion_Fish(t *testing.T) {
 	stdout, _, err := runArgs(t, "completion", "fish")
