@@ -1,13 +1,14 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"time"
 )
 
 // StartReplay runs a background goroutine that replays pending queue items
 // through the router when the tmux session becomes available.
-func StartReplay(q *Queue, router *Router, tmux *TmuxRunner, interval time.Duration, debug bool) {
+func StartReplay(q *Queue, router *Router, srv *Server, tmux *TmuxRunner, interval time.Duration, debug bool) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -32,6 +33,11 @@ func StartReplay(q *Queue, router *Router, tmux *TmuxRunner, interval time.Durat
 				"pending_count", len(items),
 			)
 			for _, it := range items {
+				if ac := router.LookupAction(it.Action); ac != nil && ac.Kind == KindCapture {
+					srv.wg.Add(1)
+					go srv.captureAsync(context.Background(), it.ID, ac)
+					continue
+				}
 				req := &ShareRequest{
 					Type:    it.Type,
 					Action:  it.Action,

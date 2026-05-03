@@ -189,6 +189,15 @@ func (p *PushConfig) ThrottleFor(profile string) time.Duration {
 	return time.Hour
 }
 
+// DomainRoute maps a URL substring pattern to an override action ID.
+// When a share request's URL contains Pattern, req.Action is replaced with
+// OverrideAction before scoped-auth and scoring. First-match wins.
+// Configured via the top-level `domain_routes:` block in actions.yaml (F1).
+type DomainRoute struct {
+	Pattern        string `yaml:"pattern"`
+	OverrideAction string `yaml:"override_action"`
+}
+
 // ActionKind determines how a share request is dispatched.
 type ActionKind string
 
@@ -199,6 +208,9 @@ const (
 	KindLiteral ActionKind = "literal"
 	// KindRegex extracts a match from text/URL before rendering a command template.
 	KindRegex ActionKind = "regex"
+	// KindCapture routes to the structured-content capture pipeline (F2).
+	// Not yet implemented: falls through to scoreAsync until F2 lands.
+	KindCapture ActionKind = "capture"
 )
 
 // ActionConfig defines a single share action in the YAML config.
@@ -222,6 +234,11 @@ type ActionConfig struct {
 	ForceContentClassify bool `yaml:"force_content_classify,omitempty"` // EPIC-084 M3: always run content-LLM classification even when cascade produces a profile
 	ShortsRubricTemplate string `yaml:"shorts_rubric_template,omitempty"` // EPIC-012 M7: rubric override for YouTube Shorts scoring
 
+	// F2: KindCapture fields — required when kind=capture.
+	ArtifactDir              string `yaml:"artifact_dir,omitempty"`               // base dir, e.g. "docs/captures"
+	ArtifactFilenameTemplate string `yaml:"artifact_filename_template,omitempty"` // Go tmpl, e.g. "{{.Date}}_{{.Key}}.md"
+	PostCaptureCommand       string `yaml:"post_capture_command,omitempty"`        // F5 hook point (no-op until F5 TDD)
+
 	// Parsed fields (not in YAML)
 	compiledTemplate *template.Template
 	compiledRegex    *regexp.Regexp
@@ -232,6 +249,9 @@ type Config struct {
 	DefaultArchiveThreshold int            `yaml:"default_archive_threshold"`
 	Server                  ServerConfig   `yaml:"server"`
 	Actions                 []ActionConfig `yaml:"actions"`
+	// DomainRoutes maps URL patterns to override actions (F1).
+	// Evaluated before scoped-auth; first-match wins.
+	DomainRoutes []DomainRoute `yaml:"domain_routes"`
 }
 
 // ServerConfig holds runtime knobs for `linkari serve` that previously lived
@@ -602,6 +622,9 @@ func (c *Config) validate() error {
 			}
 			a.compiledTemplate = t
 
+		case KindCapture:
+			// F2 stub: no template required. captureAsync is not yet implemented.
+
 		default:
 			return fmt.Errorf("action %q: unknown kind %q", a.ID, a.Kind)
 		}
@@ -705,12 +728,16 @@ func MergeWithBuiltin(builtin, user *Config) (*Config, error) {
 	out := Config{
 		DefaultArchiveThreshold: builtin.DefaultArchiveThreshold,
 		Server:                  builtin.Server,
+		DomainRoutes:            builtin.DomainRoutes,
 	}
 	if user.DefaultArchiveThreshold != 0 {
 		out.DefaultArchiveThreshold = user.DefaultArchiveThreshold
 	}
 	if !user.Server.IsZero() {
 		out.Server = user.Server
+	}
+	if len(user.DomainRoutes) > 0 {
+		out.DomainRoutes = user.DomainRoutes
 	}
 
 	// Index user actions by ID for O(1) override lookups.
@@ -839,6 +866,28 @@ func builtinConfig() *Config {
 				CommandTemplate: "ginit {{.Text}}",
 				ProfileMap:      "auto",
 				AutoScore:       true,
+			},
+			// F2: capture actions — wired with ArtifactDir/ArtifactFilenameTemplate.
+			// JiraRenderer registered at startup (F3); confluence renderer deferred to F6.
+			{
+				ID:                      "capture_jira_auto",
+				Label:                   "Capture Jira",
+				Icon:                    "work",
+				Type:                    "url",
+				Kind:                    KindCapture,
+				ProfileMap:              "auto",
+				ArtifactDir:             "docs/captures",
+				ArtifactFilenameTemplate: "{{.Date}}_{{.Key}}.md",
+			},
+			{
+				ID:                      "capture_confluence_auto",
+				Label:                   "Capture Confluence",
+				Icon:                    "work",
+				Type:                    "url",
+				Kind:                    KindCapture,
+				ProfileMap:              "auto",
+				ArtifactDir:             "docs/captures",
+				ArtifactFilenameTemplate: "{{.Date}}_{{.Key}}.md",
 			},
 		},
 	}

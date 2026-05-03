@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	textTemplate "text/template"
 	"time"
 
 	"github.com/google/uuid"
@@ -206,6 +207,10 @@ type Server struct {
 	// Populated from ServerConfig.Share.HeuristicOverrideEnabled at boot.
 	shareHeuristicOverride bool
 
+	// F1: domain-aware action routing table. Populated from Config.DomainRoutes at boot.
+	// resolveDomainRoute evaluates this before checkScopedAuth.
+	domainRoutes []DomainRoute
+
 	// EPIC-073: shield middleware for funnel client identity enforcement.
 	shield *Shield // nil when shield is not configured
 
@@ -226,6 +231,37 @@ type Server struct {
 
 	// GAP-08: metrics collection. nil when metrics.enabled=false in server.yaml.
 	metrics *MetricsCollector
+
+	// F2: capture pipeline state.
+	wg               sync.WaitGroup                // tracks in-flight captureAsync goroutines
+	captureRenderers map[string]CaptureRenderer    // actionID → renderer; guarded by captureRenderersMu
+	captureRenderersMu sync.RWMutex
+}
+
+// CaptureRenderer converts structured fetched content to a markdown artifact.
+// Implementations are stateless and pure: same (content, ct, now) → same bytes.
+type CaptureRenderer interface {
+	Render(content string, ct ContentType, now time.Time) ([]byte, error)
+	ArtifactKey(rawURL string) string // e.g. "SR-2972" from a browse URL
+}
+
+// RegisterCaptureRenderer registers a CaptureRenderer for the given action ID.
+// Called at startup for each configured capture action that has a renderer.
+func (s *Server) RegisterCaptureRenderer(actionID string, r CaptureRenderer) {
+	s.captureRenderersMu.Lock()
+	if s.captureRenderers == nil {
+		s.captureRenderers = make(map[string]CaptureRenderer)
+	}
+	s.captureRenderers[actionID] = r
+	s.captureRenderersMu.Unlock()
+}
+
+// lookupCaptureRenderer returns the renderer for the given action ID, or nil.
+func (s *Server) lookupCaptureRenderer(actionID string) CaptureRenderer {
+	s.captureRenderersMu.RLock()
+	r := s.captureRenderers[actionID]
+	s.captureRenderersMu.RUnlock()
+	return r
 }
 
 // NewServer creates a new Server with the given bearer token, router, and optional queue.
@@ -925,19 +961,22 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// EPIC-077 M2: Jira reroute fires first — before scoped-auth and before
+	// F1: domain-aware action routing fires before scoped-auth and before
 	// resolveShareAction. Ordering invariant:
-	//   1. routeJiraURL (uinit_auto + Jira URL → ginit_auto)
-	//   2. checkScopedAuth (sees post-reroute action — mobile token rejected for ginit_*)
-	//   3. resolveShareAction (full caller-wins resolution, minus Jira rerouting)
+	//   1. resolveDomainRoute (URL pattern → override_action; all actions)
+	//   2. checkScopedAuth (sees post-override action)
+	//   3. resolveShareAction (full caller-wins resolution)
 	//
-	// This makes the Jira Ingress Invariant (EPIC-057) explicit and independently
-	// testable. routeJiraURL mutates req.Action when rerouting applies.
-	if s.router.RouteJiraURL(&req) {
-		slog.DebugContext(ctx, "share: jira auto-rerouted to ginit_auto",
-			"event_type", "share_jira_rerouted",
+	// resolveDomainRoute mutates req.Action when a domain rule matches.
+	// Error means override_action not in cfgIndex (misconfigured actions.yaml).
+	if err := s.router.ResolveDomainRoute(&req, s.domainRoutes); err != nil {
+		slog.ErrorContext(ctx, "share rejected: domain route misconfigured",
+			"event_type", "domain_route_error",
+			"error", err,
 			"url", req.URL,
 		)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	// EPIC-052: resolve (action, profile) provenance BEFORE any DB write so
@@ -1136,6 +1175,21 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 
 	// EPIC-067: thread queue row ID for audio scoring (no URL to match on).
 	req.QueueRowID = queueID
+
+	// F2: KindCapture actions dispatch to captureAsync instead of router.Route.
+	// No LLM call is made for any KindCapture action (structural invariant).
+	if ac := s.router.LookupAction(req.Action); ac != nil && ac.Kind == KindCapture {
+		s.wg.Add(1)
+		go s.captureAsync(context.Background(), queueID, ac)
+		writeJSON(w, http.StatusOK, ShareResponse{
+			Status:    "ok",
+			Message:   "capture queued",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			ID:        queueID,
+			Slug:      urlToSlug(req.URL),
+		})
+		return
+	}
 
 	// Route
 	result, err := s.router.Route(&req)
@@ -2300,4 +2354,141 @@ func (s *Server) handleSyncLikedVideos(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// -- F2: captureAsync pipeline --
+
+// captureAsync is the dispatch path for KindCapture actions.
+// Runs in a detached goroutine — caller passes context.Background(), not r.Context().
+// All terminal outcomes (success or failure) are written to the queue row.
+func (s *Server) captureAsync(ctx context.Context, id int64, cfg *ActionConfig) {
+	defer s.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("captureAsync panic", "id", id, "panic", r)
+			if s.queue != nil {
+				_ = s.queue.MarkFailedWithReason(id, "capture_panic")
+			}
+		}
+	}()
+
+	if s.queue == nil {
+		return
+	}
+
+	row, err := s.queue.GetByID(id)
+	if err != nil {
+		slog.Error("captureAsync: GetByID failed", "id", id, "error", err)
+		return
+	}
+
+	if pkgDomainRouter == nil {
+		_ = s.queue.MarkFailedWithReason(id, "capture_no_domain_router")
+		return
+	}
+
+	content, ct, err := pkgDomainRouter.FetchWithFallback(ctx, row.URL)
+	if err != nil {
+		slog.Error("captureAsync: fetch failed", "id", id, "url", row.URL, "error", err)
+		_ = s.queue.MarkFailedWithReason(id, "capture_fetch_error")
+		return
+	}
+
+	if ct == ContentTypePlain {
+		// Structured content unavailable — fall back to scoreAsync scoring path.
+		if s.events != nil {
+			_ = s.events.Emit("capture_content_type_mismatch", map[string]interface{}{
+				"id":           id,
+				"content_type": ct.String(),
+				"url":          row.URL,
+				"fallback":     "scoreAsync",
+			})
+		}
+		s.captureScoreFallback(ctx, row)
+		return
+	}
+
+	renderer := s.lookupCaptureRenderer(cfg.ID)
+	if renderer == nil {
+		_ = s.queue.MarkFailedWithReason(id, "capture_renderer_missing")
+		return
+	}
+
+	artifact, err := renderer.Render(content, ct, time.Now().UTC())
+	if err != nil || len(artifact) == 0 {
+		_ = s.queue.MarkFailedWithReason(id, "capture_render_error")
+		return
+	}
+
+	key := renderer.ArtifactKey(row.URL)
+	filename, err := renderArtifactFilename(cfg.ArtifactFilenameTemplate, time.Now().UTC().Format("2006-01-02"), key)
+	if err != nil {
+		_ = s.queue.MarkFailedWithReason(id, "capture_render_error")
+		return
+	}
+
+	dir := cfg.ArtifactDir
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		_ = s.queue.MarkFailedWithReason(id, "capture_write_error")
+		return
+	}
+	if s.events != nil {
+		_ = s.events.Emit("capture_dir_created", map[string]interface{}{"dir": dir})
+	}
+
+	artifactPath := filepath.Join(dir, filename)
+	if err := os.WriteFile(artifactPath, artifact, 0o644); err != nil {
+		_ = s.queue.MarkFailedWithReason(id, "capture_write_error")
+		return
+	}
+
+	if err := s.queue.SetCaptured(id, artifactPath); err != nil {
+		slog.Error("captureAsync: SetCaptured failed", "id", id, "error", err)
+		return
+	}
+
+	if s.events != nil {
+		_ = s.events.Emit("capture_complete", map[string]interface{}{
+			"id":            id,
+			"artifact_path": artifactPath,
+			"key":           key,
+			"url":           row.URL,
+		})
+	}
+
+	// F5 hook point (no-op until F5 TDD).
+	_ = cfg.PostCaptureCommand
+}
+
+// captureScoreFallback routes a ContentTypePlain capture row through the normal scoring path.
+// Called when FetchWithFallback returns ContentTypePlain for a KindCapture action.
+func (s *Server) captureScoreFallback(ctx context.Context, row *QueueItem) {
+	req := &ShareRequest{
+		URL:        row.URL,
+		Action:     row.Action,
+		Profile:    row.Profile,
+		Type:       row.Type,
+		QueueRowID: row.ID,
+	}
+	if _, err := s.router.Route(req); err != nil {
+		_ = s.queue.MarkFailedWithReason(row.ID, "capture_score_fallback_failed")
+		return
+	}
+	_ = s.queue.MarkRelayed(row.ID)
+}
+
+// renderArtifactFilename executes the artifact filename template with Date and Key variables.
+func renderArtifactFilename(tmpl, date, key string) (string, error) {
+	if tmpl == "" {
+		return date + "_" + key + ".md", nil
+	}
+	t, err := textTemplate.New("filename").Parse(tmpl)
+	if err != nil {
+		return "", fmt.Errorf("artifact_filename_template parse: %w", err)
+	}
+	var buf strings.Builder
+	if err := t.Execute(&buf, struct{ Date, Key string }{Date: date, Key: key}); err != nil {
+		return "", fmt.Errorf("artifact_filename_template execute: %w", err)
+	}
+	return buf.String(), nil
 }

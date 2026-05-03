@@ -625,6 +625,15 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// actions require domain heuristics for profile classification.
 			srv.shareHeuristicOverride = true
 
+			// F1: wire domain_routes from loaded config; fatal on misconfigured override_action.
+			if cfg != nil && len(cfg.DomainRoutes) > 0 {
+				if err := validateDomainRoutes(cfg.DomainRoutes, router.cfgIndex); err != nil {
+					return fmt.Errorf("domain_routes validation: %w", err)
+				}
+				srv.domainRoutes = cfg.DomainRoutes
+				slog.Info("domain routes loaded", "count", len(cfg.DomainRoutes))
+			}
+
 			// EPIC-001: seed static invite codes from server.yaml.
 			if serverFileCfg != nil && len(serverFileCfg.InviteCodes) > 0 && queue != nil {
 				n, err := queue.SeedInviteCodes(serverFileCfg.InviteCodes)
@@ -712,13 +721,14 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					}
 				}
 				// F4: Jira/Confluence read client for the configured org domain.
-				if serverFileCfg != nil && serverFileCfg.JiraDomain != "" && serverFileCfg.JiraAPIUsername != "" && serverFileCfg.JiraAPIPassword != "" {
+				if jiraDomain != "" && jiraAPIUsername != "" && jiraAPIPassword != "" {
 					jiraReadClient := &JiraClient{
-						Domain:   serverFileCfg.JiraDomain,
-						Username: serverFileCfg.JiraAPIUsername,
-						Password: serverFileCfg.JiraAPIPassword,
+						Domain:   jiraDomain,
+						Username: jiraAPIUsername,
+						Password: jiraAPIPassword,
 					}
-					dr.RegisterClient(serverFileCfg.JiraDomain, jiraReadClient)
+					dr.RegisterClient(jiraDomain, jiraReadClient)
+					srv.RegisterCaptureRenderer("capture_jira_auto", NewJiraRenderer())
 				} else {
 					slog.Warn("domain_client_unconfigured", "field", "jira_domain/atlassian_email/atlassian_api_token", "effect", "atlassian.net falls back to Jina")
 				}
@@ -757,7 +767,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 
 			slog.Info("queue enabled", "db", queueDB)
-			StartReplay(queue, router, tmux, 30*time.Second, debug)
+			StartReplay(queue, router, srv, tmux, 30*time.Second, debug)
 			srv.StartPushWorker(cmd.Context())
 
 			// EPIC-054 M3: relayed-state watchdog. Reclassifies rows stuck in
