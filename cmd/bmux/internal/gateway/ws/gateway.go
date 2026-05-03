@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 
@@ -119,15 +120,21 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // Start binds and begins accepting connections on cfg.BindAddr (standalone mode).
-func (g *gateway) Start(ctx context.Context) error {
+func (g *gateway) Start(_ context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.server != nil {
-		// Already started (or using httptest mode).
 		return nil
 	}
-	// When used with httptest, the server is the httptest server — no listener to start.
-	slog.Info("gateway_started", "addr", g.cfg.BindAddr)
+	ln, err := net.Listen("tcp", g.cfg.BindAddr)
+	if err != nil {
+		return fmt.Errorf("gateway: listen %s: %w", g.cfg.BindAddr, err)
+	}
+	srv := &http.Server{Addr: g.cfg.BindAddr, Handler: g.mux}
+	g.server = srv
+	g.addr = ln.Addr().String()
+	go srv.Serve(ln) //nolint:errcheck
+	slog.Info("gateway_started", "addr", g.addr)
 	return nil
 }
 

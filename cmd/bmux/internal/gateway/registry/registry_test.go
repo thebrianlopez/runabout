@@ -62,7 +62,7 @@ func (s *stubBridge) closeEvents() {
 }
 
 // helper: start registry and return it + cancel func.
-func startRegistry(t *testing.T, b bridge) (SessionRegistry, context.CancelFunc) {
+func startRegistry(t *testing.T, b F1Bridge) (SessionRegistry, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	reg := New(b)

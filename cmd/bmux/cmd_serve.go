@@ -66,11 +66,24 @@ func newServeCmd(paths *config.Paths, socketName, configPath *string) *cobra.Com
 				}
 			}
 
+			var stopGateway func()
+			if cfg.Gateway.Enabled {
+				stop, err := startGatewayStack(ctx, cfg)
+				if err != nil {
+					slog.Error("gateway start failed", "err", err)
+					return err
+				}
+				stopGateway = stop
+			}
+
 			if err := daemon.WriteReady(paths); err != nil {
+				if stopGateway != nil {
+					stopGateway()
+				}
 				return err
 			}
 
-			slog.Info("bmux serve ready", "hosts", len(cfg.Hosts), "socket", name)
+			slog.Info("bmux serve ready", "hosts", len(cfg.Hosts), "socket", name, "gateway", cfg.Gateway.Enabled)
 
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -80,6 +93,9 @@ func newServeCmd(paths *config.Paths, socketName, configPath *string) *cobra.Com
 			case <-ctx.Done():
 			}
 
+			if stopGateway != nil {
+				stopGateway()
+			}
 			for _, host := range cfg.Hosts {
 				if err := mgr.Disconnect(host.Name); err != nil {
 					slog.Warn("disconnect error", "name", host.Name, "err", err)

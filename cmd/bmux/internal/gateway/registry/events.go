@@ -53,10 +53,8 @@ type TopologyEvent struct {
 	PaneID  string
 }
 
-// bridge is the subset of F1 ControlModeBridge the registry requires.
-// Defined here as a local interface so tests can inject a stub without
-// importing the (not-yet-implemented) F1 package.
-type bridge interface {
+// F1Bridge is the subset of F1 ControlModeBridge the registry requires.
+type F1Bridge interface {
 	// Events returns a channel of topology change events from F1.
 	// The channel is closed when F1 disconnects; the registry will
 	// re-query ListSessions/ListPanes when a new channel is obtained.
