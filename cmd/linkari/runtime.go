@@ -71,23 +71,23 @@ type SandboxConfig struct {
 	// Enabled routes ffmpeg and whisper invocations through ContainerRuntime.
 	// InvokeClaudeSubprocess always runs locally (see HybridRuntime).
 	// When false (default), LocalRuntime is used and no container deps are required.
-	Enabled bool `yaml:"enabled"`
+	Enabled bool `toml:"enabled"`
 
 	// RuntimeSocket is the path to the CRI/containerd Unix socket.
 	// Default: /run/containerd/containerd.sock
-	RuntimeSocket string `yaml:"runtime_socket"`
+	RuntimeSocket string `toml:"runtime_socket"`
 
 	// ImageRegistry is the OCI image registry prefix for sandbox images.
 	// Images are pulled as <ImageRegistry>/ffmpeg, whisper, claude-sandbox.
-	ImageRegistry string `yaml:"image_registry"`
+	ImageRegistry string `toml:"image_registry"`
 
 	// MemoryLimitMB is the per-container memory ceiling in megabytes.
 	// 0 means no limit (not recommended for production). Default: 2048.
-	MemoryLimitMB int `yaml:"memory_limit_mb"`
+	MemoryLimitMB int `toml:"memory_limit_mb"`
 
 	// CPULimitCores is the per-container CPU quota as fractional cores.
 	// 0 means no limit. Default: 2.0.
-	CPULimitCores float64 `yaml:"cpu_limit_cores"`
+	CPULimitCores float64 `toml:"cpu_limit_cores"`
 }
 
 // runtimeSocket returns the effective CRI socket path.

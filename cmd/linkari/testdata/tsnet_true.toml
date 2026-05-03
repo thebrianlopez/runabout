@@ -1,0 +1,7 @@
+[server]
+tsnet = true
+tsnet_hostname = "linkari-test"
+tsnet_state_dir = "/tmp/tsnet-test"
+log_file = "/tmp/linkari-test.log"
+debug = true
+notify_min_score = 5

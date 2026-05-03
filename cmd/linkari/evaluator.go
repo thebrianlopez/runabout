@@ -273,7 +273,7 @@ func CheckGate(sc *Scorecard, cfg ActionConfig) bool {
 // if it exists and has a confidence threshold configured. Returns nil if
 // the action doesn't exist or the config can't be loaded.
 func lookupGinitAction(_ string) *ActionConfig {
-	cfg, err := LoadConfig("")
+	cfg, err := LoadConfig(context.Background(), "")
 	if err != nil {
 		return nil
 	}
