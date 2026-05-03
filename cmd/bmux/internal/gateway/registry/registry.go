@@ -54,11 +54,17 @@ func (r *sessionRegistry) Start(ctx context.Context) error {
 	r.stopCh = make(chan struct{})
 	r.doneCh = make(chan struct{})
 
+	// Capture the events channel before returning so the goroutine holds a
+	// reference to the channel that was live at start time. Without this, a
+	// caller that closes and replaces the channel before the goroutine is
+	// scheduled would cause the goroutine to miss the close event entirely.
+	eventCh := r.b.Events()
+
 	if err := r.populate(ctx); err != nil {
 		return err
 	}
 
-	go r.run(ctx)
+	go r.run(ctx, eventCh)
 	return nil
 }
 
@@ -92,38 +98,35 @@ func (r *sessionRegistry) populate(ctx context.Context) error {
 
 // run is the event-consumption goroutine. When Events() closes (F1 disconnect),
 // it re-populates and re-subscribes, implementing the reconnect loop (BT-3).
-func (r *sessionRegistry) run(ctx context.Context) {
+// initial is the events channel captured in Start() before the goroutine was
+// scheduled, ensuring no close event is missed due to scheduling delays.
+func (r *sessionRegistry) run(ctx context.Context, eventCh <-chan ControlModeEvent) {
 	defer close(r.doneCh)
 	for {
-		eventCh := r.b.Events()
-		for {
-			select {
-			case <-r.stopCh:
-				return
-			case <-ctx.Done():
-				return
-			case ev, ok := <-eventCh:
-				if !ok {
-					// F1 disconnected — emit stale notice and re-populate.
-					slog.Warn("registry_stale", "reason", "F1 channel closed")
-					r.fanOut(TopologyEvent{Type: TopologyStale})
-					// Re-populate from F1 (blocking until ctx is cancelled or success).
-					if err := r.populate(ctx); err != nil {
-						slog.Warn("registry_stale", "reason", err.Error())
-					}
-					goto nextChannel
-				}
-				r.apply(ev)
-			}
-		}
-	nextChannel:
-		// Check if we should stop before re-subscribing.
 		select {
 		case <-r.stopCh:
 			return
 		case <-ctx.Done():
 			return
-		default:
+		case ev, ok := <-eventCh:
+			if !ok {
+				slog.Warn("registry_stale", "reason", "F1 channel closed")
+				r.fanOut(TopologyEvent{Type: TopologyStale})
+				if err := r.populate(ctx); err != nil {
+					slog.Warn("registry_stale", "reason", err.Error())
+				}
+				// Check stop before re-subscribing.
+				select {
+				case <-r.stopCh:
+					return
+				case <-ctx.Done():
+					return
+				default:
+				}
+				eventCh = r.b.Events()
+				continue
+			}
+			r.apply(ev)
 		}
 	}
 }
