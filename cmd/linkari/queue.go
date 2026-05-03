@@ -28,6 +28,7 @@ var validStatuses = map[string]bool{
 	"failed":     true,
 	"eval_failed": true, // EPIC-001 M2: evaluator double-failure terminal status
 	"prefiltered": true, // EPIC-001 M4: pre-filter transparency queue rows
+	"captured":   true, // F4: structured-content capture terminal status
 	"all":        true,
 }
 
@@ -64,6 +65,7 @@ type QueueItem struct {
 	FileSize       int64  `json:"file_size,omitempty"`        // EPIC-078 M5
 	IsShorts       bool   `json:"is_shorts,omitempty"`        // EPIC-012 M3
 	Source         string `json:"source,omitempty"`           // EPIC-016 M2: firehose source tracking
+	ArtifactPath   string `json:"artifact_path,omitempty" db:"artifact_path"` // F2: capture artifact file path
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -209,6 +211,8 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE queue ADD COLUMN is_shorts INTEGER NOT NULL DEFAULT 0",
 		// EPIC-016 M2: Firehose source tracking.
 		"ALTER TABLE queue ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+		// F2: structured-content capture artifact path.
+		"ALTER TABLE queue ADD COLUMN artifact_path TEXT DEFAULT NULL",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -494,7 +498,7 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,'')"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,''), COALESCE(artifact_path,'')"
 
 // Pending returns all items with status=pending, ordered by id ASC (FIFO).
 func (q *Queue) Pending() ([]QueueItem, error) {
@@ -563,6 +567,18 @@ func (q *Queue) MarkFailedWithReason(id int64, reason string) error {
 	_, err := q.db.Exec(
 		"UPDATE queue SET status='failed', error_reason=? WHERE id=?",
 		reason, id,
+	)
+	return err
+}
+
+// SetCaptured marks a queue row as captured (terminal status) and records the artifact path.
+// The UPDATE guard excludes already-terminal rows (captured, failed, archived) to prevent
+// double-write races when the same URL is shared twice rapidly.
+func (q *Queue) SetCaptured(id int64, artifactPath string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := q.db.Exec(
+		"UPDATE queue SET status='captured', artifact_path=?, scored_at=? WHERE id=? AND status NOT IN ('captured','failed','archived')",
+		artifactPath, now, id,
 	)
 	return err
 }
@@ -1906,7 +1922,7 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 		var it QueueItem
 		var score int
 		var isScreenshotInt, isShortsInt int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source); err != nil {
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source, &it.ArtifactPath); err != nil {
 			return nil, err
 		}
 		if score != 0 {

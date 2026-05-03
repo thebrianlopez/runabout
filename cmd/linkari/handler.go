@@ -188,39 +188,6 @@ func (r *Router) Actions() []Action {
 	return r.actions
 }
 
-// routeJiraURL reroutes a uinit_auto share request to ginit_auto when the URL
-// matches the Jira browse pattern and ginit_auto is a registered action.
-//
-// EPIC-077 M2: extracted from resolveShareAction so the invariant is explicit:
-//   Jira reroute → scoped auth → resolveShareAction
-//
-// Returns true when the action was rewritten (req.Action mutated to "ginit_auto").
-// The caller must pass the post-reroute req.Action to checkScopedAuth to preserve
-// the Jira Ingress Invariant (EPIC-057): checkScopedAuth must see the post-reroute
-// action so mobile tokens are rejected for ginit_* even when they sent uinit_auto.
-func routeJiraURL(req *ShareRequest, cfgIndex map[string]*ActionConfig) bool {
-	if req.Action != "uinit_auto" {
-		return false
-	}
-	if !jiraURLRE.MatchString(req.URL) {
-		return false
-	}
-	if _, hasGinit := cfgIndex["ginit_auto"]; !hasGinit {
-		return false
-	}
-	req.Action = "ginit_auto"
-	return true
-}
-
-// RouteJiraURL is the thread-safe router entry point for routeJiraURL.
-// Call this BEFORE checkScopedAuth so scoped-auth sees the post-reroute action.
-// Returns true when the action was rewritten.
-func (r *Router) RouteJiraURL(req *ShareRequest) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return routeJiraURL(req, r.cfgIndex)
-}
-
 // ResolveShare is the server-facing entry point for EPIC-052's provenance
 // helper. It takes a read lock on the router's cfgIndex and delegates to the
 // pure `resolveShareAction` helper. Call this BEFORE writing a queue row so
@@ -312,6 +279,7 @@ var domainProfileMap = []struct {
 	profile string
 }{
 	// eng
+	{"atlassian.net", "eng"},   // Jira issues + Confluence pages
 	{"github.com", "eng"},
 	{"gitlab.com", "eng"},
 	{"stackoverflow.com", "eng"},
@@ -415,9 +383,9 @@ func resolveShareAction(req *ShareRequest, cfgIndex map[string]*ActionConfig, he
 		}
 
 		// EPIC-061 M2: auto-profile heuristics for ProfileMap="auto".
-		// Note: Jira URL auto-routing (uinit_auto → ginit_auto) was extracted
-		// to routeJiraURL (EPIC-077 M2) and is now called before ResolveShare
-		// in handleShare. resolveShareAction no longer performs Jira rerouting.
+		// Note: F1 replaced routeJiraURL with resolveDomainRoute (domain_route.go).
+		// resolveDomainRoute fires before ResolveShare in handleShare.
+		// resolveShareAction does not perform domain routing.
 		if ac.ProfileMap == "auto" && heuristicOverrideEnabled {
 			// Domain heuristic profile classification.
 			if profile == "" {
