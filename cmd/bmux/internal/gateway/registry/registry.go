@@ -27,7 +27,7 @@ type SessionRegistry interface {
 }
 
 // New creates a SessionRegistry backed by the given bridge.
-func New(b bridge) SessionRegistry {
+func New(b F1Bridge) SessionRegistry {
 	return &sessionRegistry{
 		b:           b,
 		sessions:    map[string]*Session{},
@@ -36,7 +36,7 @@ func New(b bridge) SessionRegistry {
 }
 
 type sessionRegistry struct {
-	b bridge
+	b F1Bridge
 
 	mu          sync.RWMutex
 	sessions    map[string]*Session // keyed by session name
