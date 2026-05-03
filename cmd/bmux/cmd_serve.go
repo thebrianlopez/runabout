@@ -56,14 +56,25 @@ func newServeCmd(paths *config.Paths, socketName, configPath *string) *cobra.Com
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
+			hostStatuses := make([]daemon.HostStatus, 0, len(cfg.Hosts))
 			for _, host := range cfg.Hosts {
 				slog.Info("connecting host", "name", host.Name, "ssh_host", host.SSHHost)
+				status := "connected"
 				if _, err := mgr.Connect(ctx, host); err != nil {
 					slog.Warn("failed to connect host", "name", host.Name, "err", err)
+					status = "disconnected"
 				}
 				if err := br.EnsureSession(host.Name); err != nil {
 					slog.Warn("failed to ensure local session", "name", host.Name, "err", err)
 				}
+				hostStatuses = append(hostStatuses, daemon.HostStatus{Name: host.Name, Status: status})
+			}
+
+			if err := daemon.WriteStatus(paths.StatusFile(), &daemon.DaemonStatus{
+				PID:   os.Getpid(),
+				Hosts: hostStatuses,
+			}); err != nil {
+				slog.Warn("failed to write status file", "err", err)
 			}
 
 			var stopGateway func()
