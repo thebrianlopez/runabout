@@ -45,7 +45,7 @@ func TestParseAtlassianURL_Unsupported(t *testing.T) {
 	}
 }
 
-// CT-4: Fetch mock 200 Jira issue → (content, ContentTypePlain, nil).
+// CT-4: Fetch mock 200 Jira issue → (content, ContentTypeJSON, nil).
 func TestJiraClient_Fetch_IssueOK(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		desc := "Some description"
@@ -64,8 +64,8 @@ func TestJiraClient_Fetch_IssueOK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CT-4: unexpected error: %v", err)
 	}
-	if ct != ContentTypePlain {
-		t.Errorf("CT-4: expected ContentTypePlain, got %v", ct)
+	if ct != ContentTypeJSON {
+		t.Errorf("CT-4: expected ContentTypeJSON, got %v", ct)
 	}
 	if content == "" {
 		t.Error("CT-4: expected non-empty content")

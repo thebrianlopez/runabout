@@ -52,6 +52,21 @@ func (c *JiraClient) client() *http.Client {
 	return http.DefaultClient
 }
 
+// ExtractJiraKey extracts the Jira issue key from a browse URL path.
+// "/browse/SR-2972" → "SR-2972". Validates the key against jiraKeyRegex
+// to reject shell metacharacters before any downstream use.
+func ExtractJiraKey(path string) (string, error) {
+	rest, ok := strings.CutPrefix(path, "/browse/")
+	if !ok {
+		return "", fmt.Errorf("jira_url_not_browse: %q", path)
+	}
+	key := strings.SplitN(rest, "/", 2)[0]
+	if !jiraKeyRegex.MatchString(key) {
+		return "", fmt.Errorf("jira_key_invalid: %q", key)
+	}
+	return key, nil
+}
+
 // ParseAtlassianURL extracts (issueKey, pageID) from *.atlassian.net URLs.
 // Exactly one of issueKey/pageID is non-empty on success.
 func ParseAtlassianURL(u *url.URL) (issueKey, pageID string, err error) {
@@ -82,15 +97,15 @@ func (c *JiraClient) Fetch(ctx context.Context, u *url.URL) (string, ContentType
 	}
 	if issueKey != "" {
 		content, err := c.FetchIssue(ctx, issueKey)
-		return content, ContentTypePlain, err
+		return content, ContentTypeJSON, err
 	}
 	content, err := c.FetchConfluencePage(ctx, pageID)
 	return content, ContentTypePlain, err
 }
 
-// FetchIssue returns "SUMMARY\n\nDESCRIPTION" via Jira REST API v2.
+// FetchIssue returns the raw JSON body of a Jira issue via REST API v2.
 func (c *JiraClient) FetchIssue(ctx context.Context, issueKey string) (string, error) {
-	endpoint := fmt.Sprintf("%s/rest/api/2/issue/%s?fields=summary,description", c.base(), issueKey)
+	endpoint := fmt.Sprintf("%s/rest/api/2/issue/%s", c.base(), issueKey)
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return "", fmt.Errorf("jira_fetch_issue: %w", err)
@@ -113,21 +128,11 @@ func (c *JiraClient) FetchIssue(ctx context.Context, issueKey string) (string, e
 		return "", fmt.Errorf("jira_fetch_issue: status %d", resp.StatusCode)
 	}
 
-	var body struct {
-		Fields struct {
-			Summary     string  `json:"summary"`
-			Description *string `json:"description"`
-		} `json:"fields"`
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("jira_fetch_issue: read: %w", err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", fmt.Errorf("jira_fetch_issue: decode: %w", err)
-	}
-
-	result := body.Fields.Summary
-	if body.Fields.Description != nil && *body.Fields.Description != "" {
-		result += "\n\n" + *body.Fields.Description
-	}
-	return result, nil
+	return string(raw), nil
 }
 
 // FetchConfluencePage returns plain text via Confluence REST API.

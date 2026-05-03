@@ -38,10 +38,11 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// EPIC-067: builtins are uinit_auto + vnote_auto + ginit_auto (3). User file
-	// overrides uinit_auto and ginit_auto, adds 1 extra (clipboard) → merged count = 4.
-	if len(cfg.Actions) != 4 {
-		t.Fatalf("expected 4 merged actions, got %d", len(cfg.Actions))
+	// EPIC-067: builtins are uinit_auto + vnote_auto + ginit_auto (3).
+	// F1/M6 adds capture_jira_auto + capture_confluence_auto stubs (2 more = 5 total).
+	// User file overrides uinit_auto and ginit_auto, adds 1 extra (clipboard) → merged count = 6.
+	if len(cfg.Actions) != 6 {
+		t.Fatalf("expected 6 merged actions, got %d", len(cfg.Actions))
 	}
 	if cfg.DefaultArchiveThreshold != 80 {
 		t.Errorf("default_archive_threshold = %d, want 80", cfg.DefaultArchiveThreshold)
@@ -175,8 +176,9 @@ func TestRegexExtractMatch(t *testing.T) {
 func TestBuiltinConfig(t *testing.T) {
 	cfg := builtinConfig()
 	// EPIC-067: 3 auto-profile actions (uinit_auto, vnote_auto, ginit_auto).
-	if len(cfg.Actions) != 3 {
-		t.Errorf("expected 3 builtin actions, got %d", len(cfg.Actions))
+	// F1/M6: +2 capture stubs (capture_jira_auto, capture_confluence_auto) = 5 total.
+	if len(cfg.Actions) != 5 {
+		t.Errorf("expected 5 builtin actions, got %d", len(cfg.Actions))
 	}
 	ids := map[string]bool{}
 	for _, a := range cfg.Actions {
