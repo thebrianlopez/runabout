@@ -193,7 +193,7 @@ func TestBareServeNoYamlFallbackToLocal(t *testing.T) {
 }
 
 // TestBareServeBootsFromYaml asserts that `linkari serve` with a fully-populated
-// server.yaml (tsnet: true, tsnet_authkey: literal) boots without any CLI flags.
+// config.toml (tsnet: true, tsnet_authkey: literal) boots without any CLI flags.
 // tsnet bring-up is mocked — no real Tailscale node is started.
 func TestBareServeBootsFromYaml(t *testing.T) {
 	swapTsnetStart(t, mockTsnetStart(t))
@@ -201,18 +201,18 @@ func TestBareServeBootsFromYaml(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	// Write server.yaml with all required fields.
+	// Write config.toml with all required fields.
 	configDir := filepath.Join(tmpHome, ".config", "linkari")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	serverYAML := `server:
-  token: yaml-boot-token
-  tsnet: true
-  tsnet_authkey: test-authkey-from-yaml
-  tsnet_hostname: linkari-test
+	configTOML := `[server]
+token = "yaml-boot-token"
+tsnet = true
+tsnet_authkey = "test-authkey-from-yaml"
+tsnet_hostname = "linkari-test"
 `
-	if err := os.WriteFile(filepath.Join(configDir, "server.yaml"), []byte(serverYAML), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(configTOML), 0600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("LINKARI_QUEUE_DB", filepath.Join(tmpHome, "queue.db"))

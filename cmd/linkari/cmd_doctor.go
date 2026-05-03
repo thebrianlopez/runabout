@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -86,27 +87,30 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
-			// --- Check 1: server.yaml present and parseable ---
-			if serverYAMLPath == "" {
-				serverYAMLPath = defaultServerConfigPath()
+			// --- Check 1: config.toml present and parseable ---
+			configPath := serverYAMLPath
+			if configPath == "" {
+				configPath = defaultConfigPath()
 			}
 			var serverCfg *ServerConfig
 			{
-				cfg, err := LoadServerFile(serverYAMLPath)
+				cfg, err := LoadConfig(ctx, configPath)
 				if err != nil {
-					addCheck(failCheck("server_yaml", fmt.Sprintf("parse error: %v", err)))
-				} else if cfg == nil {
-					addCheck(warnCheck("server_yaml",
-						fmt.Sprintf("not found at %s — run 'linkari config init' to create", serverYAMLPath)))
+					if errors.Is(err, os.ErrNotExist) {
+						addCheck(warnCheck("config_toml",
+							fmt.Sprintf("not found at %s — run 'linkari config init' to create", configPath)))
+					} else {
+						addCheck(failCheck("config_toml", fmt.Sprintf("parse error: %v", err)))
+					}
 				} else {
-					serverCfg = cfg
-					addCheck(okCheck("server_yaml", serverYAMLPath))
+					sc := cfg.Server
+					serverCfg = &sc
+					addCheck(okCheck("config_toml", configPath))
 				}
 			}
 
 			// --- Checks 2-4: secret fields (token, firebase_sa, tsnet_authkey) ---
-			resolver := secrets.New(secrets.DefaultAWSFactory())
-			resolutions := resolveAllSecrets(ctx, resolver, serverCfg)
+			resolutions := resolveAllSecrets(serverCfg)
 
 			var hasSMURI bool
 			for _, r := range resolutions {
@@ -116,7 +120,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 				if r.Value == "" {
 					if r.Field == "token" {
-						addCheck(failCheck("token", "not configured — set token in server.yaml, or export LINKARI_TOKEN"))
+						addCheck(failCheck("token", "not configured — set token in config.toml, or export LINKARI_TOKEN"))
 					} else {
 						addCheck(warnCheck(r.Field, fmt.Sprintf("not configured (optional for %s)", r.Field)))
 					}
@@ -355,7 +359,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&serverYAMLPath, "path", "", "path to server.yaml (default: ~/.config/linkari/server.yaml)")
+	cmd.Flags().StringVar(&serverYAMLPath, "path", "", "path to config.toml (default: ~/.config/linkari/config.toml)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
 	return cmd
 }

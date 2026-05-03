@@ -32,8 +32,8 @@ func newDoctorCmdForTest(t *testing.T, tmpDir string, extraArgs []string) (*byte
 	return &out, cmd.Execute
 }
 
-// TestDoctor_MissingServerYAML verifies that a missing server.yaml produces
-// a warn on server_yaml and fail on token, but exits with an error.
+// TestDoctor_MissingServerYAML verifies that a missing config.toml produces
+// a warn on config_toml and fail on token, but exits with an error.
 func TestDoctor_MissingServerYAML(t *testing.T) {
 	dir := t.TempDir()
 	out, run := newDoctorCmdForTest(t, dir, nil)
@@ -43,15 +43,15 @@ func TestDoctor_MissingServerYAML(t *testing.T) {
 		t.Error("expected error from missing token, got nil")
 	}
 	got := out.String()
-	if !strings.Contains(got, "⚠ server_yaml") {
-		t.Errorf("expected warn for server_yaml, output:\n%s", got)
+	if !strings.Contains(got, "⚠ config_toml") {
+		t.Errorf("expected warn for config_toml, output:\n%s", got)
 	}
 	if !strings.Contains(got, "✗ token") {
 		t.Errorf("expected fail for token, output:\n%s", got)
 	}
 }
 
-// TestDoctor_LiteralToken verifies that a literal token in server.yaml
+// TestDoctor_LiteralToken verifies that a literal token in config.toml
 // produces an ok check for token and skips the aws_identity check.
 func TestDoctor_LiteralToken(t *testing.T) {
 	dir := t.TempDir()
@@ -59,18 +59,18 @@ func TestDoctor_LiteralToken(t *testing.T) {
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	yamlPath := filepath.Join(cfgDir, "server.yaml")
-	content := "server:\n  token: \"test-literal-token\"\n"
-	if err := os.WriteFile(yamlPath, []byte(content), 0o600); err != nil {
-		t.Fatalf("write server.yaml: %v", err)
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	content := "[server]\ntoken = \"test-literal-token\"\n"
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
 	}
 
-	out, run := newDoctorCmdForTest(t, dir, []string{"--path", yamlPath})
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
 	_ = run() // may fail due to firebase_sa/tsnet_authkey being optional warns — that's fine
 
 	got := out.String()
-	if !strings.Contains(got, "✓ server_yaml") {
-		t.Errorf("expected ok for server_yaml, output:\n%s", got)
+	if !strings.Contains(got, "✓ config_toml") {
+		t.Errorf("expected ok for config_toml, output:\n%s", got)
 	}
 	if !strings.Contains(got, "✓ token") {
 		t.Errorf("expected ok for token, output:\n%s", got)
@@ -89,14 +89,14 @@ func TestDoctor_JSONOutput(t *testing.T) {
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	yamlPath := filepath.Join(cfgDir, "server.yaml")
+	tomlPath := filepath.Join(cfgDir, "config.toml")
 	// Literal token: all secret checks pass without SM calls.
-	content := "server:\n  token: \"test-literal-token\"\n"
-	if err := os.WriteFile(yamlPath, []byte(content), 0o600); err != nil {
-		t.Fatalf("write server.yaml: %v", err)
+	content := "[server]\ntoken = \"test-literal-token\"\n"
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
 	}
 
-	out, run := newDoctorCmdForTest(t, dir, []string{"--path", yamlPath, "--json"})
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--json"})
 	_ = run() // ignore error; we test JSON structure
 
 	var result struct {
@@ -126,13 +126,13 @@ func TestDoctor_ExitCodeMatrix(t *testing.T) {
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	yamlPath := filepath.Join(cfgDir, "server.yaml")
-	content := "server:\n  token: \"test-literal-token\"\n"
-	if err := os.WriteFile(yamlPath, []byte(content), 0o600); err != nil {
-		t.Fatalf("write server.yaml: %v", err)
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	content := "[server]\ntoken = \"test-literal-token\"\n"
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
 	}
 
-	out, run := newDoctorCmdForTest(t, dir, []string{"--path", yamlPath, "--json"})
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--json"})
 	err := run()
 
 	var result struct {
@@ -153,34 +153,33 @@ func TestDoctor_ExitCodeMatrix(t *testing.T) {
 }
 
 // TestDoctor_AllChecksPresent verifies that all expected check names appear in
-// the output for a fully configured (literal-value) server.yaml.
+// the output for a fully configured (literal-value) config.toml.
 func TestDoctor_AllChecksPresent(t *testing.T) {
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, ".config", "linkari")
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	yamlPath := filepath.Join(cfgDir, "server.yaml")
-	// Use file:// URIs so SM is not called but fields are non-empty.
+	tomlPath := filepath.Join(cfgDir, "config.toml")
 	fakeSA := filepath.Join(dir, "firebase-sa.json")
 	if err := os.WriteFile(fakeSA, []byte(`{"type":"service_account"}`), 0o600); err != nil {
 		t.Fatalf("write fake SA: %v", err)
 	}
-	content := "server:\n" +
-		"  token: \"test-literal-token\"\n" +
-		"  firebase_sa: \"file://" + fakeSA + "\"\n" +
-		"  tsnet_authkey: \"tskey-test\"\n" +
-		"  jira_token: \"jira-test-token\"\n" +
-		"  atlassian_email: \"user@example.com\"\n" +
-		"  atlassian_api_token: \"test-password\"\n" +
-		"  jira_domain: \"test.atlassian.net\"\n" +
-		"  pagerduty_token: \"pd-test-token\"\n" +
-		"  log_file: \"" + filepath.Join(dir, "linkari.log") + "\"\n"
-	if err := os.WriteFile(yamlPath, []byte(content), 0o600); err != nil {
-		t.Fatalf("write server.yaml: %v", err)
+	content := "[server]\n" +
+		"token = \"test-literal-token\"\n" +
+		"firebase_sa = \"" + fakeSA + "\"\n" +
+		"tsnet_authkey = \"tskey-test\"\n" +
+		"jira_token = \"jira-test-token\"\n" +
+		"atlassian_email = \"user@example.com\"\n" +
+		"atlassian_api_token = \"test-password\"\n" +
+		"jira_domain = \"test.atlassian.net\"\n" +
+		"pagerduty_token = \"pd-test-token\"\n" +
+		"log_file = \"" + filepath.Join(dir, "linkari.log") + "\"\n"
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
 	}
 
-	out, run := newDoctorCmdForTest(t, dir, []string{"--path", yamlPath, "--json"})
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--json"})
 	_ = run()
 
 	var result struct {
@@ -196,7 +195,7 @@ func TestDoctor_AllChecksPresent(t *testing.T) {
 	}
 
 	required := []string{
-		"server_yaml", "token", "firebase_sa", "tsnet_authkey", "jira_token",
+		"config_toml", "token", "firebase_sa", "tsnet_authkey", "jira_token",
 		"atlassian_email", "atlassian_api_token", "jira_domain", "pagerduty_token",
 		"xdg_config_dir", "xdg_cache_dir", "xdg_state_dir",
 		"tsnet_state", "firebase_sa_cache", "log_file",
