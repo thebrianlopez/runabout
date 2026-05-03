@@ -19,13 +19,13 @@ func TestProvenanceLogFormat(t *testing.T) {
 	defer log.SetFlags(log.LstdFlags)
 
 	entries := []provenanceEntry{
-		{field: "token", source: "secretsmanager://linkari/bearer-token", fp: secrets.Fingerprint("hunter2"), tier: "yaml-sm"},
+		{field: "token", source: "secretsmanager://linkari/bearer-token", fp: secrets.Fingerprint("hunter2"), tier: "toml-sm"},
 		{field: "tsnet_authkey", source: "<literal>", fp: secrets.Fingerprint("tskey-abc"), tier: "env"},
 	}
 	flushProvenance(entries)
 
 	want := "linkari: secret token resolved from secretsmanager://linkari/bearer-token fp=" +
-		secrets.Fingerprint("hunter2") + " tier=yaml-sm\n" +
+		secrets.Fingerprint("hunter2") + " tier=toml-sm\n" +
 		"linkari: secret tsnet_authkey resolved from <literal> fp=" +
 		secrets.Fingerprint("tskey-abc") + " tier=env\n"
 

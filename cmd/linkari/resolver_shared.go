@@ -93,7 +93,7 @@ func resolveAllSecrets(cfg *ServerConfig) []SecretResolution {
 		switch {
 		case yamlVal != "":
 			value = yamlVal
-			tier = "yaml-literal"
+			tier = "toml-literal"
 		case spec.env != "":
 			value = spec.env
 			tier = "env"
