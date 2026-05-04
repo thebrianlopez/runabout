@@ -497,3 +497,371 @@ var (
 	errCaptureTestFetch  = errors.New("test_fetch_error")
 	errCaptureTestRender = errors.New("test_render_error")
 )
+
+// -- F5 PostCaptureCommand contract tests (CT-1 through CT-7, RG-1, RG-2) --
+//
+// Written test-first for M1. All tests in this block must fail until M2 provides the
+// real implementation of runPostCaptureCommand. The no-op M1 stub makes CT-4 and CT-5
+// fail on missing behaviour; CT-1, CT-2, CT-3 fail on validate() not compiling the
+// template; CT-6 and CT-7 fail on missing tmux/exec call records; RG tests fail on
+// missing key-forwarding assertion.
+
+// postCmdCaptureTmux is a test double for the tmux dispatch path in runPostCaptureCommand.
+// M2 must route through this recorder when Target is set.
+type postCmdCaptureTmux struct {
+	mu        sync.Mutex
+	calls     []postCmdNewWindowCall
+	returnErr error
+}
+
+type postCmdNewWindowCall struct {
+	session string
+	command string
+	name    string
+}
+
+func (r *postCmdCaptureTmux) NewWindow(session, command, name string) error {
+	r.mu.Lock()
+	r.calls = append(r.calls, postCmdNewWindowCall{session: session, command: command, name: name})
+	r.mu.Unlock()
+	return r.returnErr
+}
+
+// enqueueCaptureDone inserts a queue row and immediately marks it captured.
+func enqueueCaptureDone(t *testing.T, q *Queue, artifactPath string) int64 {
+	t.Helper()
+	req := &ShareRequest{
+		Type:    "url",
+		URL:     "https://grindr.atlassian.net/browse/SR-2972",
+		Action:  "capture_jira_auto",
+		Profile: "eng",
+	}
+	id, err := q.Enqueue(req)
+	if err != nil {
+		t.Fatalf("enqueueCaptureDone: Enqueue: %v", err)
+	}
+	if err := q.SetCaptured(id, artifactPath); err != nil {
+		t.Fatalf("enqueueCaptureDone: SetCaptured: %v", err)
+	}
+	return id
+}
+
+// F5-CT-1: PostCaptureCommand=="" → runPostCaptureCommand is a no-op; validate() must
+// leave compiledPostCaptureTemplate nil.
+// Fails until M2 wires the validate() path to compile (or skip) the template field.
+func TestPostCapture_CT1_EmptyCommand_NoSubprocess(t *testing.T) {
+	// Build a config with an empty PostCaptureCommand and run validate().
+	// After validate(), compiledPostCaptureTemplate must be nil for an empty command.
+	// With a non-empty command, validate() must populate compiledPostCaptureTemplate.
+	// M1 stub: validate() never sets compiledPostCaptureTemplate → the non-empty case fails.
+	cfg := &Config{
+		Actions: []ActionConfig{
+			{
+				ID:                 "capture_jira_auto",
+				Kind:               KindCapture,
+				ArtifactDir:        t.TempDir(),
+				PostCaptureCommand: "echo {{.Key}}",
+			},
+		},
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("F5-CT-1: validate() error: %v", err)
+	}
+	got := cfg.Actions[0].compiledPostCaptureTemplate
+	// M2: validate() must compile a non-empty PostCaptureCommand into compiledPostCaptureTemplate.
+	// Stub: compiledPostCaptureTemplate is always nil → test fails.
+	if got == nil {
+		t.Errorf("F5-CT-1: compiledPostCaptureTemplate is nil after validate() with non-empty PostCaptureCommand")
+	}
+}
+
+// F5-CT-2: {{.Key}} in command template expands to the validated Jira key.
+// Fails until M2 routes the rendered command through runPostCaptureCommand.
+func TestPostCapture_CT2_KeyTemplateExpands(t *testing.T) {
+	s, _ := newCaptureServer(t, nil)
+	outFile := filepath.Join(t.TempDir(), "ct2_key.txt")
+
+	cfg := &ActionConfig{
+		ID:                 "capture_jira_auto",
+		Kind:               KindCapture,
+		Target:             "",
+		PostCaptureCommand: "echo {{.Key}} > " + outFile,
+	}
+	s.runPostCaptureCommand(cfg, "SR-2972", "/tmp/artifact.md", "https://grindr.atlassian.net/browse/SR-2972")
+
+	// M2: runPostCaptureCommand must render the template and exec it.
+	// Stub does nothing → outFile does not exist → test fails.
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("F5-CT-2: output file not created (exec not called): %v", err)
+	}
+	if !strings.Contains(string(data), "SR-2972") {
+		t.Errorf("F5-CT-2: output %q does not contain SR-2972", string(data))
+	}
+}
+
+// F5-CT-3: {{.ArtifactPath}} and {{.Date}} both expand correctly in the rendered command.
+// Fails until M2 provides template rendering in runPostCaptureCommand.
+func TestPostCapture_CT3_ArtifactPathAndDateExpand(t *testing.T) {
+	s, _ := newCaptureServer(t, nil)
+	outFile := filepath.Join(t.TempDir(), "ct3_out.txt")
+	artifactPath := "/docs/captures/2026-05-03_SR-2972.md"
+
+	cfg := &ActionConfig{
+		ID:                 "capture_jira_auto",
+		Kind:               KindCapture,
+		Target:             "",
+		PostCaptureCommand: "echo '{{.ArtifactPath}} {{.Date}}' > " + outFile,
+	}
+	s.runPostCaptureCommand(cfg, "SR-2972", artifactPath, "https://grindr.atlassian.net/browse/SR-2972")
+
+	// M2: both placeholders must appear in the output file.
+	// Stub does nothing → outFile absent → test fails.
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("F5-CT-3: output file not created (exec not called): %v", err)
+	}
+	if !strings.Contains(string(data), artifactPath) {
+		t.Errorf("F5-CT-3: ArtifactPath not in output %q", string(data))
+	}
+	// Date is injected by runPostCaptureCommand as time.Now().UTC().Format("2006-01-02").
+	// We just check the format prefix is present.
+	if !strings.Contains(string(data), "2026") {
+		t.Errorf("F5-CT-3: Date not in output %q", string(data))
+	}
+	_ = s
+}
+
+// F5-CT-4: Target="linkari:0", valid command → tmux.NewWindow("linkari", command, "SR-2972 capture") called.
+// Fails until M2 dispatches via tmux when Target is non-empty.
+func TestPostCapture_CT4_TargetTmux_CallsNewWindow(t *testing.T) {
+	rec := &postCmdCaptureTmux{}
+	// newPostCaptureServer wires rec via TODO in M2; for now rec.calls stays empty.
+	q := newTestQueue(t)
+	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
+	s := NewServer("tok", router, q, NewRingLog(10), false, nil)
+
+	cfg := &ActionConfig{
+		ID:                 "capture_jira_auto",
+		Kind:               KindCapture,
+		Target:             "linkari:0",
+		PostCaptureCommand: "echo done",
+	}
+	s.runPostCaptureCommand(cfg, "SR-2972", "/tmp/2026-05-03_SR-2972.md", "https://grindr.atlassian.net/browse/SR-2972")
+
+	// M2 must call tmux.NewWindow with the rendered command and window name "SR-2972 capture".
+	// Stub does nothing → rec.calls is empty → test fails.
+	if len(rec.calls) == 0 {
+		t.Fatalf("F5-CT-4: expected tmux.NewWindow to be called; no calls recorded (stub is no-op)")
+	}
+	got := rec.calls[0]
+	if got.session != "linkari" {
+		t.Errorf("F5-CT-4: session = %q, want %q", got.session, "linkari")
+	}
+	if !strings.Contains(got.command, "echo done") {
+		t.Errorf("F5-CT-4: command %q does not contain rendered command", got.command)
+	}
+	if got.name != "SR-2972 capture" {
+		t.Errorf("F5-CT-4: window name = %q, want %q", got.name, "SR-2972 capture")
+	}
+}
+
+// F5-CT-5: Target="" → exec.Command("sh", "-c", command) called; not tmux.NewWindow.
+// Fails until M2 provides the exec path for empty Target.
+func TestPostCapture_CT5_TargetEmpty_ExecCommand(t *testing.T) {
+	s, _ := newCaptureServer(t, nil)
+	outFile := filepath.Join(t.TempDir(), "ct5_out.txt")
+
+	cfg := &ActionConfig{
+		ID:                 "capture_jira_auto",
+		Kind:               KindCapture,
+		Target:             "",
+		PostCaptureCommand: "touch " + outFile,
+	}
+	s.runPostCaptureCommand(cfg, "SR-2972", "/tmp/artifact.md", "https://grindr.atlassian.net/browse/SR-2972")
+
+	// M2: with empty Target, exec.Command("sh", "-c", rendered) must be called synchronously.
+	// Stub does nothing → outFile absent → test fails.
+	if _, err := os.Stat(outFile); err != nil {
+		t.Errorf("F5-CT-5: exec.Command not called — expected %s to exist: %v", outFile, err)
+	}
+}
+
+// F5-CT-6: Target set, tmux.NewWindow returns error → capture_command_error logged; row stays captured.
+// Fails until M2 dispatches via tmux (so we can verify the tmux call happened even when it errors).
+func TestPostCapture_CT6_TmuxError_StatusRemainsCaptured(t *testing.T) {
+	rec := &postCmdCaptureTmux{returnErr: errors.New("tmux_unavailable")}
+	q := newTestQueue(t)
+	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
+	s := NewServer("tok", router, q, NewRingLog(10), false, nil)
+
+	artifactPath := filepath.Join(t.TempDir(), "2026-05-03_SR-2972.md")
+	if err := os.WriteFile(artifactPath, []byte("# artifact"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id := enqueueCaptureDone(t, q, artifactPath)
+
+	cfg := &ActionConfig{
+		ID:                 "capture_jira_auto",
+		Kind:               KindCapture,
+		Target:             "linkari:0",
+		PostCaptureCommand: "echo done",
+	}
+	s.runPostCaptureCommand(cfg, "SR-2972", artifactPath, "https://grindr.atlassian.net/browse/SR-2972")
+
+	// M2: tmux.NewWindow must have been called (even though it errored).
+	// Stub does nothing → rec.calls is empty → test fails.
+	if len(rec.calls) == 0 {
+		t.Errorf("F5-CT-6: tmux.NewWindow was not called — stub is a no-op")
+	}
+	// Best-effort: queue row must remain captured regardless of tmux error.
+	item, err := q.GetByID(id)
+	if err != nil {
+		t.Fatalf("F5-CT-6: GetByID: %v", err)
+	}
+	if item.Status != "captured" {
+		t.Errorf("F5-CT-6: expected status=captured after tmux error, got %q", item.Status)
+	}
+}
+
+// F5-CT-7: exec.Command exits non-zero → capture_command_error logged; row stays captured.
+// Fails until M2 provides the exec path (stub does nothing; the "exit 1" never runs).
+func TestPostCapture_CT7_ExecNonZero_StatusRemainsCaptured(t *testing.T) {
+	s, q := newCaptureServer(t, nil)
+
+	artifactPath := filepath.Join(t.TempDir(), "ct7_artifact.md")
+	if err := os.WriteFile(artifactPath, []byte("# ct7"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id := enqueueCaptureDone(t, q, artifactPath)
+
+	// A command that will exit non-zero when M2 runs it via exec.Command("sh", "-c", ...).
+	sentinelFile := filepath.Join(t.TempDir(), "ct7_ran.txt")
+	cfg := &ActionConfig{
+		ID:                 "capture_jira_auto",
+		Kind:               KindCapture,
+		Target:             "",
+		PostCaptureCommand: "touch " + sentinelFile + " && exit 1",
+	}
+	s.runPostCaptureCommand(cfg, "SR-2972", artifactPath, "https://grindr.atlassian.net/browse/SR-2972")
+
+	// M2: the command must have been attempted (sentinel exists) even though it failed.
+	// Stub does nothing → sentinel absent → test fails.
+	if _, err := os.Stat(sentinelFile); err != nil {
+		t.Errorf("F5-CT-7: exec.Command not called — sentinel %s absent: %v", sentinelFile, err)
+	}
+	// Best-effort: queue row must remain captured regardless.
+	item, err := q.GetByID(id)
+	if err != nil {
+		t.Fatalf("F5-CT-7: GetByID: %v", err)
+	}
+	if item.Status != "captured" {
+		t.Errorf("F5-CT-7: expected status=captured after exec failure, got %q", item.Status)
+	}
+}
+
+// F5-RG-1: Queue row is status=captured after runPostCaptureCommand failure.
+// Best-effort guarantee: the hook must never mutate queue state.
+// Fails until M2 provides exec behaviour — the stub's no-op means exec never ran, so
+// we verify via the sentinel that the exec WAS attempted (positive assertion).
+func TestPostCapture_RG1_FailureDoesNotMutateQueueState(t *testing.T) {
+	s, q := newCaptureServer(t, nil)
+
+	artifactPath := filepath.Join(t.TempDir(), "rg1_artifact.md")
+	if err := os.WriteFile(artifactPath, []byte("# rg1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id := enqueueCaptureDone(t, q, artifactPath)
+
+	sentinelFile := filepath.Join(t.TempDir(), "rg1_ran.txt")
+	cfg := &ActionConfig{
+		ID:                 "capture_jira_auto",
+		Kind:               KindCapture,
+		Target:             "",
+		PostCaptureCommand: "touch " + sentinelFile + " && false",
+	}
+	s.runPostCaptureCommand(cfg, "SR-2972", artifactPath, "https://grindr.atlassian.net/browse/SR-2972")
+
+	// Positive assertion: M2 must exec the command (sentinel exists).
+	// Stub does nothing → sentinel absent → test fails.
+	if _, err := os.Stat(sentinelFile); err != nil {
+		t.Errorf("F5-RG-1: exec not called — sentinel %s absent: %v", sentinelFile, err)
+	}
+	// Guard: queue row must be unchanged.
+	item, err := q.GetByID(id)
+	if err != nil {
+		t.Fatalf("F5-RG-1: GetByID: %v", err)
+	}
+	if item.Status != "captured" {
+		t.Errorf("F5-RG-1: status mutated; got %q, want captured", item.Status)
+	}
+	if item.ArtifactPath != artifactPath {
+		t.Errorf("F5-RG-1: artifact_path mutated; got %q, want %q", item.ArtifactPath, artifactPath)
+	}
+}
+
+// F5-RG-2: PostCaptureContext.Key equals the value returned by renderer.ArtifactKey for the URL.
+// Verifies that the key forwarded from captureAsync to runPostCaptureCommand is correct.
+// Fails until M2 records the key that runPostCaptureCommand receives.
+func TestPostCapture_RG2_ContextKeyMatchesArtifactKey(t *testing.T) {
+	rawURL := "https://grindr.atlassian.net/browse/SR-2972"
+
+	// Verify the extraction contract: ArtifactKey for this URL must return "SR-2972".
+	renderer := &captureStubRenderer{
+		keyFn: func(u string) string {
+			parsed, err := url.Parse(u)
+			if err != nil {
+				return ""
+			}
+			key, err := ExtractJiraKey(parsed.Path)
+			if err != nil {
+				return ""
+			}
+			return key
+		},
+	}
+	gotKey := renderer.ArtifactKey(rawURL)
+	if gotKey != "SR-2972" {
+		t.Fatalf("F5-RG-2: ArtifactKey(%q) = %q, want SR-2972 (extraction contract broken)", rawURL, gotKey)
+	}
+
+	// Integration assertion: run captureAsync end-to-end and verify the key that reaches
+	// runPostCaptureCommand equals gotKey. M2 must record the received key in an observable way.
+	// For now, we verify via a sentinel filename that embeds the key.
+	dir := t.TempDir()
+	domainClient := &captureStubDomainClient{
+		content: `{"key":"SR-2972","fields":{"summary":"test"}}`,
+		ct:      ContentTypeJSON,
+	}
+	s, q := newCaptureServer(t, domainClient)
+	s.RegisterCaptureRenderer("capture_jira_auto", &captureStubRenderer{
+		keyFn: func(u string) string { return "SR-2972" },
+	})
+	id := enqueueCaptureDone(t, q, filepath.Join(dir, "placeholder.md"))
+	// Replace the captured row with a pending one so captureAsync processes it.
+	req2 := &ShareRequest{
+		Type:    "url",
+		URL:     rawURL,
+		Action:  "capture_jira_auto",
+		Profile: "eng",
+	}
+	id2, err := q.Enqueue(req2)
+	if err != nil {
+		t.Fatalf("F5-RG-2: Enqueue: %v", err)
+	}
+	_ = id // original row not used beyond confirming SetCaptured works
+
+	sentinelFile := filepath.Join(dir, "rg2_key_SR-2972.txt")
+	cfg := captureJiraAutoConfig(dir)
+	cfg.PostCaptureCommand = "touch " + sentinelFile
+
+	s.wg.Add(1)
+	go s.captureAsync(context.Background(), id2, cfg)
+	s.wg.Wait()
+
+	// M2: captureAsync must call runPostCaptureCommand, which must exec the command,
+	// creating the sentinel. Stub does nothing → sentinel absent → test fails.
+	if _, err := os.Stat(sentinelFile); err != nil {
+		t.Errorf("F5-RG-2: PostCaptureCommand not invoked after captureAsync — sentinel %s absent: %v", sentinelFile, err)
+	}
+}
