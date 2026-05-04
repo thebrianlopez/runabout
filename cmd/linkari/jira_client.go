@@ -135,6 +135,13 @@ func (c *JiraClient) FetchIssue(ctx context.Context, issueKey string) (string, e
 	return string(raw), nil
 }
 
+// FetchConfluenceADF fetches Confluence page metadata and ADF body via REST API v1.
+// Returns the full JSON response as a string for renderer parsing.
+// Errors: ErrAtlassianAuth (401/403), ErrAtlassianNotFound (404), wrapped network errors.
+func (c *JiraClient) FetchConfluenceADF(ctx context.Context, pageID string) (string, error) {
+	return "", nil // stub — implemented in M2
+}
+
 // FetchConfluencePage returns plain text via Confluence REST API.
 func (c *JiraClient) FetchConfluencePage(ctx context.Context, pageID string) (string, error) {
 	endpoint := fmt.Sprintf("%s/wiki/rest/api/content/%s?expand=body.view", c.base(), pageID)
