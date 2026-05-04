@@ -45,10 +45,10 @@ type TriageResult struct {
 // the M1 fixture corpus until M3+ revisits the model selection.
 const claudeModel = "claude-haiku-4-5-20251001"
 
-// contentTruncationRunes matches the fish 2000-char truncation in
-// _uinit_profile_prompt.fish line 39 (`string sub -l 2000`). Fish counts
-// runes, not bytes — match that semantic.
-const contentTruncationRunes = 2000
+// contentTruncationRunes caps content sent to the LLM evaluator. Raised from
+// 2000 to 8000 (EPIC-093 M1) — the prior cap was too narrow for rich articles,
+// causing sections beyond the intro to never be scored.
+const contentTruncationRunes = 8000
 
 // execHaiku is the indirection point that tests stub. Production path is
 // runClaudeHaiku; tests can swap in a deterministic fake.
