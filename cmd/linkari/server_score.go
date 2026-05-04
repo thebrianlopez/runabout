@@ -480,7 +480,9 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// check is no longer needed here.
 
 	// Content acquisition — branches on share type.
-	var content string
+	// rawContent holds the pre-truncation fetch result; saveTranscriptFile must
+	// receive the full text so transcript files are not silently truncated.
+	var content, rawContent string
 	if isURLShare {
 		if req.IsScreenshot {
 			// Screenshots use ExtraSubject+ExtraText instead of Jina.
@@ -531,6 +533,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				}
 				return
 			}
+			rawContent = content
 			content = truncateRunes(content, contentTruncationRunes)
 			if strings.TrimSpace(content) == "" {
 				slog.Warn("score_async: empty content", "event_type", "score_async_empty_content", "url", rawURL)
@@ -905,7 +908,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		}
 	}
 	if isURLShare && !req.IsScreenshot && content != "" {
-		if _, err := saveTranscriptFile(req.QueueRowID, profile, deriveSlugFromURL(rawURL), content, "url", rawURL, "", "", 0, ""); err != nil {
+		if _, err := saveTranscriptFile(req.QueueRowID, profile, deriveSlugFromURL(rawURL), rawContent, "url", rawURL, "", "", 0, ""); err != nil {
 			slog.Warn("score_async: transcript save failed", "event_type", "transcript_save_failed", "type", req.Type, "row_id", req.QueueRowID, "error", err)
 		}
 	}
