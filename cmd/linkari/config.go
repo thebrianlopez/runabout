@@ -658,10 +658,22 @@ func (c *Config) validate() error {
 			a.compiledTemplate = t
 
 		case KindCapture:
-			// F2 stub: no template required. captureAsync is not yet implemented.
+			// F5: compile PostCaptureCommand as a Go text/template when non-empty.
+			if a.PostCaptureCommand != "" {
+				t, err := template.New(a.ID + "_post_capture").Parse(a.PostCaptureCommand)
+				if err != nil {
+					return fmt.Errorf("action %q: invalid post_capture_command template: %w", a.ID, err)
+				}
+				a.compiledPostCaptureTemplate = t
+			}
 
 		default:
 			return fmt.Errorf("action %q: unknown kind %q", a.ID, a.Kind)
+		}
+
+		// F5: post_capture_command is only valid on kind=capture actions.
+		if a.PostCaptureCommand != "" && a.Kind != KindCapture {
+			return fmt.Errorf("action %q: post_capture_command only valid for kind=capture", a.ID)
 		}
 
 		// EPIC-058 M3: auto_launch requires a positive confidence_threshold.
