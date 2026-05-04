@@ -243,8 +243,17 @@ type ActionConfig struct {
 	PostCaptureCommand       string `toml:"post_capture_command"`       // F5 hook point (no-op until F5 TDD)
 
 	// Parsed fields (not in TOML)
-	compiledTemplate *template.Template
-	compiledRegex    *regexp.Regexp
+	compiledTemplate            *template.Template
+	compiledRegex               *regexp.Regexp
+	compiledPostCaptureTemplate *template.Template // F5: compiled from PostCaptureCommand
+}
+
+// PostCaptureContext is the template data available to PostCaptureCommand.
+type PostCaptureContext struct {
+	ArtifactPath string
+	Key          string
+	URL          string
+	Date         string
 }
 
 // Config is the top-level TOML config file.

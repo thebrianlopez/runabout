@@ -210,6 +210,59 @@ func contains(s, substr string) bool {
 	return false
 }
 
+// -- F5 PostCaptureCommand config validation tests (CT-8, CT-9) --
+//
+// Written test-first for M1. Both fail until M2 adds the F5 validation cases to Config.validate().
+
+// F5-CT-8: PostCaptureCommand with a malformed Go template on a KindCapture action
+// → validate() returns an error containing "invalid post_capture_command template".
+func TestPostCaptureConfig_CT8_MalformedTemplate_ValidationError(t *testing.T) {
+	cfg := &Config{
+		Actions: []ActionConfig{
+			{
+				ID:                 "capture_jira_auto",
+				Kind:               KindCapture,
+				ArtifactDir:        t.TempDir(),
+				PostCaptureCommand: "{{.Unclosed",
+			},
+		},
+	}
+	err := cfg.validate()
+	// M2: validate() must parse PostCaptureCommand as a template for KindCapture actions
+	// and return an error containing "invalid post_capture_command template" when it is malformed.
+	// Stub: validate() ignores PostCaptureCommand → no error returned → test fails.
+	if err == nil {
+		t.Fatal("F5-CT-8: expected validate() to return an error for malformed PostCaptureCommand; got nil")
+	}
+	if !contains(err.Error(), "invalid post_capture_command template") {
+		t.Errorf("F5-CT-8: error %q does not contain %q", err.Error(), "invalid post_capture_command template")
+	}
+}
+
+// F5-CT-9: PostCaptureCommand non-empty on a KindTemplate action
+// → validate() returns an error containing "only valid for kind=capture".
+func TestPostCaptureConfig_CT9_NonCaptureKind_ValidationError(t *testing.T) {
+	cfg := &Config{
+		Actions: []ActionConfig{
+			{
+				ID:                 "uinit_custom",
+				Kind:               KindTemplate,
+				CommandTemplate:    "uinit {{.URL}}",
+				PostCaptureCommand: "echo done",
+			},
+		},
+	}
+	err := cfg.validate()
+	// M2: validate() must reject PostCaptureCommand on non-KindCapture actions.
+	// Stub: validate() ignores PostCaptureCommand → no error returned → test fails.
+	if err == nil {
+		t.Fatal("F5-CT-9: expected validate() to return an error for PostCaptureCommand on kind=template; got nil")
+	}
+	if !contains(err.Error(), "only valid for kind=capture") {
+		t.Errorf("F5-CT-9: error %q does not contain %q", err.Error(), "only valid for kind=capture")
+	}
+}
+
 // expandConfigRefs tests.
 
 func TestExpandConfigRefsEnvScheme(t *testing.T) {

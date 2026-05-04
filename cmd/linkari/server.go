@@ -2456,8 +2456,31 @@ func (s *Server) captureAsync(ctx context.Context, id int64, cfg *ActionConfig) 
 		})
 	}
 
-	// F5 hook point (no-op until F5 TDD).
-	_ = cfg.PostCaptureCommand
+	// F5: invoke optional post-capture shell hook.
+	s.runPostCaptureCommand(cfg, key, artifactPath, row.URL)
+}
+
+// runPostCaptureCommand executes cfg.PostCaptureCommand after a successful capture write.
+// It is a best-effort hook: errors are logged but never affect queue state.
+// F5 stub — implementation added in M2.
+func (s *Server) runPostCaptureCommand(_ *ActionConfig, _, _, _ string) {
+	// no-op stub; M2 provides the real implementation.
+}
+
+// parsePostCaptureTemplate parses a PostCaptureCommand Go template string.
+// F5 stub — returns a non-nil template so CT-2/CT-3 compilation succeeds; M2 provides the real implementation.
+func parsePostCaptureTemplate(tmpl string) (*textTemplate.Template, error) {
+	return textTemplate.New("post_capture_command").Parse(tmpl)
+}
+
+// renderPostCaptureCommand executes a parsed PostCaptureCommand template with the given context.
+// F5 stub — real implementation in M2.
+func renderPostCaptureCommand(t *textTemplate.Template, ctx PostCaptureContext) (string, error) {
+	var buf strings.Builder
+	if err := t.Execute(&buf, ctx); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
 
 // captureScoreFallback routes a ContentTypePlain capture row through the normal scoring path.
