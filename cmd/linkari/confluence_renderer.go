@@ -39,6 +39,9 @@ type confluenceAPIResponse struct {
 			} `json:"results"`
 		} `json:"labels"`
 	} `json:"metadata"`
+	Links struct {
+		WebUI string `json:"webui"`
+	} `json:"_links"`
 }
 
 // adfNode represents a node in the Atlassian Document Format tree.
@@ -127,7 +130,8 @@ func (r *ConfluenceRenderer) Render(content string, ct ContentType, now time.Tim
 	} else {
 		b.WriteString("attachments: []\n")
 	}
-	b.WriteString("url: \"\"\n")
+	pageURL := resp.Links.WebUI
+	fmt.Fprintf(&b, "url: %q\n", pageURL)
 	fmt.Fprintf(&b, "captured_at: %s\n", capturedAt)
 	b.WriteString("---\n")
 
