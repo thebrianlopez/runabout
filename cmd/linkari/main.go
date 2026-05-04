@@ -713,6 +713,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					}
 					dr.RegisterClient(jiraDomain, jiraReadClient)
 					srv.RegisterCaptureRenderer("capture_jira_auto", NewJiraRenderer())
+					srv.RegisterCaptureRenderer("capture_confluence_auto", NewConfluenceRenderer())
 				} else {
 					slog.Warn("domain_client_unconfigured", "field", "jira_domain/atlassian_email/atlassian_api_token", "effect", "atlassian.net falls back to Jina")
 				}
