@@ -636,10 +636,11 @@ func TestPostCapture_CT3_ArtifactPathAndDateExpand(t *testing.T) {
 // Fails until M2 dispatches via tmux when Target is non-empty.
 func TestPostCapture_CT4_TargetTmux_CallsNewWindow(t *testing.T) {
 	rec := &postCmdCaptureTmux{}
-	// newPostCaptureServer wires rec via TODO in M2; for now rec.calls stays empty.
 	q := newTestQueue(t)
 	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
 	s := NewServer("tok", router, q, NewRingLog(10), false, nil)
+	// M2: wire the recorder as the post-capture tmux dispatcher.
+	s.postCaptureTmux = rec
 
 	cfg := &ActionConfig{
 		ID:                 "capture_jira_auto",
@@ -694,6 +695,8 @@ func TestPostCapture_CT6_TmuxError_StatusRemainsCaptured(t *testing.T) {
 	q := newTestQueue(t)
 	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
 	s := NewServer("tok", router, q, NewRingLog(10), false, nil)
+	// M2: wire the recorder as the post-capture tmux dispatcher.
+	s.postCaptureTmux = rec
 
 	artifactPath := filepath.Join(t.TempDir(), "2026-05-03_SR-2972.md")
 	if err := os.WriteFile(artifactPath, []byte("# artifact"), 0o644); err != nil {

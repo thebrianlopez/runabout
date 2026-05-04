@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -236,6 +238,16 @@ type Server struct {
 	wg               sync.WaitGroup                // tracks in-flight captureAsync goroutines
 	captureRenderers map[string]CaptureRenderer    // actionID → renderer; guarded by captureRenderersMu
 	captureRenderersMu sync.RWMutex
+
+	// F5: tmux dispatcher for post-capture commands. Defaults to router.tmux;
+	// may be replaced in tests to record NewWindow calls without invoking real tmux.
+	postCaptureTmux TmuxWindower
+}
+
+// TmuxWindower is the subset of TmuxRunner used by runPostCaptureCommand.
+// Allows test doubles to intercept tmux dispatch without a real tmux session.
+type TmuxWindower interface {
+	NewWindow(session, command, name string) error
 }
 
 // CaptureRenderer converts structured fetched content to a markdown artifact.
@@ -269,7 +281,7 @@ func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug 
 	if router != nil && queue != nil {
 		router.SetQueue(queue)
 	}
-	return &Server{
+	s := &Server{
 		token:          token,
 		router:         router,
 		queue:          queue,
@@ -279,6 +291,12 @@ func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug 
 		startAt:        time.Now(),
 		fcmTokenSource: fcmTS,
 	}
+	// F5: default post-capture tmux dispatcher to the router's TmuxRunner.
+	// Tests may replace s.postCaptureTmux with a recorder before calling runPostCaptureCommand.
+	if router != nil {
+		s.postCaptureTmux = router.tmux
+	}
+	return s
 }
 
 // SetShield installs (or replaces) the shield middleware on the server.
@@ -2462,26 +2480,60 @@ func (s *Server) captureAsync(ctx context.Context, id int64, cfg *ActionConfig) 
 
 // runPostCaptureCommand executes cfg.PostCaptureCommand after a successful capture write.
 // It is a best-effort hook: errors are logged but never affect queue state.
-// F5 stub — implementation added in M2.
-func (s *Server) runPostCaptureCommand(_ *ActionConfig, _, _, _ string) {
-	// no-op stub; M2 provides the real implementation.
-}
-
-// parsePostCaptureTemplate parses a PostCaptureCommand Go template string.
-// F5 stub — returns a non-nil template so CT-2/CT-3 compilation succeeds; M2 provides the real implementation.
-func parsePostCaptureTemplate(tmpl string) (*textTemplate.Template, error) {
-	return textTemplate.New("post_capture_command").Parse(tmpl)
-}
-
-// renderPostCaptureCommand executes a parsed PostCaptureCommand template with the given context.
-// F5 stub — real implementation in M2.
-func renderPostCaptureCommand(t *textTemplate.Template, ctx PostCaptureContext) (string, error) {
-	var buf strings.Builder
-	if err := t.Execute(&buf, ctx); err != nil {
-		return "", err
+//
+// Invariant: key enters this function pre-validated by renderer.ArtifactKey →
+// ExtractJiraKey → jiraKeyRegex. Do not re-validate inside this function.
+func (s *Server) runPostCaptureCommand(cfg *ActionConfig, key, artifactPath, rawURL string) {
+	if cfg.PostCaptureCommand == "" {
+		return
 	}
-	return buf.String(), nil
+
+	// Use the pre-compiled template when available (populated by validate()).
+	// Fall back to on-demand compilation to support direct ActionConfig construction in tests.
+	tmpl := cfg.compiledPostCaptureTemplate
+	if tmpl == nil {
+		var err error
+		tmpl, err = textTemplate.New(cfg.ID + "_post_capture").Parse(cfg.PostCaptureCommand)
+		if err != nil {
+			slog.Warn("capture_command_error: template render failed", "action", cfg.ID, "error", err)
+			return
+		}
+	}
+
+	ctx := PostCaptureContext{
+		ArtifactPath: artifactPath,
+		Key:          key,
+		URL:          rawURL,
+		Date:         time.Now().UTC().Format("2006-01-02"),
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, ctx); err != nil {
+		slog.Warn("capture_command_error: template render failed", "action", cfg.ID, "error", err)
+		return
+	}
+	command := buf.String()
+
+	if cfg.Target != "" {
+		if s.postCaptureTmux == nil {
+			slog.Warn("capture_command_error: no tmux dispatcher configured", "action", cfg.ID)
+			return
+		}
+		session := strings.Split(cfg.Target, ":")[0]
+		if err := s.postCaptureTmux.NewWindow(session, command, key+" capture"); err != nil {
+			slog.Warn("capture_command_error: tmux dispatch failed", "action", cfg.ID, "error", err)
+		}
+		return
+	}
+
+	// Empty target: run synchronously via sh -c.
+	cmd := exec.Command("sh", "-c", command)
+	if err := cmd.Run(); err != nil {
+		slog.Warn("capture_command_error: exec failed", "action", cfg.ID, "error", err)
+	}
 }
+
+
 
 // captureScoreFallback routes a ContentTypePlain capture row through the normal scoring path.
 // Called when FetchWithFallback returns ContentTypePlain for a KindCapture action.
