@@ -99,8 +99,8 @@ func (c *JiraClient) Fetch(ctx context.Context, u *url.URL) (string, ContentType
 		content, err := c.FetchIssue(ctx, issueKey)
 		return content, ContentTypeJSON, err
 	}
-	content, err := c.FetchConfluencePage(ctx, pageID)
-	return content, ContentTypePlain, err
+	content, err := c.FetchConfluenceADF(ctx, pageID)
+	return content, ContentTypeADF, err
 }
 
 // FetchIssue returns the raw JSON body of a Jira issue via REST API v2.
@@ -139,7 +139,34 @@ func (c *JiraClient) FetchIssue(ctx context.Context, issueKey string) (string, e
 // Returns the full JSON response as a string for renderer parsing.
 // Errors: ErrAtlassianAuth (401/403), ErrAtlassianNotFound (404), wrapped network errors.
 func (c *JiraClient) FetchConfluenceADF(ctx context.Context, pageID string) (string, error) {
-	return "", nil // stub — implemented in M2
+	endpoint := fmt.Sprintf("%s/wiki/rest/api/content/%s?expand=body.atlas_doc_format,space,version,metadata.labels", c.base(), pageID)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("confluence_fetch_adf_error: %w", err)
+	}
+	req.SetBasicAuth(c.Username, c.Password)
+
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return "", fmt.Errorf("confluence_fetch_adf_error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "", ErrAtlassianAuth
+	case http.StatusNotFound:
+		return "", ErrAtlassianNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("confluence_fetch_adf_error: status %d", resp.StatusCode)
+	}
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("confluence_fetch_adf_error: read: %w", err)
+	}
+	return string(raw), nil
 }
 
 // FetchConfluencePage returns plain text via Confluence REST API.
