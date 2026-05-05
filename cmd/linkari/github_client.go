@@ -105,9 +105,141 @@ type githubContentResponse struct {
 	Encoding string `json:"encoding"`
 }
 
+// isPRURL reports whether the given URL path is a GitHub PR path.
+// A PR path has the form /{owner}/{repo}/pull/{number} where {number} is numeric.
+func isPRURL(path string) bool {
+	if !strings.Contains(path, "/pull/") {
+		return false
+	}
+	segments := strings.Split(path, "/")
+	// segments: ["", owner, repo, "pull", number, ...]
+	for i, seg := range segments {
+		if seg == "pull" && i+1 < len(segments) {
+			_, err := strconv.Atoi(segments[i+1])
+			return err == nil
+		}
+	}
+	return false
+}
+
+// FetchPR fetches a GitHub pull request via REST API v3.
+// Returns raw JSON response + ContentTypeJSON on success.
+// Returns ("", ContentTypePlain, error) on 401/403/404/rate-limit/network error.
+func (c *GitHubClient) FetchPR(ctx context.Context, owner, repo string, prNumber int) (string, ContentType, error) {
+	start := time.Now()
+
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", c.apiBaseURL, owner, repo, prNumber)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return "", ContentTypePlain, fmt.Errorf("%w: %v", ErrGitHubUnexpected, err)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "token "+c.token)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		latency := time.Since(start).Milliseconds()
+		c.emitEvent("github_fetch_error", map[string]interface{}{
+			"url":         fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", owner, repo, prNumber),
+			"error_class": "network_error",
+			"http_status": 0,
+			"latency_ms":  latency,
+		})
+		return "", ContentTypePlain, fmt.Errorf("github_pr_fetch_error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	latency := time.Since(start).Milliseconds()
+
+	// Check rate limit header before status code.
+	if remaining := resp.Header.Get("X-RateLimit-Remaining"); remaining == "0" {
+		c.emitEvent("github_fetch_error", map[string]interface{}{
+			"owner":       owner,
+			"repo":        repo,
+			"pr_number":   prNumber,
+			"error_class": "rate_limited",
+			"http_status": resp.StatusCode,
+			"latency_ms":  latency,
+		})
+		return "", ContentTypePlain, ErrGitHubRateLimited
+	}
+
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		c.emitEvent("github_fetch_error", map[string]interface{}{
+			"owner":       owner,
+			"repo":        repo,
+			"pr_number":   prNumber,
+			"error_class": "auth_error",
+			"http_status": resp.StatusCode,
+			"latency_ms":  latency,
+		})
+		return "", ContentTypePlain, ErrGitHubAuth
+	case http.StatusNotFound:
+		c.emitEvent("github_fetch_error", map[string]interface{}{
+			"owner":       owner,
+			"repo":        repo,
+			"pr_number":   prNumber,
+			"error_class": "not_found",
+			"http_status": resp.StatusCode,
+			"latency_ms":  latency,
+		})
+		return "", ContentTypePlain, ErrGitHubNotFound
+	case http.StatusTooManyRequests:
+		c.emitEvent("github_fetch_error", map[string]interface{}{
+			"owner":       owner,
+			"repo":        repo,
+			"pr_number":   prNumber,
+			"error_class": "rate_limited",
+			"http_status": resp.StatusCode,
+			"latency_ms":  latency,
+		})
+		return "", ContentTypePlain, ErrGitHubRateLimited
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		c.emitEvent("github_fetch_error", map[string]interface{}{
+			"owner":       owner,
+			"repo":        repo,
+			"pr_number":   prNumber,
+			"error_class": "unexpected",
+			"http_status": resp.StatusCode,
+			"latency_ms":  latency,
+		})
+		return "", ContentTypePlain, fmt.Errorf("%w: status %d", ErrGitHubUnexpected, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", ContentTypePlain, fmt.Errorf("%w: read body: %v", ErrGitHubUnexpected, err)
+	}
+
+	c.emitEvent("github_pr_fetch_complete", map[string]interface{}{
+		"owner":         owner,
+		"repo":          repo,
+		"pr_number":     prNumber,
+		"latency_ms":    latency,
+		"authenticated": c.token != "",
+	})
+
+	return string(body), ContentTypeJSON, nil
+}
+
 // Fetch implements DomainClient for GitHub repositories.
 func (c *GitHubClient) Fetch(ctx context.Context, u *url.URL) (string, ContentType, error) {
 	start := time.Now()
+
+	// Dispatch PR URLs to FetchPR before the existing README/blob path.
+	if isPRURL(u.Path) {
+		owner, repo, prNumber, err := ParseGitHubPRURL(u.String())
+		if err != nil {
+			return "", ContentTypePlain, err
+		}
+		return c.FetchPR(ctx, owner, repo, prNumber)
+	}
 
 	owner, repo, filepath, err := ParseGitHubURL(u.String())
 	if err != nil {
