@@ -65,6 +65,41 @@ func TestHealthzWithDB(t *testing.T) {
 	}
 }
 
+func TestHealthzJiraUnconfigured(t *testing.T) {
+	// Server with no Jira credentials should return 200 with jira.configured=false.
+	tmux := &TmuxRunner{}
+	router := NewRouterFromConfig(tmux, builtinConfig(), false)
+	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
+	mux := srv.Mux()
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	jiraRaw, ok := body["jira"]
+	if !ok {
+		t.Fatal("expected jira field in health response")
+	}
+	jira, ok := jiraRaw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected jira to be an object, got %T", jiraRaw)
+	}
+	if jira["configured"] != false {
+		t.Errorf("jira.configured = %v, want false", jira["configured"])
+	}
+	if jira["warning"] != "jira_credentials_unconfigured" {
+		t.Errorf("jira.warning = %v, want jira_credentials_unconfigured", jira["warning"])
+	}
+}
+
 func TestHealthzDegradedDB(t *testing.T) {
 	// Simulate mid-session DB failure by closing the connection after init.
 	tmux := &TmuxRunner{}

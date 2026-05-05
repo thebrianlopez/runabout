@@ -225,7 +225,7 @@ func TestCapture_CT4_CaptureAsync_FetchError_MarksFailed(t *testing.T) {
 	}
 }
 
-// CT-5: captureAsync + no renderer registered → status=failed, capture_renderer_missing.
+// CT-5: captureAsync + no renderer registered → status=failed, capture_renderer_not_found.
 func TestCapture_CT5_CaptureAsync_NoRenderer_MarksFailed(t *testing.T) {
 	domainClient := &captureStubDomainClient{content: `{"key":"X-1"}`, ct: ContentTypeJSON}
 	s, q := newCaptureServer(t, domainClient)
@@ -489,6 +489,50 @@ func TestCapture_RG3_CapturedNotInPending(t *testing.T) {
 		if item.ID == id {
 			t.Errorf("RG-3: captured row %d appeared in Pending()", id)
 		}
+	}
+}
+
+// CT-13: captureAsync enqueues an FCM push notification after SetCaptured succeeds.
+// F2 TDD §6 RG-5: Android must receive a "Captured: {KEY}" notification.
+// Verified by querying push_outbox for a row with verdict='captured' and slug='TEST-001'.
+func TestCaptureAsyncEnqueuesPush(t *testing.T) {
+	dir := t.TempDir()
+	domainClient := &captureStubDomainClient{
+		content: `{"key":"TEST-001","fields":{"summary":"Test issue"}}`,
+		ct:      ContentTypeJSON,
+	}
+	s, q := newCaptureServer(t, domainClient)
+	s.RegisterCaptureRenderer("capture_jira_auto", &captureStubRenderer{
+		keyFn: func(_ string) string { return "TEST-001" },
+	})
+
+	id := enqueueCapturePending(t, q)
+	cfg := captureJiraAutoConfig(dir)
+
+	s.wg.Add(1)
+	go s.captureAsync(context.Background(), id, cfg)
+	s.wg.Wait()
+
+	// Assert push_outbox has exactly one row with verdict='captured' and slug='TEST-001'.
+	var count int
+	if err := q.db.QueryRow(
+		`SELECT COUNT(*) FROM push_outbox WHERE verdict='captured' AND slug='TEST-001'`,
+	).Scan(&count); err != nil {
+		t.Fatalf("CT-13: query push_outbox: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("CT-13: expected 1 push_outbox row with verdict='captured' and slug='TEST-001', got %d", count)
+	}
+
+	// Assert the slug is non-empty (belt-and-suspenders on the key extraction).
+	var slug string
+	if err := q.db.QueryRow(
+		`SELECT slug FROM push_outbox WHERE verdict='captured' LIMIT 1`,
+	).Scan(&slug); err != nil {
+		t.Fatalf("CT-13: query slug: %v", err)
+	}
+	if slug == "" {
+		t.Errorf("CT-13: expected non-empty slug in push_outbox row")
 	}
 }
 

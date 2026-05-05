@@ -120,6 +120,23 @@ func TestAutoScoreEnqueuePath(t *testing.T) {
 // CT-3 through CT-6 and RG-1 previously tested routeJiraURL; those are removed
 // in F1 M4. Equivalent coverage lives in domain_route_test.go (CT-1/CT-2/RG-1/RG-2).
 
+// BT-1: Router.ResolveShare with atlassian.net URL sets Reason="" (positive domain match, not fallback).
+func TestAtlassianURLRouting_BT1_ResolveShareNoFallback(t *testing.T) {
+	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
+	req := &ShareRequest{
+		Action: "uinit_auto",
+		Type:   "url",
+		URL:    "https://org.atlassian.net/browse/SR-2972",
+	}
+	res := router.ResolveShare(req, true)
+	if res.Reason != "" {
+		t.Errorf("BT-1: ResolveShare() Reason=%q, want \"\" (atlassian.net must not fall back to domain_fallback)", res.Reason)
+	}
+	if res.ResolvedProfile != "eng" {
+		t.Errorf("BT-1: ResolveShare() ResolvedProfile=%q, want \"eng\"", res.ResolvedProfile)
+	}
+}
+
 // CT-1: atlassian.net Jira browse URL → positive profile match ("eng", true).
 func TestAtlassianURLRouting_CT1_JiraBrowsePositiveMatch(t *testing.T) {
 	profile, matched := classifyURLProfile("https://org.atlassian.net/browse/KEY-1")
