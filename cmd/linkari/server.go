@@ -698,6 +698,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusServiceUnavailable
 	}
 
+	jiraConfigured := s.jiraDomain != "" && s.jiraAPIUsername != "" && s.jiraAPIPassword != ""
+	jiraHealth := map[string]interface{}{
+		"configured": jiraConfigured,
+	}
+	if !jiraConfigured {
+		jiraHealth["warning"] = "jira_credentials_unconfigured"
+	}
+
 	health := map[string]interface{}{
 		"status":         status,
 		"timestamp":      time.Now().UTC().Format(time.RFC3339),
@@ -709,6 +717,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"tsnet_addr":     s.tsnetAddr,
 		"debug":          s.debug,
 		"db":             dbStatus,
+		"jira":           jiraHealth,
 	}
 	if dbError != "" {
 		health["db_error"] = dbError
@@ -2394,6 +2403,13 @@ func (s *Server) captureAsync(ctx context.Context, id int64, cfg *ActionConfig) 
 		return
 	}
 
+	if s.events != nil {
+		_ = s.events.Emit("capture_async_start", map[string]interface{}{
+			"id":        id,
+			"action_id": cfg.ID,
+		})
+	}
+
 	row, err := s.queue.GetByID(id)
 	if err != nil {
 		slog.Error("captureAsync: GetByID failed", "id", id, "error", err)
@@ -2428,7 +2444,7 @@ func (s *Server) captureAsync(ctx context.Context, id int64, cfg *ActionConfig) 
 
 	renderer := s.lookupCaptureRenderer(cfg.ID)
 	if renderer == nil {
-		_ = s.queue.MarkFailedWithReason(id, "capture_renderer_missing")
+		_ = s.queue.MarkFailedWithReason(id, "capture_renderer_not_found")
 		return
 	}
 
@@ -2462,17 +2478,22 @@ func (s *Server) captureAsync(ctx context.Context, id int64, cfg *ActionConfig) 
 
 	if err := s.queue.SetCaptured(id, artifactPath); err != nil {
 		slog.Error("captureAsync: SetCaptured failed", "id", id, "error", err)
+		_ = s.queue.MarkFailedWithReason(id, "set_captured_db_error")
 		return
 	}
 
 	if s.events != nil {
-		_ = s.events.Emit("capture_complete", map[string]interface{}{
+		_ = s.events.Emit("capture_async_complete", map[string]interface{}{
 			"id":            id,
 			"artifact_path": artifactPath,
 			"key":           key,
 			"url":           row.URL,
 		})
 	}
+
+	// Populate the FCM push outbox so Android receives a "Captured: {key}" notification.
+	// Captures have no LLM score; 0 is the sentinel value (below any min_score floor).
+	s.enqueueDigestPush(ctx, row.Profile, 0, key, "captured", row.URL)
 
 	// F5: invoke optional post-capture shell hook.
 	s.runPostCaptureCommand(cfg, key, artifactPath, row.URL)

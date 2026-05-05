@@ -177,7 +177,16 @@ linkari serve --tsnet --tsnet-authkey $TS_AUTHKEY --token $LINKARI_TOKEN \
 
 If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `linkari serve` automatically falls back to local-only mode with a WARN log. Config is hot-reloadable via SIGHUP (actions, archive thresholds, push config, watchdog tuning).
 
-**Actions:** `text` (paste into existing pane), `url` (opens new tmux window via `uinit` with profile), `ginit` (parses Jira key, opens `ginit <KEY>`). Seven URL profiles: eng, life, travel, fashion, music, finance, dining. URL windows use `remain-on-exit failed` — auto-close on success, stay open on error. Domain heuristics auto-classify URLs into profiles (e.g. github.com → eng, booking.com → travel). Login-wall domains (Instagram, X/Twitter, Facebook) are pre-filtered to avoid wasting Haiku calls on inaccessible content; LinkedIn `/pulse/` articles are exempted as publicly accessible.
+**Structured capture config (`~/.config/linkari/config.toml`):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `artifact_dir` | string | Directory for capture artifacts (e.g. `~/docs/captures`) |
+| `artifact_filename_template` | string | Go `text/template` for artifact filenames (e.g. `{{.Date}}_{{.Key}}.md`) |
+| `domain_routes` | map[string]string | Per-domain action override — maps domain patterns to action names (e.g. `"jira.atlassian.net" = "capture_jira_auto"`) |
+| `post_capture_command` | string | Optional shell command executed after the artifact is written. Template vars: `{{.Key}}`, `{{.ArtifactPath}}`, `{{.URL}}`, `{{.Date}}`. Execution is best-effort — non-zero exit logs `capture_command_error` but the queue row stays `status=captured`. Only `{{.Key}}` is validated (regex-gated) before substitution; no other content from the fetched payload reaches the command. |
+
+**Actions:** `text` (paste into existing pane), `url` (opens new tmux window via `uinit` with profile), `ginit` (parses Jira key, opens `ginit <KEY>`), `capture_jira_auto` (action kind `KindCapture` — intercepts Jira browse URLs and writes a structured markdown artifact to `docs/captures/` with YAML frontmatter instead of routing to the LLM scorer), `capture_confluence_auto` (same `KindCapture` path for Confluence page URLs — fetches ADF content and converts to markdown; unknown ADF node types are skipped with an `adf_unsupported_block` warning and the rest of the page still renders). Seven URL profiles: eng, life, travel, fashion, music, finance, dining. URL windows use `remain-on-exit failed` — auto-close on success, stay open on error. Domain heuristics auto-classify URLs into profiles (e.g. github.com → eng, booking.com → travel). Login-wall domains (Instagram, X/Twitter, Facebook) are pre-filtered to avoid wasting Haiku calls on inaccessible content; LinkedIn `/pulse/` articles are exempted as publicly accessible.
 
 **Server-side scoring:** URL actions with `ServerScore: true` bypass the tmux → fish pipeline entirely — a goroutine fetches page content via Jina Reader, evaluates with Haiku, scores, archives, and sends FCM push. Unsupported domains (YouTube, Spotify, TikTok, etc.) return early without burning a Haiku call.
 
@@ -200,7 +209,7 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 | `/queue/slug/{slug}/feedback` | POST | Feedback by workspace slug (convenience alias) |
 | `/queue/slug/{slug}/outcome` | POST | Outcome by workspace slug (convenience alias) |
 | `/profiles/stats` | GET | Per-profile scoring statistics and feedback summary |
-| `/archive` | GET | List archived items (filter by `?profile=`) |
+| `/archive` | GET | List archived items (filter by `?profile=`, `?status=captured` for capture-only rows) |
 | `/digest` | GET | Recent scored items (last 24h) |
 | `/notify` | POST | Score callback → FCM push when above threshold |
 | `/register` | POST | Register FCM device token for push notifications |

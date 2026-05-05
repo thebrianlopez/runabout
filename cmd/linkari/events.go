@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"sync"
@@ -52,6 +53,8 @@ func NewEventLogger(path string) (*EventLogger, error) {
 
 // Emit appends a JSONL event to the log file.
 func (l *EventLogger) Emit(eventType string, metadata map[string]interface{}) error {
+	slog.Debug("event_bus_emit", "event_type", eventType, "metadata", metadata)
+
 	ev := Event{
 		EventType: eventType,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
