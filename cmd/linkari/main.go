@@ -692,6 +692,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				ghClient := NewGitHubClient(ghToken)
 				ghClient.EmitVia(events)
 				dr.RegisterClient("github.com", ghClient)
+				// F7: GitHubPRRenderer has no auth dependency — register unconditionally.
+				srv.RegisterCaptureRenderer("capture_github_pr_auto", NewGitHubPRRenderer())
 				// F3: startup warnings for unconfigured domain clients (non-fatal).
 				if cfgGitHubToken == "" && os.Getenv("GITHUB_TOKEN") == "" {
 					slog.Warn("domain_client_unconfigured", "field", "github_token", "effect", "github.com falls back to Jina")
