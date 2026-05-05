@@ -936,6 +936,16 @@ func builtinConfig() *Config {
 				ArtifactDir:             "docs/captures",
 				ArtifactFilenameTemplate: "{{.Date}}_{{.Key}}.md",
 			},
+			{
+				ID:                      "capture_github_pr_auto",
+				Label:                   "Capture GitHub PR",
+				Icon:                    "work",
+				Type:                    "url",
+				Kind:                    KindCapture,
+				ProfileMap:              "auto",
+				ArtifactDir:             "docs/captures",
+				ArtifactFilenameTemplate: "{{.Date}}_{{.Key}}.md",
+			},
 		},
 	}
 	// Compile templates/regexes.
