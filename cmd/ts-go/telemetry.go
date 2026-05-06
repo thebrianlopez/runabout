@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,12 +56,29 @@ func (t *tracker) emit(cmdErr error) {
 		flags[f.Name] = f.Value.String()
 	})
 
-	event := buildEvent(t.cliName, subcmd, duration, exitCode, flags)
+	ev := buildEvent(t.cliName, subcmd, duration, exitCode, flags)
 
-	if err := writeEvent(event); err != nil {
+	if ev.EventClass == "hook" && isHookRateLimited(ev.Command, ev.CWD) {
+		return
+	}
+
+	if err := writeEvent(ev); err != nil {
 		fmt.Fprintf(os.Stderr, "telemetry: %v\n", err)
 	}
 }
+
+// hookSubcmds is the set of ts-go subcommand names that are shell-integration
+// hooks rather than user-intent invocations. These fire on every prompt render
+// or tab completion and must be rate-limited to avoid bus saturation.
+var hookSubcmds = map[string]bool{
+	"fish":             true,
+	"__complete":       true,
+	"__completeNoDesc": true,
+}
+
+// hookRateLimitTTL is the minimum interval between emitted hook-class events
+// for a given (command, cwd) pair.
+const hookRateLimitTTL = 60 * time.Second
 
 // event is a schema v2 JSONL telemetry record.
 type event struct {
@@ -68,6 +86,7 @@ type event struct {
 	Timestamp     string                 `json:"timestamp"`
 	Layer         string                 `json:"layer"`
 	EventType     string                 `json:"event_type"`
+	EventClass    string                 `json:"event_class"`
 	Command       string                 `json:"command"`
 	SessionID     string                 `json:"session_id"`
 	User          string                 `json:"user"`
@@ -78,6 +97,38 @@ type event struct {
 	Epic          *string                `json:"epic"`
 	Milestone     *string                `json:"milestone"`
 	Metadata      map[string]interface{} `json:"metadata"`
+}
+
+// classifySubcmd returns "hook" for shell-integration subcommands, "user_intent" otherwise.
+func classifySubcmd(subcmd string) string {
+	if hookSubcmds[subcmd] {
+		return "hook"
+	}
+	return "user_intent"
+}
+
+// hookRateLimitSentinel returns the path to the per-(command,cwd) sentinel file.
+func hookRateLimitSentinel(command, cwd string) string {
+	h := fnv.New32a()
+	h.Write([]byte(command + "|" + cwd))
+	key := fmt.Sprintf("%08x", h.Sum32())
+	return filepath.Join(os.TempDir(), "automation-metrics-rl", key)
+}
+
+// isHookRateLimited returns true if a hook-class event for (command, cwd) was
+// emitted within the last hookRateLimitTTL. If not, it touches the sentinel so
+// the next call within the TTL will be suppressed.
+func isHookRateLimited(command, cwd string) bool {
+	sentinel := hookRateLimitSentinel(command, cwd)
+	dir := filepath.Dir(sentinel)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false
+	}
+	if info, err := os.Stat(sentinel); err == nil && time.Since(info.ModTime()) < hookRateLimitTTL {
+		return true
+	}
+	os.WriteFile(sentinel, nil, 0o644) //nolint:errcheck
+	return false
 }
 
 // buildEvent constructs a schema v2 event struct.
@@ -94,6 +145,7 @@ func buildEvent(cliName, subcmd string, durationMs int64, exitCode int, flags ma
 		Timestamp:     time.Now().UTC().Format("20060102T150405Z"),
 		Layer:         "go_cli",
 		EventType:     "command",
+		EventClass:    classifySubcmd(subcmd),
 		Command:       cliName + " " + subcmd,
 		SessionID:     sid,
 		User:          user,
