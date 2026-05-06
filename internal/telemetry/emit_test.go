@@ -23,6 +23,9 @@ func TestBuildEvent(t *testing.T) {
 	if event.EventType != "command" {
 		t.Errorf("event_type = %q, want %q", event.EventType, "command")
 	}
+	if event.EventClass != "user_intent" {
+		t.Errorf("event_class = %q, want %q", event.EventClass, "user_intent")
+	}
 	if event.Command != "mdq query" {
 		t.Errorf("command = %q, want %q", event.Command, "mdq query")
 	}
@@ -92,6 +95,9 @@ func TestWriteEventCreatesValidJSONL(t *testing.T) {
 	}
 	if parsed.Command != "mdq query" {
 		t.Errorf("command = %q, want %q", parsed.Command, "mdq query")
+	}
+	if parsed.EventClass != "user_intent" {
+		t.Errorf("event_class = %q, want %q", parsed.EventClass, "user_intent")
 	}
 }
 
