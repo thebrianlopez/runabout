@@ -187,26 +187,106 @@ func runFfmpegConvert(ctx context.Context, inputPath, outputPath string) error {
 	return nil
 }
 
+// execLiteCmd is the injectable subprocess runner for the lit binary.
+// Tests override this to avoid real subprocess invocation.
+var execLiteCmd = func(ctx context.Context, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, liteparseBinaryPath, args...).Output()
+}
+
 // execLiteParse is the function var for extracting text from documents via LiteParse.
 // Tests override this to avoid real lit invocation.
 var execLiteParse = runLiteParse
 
+// liteParseConfig holds the active confidence threshold. Initialized to the
+// default 0.5; overwritten by initClaudeConfig at startup. EPIC-104.
+var liteParseConfig = LiteParseConfig{ConfidenceThreshold: 0.5}
+
+// litPageResult is one page entry from the liteparse --format json output.
+type litPageResult struct {
+	Text       string  `json:"text"`
+	Confidence float64 `json:"confidence"`
+}
+
+// litJSONResponse is the top-level shape of liteparse --format json output.
+type litJSONResponse struct {
+	Pages []litPageResult `json:"pages"`
+}
+
+// parseLiteParseJSON extracts text and aggregate confidence from a liteparse
+// --format json response. Returns (text, meanConfidence, pageCount, error).
+// Empty pages → confidence=0.0, pageCount=0. Invalid JSON → non-nil error.
+func parseLiteParseJSON(data []byte) (string, float64, int, error) {
+	var resp litJSONResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", 0, 0, err
+	}
+	n := len(resp.Pages)
+	if n == 0 {
+		return "", 0.0, 0, nil
+	}
+	var total float64
+	var sb strings.Builder
+	for _, p := range resp.Pages {
+		total += p.Confidence
+		if sb.Len() > 0 && p.Text != "" {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(p.Text)
+	}
+	return strings.TrimSpace(sb.String()), total / float64(n), n, nil
+}
+
 // runLiteParse extracts text from a document at path using the lit CLI.
-// Tries --no-ocr first; retries with built-in OCR if the result is empty.
-// Returns the extracted text, whether OCR was used, and any error.
-func runLiteParse(ctx context.Context, path string) (string, bool, error) {
-	out, err := exec.CommandContext(ctx, liteparseBinaryPath, "parse", "--no-ocr", "-q", path).Output()
+// Calls --format json --no-ocr first; retries with OCR when confidence < threshold.
+// Falls back to plain-text --no-ocr mode if JSON parsing fails.
+// Returns (text, confidence, error); confidence == -1.0 signals JSON parse fallback.
+func runLiteParse(ctx context.Context, path string, cfg LiteParseConfig) (string, float64, error) {
+	threshold := cfg.ConfidenceThreshold
+	if threshold <= 0 {
+		threshold = 0.5
+	}
+
+	out, err := execLiteCmd(ctx, "parse", "--format", "json", "--no-ocr", path)
 	if err != nil {
-		return "", false, fmt.Errorf("lit parse: %w", err)
+		return "", 0.0, fmt.Errorf("lit parse: %w", err)
 	}
-	if text := strings.TrimSpace(string(out)); text != "" {
-		return text, false, nil
+
+	text, confidence, pageCount, parseErr := parseLiteParseJSON(out)
+	if parseErr != nil {
+		// JSON parse fallback: call --no-ocr -q (previous behavior).
+		slog.Warn("lit parse: json parse failed, falling back to plain-text",
+			"event_type", "pdf_extraction_json_fallback",
+			"parse_error", parseErr,
+		)
+		out2, err2 := execLiteCmd(ctx, "parse", "--no-ocr", "-q", path)
+		if err2 != nil {
+			return "", 0.0, fmt.Errorf("lit parse (fallback): %w", err2)
+		}
+		return strings.TrimSpace(string(out2)), -1.0, nil
 	}
-	out, err = exec.CommandContext(ctx, liteparseBinaryPath, "parse", "-q", path).Output()
-	if err != nil {
-		return "", true, fmt.Errorf("lit parse (ocr): %w", err)
+
+	ocrRetry := false
+	if confidence < threshold {
+		slog.Info("lit parse: low confidence, triggering OCR retry",
+			"event_type", "pdf_extraction_ocr_triggered",
+			"confidence_before_ocr", confidence,
+		)
+		ocrRetry = true
+		out3, err3 := execLiteCmd(ctx, "parse", "--format", "json", path)
+		if err3 == nil {
+			if t3, c3, pc3, pe3 := parseLiteParseJSON(out3); pe3 == nil {
+				text, confidence, pageCount = t3, c3, pc3
+			}
+		}
 	}
-	return strings.TrimSpace(string(out)), true, nil
+
+	slog.Info("lit parse: complete",
+		"event_type", "pdf_extraction_json",
+		"confidence", confidence,
+		"page_count", pageCount,
+		"ocr_retry", ocrRetry,
+	)
+	return text, confidence, nil
 }
 
 // execWhisper is the function var for running whisper-cli. Tests override this
@@ -278,6 +358,13 @@ const audioChunkSeconds = 600
 // under this size are transcribed in a single whisper pass. 50MB WAV ≈ 26 min
 // at 16kHz mono — a reasonable breakpoint where whisper memory becomes a concern.
 const audioChunkSizeThreshold = 50 << 20
+
+// ContentTypePDF is the document-type preamble prepended to the LLM prompt
+// for all type=document (PDF) scoring. Injected in scoreAsync before the
+// profile rubric, independent of classificationPreamble (EPIC-105 M3).
+const ContentTypePDF = `The following content was extracted from a PDF document shared from a mobile device.
+Evaluate it in context: the document may be a financial statement, invoice, report, contract, or personal record.
+Focus on the informational value and actionability of the content for the user's workflow.`
 
 // classificationPreamble returns a preamble to prepend to the evaluator
 // prompt when the profile was auto-classified from a URL. This tells the
@@ -362,6 +449,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	isURLShare := req.Type == "url"
 	rawURL := req.URL
 	profile := req.Profile
+	var contentWarning string // EPIC-102: set to "lit_parse_failed" on execLiteParse error
 
 	// Screenshot detection — unconditional, orthogonal to profile assignment.
 	detectScreenshot(req)
@@ -433,6 +521,24 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			"content_type":    req.Type,
 			"phase":           "score_async", // EPIC-083 M5-1
 		})
+	}
+
+	// EPIC-105 M5: PDF profile routing observability.
+	if req.MimeType == "application/pdf" {
+		if classifySource == "intent_metadata" {
+			slog.InfoContext(ctx, "score_async: pdf profile routed via app_category heuristic",
+				"event_type", "pdf_profile_routed",
+				"row_id", req.QueueRowID,
+				"app_category", req.AppCategory,
+				"profile", profile,
+			)
+		} else {
+			slog.DebugContext(ctx, "score_async: pdf profile heuristic fallthrough",
+				"event_type", "pdf_profile_fallthrough",
+				"row_id", req.QueueRowID,
+				"app_category", req.AppCategory,
+			)
+		}
 	}
 
 	slog.Info("score_async: start",
@@ -564,21 +670,51 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	} else {
 		// type=document → lit parse text extraction, metadata fallback.
 		if req.Type == "document" {
-			text, ocrUsed, err := execLiteParse(ctx, req.AudioPath)
+			text, confidence, err := execLiteParse(ctx, req.AudioPath, liteParseConfig)
 			if err != nil {
 				slog.Warn("score_async: pdf text extraction failed",
-					"event_type", "pdf_extract_failed",
+					"event_type", "pdf_extraction_failed",
 					"row_id", req.QueueRowID,
+					"filename", req.Filename,
 					"error", err,
 				)
-			} else if text != "" {
-				slog.Info("score_async: pdf text extracted",
-					"event_type", "pdf_text_extracted",
-					"row_id", req.QueueRowID,
-					"char_count", len(text),
-					"ocr_used", ocrUsed,
-				)
-				content = text
+				contentWarning = "lit_parse_failed"
+				if q != nil && req.QueueRowID > 0 {
+					if cwErr := q.SetContentWarning(req.QueueRowID, contentWarning); cwErr != nil {
+						slog.Warn("score_async: SetContentWarning failed",
+							"event_type", "pdf_content_warning_set",
+							"row_id", req.QueueRowID,
+							"error", cwErr,
+						)
+					} else {
+						slog.Info("score_async: content_warning set",
+							"event_type", "pdf_content_warning_set",
+							"row_id", req.QueueRowID,
+							"content_warning", contentWarning,
+						)
+					}
+				}
+			} else {
+				// Write extraction_confidence to queue row (EPIC-104). Covers both
+				// the normal JSON path and the -1.0 JSON parse fallback sentinel.
+				if q != nil && req.QueueRowID > 0 {
+					if setErr := q.SetExtractionConfidence(req.QueueRowID, confidence); setErr != nil {
+						slog.Warn("score_async: SetExtractionConfidence failed",
+							"event_type", "pdf_confidence_set_failed",
+							"row_id", req.QueueRowID,
+							"error", setErr,
+						)
+					}
+				}
+				if text != "" {
+					slog.Info("score_async: pdf text extracted",
+						"event_type", "pdf_extraction_json",
+						"row_id", req.QueueRowID,
+						"char_count", len(text),
+						"confidence", confidence,
+					)
+					content = text
+				}
 			}
 		}
 		if content == "" {
@@ -672,6 +808,17 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	}
 	if autoClassified {
 		sysPrompt = classificationPreamble(profile, rawURL, classifySource, contentType) + sysPrompt
+	}
+	// EPIC-105 M4: prepend ContentTypePDF preamble for document (PDF) shares.
+	// Injected after classificationPreamble so the document context precedes
+	// the auto-classification note (if any) and the profile rubric.
+	if req.Type == "document" {
+		sysPrompt = ContentTypePDF + "\n\n" + sysPrompt
+		slog.DebugContext(ctx, "score_async: pdf content preamble applied",
+			"event_type", "pdf_content_preamble_applied",
+			"row_id", req.QueueRowID,
+			"type", req.Type,
+		)
 	}
 
 	// EPIC-079 M3: use vision evaluator for image shares with a readable file.
@@ -1016,7 +1163,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		resolvePushConfigOnce(q)
 		_, _ = q.EnqueueDigestIfDue(context.Background(),
 			itemProfile, *itemScore, itemSlug, itemVerdict, itemURL,
-			sc.GapSummary(3), "", classifySource)
+			sc.GapSummary(3), "", classifySource, contentWarning)
 		// EPIC-015 M4: Bluesky verdict reply — fire-and-forget; never blocks FCM.
 		_ = publishVerdictReply(context.Background(), bskyClientForScoring, itemURL, *itemScore, itemVerdict, q, 1)
 	}
@@ -1261,6 +1408,12 @@ var packageProfileMap = map[string]string{
 	"com.opentable":                    "dining",
 }
 
+// CategoryFinance is the app_category value used in the PDF profile routing
+// heuristic (EPIC-105 M2). The compound guard (mime_type=application/pdf AND
+// app_category=CategoryFinance) ensures non-PDF shares with this category still
+// route to "travel" via appCategoryProfileMap.
+const CategoryFinance = 6
+
 // EPIC-038 M4: appCategoryProfileMap maps Android ApplicationInfo.category
 // constants to Linkari profiles. Lower confidence than packageProfileMap.
 // Constants from android.content.pm.ApplicationInfo:
@@ -1319,6 +1472,16 @@ func classifyByIntentMetadata(req *ShareRequest) string {
 		}
 		if p, ok := packageProfileMap[req.CallingPackage]; ok {
 			return p
+		}
+	}
+	// EPIC-105 M2: PDF + finance-category compound heuristic. Fires before
+	// mimeProfileMap (which intentionally excludes application/pdf as too generic).
+	// Only category 6 (CategoryFinance) maps to "finance"; other categories fall
+	// through to the filename/subject cascade unchanged.
+	if req.MimeType == "application/pdf" {
+		switch req.AppCategory {
+		case CategoryFinance:
+			return "finance"
 		}
 	}
 	// MIME type classification (EPIC-075 M4).
