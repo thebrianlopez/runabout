@@ -76,6 +76,7 @@ func (s ServerConfig) IsZero() bool {
 // pipeline. Nested under [liteparse] in config.toml. EPIC-104.
 type LiteParseConfig struct {
 	ConfidenceThreshold float64 `toml:"confidence_threshold"` // OCR retry gate; default 0.5
+	TessDataPrefix      string  `toml:"tessdata_prefix"`      // TESSDATA_PREFIX env for lit subprocess; empty = inherit from process env
 }
 
 type YouTubeConfig struct {
