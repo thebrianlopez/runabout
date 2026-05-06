@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -57,6 +59,10 @@ func (t *tracker) emit(cmdErr error) {
 
 	event := buildEvent(t.cliName, subcmd, duration, exitCode, flags)
 
+	if event.EventClass == "hook" && !shouldEmitHookEvent(event.Command, event.CWD, 60*time.Second) {
+		return
+	}
+
 	if err := writeEvent(event); err != nil {
 		fmt.Fprintf(os.Stderr, "telemetry: %v\n", err)
 	}
@@ -68,6 +74,7 @@ type event struct {
 	Timestamp     string                 `json:"timestamp"`
 	Layer         string                 `json:"layer"`
 	EventType     string                 `json:"event_type"`
+	EventClass    string                 `json:"event_class"`
 	Command       string                 `json:"command"`
 	SessionID     string                 `json:"session_id"`
 	User          string                 `json:"user"`
@@ -80,6 +87,54 @@ type event struct {
 	Metadata      map[string]interface{} `json:"metadata"`
 }
 
+// hookPatterns lists (cliName, subcmd-prefix) pairs that classify as "hook".
+var hookPatterns = [][2]string{
+	{"ts-go", "fish"},
+	{"ts-go", "__complete"},
+}
+
+// classifyEventClass returns "hook" for known shell-integration subcommands,
+// "user_intent" for all others.
+func classifyEventClass(cliName, subcmd string) string {
+	for _, p := range hookPatterns {
+		if cliName == p[0] && strings.HasPrefix(subcmd, p[1]) {
+			return "hook"
+		}
+	}
+	return "user_intent"
+}
+
+// hookDedupDir returns the sentinel directory for hook deduplication.
+func hookDedupDir() string {
+	return filepath.Join(eventsDir(), ".hook_dedup")
+}
+
+// shouldEmitHookEvent returns false if a hook event for (command, cwd) was
+// emitted within ttl. On a pass (returns true), it resets the sentinel mtime.
+// MkdirAll and file errors are treated as pass-through (emit proceeds).
+func shouldEmitHookEvent(command, cwd string, ttl time.Duration) bool {
+	dir := hookDedupDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return true
+	}
+
+	h := sha256.Sum256([]byte(command + "\x00" + cwd))
+	sentinelName := hex.EncodeToString(h[:])[:16]
+	sentinelPath := filepath.Join(dir, sentinelName)
+
+	info, err := os.Stat(sentinelPath)
+	if err == nil {
+		// Sentinel exists — check if TTL has elapsed.
+		if time.Since(info.ModTime()) < ttl {
+			return false
+		}
+	}
+
+	// Write/touch sentinel — treat errors as pass-through.
+	_ = os.WriteFile(sentinelPath, nil, 0o644)
+	return true
+}
+
 // buildEvent constructs a schema v2 event struct.
 func buildEvent(cliName, subcmd string, durationMs int64, exitCode int, flags map[string]string) event {
 	cwd, _ := os.Getwd()
@@ -89,11 +144,14 @@ func buildEvent(cliName, subcmd string, durationMs int64, exitCode int, flags ma
 		sid = "unknown"
 	}
 
+	eventClass := classifyEventClass(cliName, subcmd)
+
 	return event{
 		SchemaVersion: "2",
 		Timestamp:     time.Now().UTC().Format("20060102T150405Z"),
 		Layer:         "go_cli",
 		EventType:     "command",
+		EventClass:    eventClass,
 		Command:       cliName + " " + subcmd,
 		SessionID:     sid,
 		User:          user,

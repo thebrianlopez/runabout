@@ -242,6 +242,10 @@ type Server struct {
 	// F5: tmux dispatcher for post-capture commands. Defaults to router.tmux;
 	// may be replaced in tests to record NewWindow calls without invoking real tmux.
 	postCaptureTmux TmuxWindower
+
+	// EPIC-102: lit health probe result, populated once at startup via CacheLitProbe.
+	// Defaults to zero value (Status="") which the health handler treats as unchecked.
+	litProbe HealthProbe
 }
 
 // TmuxWindower is the subset of TmuxRunner used by runPostCaptureCommand.
@@ -297,6 +301,20 @@ func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug 
 		s.postCaptureTmux = router.tmux
 	}
 	return s
+}
+
+// CacheLitProbe runs the lit/TESSDATA_PREFIX health probe once and stores the
+// result on the server for use by handleHealth. Called at startup so the probe
+// uses real OS lookups without blocking the health endpoint per-request.
+func (s *Server) CacheLitProbe() {
+	s.litProbe = probeHealth(exec.LookPath, os.Getenv)
+	slog.Info("lit health probe",
+		"event_type", "lit_health_probe",
+		"status", s.litProbe.Status,
+		"lit_present", s.litProbe.LitPresent,
+		"tessdata_prefix_set", s.litProbe.TessdataPrefixSet,
+		"lit_version", s.litProbe.LitVersion,
+	)
 }
 
 // SetShield installs (or replaces) the shield middleware on the server.
@@ -691,11 +709,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// EPIC-102: use startup-cached lit probe (populated by CacheLitProbe at startup).
+	litProbe := s.litProbe
+
 	status := "ok"
 	code := http.StatusOK
-	if dbStatus != "ok" {
+	if dbStatus != "ok" || litProbe.Status == "degraded" {
 		status = "degraded"
-		code = http.StatusServiceUnavailable
+		if dbStatus != "ok" {
+			code = http.StatusServiceUnavailable
+		}
 	}
 
 	jiraConfigured := s.jiraDomain != "" && s.jiraAPIUsername != "" && s.jiraAPIPassword != ""
@@ -707,17 +730,22 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	health := map[string]interface{}{
-		"status":         status,
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
-		"uptime":         uptime,
-		"actions":        len(actions),
-		"fcm_enabled":    s.fcmTokenSource != nil,
-		"fcm_registered": fcmToken != "",
-		"tsnet_enabled":  s.tsnetAddr != "",
-		"tsnet_addr":     s.tsnetAddr,
-		"debug":          s.debug,
-		"db":             dbStatus,
-		"jira":           jiraHealth,
+		"status":              status,
+		"timestamp":           time.Now().UTC().Format(time.RFC3339),
+		"uptime":              uptime,
+		"actions":             len(actions),
+		"fcm_enabled":         s.fcmTokenSource != nil,
+		"fcm_registered":      fcmToken != "",
+		"tsnet_enabled":       s.tsnetAddr != "",
+		"tsnet_addr":          s.tsnetAddr,
+		"debug":               s.debug,
+		"db":                  dbStatus,
+		"jira":                jiraHealth,
+		"lit_present":         litProbe.LitPresent,
+		"tessdata_prefix_set": litProbe.TessdataPrefixSet,
+	}
+	if litProbe.LitVersion != "" {
+		health["lit_version"] = litProbe.LitVersion
 	}
 	if dbError != "" {
 		health["db_error"] = dbError
@@ -865,6 +893,11 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			case "date_added":
 				// EPIC-079 M5: DateAdded removed from ShareRequest — drain but ignore.
 				io.Copy(io.Discard, part)
+			case "exif_data":
+				// EPIC-107 M1: explicit discard makes intent clear vs. silent default: fallthrough.
+				// Future: parse structured EXIF for images when Android sends it.
+				b, _ := io.ReadAll(io.LimitReader(part, 65536))
+				slog.DebugContext(ctx, "share: exif_data field received", "bytes", len(b))
 			case "relative_path":
 				b, _ := io.ReadAll(io.LimitReader(part, 1024))
 				req.RelativePath = string(b)
@@ -2030,7 +2063,7 @@ func (s *Server) handleTestPush(w http.ResponseWriter, r *http.Request) {
 		testURL     = "https://linkari.test/ping"
 	)
 
-	if err := sendOutboxFCM(s, deviceToken, testScore, testSlug, testVerdict, testURL, "", "", "", ""); err != nil {
+	if err := sendOutboxFCM(s, deviceToken, testScore, testSlug, testVerdict, testURL, "", "", "", "", ""); err != nil {
 		slog.WarnContext(ctx, "test push: FCM send failed", "error", err)
 		emitPushEvent("push_test_failed", map[string]interface{}{
 			"reason":    "fcm_send_failed",

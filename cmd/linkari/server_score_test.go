@@ -1262,7 +1262,7 @@ func TestScoreAsync_PDFTranscriptSaved(t *testing.T) {
 	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
 	t.Cleanup(func() { transcriptDir = prevDir })
 
-	installLiteParseStub(t, "Extracted PDF text content", false, nil)
+	installLiteParseStub(t, "Extracted PDF text content", 0.9, nil)
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -1428,7 +1428,7 @@ func TestScoreAsync_Document_LiteParse(t *testing.T) {
 		t.Fatalf("write temp: %v", err)
 	}
 
-	installLiteParseStub(t, "Interesting content about machine learning and transformers.", false, nil)
+	installLiteParseStub(t, "Interesting content about machine learning and transformers.", 0.9, nil)
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -1482,7 +1482,7 @@ func TestScoreAsync_Document_EmptyText(t *testing.T) {
 		t.Fatalf("write temp: %v", err)
 	}
 
-	installLiteParseStub(t, "", false, nil)
+	installLiteParseStub(t, "", 0.0, nil)
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})

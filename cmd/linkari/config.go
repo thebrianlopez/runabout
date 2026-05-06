@@ -72,6 +72,12 @@ func (s ServerConfig) IsZero() bool {
 }
 
 // YouTubeConfig holds per-field tuning for yt-dlp extraction. EPIC-090 M5.
+// LiteParseConfig holds tuning knobs for the confidence-aware PDF extraction
+// pipeline. Nested under [liteparse] in config.toml. EPIC-104.
+type LiteParseConfig struct {
+	ConfidenceThreshold float64 `toml:"confidence_threshold"` // OCR retry gate; default 0.5
+}
+
 type YouTubeConfig struct {
 	SubtitleLangs   string `toml:"subtitle_langs"`    // yt-dlp --sub-langs value (default: "en.*,en")
 	TimeoutSeconds  int    `toml:"timeout_seconds"`   // extraction timeout in seconds (default: 30)
@@ -338,6 +344,7 @@ type ServerConfig struct {
 
 	// EPIC-007: PDF document content extraction via LiteParse.
 	LiteParseePath string        `toml:"liteparse_path"` // path to lit binary (default: lit on PATH; install: brew install llamaindex-liteparse)
+	LiteParse      LiteParseConfig `toml:"liteparse"`  // EPIC-104: confidence-aware extraction config
 	YouTube        YouTubeConfig `toml:"youtube"`        // EPIC-090 M5: per-field YouTube tuning
 
 	// EPIC-001: Google Sign-In config.
