@@ -68,6 +68,7 @@ type Event struct {
 	Timestamp     string                 `json:"timestamp"`
 	Layer         string                 `json:"layer"`
 	EventType     string                 `json:"event_type"`
+	EventClass    string                 `json:"event_class"`
 	Command       string                 `json:"command"`
 	SessionID     string                 `json:"session_id"`
 	User          string                 `json:"user"`
@@ -94,6 +95,7 @@ func buildEvent(cliName, subcmd string, durationMs int64, exitCode int, flags ma
 		Timestamp:     time.Now().UTC().Format("20060102T150405Z"),
 		Layer:         "go_cli",
 		EventType:     "command",
+		EventClass:    "user_intent",
 		Command:       cliName + " " + subcmd,
 		SessionID:     sid,
 		User:          user,
