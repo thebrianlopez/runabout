@@ -443,6 +443,9 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.LiteParse.ConfidenceThreshold > 0 {
 		liteParseConfig.ConfidenceThreshold = cfg.LiteParse.ConfidenceThreshold
 	}
+	if cfg != nil && cfg.LiteParse.TessDataPrefix != "" {
+		os.Setenv("TESSDATA_PREFIX", cfg.LiteParse.TessDataPrefix)
+	}
 	// EPIC-090 M5: per-field YouTube tuning.
 	if cfg != nil && cfg.YouTube.SubtitleLangs != "" {
 		ytSubtitleLangs = cfg.YouTube.SubtitleLangs
