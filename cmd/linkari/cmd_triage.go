@@ -439,6 +439,10 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.LiteParseePath != "" {
 		liteparseBinaryPath = cfg.LiteParseePath
 	}
+	// EPIC-104: confidence-aware PDF extraction threshold.
+	if cfg != nil && cfg.LiteParse.ConfidenceThreshold > 0 {
+		liteParseConfig.ConfidenceThreshold = cfg.LiteParse.ConfidenceThreshold
+	}
 	// EPIC-090 M5: per-field YouTube tuning.
 	if cfg != nil && cfg.YouTube.SubtitleLangs != "" {
 		ytSubtitleLangs = cfg.YouTube.SubtitleLangs

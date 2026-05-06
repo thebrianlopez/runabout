@@ -755,6 +755,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 
 			slog.Info("queue enabled", "db", queueDB)
 			StartReplay(queue, router, srv, tmux, 30*time.Second, debug)
+			srv.CacheLitProbe()
 			srv.StartPushWorker(cmd.Context())
 
 			// EPIC-054 M3: relayed-state watchdog. Reclassifies rows stuck in

@@ -103,11 +103,11 @@ func installWhisperStub(t *testing.T, transcript string, err error) {
 }
 
 // installLiteParseStub overrides execLiteParse for the duration of the test.
-func installLiteParseStub(t *testing.T, text string, ocrUsed bool, err error) {
+func installLiteParseStub(t *testing.T, text string, confidence float64, err error) {
 	t.Helper()
 	prev := execLiteParse
-	execLiteParse = func(_ context.Context, _ string) (string, bool, error) {
-		return text, ocrUsed, err
+	execLiteParse = func(_ context.Context, _ string, _ LiteParseConfig) (string, float64, error) {
+		return text, confidence, err
 	}
 	t.Cleanup(func() { execLiteParse = prev })
 }

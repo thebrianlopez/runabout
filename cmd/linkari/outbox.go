@@ -143,7 +143,7 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 			)
 			continue
 		}
-		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary, p.ContentType, p.ClassifySource); err != nil {
+		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary, p.ContentType, p.ClassifySource, p.ContentWarning); err != nil {
 			attempts := p.Attempts + 1
 			if attempts >= pushMaxAttempts {
 				_ = s.queue.MarkPushDead(p.ID, err.Error())
@@ -239,7 +239,8 @@ func emitShareActionResolved(res ShareResolution, url string, queueID int64) {
 // different notification title/body and includes content_type in the data map.
 // EPIC-077 M6: classifySource parameter added — included in FCM data payload
 // so the Android client can surface classification provenance in debug views.
-func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, profile, gapSummary, contentType, classifySource string) error {
+// EPIC-102: contentWarning parameter added — "lit_parse_failed" when PDF extraction failed.
+func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, profile, gapSummary, contentType, classifySource, contentWarning string) error {
 	tok, err := s.fcmTokenSource.Token()
 	if err != nil {
 		return fmt.Errorf("obtaining oauth2 token: %w", err)
@@ -301,6 +302,7 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 				"gap_summary":     gapSummary,
 				"content_type":    contentType,
 				"classify_source": classifySource,
+				"content_warning": contentWarning,
 			},
 			"android": map[string]string{
 				"priority": "high",

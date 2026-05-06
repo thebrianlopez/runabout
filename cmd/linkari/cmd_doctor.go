@@ -242,17 +242,13 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
-			// --- Check: lit binary (EPIC-007 M3) ---
+			// --- Check: TESSDATA_PREFIX env var (EPIC-102) ---
 			{
-				litPath := liteparseBinaryPath
-				if serverCfg != nil && serverCfg.LiteParseePath != "" {
-					litPath = serverCfg.LiteParseePath
-				}
-				if resolved, err := exec.LookPath(litPath); err != nil {
-					addCheck(warnCheck("lit",
-						fmt.Sprintf("lit not found at %q — brew install llamaindex-liteparse", litPath)))
+				if val := os.Getenv("TESSDATA_PREFIX"); val == "" {
+					addCheck(warnCheck("tessdata_prefix",
+						"TESSDATA_PREFIX not set — OCR fallback via lit will be unavailable"))
 				} else {
-					addCheck(okCheck("lit", resolved))
+					addCheck(okCheck("tessdata_prefix", val))
 				}
 			}
 
