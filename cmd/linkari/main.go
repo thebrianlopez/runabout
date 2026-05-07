@@ -64,60 +64,6 @@ var (
 	date    = "unknown"
 )
 
-// backgroundWorker encapsulates a periodic task with a fixed interval.
-// EPIC-019 M2.
-type backgroundWorker struct {
-	interval time.Duration
-	fn       func(ctx context.Context) error
-}
-
-// backgroundWorkerPool runs a collection of backgroundWorkers on independent tickers.
-type backgroundWorkerPool struct {
-	workers []backgroundWorker
-}
-
-// AddWorker registers a new periodic worker in the pool.
-func (p *backgroundWorkerPool) AddWorker(interval time.Duration, fn func(ctx context.Context) error) {
-	p.workers = append(p.workers, backgroundWorker{interval: interval, fn: fn})
-}
-
-// Start launches all registered workers as goroutines. Each worker fires on
-// its own timer and stops when ctx is cancelled. On error, the next fire is
-// delayed by interval * 2^consecutiveFailures, capped at 4 hours.
-func (p *backgroundWorkerPool) Start(ctx context.Context) {
-	const maxBackoff = 4 * time.Hour
-	for _, w := range p.workers {
-		w := w
-		go func() {
-			consecutive := 0
-			for {
-				delay := w.interval
-				if consecutive > 0 {
-					delay = w.interval * (1 << min(consecutive, 4))
-					if delay > maxBackoff {
-						delay = maxBackoff
-					}
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(delay):
-				}
-				if err := w.fn(ctx); err != nil {
-					consecutive++
-					slog.Warn("background worker error",
-						"consecutive_failures", consecutive,
-						"next_delay", min(w.interval*(1<<min(consecutive, 4)), maxBackoff).String(),
-						"error", err,
-					)
-				} else {
-					consecutive = 0
-				}
-			}
-		}()
-	}
-}
-
 func main() {
 	rootCmd := &cobra.Command{
 		Use:     "linkari",
@@ -765,24 +711,16 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				go relayedWatchdog.Run(cmd.Context())
 			}
 
-			// EPIC-019 M7: YouTube subscription feed background worker.
-			workerPool := &backgroundWorkerPool{}
+			// EPIC-090: ContentSource registry — starts all registered sources
+			// uniformly in goroutines with panic isolation. Replaces the former
+			// backgroundWorkerPool subs worker (EPIC-019 M7) and bare firehose
+			// goroutine (EPIC-016 M5); subscription poller requires uinit_auto action.
 			if queue != nil {
 				if router.LookupAction("uinit_auto") == nil {
 					slog.Warn("subscription poller requires action=uinit_auto but it is not registered — subscription videos will fail at replay; add uinit_auto to actions.yaml")
 				}
-				workerPool.AddWorker(1*time.Hour, func(ctx context.Context) error {
-					return watchSubscriptionsAsync("default", queue, srv.events, googleClientID, googleClientSecret)
-				})
-			}
-			workerPool.Start(cmd.Context())
-
-			// EPIC-090: ContentSource registry — starts all registered sources
-			// uniformly in goroutines with panic isolation. Initially empty;
-			// existing sources (firehose, YouTube) are retrofitted in F3/F4.
-			if queue != nil {
 				registry := NewSourceRegistry()
-				for _, src := range registeredSources(srv.bskyClient) {
+				for _, src := range registeredSources(srv) {
 					registry.Register(src)
 				}
 				go registry.Start(cmd.Context(), queue, func(req *ShareRequest) error {

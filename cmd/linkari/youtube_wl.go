@@ -55,6 +55,28 @@ func execYouTubePlaylistItemsReal(ctx context.Context, ts oauth2.TokenSource, pl
 	return items, resp.NextPageToken, nil
 }
 
+// YouTubeWatchLaterSource wraps syncWatchLaterAsync behind the ContentSource interface.
+type YouTubeWatchLaterSource struct {
+	clientID     string
+	clientSecret string
+	events       *EventLogger
+}
+
+func (s *YouTubeWatchLaterSource) Name() string { return "yt_watch_later" }
+
+// Start polls the Watch Later playlist every hour until ctx is cancelled.
+func (s *YouTubeWatchLaterSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
+	const interval = 1 * time.Hour
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(interval):
+		}
+		syncWatchLaterAsync("default", q, s.events, s.clientID, s.clientSecret)
+	}
+}
+
 // syncWatchLaterAsync fetches the Watch Later playlist and enqueues unseen
 // videos for scoring. Runs in a goroutine; errors are logged, not returned.
 // EPIC-018 M4 + M8.
