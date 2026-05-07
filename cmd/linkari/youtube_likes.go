@@ -12,6 +12,28 @@ import (
 	"time"
 )
 
+// YouTubeLikedSource wraps syncLikedVideosAsync behind the ContentSource interface.
+type YouTubeLikedSource struct {
+	clientID     string
+	clientSecret string
+	events       *EventLogger
+}
+
+func (s *YouTubeLikedSource) Name() string { return "yt_liked" }
+
+// Start polls the Liked Videos playlist every hour until ctx is cancelled.
+func (s *YouTubeLikedSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
+	const interval = 1 * time.Hour
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(interval):
+		}
+		syncLikedVideosAsync("default", q, s.events, s.clientID, s.clientSecret)
+	}
+}
+
 // syncLikedVideosAsync fetches the Liked Videos playlist and enqueues unseen
 // videos for scoring. Runs in a goroutine; errors are logged, not returned.
 func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string) {
