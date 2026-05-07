@@ -114,25 +114,20 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 			if item.VideoID == "" {
 				continue
 			}
-			scored, err := q.IsLikedVideoScored(item.VideoID)
+			isNew, err := q.IsNewContent("yt_liked", item.VideoID)
 			if err != nil {
 				slog.Warn("syncLikedVideosAsync: DB check failed", "video_id", item.VideoID, "error", err)
 				continue
 			}
-			if scored {
+			if !isNew {
 				skipped++
 				if events != nil {
 					_ = events.Emit("likedvideos_video_skipped", map[string]interface{}{
 						"profile":  profile,
 						"video_id": item.VideoID,
-						"reason":   "already_scored",
+						"reason":   "already_seen",
 					})
 				}
-				continue
-			}
-
-			if err := q.InsertLikedVideo(item.VideoID, time.Now().Unix()); err != nil {
-				slog.Warn("syncLikedVideosAsync: insert failed", "video_id", item.VideoID, "error", err)
 				continue
 			}
 
@@ -149,6 +144,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 				slog.Warn("syncLikedVideosAsync: enqueue failed", "video_id", item.VideoID, "error", err)
 				continue
 			}
+			_ = q.MarkContentSeen("yt_liked", item.VideoID, rowID)
 
 			enqueued++
 			if events != nil {

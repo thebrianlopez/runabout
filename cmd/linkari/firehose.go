@@ -103,15 +103,12 @@ func processFirehoseMessage(ctx context.Context, q *Queue, msg []byte) error {
 // handleFirehosePost checks keyword subscriptions and enqueues matching posts.
 // Uses kind='notify' push rows — NOT kind='digest' — per EPIC-016 invariant.
 func handleFirehosePost(ctx context.Context, q *Queue, post *firehosePost) error {
-	// Dedup guard: skip if same AT URI seen in last 5 minutes (BT-1, BT-4).
-	var count int
-	q.db.QueryRow(
-		`SELECT COUNT(*) FROM queue WHERE url=? AND source='firehose' AND queued_at > datetime('now','-5 minutes')`,
-		post.AtURI,
-	).Scan(&count)
-	if count > 0 {
+	// Dedup guard: skip if same AT URI already seen (BT-1, BT-4).
+	isNew, err := q.IsNewContent("bsky_firehose", post.AtURI)
+	if err != nil || !isNew {
 		return nil
 	}
+	_ = q.MarkContentSeen("bsky_firehose", post.AtURI, 0)
 
 	// Fetch all subscriptions.
 	rows, err := q.db.Query("SELECT profile, keyword FROM firehose_subscriptions")
@@ -157,6 +154,24 @@ func handleFirehosePost(ctx context.Context, q *Queue, post *firehosePost) error
 		)
 	}
 	return rows.Err()
+}
+
+// BlueskyFirehoseSource wraps runFirehoseWorker behind the ContentSource interface.
+type BlueskyFirehoseSource struct {
+	client *BlueskyClient
+}
+
+// Name returns the stable source identifier used as the seen_content.source key.
+func (s *BlueskyFirehoseSource) Name() string { return "bsky_firehose" }
+
+// Start runs the WebSocket loop with exponential backoff. Returns immediately if
+// client is nil (source auto-skipped when Bluesky auth is not configured).
+func (s *BlueskyFirehoseSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
+	if s.client == nil {
+		return nil
+	}
+	runFirehoseWorker(ctx, q, s.client, slog.Default())
+	return nil
 }
 
 // execConnectAndRead is the production WebSocket connect+read function,

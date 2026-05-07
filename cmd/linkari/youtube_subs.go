@@ -257,18 +257,13 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 			if item.VideoID == "" {
 				continue
 			}
-			known, err := q.IsMonitoredVideoKnown(item.VideoID)
+			isNew, err := q.IsNewContent("yt_monitored", item.VideoID)
 			if err != nil {
 				slog.Warn("watchSubscriptionsAsync: DB check failed", "video_id", item.VideoID, "error", err)
 				continue
 			}
-			if known {
+			if !isNew {
 				totalSkipped++
-				continue
-			}
-
-			if err := q.InsertMonitoredVideo(sub.ChannelID, item.VideoID, time.Now().Unix()); err != nil {
-				slog.Warn("watchSubscriptionsAsync: insert failed", "video_id", item.VideoID, "error", err)
 				continue
 			}
 
@@ -285,6 +280,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 				slog.Warn("watchSubscriptionsAsync: enqueue failed", "video_id", item.VideoID, "error", err)
 				continue
 			}
+			_ = q.MarkContentSeen("yt_monitored", item.VideoID, rowID)
 
 			newVideoCount++
 			totalEnqueued++

@@ -361,6 +361,54 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		queue_id     INTEGER
 	)`)
 
+	// EPIC-091 M2: unified seen_content dedup table — replaces per-source tables.
+	db.Exec(`CREATE TABLE IF NOT EXISTS seen_content (
+		source   TEXT    NOT NULL,
+		item_id  TEXT    NOT NULL,
+		seen_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+		queue_id INTEGER,
+		PRIMARY KEY (source, item_id)
+	)`)
+
+	// EPIC-091 M4: migrate per-source tables → seen_content in one transaction.
+	// Idempotent: old tables are empty on second run; INSERT OR IGNORE is a no-op.
+	{
+		tx, txErr := db.Begin()
+		if txErr == nil {
+			var rowsCopied int64
+			for _, migration := range []struct {
+				source string
+				table  string
+			}{
+				{"yt_watch_later", "youtube_watchlater_videos"},
+				{"yt_liked", "youtube_liked_videos"},
+				{"yt_monitored", "youtube_monitored_videos"},
+			} {
+				res, _ := tx.Exec(fmt.Sprintf(
+					`INSERT OR IGNORE INTO seen_content (source, item_id, seen_at, queue_id)
+					 SELECT '%s', video_id, discovered_at, queue_id FROM %s`,
+					migration.source, migration.table,
+				))
+				if res != nil {
+					n, _ := res.RowsAffected()
+					rowsCopied += n
+				}
+			}
+			tx.Exec(`DROP TABLE IF EXISTS youtube_watchlater_videos`)
+			tx.Exec(`DROP TABLE IF EXISTS youtube_liked_videos`)
+			tx.Exec(`DROP TABLE IF EXISTS youtube_monitored_videos`)
+			if commitErr := tx.Commit(); commitErr != nil {
+				tx.Rollback()
+				slog.Error("seen_content_migration_failed", "error", commitErr, "step", "commit")
+			} else {
+				slog.Info("seen_content_migration_complete",
+					"rows_copied", rowsCopied,
+					"tables_dropped", 3,
+				)
+			}
+		}
+	}
+
 	// EPIC-001: add user_id column to devices for session association.
 	db.Exec("ALTER TABLE devices ADD COLUMN user_id INTEGER DEFAULT NULL")
 	// EPIC-013 M2: Bluesky session persistence.
@@ -2040,93 +2088,9 @@ func (q *Queue) EnqueueWithSource(req *ShareRequest, source string) (int64, erro
 
 // --- EPIC-018 M3: Watch Later dedup methods ---
 
-// InsertWatchLaterVideo records a newly discovered Watch Later video.
-// Ignores duplicate video_id (UNIQUE constraint) — returns nil on conflict.
-func (q *Queue) InsertWatchLaterVideo(videoID string, discoveredAt int64) error {
-	_, err := q.db.Exec(
-		`INSERT OR IGNORE INTO youtube_watchlater_videos (video_id, discovered_at) VALUES (?, ?)`,
-		videoID, discoveredAt,
-	)
-	return err
-}
-
-// MarkWatchLaterScored links a queue row to a Watch Later video row and records scored_at.
-func (q *Queue) MarkWatchLaterScored(videoID string, scoredAt int64, queueID int64) error {
-	_, err := q.db.Exec(
-		`UPDATE youtube_watchlater_videos SET scored_at=?, queue_id=? WHERE video_id=?`,
-		scoredAt, queueID, videoID,
-	)
-	return err
-}
-
-// IsWatchLaterVideoScored returns true if the video has already been scored
-// (scored_at IS NOT NULL).
-func (q *Queue) IsWatchLaterVideoScored(videoID string) (bool, error) {
-	var count int
-	err := q.db.QueryRow(
-		`SELECT COUNT(*) FROM youtube_watchlater_videos WHERE video_id=? AND scored_at IS NOT NULL`,
-		videoID,
-	).Scan(&count)
-	return count > 0, err
-}
-
-// --- Liked Videos dedup methods ---
-
-// InsertLikedVideo records a newly discovered Liked Videos entry.
-// Ignores duplicate video_id (UNIQUE constraint) — returns nil on conflict.
-func (q *Queue) InsertLikedVideo(videoID string, discoveredAt int64) error {
-	_, err := q.db.Exec(
-		`INSERT OR IGNORE INTO youtube_liked_videos (video_id, discovered_at) VALUES (?, ?)`,
-		videoID, discoveredAt,
-	)
-	return err
-}
-
-// IsLikedVideoScored returns true if the video has already been scored
-// (scored_at IS NOT NULL).
-func (q *Queue) IsLikedVideoScored(videoID string) (bool, error) {
-	var count int
-	err := q.db.QueryRow(
-		`SELECT COUNT(*) FROM youtube_liked_videos WHERE video_id=? AND scored_at IS NOT NULL`,
-		videoID,
-	).Scan(&count)
-	return count > 0, err
-}
-
-// --- EPIC-019 M4: Monitored subscription video dedup methods ---
-
-// InsertMonitoredVideo records a newly discovered subscription video.
-// Ignores duplicate video_id — returns nil on conflict.
-func (q *Queue) InsertMonitoredVideo(channelID, videoID string, discoveredAt int64) error {
-	_, err := q.db.Exec(
-		`INSERT OR IGNORE INTO youtube_monitored_videos (channel_id, video_id, discovered_at) VALUES (?, ?, ?)`,
-		channelID, videoID, discoveredAt,
-	)
-	return err
-}
-
-// MarkMonitoredVideoScored links a queue row to a monitored video row and records scored_at.
-func (q *Queue) MarkMonitoredVideoScored(videoID string, scoredAt int64, queueID int64) error {
-	_, err := q.db.Exec(
-		`UPDATE youtube_monitored_videos SET scored_at=?, queue_id=? WHERE video_id=?`,
-		scoredAt, queueID, videoID,
-	)
-	return err
-}
-
-// IsMonitoredVideoKnown returns true if the video_id has already been inserted
-// (regardless of whether it has been scored).
-func (q *Queue) IsMonitoredVideoKnown(videoID string) (bool, error) {
-	var count int
-	err := q.db.QueryRow(
-		`SELECT COUNT(*) FROM youtube_monitored_videos WHERE video_id=?`,
-		videoID,
-	).Scan(&count)
-	return count > 0, err
-}
-
 // CountScoredMonitoredVideosToday returns how many monitored videos scored today
 // crossed the worth-watching threshold (score >= 60) vs. below it.
+// Joins seen_content (source='yt_monitored') with queue via queue_id.
 func (q *Queue) CountScoredMonitoredVideosToday(profile string) (worthWatching int, skipped int, err error) {
 	const threshold = 60
 	now := time.Now().UTC()
@@ -2134,10 +2098,11 @@ func (q *Queue) CountScoredMonitoredVideosToday(profile string) (worthWatching i
 
 	rows, err := q.db.Query(`
 		SELECT q.score
-		FROM youtube_monitored_videos ymv
-		JOIN queue q ON q.id = ymv.queue_id
-		WHERE q.profile = ?
-		  AND ymv.scored_at >= ?
+		FROM seen_content sc
+		JOIN queue q ON q.id = sc.queue_id
+		WHERE sc.source = 'yt_monitored'
+		  AND q.profile = ?
+		  AND sc.seen_at >= ?
 		  AND q.score IS NOT NULL`,
 		profile, startOfDay,
 	)
@@ -2185,5 +2150,41 @@ func (q *Queue) EnqueueSubscriptionDigest(profile, body string, worthWatching, s
 		 VALUES (?, '', ?, '', 'subscription_digest', ?, ?, 'youtube_subscriptions', '', 'pending', 0, ?, ?, ?)`,
 		worthWatching, body, profile, body, now, now, now,
 	)
+	return err
+}
+
+// --- EPIC-091: Unified seen_content dedup methods ---
+
+// IsNewContent returns true if (source, itemID) has never been seen.
+// Returns (false, nil) if already seen.
+// Returns (false, error) on DB failure.
+func (q *Queue) IsNewContent(source, itemID string) (bool, error) {
+	var count int
+	err := q.db.QueryRow(
+		`SELECT COUNT(*) FROM seen_content WHERE source=? AND item_id=?`,
+		source, itemID,
+	).Scan(&count)
+	if err != nil {
+		slog.Warn("dedup_check_failed", "source", source, "item_id", itemID, "error", err)
+		return false, err
+	}
+	return count == 0, nil
+}
+
+// MarkContentSeen records that (source, itemID) has been processed.
+// Idempotent: safe to call multiple times for the same pair.
+// queueID is the row ID from q.Enqueue(); pass 0 if enqueue was skipped.
+func (q *Queue) MarkContentSeen(source, itemID string, queueID int64) error {
+	var queueIDVal interface{}
+	if queueID != 0 {
+		queueIDVal = queueID
+	}
+	_, err := q.db.Exec(
+		`INSERT OR IGNORE INTO seen_content (source, item_id, seen_at, queue_id) VALUES (?, ?, strftime('%s','now'), ?)`,
+		source, itemID, queueIDVal,
+	)
+	if err != nil {
+		slog.Warn("dedup_mark_failed", "source", source, "item_id", itemID, "queue_id", queueID, "error", err)
+	}
 	return err
 }
