@@ -20,7 +20,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// CT-1: InsertLikedVideo + IsLikedVideoScored (unscored = false)
+// CT-1: MarkContentSeen + IsNewContent (seen = not new)
 // ---------------------------------------------------------------------------
 
 func TestLikedVideosCT1_InsertAndCheck(t *testing.T) {
@@ -28,16 +28,16 @@ func TestLikedVideosCT1_InsertAndCheck(t *testing.T) {
 	defer cleanup()
 
 	videoID := "abc123"
-	if err := q.InsertLikedVideo(videoID, time.Now().Unix()); err != nil {
-		t.Fatalf("InsertLikedVideo: %v", err)
+	if err := q.MarkContentSeen("yt_liked", videoID, 0); err != nil {
+		t.Fatalf("MarkContentSeen: %v", err)
 	}
 
-	scored, err := q.IsLikedVideoScored(videoID)
+	isNew, err := q.IsNewContent("yt_liked", videoID)
 	if err != nil {
-		t.Fatalf("IsLikedVideoScored: %v", err)
+		t.Fatalf("IsNewContent: %v", err)
 	}
-	if scored {
-		t.Fatal("expected false (not yet scored)")
+	if isNew {
+		t.Fatal("expected false (already seen)")
 	}
 }
 
@@ -113,43 +113,35 @@ func TestLikedVideosCT3_HandlerReturns202(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CT-4: mark scored via scored_at
+// CT-4: MarkContentSeen stores queue_id in seen_content
 // ---------------------------------------------------------------------------
 
 func TestLikedVideosCT4_MarkScored(t *testing.T) {
-	q, db, cleanup := setupTestQueue(t)
+	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 
 	videoID := "markme"
-	now := time.Now().Unix()
-	if err := q.InsertLikedVideo(videoID, now); err != nil {
-		t.Fatal(err)
-	}
 
-	scored, _ := q.IsLikedVideoScored(videoID)
-	if scored {
-		t.Fatal("should not be scored yet")
+	isNew, _ := q.IsNewContent("yt_liked", videoID)
+	if !isNew {
+		t.Fatal("should be new before MarkContentSeen")
 	}
 
 	const queueID int64 = 42
-	_, err := db.Exec(
-		`UPDATE youtube_liked_videos SET scored_at=?, queue_id=? WHERE video_id=?`,
-		now, queueID, videoID,
-	)
-	if err != nil {
-		t.Fatalf("UPDATE scored_at: %v", err)
+	if err := q.MarkContentSeen("yt_liked", videoID, queueID); err != nil {
+		t.Fatalf("MarkContentSeen: %v", err)
 	}
 
-	scored, err = q.IsLikedVideoScored(videoID)
+	isNew, err := q.IsNewContent("yt_liked", videoID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !scored {
-		t.Fatal("expected scored=true after setting scored_at")
+	if isNew {
+		t.Fatal("expected isNew=false after MarkContentSeen")
 	}
 
 	var gotQueueID int64
-	err = db.QueryRow("SELECT queue_id FROM youtube_liked_videos WHERE video_id=?", videoID).Scan(&gotQueueID)
+	err = q.db.QueryRow("SELECT queue_id FROM seen_content WHERE source='yt_liked' AND item_id=?", videoID).Scan(&gotQueueID)
 	if err != nil {
 		t.Fatalf("query queue_id: %v", err)
 	}
@@ -361,7 +353,7 @@ func TestLikedVideosRG2_ConcurrentSyncReturns409(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLikedVideosIntegration(t *testing.T) {
-	q, db, cleanup := setupTestQueue(t)
+	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 
 	if err := q.SetYouTubeRefreshToken("default", "fake-tok", time.Now().Add(time.Hour).Unix()); err != nil {
@@ -402,11 +394,11 @@ func TestLikedVideosIntegration(t *testing.T) {
 	}
 
 	var count int
-	if err := db.QueryRow("SELECT COUNT(*) FROM youtube_liked_videos WHERE video_id='integ-vid1'").Scan(&count); err != nil {
-		t.Fatalf("query liked_videos: %v", err)
+	if err := q.db.QueryRow("SELECT COUNT(*) FROM seen_content WHERE source='yt_liked' AND item_id='integ-vid1'").Scan(&count); err != nil {
+		t.Fatalf("query seen_content: %v", err)
 	}
 	if count != 1 {
-		t.Fatalf("expected 1 liked_videos row, got %d", count)
+		t.Fatalf("expected 1 seen_content row, got %d", count)
 	}
 
 	items, err := q.Pending()

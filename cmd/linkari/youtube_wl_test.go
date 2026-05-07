@@ -20,7 +20,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// CT-1: InsertWatchLaterVideo + IsWatchLaterVideoScored (unscored = false)
+// CT-1: MarkContentSeen + IsNewContent (seen = not new)
 // ---------------------------------------------------------------------------
 
 func TestWatchLaterCT1_InsertAndCheck(t *testing.T) {
@@ -28,16 +28,16 @@ func TestWatchLaterCT1_InsertAndCheck(t *testing.T) {
 	defer cleanup()
 
 	videoID := "abc123"
-	if err := q.InsertWatchLaterVideo(videoID, time.Now().Unix()); err != nil {
-		t.Fatalf("InsertWatchLaterVideo: %v", err)
+	if err := q.MarkContentSeen("yt_watch_later", videoID, 0); err != nil {
+		t.Fatalf("MarkContentSeen: %v", err)
 	}
 
-	scored, err := q.IsWatchLaterVideoScored(videoID)
+	isNew, err := q.IsNewContent("yt_watch_later", videoID)
 	if err != nil {
-		t.Fatalf("IsWatchLaterVideoScored: %v", err)
+		t.Fatalf("IsNewContent: %v", err)
 	}
-	if scored {
-		t.Fatal("expected false (not yet scored)")
+	if isNew {
+		t.Fatal("expected false (already seen)")
 	}
 }
 
@@ -116,7 +116,7 @@ func TestWatchLaterCT3_HandlerReturns202(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CT-4: MarkWatchLaterScored links queue_id
+// CT-4: MarkContentSeen stores queue_id in seen_content
 // ---------------------------------------------------------------------------
 
 func TestWatchLaterCT4_MarkScored(t *testing.T) {
@@ -124,32 +124,28 @@ func TestWatchLaterCT4_MarkScored(t *testing.T) {
 	defer cleanup()
 
 	videoID := "markme"
-	now := time.Now().Unix()
-	if err := q.InsertWatchLaterVideo(videoID, now); err != nil {
-		t.Fatal(err)
+
+	// Verify new before marking.
+	isNew, _ := q.IsNewContent("yt_watch_later", videoID)
+	if !isNew {
+		t.Fatal("should be new before MarkContentSeen")
 	}
 
-	// Verify not scored.
-	scored, _ := q.IsWatchLaterVideoScored(videoID)
-	if scored {
-		t.Fatal("should not be scored yet")
+	if err := q.MarkContentSeen("yt_watch_later", videoID, 42); err != nil {
+		t.Fatalf("MarkContentSeen: %v", err)
 	}
 
-	if err := q.MarkWatchLaterScored(videoID, now, 42); err != nil {
-		t.Fatalf("MarkWatchLaterScored: %v", err)
-	}
-
-	scored, err := q.IsWatchLaterVideoScored(videoID)
+	isNew, err := q.IsNewContent("yt_watch_later", videoID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !scored {
-		t.Fatal("expected scored=true after MarkWatchLaterScored")
+	if isNew {
+		t.Fatal("expected isNew=false after MarkContentSeen")
 	}
 
-	// Verify queue_id is stored.
+	// Verify queue_id is stored in seen_content.
 	var queueID int64
-	err = q.db.QueryRow("SELECT queue_id FROM youtube_watchlater_videos WHERE video_id=?", videoID).Scan(&queueID)
+	err = q.db.QueryRow("SELECT queue_id FROM seen_content WHERE source='yt_watch_later' AND item_id=?", videoID).Scan(&queueID)
 	if err != nil {
 		t.Fatalf("query queue_id: %v", err)
 	}
@@ -296,7 +292,7 @@ func TestWatchLaterBT3_QuotaExhaustion(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// BT-4: youtube_watchlater_videos.queue_id populated after MarkWatchLaterScored
+// BT-4: seen_content.queue_id populated after MarkContentSeen
 // ---------------------------------------------------------------------------
 
 func TestWatchLaterBT4_QueueIDPopulated(t *testing.T) {
@@ -411,13 +407,13 @@ func TestWatchLaterIntegration(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Assert youtube_watchlater_videos row inserted.
+	// Assert seen_content row inserted for this video.
 	var count int
-	if err := q.db.QueryRow("SELECT COUNT(*) FROM youtube_watchlater_videos WHERE video_id='integ-vid1'").Scan(&count); err != nil {
-		t.Fatalf("query watchlater_videos: %v", err)
+	if err := q.db.QueryRow("SELECT COUNT(*) FROM seen_content WHERE source='yt_watch_later' AND item_id='integ-vid1'").Scan(&count); err != nil {
+		t.Fatalf("query seen_content: %v", err)
 	}
 	if count != 1 {
-		t.Fatalf("expected 1 watchlater row, got %d", count)
+		t.Fatalf("expected 1 seen_content row, got %d", count)
 	}
 
 	// Assert queue row enqueued.

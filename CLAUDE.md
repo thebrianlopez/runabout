@@ -1,13 +1,13 @@
 
-# runabout — bmux-go
+# runabout — bluesky-support-linkari
 
 ## Repo Context
 
 | Field | Value |
 |-------|-------|
 | **Repo** | `runabout` |
-| **Role** | `backend` |
-| **Workspace** | `bmux-go` |
+| **Role** | `` |
+| **Workspace** | `bluesky-support-linkari` |
 | **Workspace manifest** | `../CLAUDE.md` |
 
 Read `../CLAUDE.md` for workspace-level context, sibling repos, and environment facts.
@@ -16,7 +16,7 @@ Read `../CLAUDE.md` for workspace-level context, sibling repos, and environment 
 
 ## Role — What This Repo Owns
 
-This repo serves the **backend** role in the `bmux-go` workspace.
+This repo serves the **** role in the `bluesky-support-linkari` workspace.
 
 Scope your changes to this role. If work requires changes in a sibling repo, coordinate via the workspace manifest — do not cross-commit.
 
