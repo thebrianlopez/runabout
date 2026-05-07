@@ -362,6 +362,12 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	)`)
 
 	// EPIC-091 M2: unified seen_content dedup table — replaces per-source tables.
+	// source values are bound to ContentSource.Name() return values:
+	//   "bsky_firehose"  → BlueskyFirehoseSource
+	//   "yt_watch_later" → YouTubeWatchLaterSource
+	//   "yt_liked"       → YouTubeLikedSource
+	//   "yt_monitored"   → YouTubeSubsSource
+	// These values are immutable — changing them discards all prior dedup history.
 	db.Exec(`CREATE TABLE IF NOT EXISTS seen_content (
 		source   TEXT    NOT NULL,
 		item_id  TEXT    NOT NULL,
