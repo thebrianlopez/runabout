@@ -58,34 +58,33 @@ func TestSubsCT1_DigestNotThrottled(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CT-2: InsertMonitoredVideo + IsMonitoredVideoKnown round-trip
+// CT-2: MarkContentSeen + IsNewContent round-trip for yt_monitored
 // ---------------------------------------------------------------------------
 
 func TestSubsCT2_InsertAndCheck(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 
-	channelID := "UC_test"
 	videoID := "vid_abc"
 
-	known, err := q.IsMonitoredVideoKnown(videoID)
+	isNew, err := q.IsNewContent("yt_monitored", videoID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if known {
-		t.Fatal("expected not known before insert")
+	if !isNew {
+		t.Fatal("expected isNew=true before MarkContentSeen")
 	}
 
-	if err := q.InsertMonitoredVideo(channelID, videoID, time.Now().Unix()); err != nil {
-		t.Fatalf("InsertMonitoredVideo: %v", err)
+	if err := q.MarkContentSeen("yt_monitored", videoID, 0); err != nil {
+		t.Fatalf("MarkContentSeen: %v", err)
 	}
 
-	known, err = q.IsMonitoredVideoKnown(videoID)
+	isNew, err = q.IsNewContent("yt_monitored", videoID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !known {
-		t.Fatal("expected known=true after insert")
+	if isNew {
+		t.Fatal("expected isNew=false after MarkContentSeen")
 	}
 }
 
@@ -130,12 +129,12 @@ func TestSubsCT3_WatchEnqueues(t *testing.T) {
 		t.Fatal("expected at least 1 pending queue item")
 	}
 
-	known, err := q.IsMonitoredVideoKnown("newvid1")
+	isNew, err := q.IsNewContent("yt_monitored", "newvid1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !known {
-		t.Fatal("expected newvid1 to be in youtube_monitored_videos")
+	if isNew {
+		t.Fatal("expected newvid1 to be in seen_content")
 	}
 }
 
@@ -147,25 +146,18 @@ func TestSubsCT4_CountScored(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 
-	now := time.Now().Unix()
-
-	// Insert 2 monitored videos and simulate scoring.
+	// Enqueue 2 monitored videos, mark seen, simulate scoring.
 	for i, score := range []int{80, 40} {
 		vidID := fmt.Sprintf("scored-vid-%d", i)
-		if err := q.InsertMonitoredVideo("ch1", vidID, now); err != nil {
-			t.Fatal(err)
-		}
-		// Insert a queue row with the given score.
 		req := &ShareRequest{URL: "https://youtube.com/watch?v=" + vidID, Type: "url", Profile: "default"}
 		rowID, err := q.Enqueue(req)
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Manually set score on queue row.
-		if _, err := q.db.Exec("UPDATE queue SET score=?, status='scored', scored_at=? WHERE id=?", score, time.Now().UTC().Format("2006-01-02T15:04:05Z"), rowID); err != nil {
+		if err := q.MarkContentSeen("yt_monitored", vidID, rowID); err != nil {
 			t.Fatal(err)
 		}
-		if err := q.MarkMonitoredVideoScored(vidID, now, rowID); err != nil {
+		if _, err := q.db.Exec("UPDATE queue SET score=?, status='scored', scored_at=? WHERE id=?", score, time.Now().UTC().Format("2006-01-02T15:04:05Z"), rowID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -399,22 +391,17 @@ func TestSubsBT4_DigestBodyCorrect(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 
-	now := time.Now().Unix()
-
 	for i, score := range []int{80, 70, 30} {
 		vidID := fmt.Sprintf("bt4-vid-%d", i)
-		if err := q.InsertMonitoredVideo("ch1", vidID, now); err != nil {
-			t.Fatal(err)
-		}
 		req := &ShareRequest{URL: "https://youtube.com/watch?v=" + vidID, Type: "url", Profile: "default"}
 		rowID, err := q.Enqueue(req)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := q.db.Exec("UPDATE queue SET score=?, status='scored', scored_at=? WHERE id=?", score, time.Now().UTC().Format("2006-01-02T15:04:05Z"), rowID); err != nil {
+		if err := q.MarkContentSeen("yt_monitored", vidID, rowID); err != nil {
 			t.Fatal(err)
 		}
-		if err := q.MarkMonitoredVideoScored(vidID, now, rowID); err != nil {
+		if _, err := q.db.Exec("UPDATE queue SET score=?, status='scored', scored_at=? WHERE id=?", score, time.Now().UTC().Format("2006-01-02T15:04:05Z"), rowID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -538,13 +525,13 @@ func TestSubscriptionIntegration(t *testing.T) {
 
 	watchSubscriptionsAsync("default", q, nil, "", "")
 
-	// Assert youtube_monitored_videos row inserted.
+	// Assert seen_content row inserted.
 	var count int
-	if err := q.db.QueryRow("SELECT COUNT(*) FROM youtube_monitored_videos WHERE video_id='integ-sub-vid1'").Scan(&count); err != nil {
-		t.Fatalf("query monitored_videos: %v", err)
+	if err := q.db.QueryRow("SELECT COUNT(*) FROM seen_content WHERE source='yt_monitored' AND item_id='integ-sub-vid1'").Scan(&count); err != nil {
+		t.Fatalf("query seen_content: %v", err)
 	}
 	if count != 1 {
-		t.Fatalf("expected 1 monitored_videos row, got %d", count)
+		t.Fatalf("expected 1 seen_content row, got %d", count)
 	}
 
 	// Assert queue row created.
@@ -558,11 +545,7 @@ func TestSubscriptionIntegration(t *testing.T) {
 
 	// Simulate scoring so digest fires.
 	rowID := items[0].ID
-	now := time.Now().Unix()
 	if _, err := q.db.Exec("UPDATE queue SET score=80, status='scored', scored_at=? WHERE id=?", time.Now().UTC().Format("2006-01-02T15:04:05Z"), rowID); err != nil {
-		t.Fatal(err)
-	}
-	if err := q.MarkMonitoredVideoScored("integ-sub-vid1", now, rowID); err != nil {
 		t.Fatal(err)
 	}
 

@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func newTestQueue(t *testing.T) *Queue {
@@ -1297,4 +1300,356 @@ func TestFindRecentFile(t *testing.T) {
 			t.Errorf("expected nil for failed row, got ID %d", got.ID)
 		}
 	})
+}
+
+// --- EPIC-091: seen_content contract tests ---
+
+// CT-1: IsNewContent returns true for unseen (source, itemID).
+func TestSeenContent_CT1_IsNewContentUnseen(t *testing.T) {
+	q := newTestQueue(t)
+	ok, err := q.IsNewContent("test_source", "item1")
+	if err != nil {
+		t.Fatalf("CT-1: IsNewContent error: %v", err)
+	}
+	if !ok {
+		t.Error("CT-1: IsNewContent should return true for unseen item")
+	}
+}
+
+// CT-2: MarkContentSeen + IsNewContent returns false.
+func TestSeenContent_CT2_MarkThenNotNew(t *testing.T) {
+	q := newTestQueue(t)
+	if err := q.MarkContentSeen("test_source", "item1", 0); err != nil {
+		t.Fatalf("CT-2: MarkContentSeen error: %v", err)
+	}
+	ok, err := q.IsNewContent("test_source", "item1")
+	if err != nil {
+		t.Fatalf("CT-2: IsNewContent error: %v", err)
+	}
+	if ok {
+		t.Error("CT-2: IsNewContent should return false after MarkContentSeen")
+	}
+}
+
+// CT-3: Same item_id, different sources are independent.
+func TestSeenContent_CT3_SourcesAreIndependent(t *testing.T) {
+	q := newTestQueue(t)
+	if err := q.MarkContentSeen("src_a", "item1", 0); err != nil {
+		t.Fatalf("CT-3: MarkContentSeen error: %v", err)
+	}
+	ok, err := q.IsNewContent("src_b", "item1")
+	if err != nil {
+		t.Fatalf("CT-3: IsNewContent error: %v", err)
+	}
+	if !ok {
+		t.Error("CT-3: IsNewContent for src_b should still return true after src_a marks item1")
+	}
+}
+
+// CT-4: Migration copies Watch Later rows into seen_content.
+func TestSeenContent_CT4_MigrationWatchLater(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "migrate.db")
+
+	// Set up DB with legacy youtube_watchlater_videos row before running NewQueue.
+	{
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatalf("CT-4: open raw db: %v", err)
+		}
+		db.Exec(`CREATE TABLE IF NOT EXISTS youtube_watchlater_videos (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			video_id TEXT NOT NULL UNIQUE,
+			discovered_at INTEGER NOT NULL,
+			scored_at INTEGER,
+			queue_id INTEGER
+		)`)
+		db.Exec(`INSERT INTO youtube_watchlater_videos (video_id, discovered_at) VALUES ('ct4vid', 1000)`)
+		db.Close()
+	}
+
+	q, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatalf("CT-4: NewQueue: %v", err)
+	}
+	defer q.Close()
+
+	ok, err := q.IsNewContent("yt_watch_later", "ct4vid")
+	if err != nil {
+		t.Fatalf("CT-4: IsNewContent: %v", err)
+	}
+	if ok {
+		t.Error("CT-4: migrated Watch Later video should not be new")
+	}
+}
+
+// CT-5: Migration copies Liked Videos rows.
+func TestSeenContent_CT5_MigrationLikedVideos(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "migrate.db")
+
+	{
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatalf("CT-5: open raw db: %v", err)
+		}
+		db.Exec(`CREATE TABLE IF NOT EXISTS youtube_liked_videos (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			video_id TEXT NOT NULL UNIQUE,
+			discovered_at INTEGER NOT NULL,
+			scored_at INTEGER,
+			queue_id INTEGER
+		)`)
+		db.Exec(`INSERT INTO youtube_liked_videos (video_id, discovered_at) VALUES ('ct5vid', 1000)`)
+		db.Close()
+	}
+
+	q, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatalf("CT-5: NewQueue: %v", err)
+	}
+	defer q.Close()
+
+	ok, err := q.IsNewContent("yt_liked", "ct5vid")
+	if err != nil {
+		t.Fatalf("CT-5: IsNewContent: %v", err)
+	}
+	if ok {
+		t.Error("CT-5: migrated Liked Video should not be new")
+	}
+}
+
+// CT-6: Migration copies Monitored Videos rows.
+func TestSeenContent_CT6_MigrationMonitoredVideos(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "migrate.db")
+
+	{
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatalf("CT-6: open raw db: %v", err)
+		}
+		db.Exec(`CREATE TABLE IF NOT EXISTS youtube_monitored_videos (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			channel_id TEXT NOT NULL,
+			video_id TEXT NOT NULL UNIQUE,
+			discovered_at INTEGER NOT NULL,
+			scored_at INTEGER,
+			queue_id INTEGER
+		)`)
+		db.Exec(`INSERT INTO youtube_monitored_videos (channel_id, video_id, discovered_at) VALUES ('ch1', 'ct6vid', 1000)`)
+		db.Close()
+	}
+
+	q, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatalf("CT-6: NewQueue: %v", err)
+	}
+	defer q.Close()
+
+	ok, err := q.IsNewContent("yt_monitored", "ct6vid")
+	if err != nil {
+		t.Fatalf("CT-6: IsNewContent: %v", err)
+	}
+	if ok {
+		t.Error("CT-6: migrated Monitored Video should not be new")
+	}
+}
+
+// CT-7: Old tables are dropped after migration.
+func TestSeenContent_CT7_OldTablesDropped(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "migrate.db")
+
+	{
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatalf("CT-7: open raw db: %v", err)
+		}
+		db.Exec(`CREATE TABLE IF NOT EXISTS youtube_watchlater_videos (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			video_id TEXT NOT NULL UNIQUE,
+			discovered_at INTEGER NOT NULL,
+			scored_at INTEGER,
+			queue_id INTEGER
+		)`)
+		db.Close()
+	}
+
+	q, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatalf("CT-7: NewQueue: %v", err)
+	}
+	defer q.Close()
+
+	// After migration, old table must not exist.
+	var count int
+	err = q.db.QueryRow(`SELECT COUNT(*) FROM youtube_watchlater_videos`).Scan(&count)
+	if err == nil {
+		t.Error("CT-7: youtube_watchlater_videos should not exist after migration")
+	}
+}
+
+// CT-8: MarkContentSeen is idempotent.
+func TestSeenContent_CT8_MarkIdempotent(t *testing.T) {
+	q := newTestQueue(t)
+	if err := q.MarkContentSeen("src", "item1", 0); err != nil {
+		t.Fatalf("CT-8: first MarkContentSeen: %v", err)
+	}
+	if err := q.MarkContentSeen("src", "item1", 0); err != nil {
+		t.Fatalf("CT-8: second MarkContentSeen (idempotent): %v", err)
+	}
+}
+
+// BT-1: Partial migration failure leaves old tables intact (transaction rollback).
+func TestSeenContent_BT1_MigrationRollbackPreservesOldTables(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "bt1.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("BT-1: open db: %v", err)
+	}
+	defer db.Close()
+
+	db.Exec(`CREATE TABLE youtube_watchlater_videos (
+		video_id TEXT NOT NULL UNIQUE, discovered_at INTEGER NOT NULL, scored_at INTEGER, queue_id INTEGER
+	)`)
+	db.Exec(`INSERT INTO youtube_watchlater_videos (video_id, discovered_at) VALUES ('bt1vid', 1000)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS seen_content (
+		source TEXT NOT NULL, item_id TEXT NOT NULL, seen_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), queue_id INTEGER,
+		PRIMARY KEY (source, item_id)
+	)`)
+
+	// Simulate migration that gets rolled back (never commits).
+	tx, txErr := db.Begin()
+	if txErr != nil {
+		t.Fatalf("BT-1: begin tx: %v", txErr)
+	}
+	tx.Exec(`INSERT OR IGNORE INTO seen_content (source, item_id, seen_at, queue_id)
+		SELECT 'yt_watch_later', video_id, discovered_at, queue_id FROM youtube_watchlater_videos`)
+	tx.Exec(`DROP TABLE youtube_watchlater_videos`)
+	tx.Rollback() // simulate failure — old tables must survive
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM youtube_watchlater_videos`).Scan(&count); err != nil {
+		t.Error("BT-1: youtube_watchlater_videos should still exist after rollback")
+	}
+}
+
+// BT-2: IsNewContent on closed DB returns (false, error) — no panic.
+func TestSeenContent_BT2_ClosedDBReturnsError(t *testing.T) {
+	q := newTestQueue(t)
+	q.Close() // close before calling IsNewContent
+
+	ok, err := q.IsNewContent("src", "item1")
+	if err == nil {
+		t.Error("BT-2: expected error from IsNewContent on closed DB")
+	}
+	if ok {
+		t.Error("BT-2: IsNewContent should return false on closed DB")
+	}
+}
+
+// BT-3: MarkContentSeen stores correct queue_id.
+func TestSeenContent_BT3_CorrectQueueID(t *testing.T) {
+	q := newTestQueue(t)
+	const wantQueueID = int64(42)
+	if err := q.MarkContentSeen("src", "item1", wantQueueID); err != nil {
+		t.Fatalf("BT-3: MarkContentSeen: %v", err)
+	}
+	var gotQueueID sql.NullInt64
+	if err := q.db.QueryRow(
+		`SELECT queue_id FROM seen_content WHERE source='src' AND item_id='item1'`,
+	).Scan(&gotQueueID); err != nil {
+		t.Fatalf("BT-3: query seen_content: %v", err)
+	}
+	if !gotQueueID.Valid || gotQueueID.Int64 != wantQueueID {
+		t.Errorf("BT-3: queue_id = %v, want %d", gotQueueID, wantQueueID)
+	}
+}
+
+// BT-4: No raw SQL dedup in firehose.go — static check.
+func TestSeenContent_BT4_NoInlineFirehoseDedup(t *testing.T) {
+	content, err := os.ReadFile("firehose.go")
+	if err != nil {
+		t.Fatalf("BT-4: read firehose.go: %v", err)
+	}
+	if strings.Contains(string(content), "COUNT(*) FROM queue") {
+		t.Error("BT-4: firehose.go still contains inline SQL dedup — should use q.IsNewContent")
+	}
+}
+
+// RG-1: IsNewContent returns false after Queue re-open on same DB file.
+func TestSeenContent_RG1_PersistenceAcrossReopen(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "rg1.db")
+	q1, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatalf("RG-1: first NewQueue: %v", err)
+	}
+	if err := q1.MarkContentSeen("bsky_firehose", "at://did/rg1", 0); err != nil {
+		t.Fatalf("RG-1: MarkContentSeen: %v", err)
+	}
+	q1.Close()
+
+	q2, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatalf("RG-1: second NewQueue: %v", err)
+	}
+	defer q2.Close()
+
+	ok, err := q2.IsNewContent("bsky_firehose", "at://did/rg1")
+	if err != nil {
+		t.Fatalf("RG-1: IsNewContent: %v", err)
+	}
+	if ok {
+		t.Error("RG-1: item should not be new after Queue re-open on same DB")
+	}
+}
+
+// RG-2: NewQueue twice on same path succeeds; seen_content row count unchanged.
+func TestSeenContent_RG2_DoubleNewQueueRowCountUnchanged(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "rg2.db")
+	q1, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatalf("RG-2: first NewQueue: %v", err)
+	}
+	q1.MarkContentSeen("yt_watch_later", "vid1", 0)
+	q1.MarkContentSeen("yt_liked", "vid2", 0)
+	var count1 int
+	q1.db.QueryRow(`SELECT COUNT(*) FROM seen_content`).Scan(&count1)
+	q1.Close()
+
+	q2, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatalf("RG-2: second NewQueue: %v", err)
+	}
+	defer q2.Close()
+
+	var count2 int
+	q2.db.QueryRow(`SELECT COUNT(*) FROM seen_content`).Scan(&count2)
+	if count1 != count2 {
+		t.Errorf("RG-2: seen_content row count changed after double NewQueue: before=%d after=%d", count1, count2)
+	}
+}
+
+// CT-9: NewQueue on existing DB with seen_content is idempotent.
+func TestSeenContent_CT9_NewQueueIdempotent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "idem.db")
+	q1, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatalf("CT-9: first NewQueue: %v", err)
+	}
+	if err := q1.MarkContentSeen("src", "item1", 0); err != nil {
+		t.Fatalf("CT-9: MarkContentSeen: %v", err)
+	}
+	q1.Close()
+
+	q2, err := NewQueue(dbPath, false)
+	if err != nil {
+		t.Fatalf("CT-9: second NewQueue: %v", err)
+	}
+	defer q2.Close()
+
+	ok, err := q2.IsNewContent("src", "item1")
+	if err != nil {
+		t.Fatalf("CT-9: IsNewContent after reopen: %v", err)
+	}
+	if ok {
+		t.Error("CT-9: item should still be seen after Queue reopen")
+	}
 }

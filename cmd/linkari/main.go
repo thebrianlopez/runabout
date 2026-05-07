@@ -650,10 +650,6 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				// EPIC-015 M4: expose the bskyClient to scoreAsync via package-level var.
 				bskyClientForScoring = srv.bskyClient
 			}
-			// EPIC-016 M5: Firehose worker — started only when Bluesky auth is configured.
-			if queue != nil && srv.bskyClient != nil {
-				go runFirehoseWorker(cmd.Context(), queue, srv.bskyClient, slog.Default())
-			}
 			srv.SetBlocklist(serverFileCfg.Blocklist)
 			srv.SetCORSOrigins(serverFileCfg.CORSOrigins)
 
@@ -780,6 +776,20 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				})
 			}
 			workerPool.Start(cmd.Context())
+
+			// EPIC-090: ContentSource registry — starts all registered sources
+			// uniformly in goroutines with panic isolation. Initially empty;
+			// existing sources (firehose, YouTube) are retrofitted in F3/F4.
+			if queue != nil {
+				registry := NewSourceRegistry()
+				for _, src := range registeredSources(srv.bskyClient) {
+					registry.Register(src)
+				}
+				go registry.Start(cmd.Context(), queue, func(req *ShareRequest) error {
+					_, err := queue.Enqueue(req)
+					return err
+				})
+			}
 
 			// Periodic VACUUM INTO snapshot — point-in-time recovery baseline
 			// if queue.db becomes corrupt (2026-04-13 incident). Defaults to

@@ -158,25 +158,20 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 			if item.VideoID == "" {
 				continue
 			}
-			scored, err := q.IsWatchLaterVideoScored(item.VideoID)
+			isNew, err := q.IsNewContent("yt_watch_later", item.VideoID)
 			if err != nil {
 				slog.Warn("syncWatchLaterAsync: DB check failed", "video_id", item.VideoID, "error", err)
 				continue
 			}
-			if scored {
+			if !isNew {
 				skipped++
 				if events != nil {
 					_ = events.Emit("watchlater_video_skipped", map[string]interface{}{
 						"profile":  profile,
 						"video_id": item.VideoID,
-						"reason":   "already_scored",
+						"reason":   "already_seen",
 					})
 				}
-				continue
-			}
-
-			if err := q.InsertWatchLaterVideo(item.VideoID, time.Now().Unix()); err != nil {
-				slog.Warn("syncWatchLaterAsync: insert failed", "video_id", item.VideoID, "error", err)
 				continue
 			}
 
@@ -193,6 +188,7 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 				slog.Warn("syncWatchLaterAsync: enqueue failed", "video_id", item.VideoID, "error", err)
 				continue
 			}
+			_ = q.MarkContentSeen("yt_watch_later", item.VideoID, rowID)
 
 			enqueued++
 			if events != nil {
