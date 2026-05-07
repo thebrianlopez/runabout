@@ -9,7 +9,9 @@ import (
 
 // ContentSource is implemented by every ingestion source.
 // Name() returns a stable, lowercase snake_case identifier used as the
-// seen_content.source key — must never change after first deployment.
+// seen_content.source dedup key. WARNING: Name() must never change after
+// first deployment — changing it silently discards all prior dedup history
+// for that source and re-enqueues previously seen content.
 type ContentSource interface {
 	Name() string
 	Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error

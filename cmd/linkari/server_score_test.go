@@ -467,6 +467,17 @@ func TestScoreURLAsync_AutoClassifiesEmptyProfile(t *testing.T) {
 	srv := jinaBodyServer(t, 200, "some engineering content about golang")
 	installJinaServer(t, srv)
 	isolateEventsDir(t)
+	// Pre-load builtin config so archiveThreshold avoids AWS Secrets Manager
+	// calls inside the goroutine's 50ms post-eval window.
+	archiveThresholdMu.Lock()
+	prevCfg := archiveThresholdCfg
+	archiveThresholdCfg = builtinConfig()
+	archiveThresholdMu.Unlock()
+	t.Cleanup(func() {
+		archiveThresholdMu.Lock()
+		archiveThresholdCfg = prevCfg
+		archiveThresholdMu.Unlock()
+	})
 
 	eval := &stubEvaluator{score: 85, verdict: "good"}
 	q := newTestQueue(t)
