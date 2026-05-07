@@ -122,6 +122,47 @@ func execYouTubePlaylistItemsListReal(ctx context.Context, ts oauth2.TokenSource
 	return items, nil
 }
 
+// YouTubeSubsSource wraps watchSubscriptionsAsync behind the ContentSource interface.
+type YouTubeSubsSource struct {
+	clientID     string
+	clientSecret string
+	events       *EventLogger
+}
+
+func (s *YouTubeSubsSource) Name() string { return "yt_monitored" }
+
+// Start polls subscription channels every hour with exponential backoff on error.
+// Matches the timing of the former backgroundWorkerPool worker.
+func (s *YouTubeSubsSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
+	const interval = 1 * time.Hour
+	const maxBackoff = 4 * time.Hour
+	consecutive := 0
+	for {
+		delay := interval
+		if consecutive > 0 {
+			d := interval * (1 << min(consecutive, 4))
+			if d > maxBackoff {
+				d = maxBackoff
+			}
+			delay = d
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(delay):
+		}
+		if err := watchSubscriptionsAsync("default", q, s.events, s.clientID, s.clientSecret); err != nil {
+			consecutive++
+			slog.Warn("yt_monitored source error",
+				"consecutive_failures", consecutive,
+				"error", err,
+			)
+		} else {
+			consecutive = 0
+		}
+	}
+}
+
 // watchSubscriptionsAsync polls all subscription channels and enqueues new
 // videos for scoring. Designed to run as a periodic background worker.
 // EPIC-019 M6 + M10.
