@@ -215,3 +215,107 @@ func checkNamesSlice(checks []doctorCheck) []string {
 	}
 	return names
 }
+
+// RG-1 (CT-1): tessdata_prefix in config, TESSDATA_PREFIX env absent → okCheck.
+// Validates the config-authority fix (EPIC-109 M1): doctor must read the config
+// struct as primary source, not the env var set by `linkari serve` init.
+func TestDoctorTessdata_ConfigSet_EnvAbsent(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	content := "[server]\ntoken = \"test-token\"\n\n[server.liteparse]\ntessdata_prefix = \"/data/tessdata\"\n"
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+	t.Setenv("TESSDATA_PREFIX", "")
+
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--json"})
+	_ = run()
+
+	var result struct {
+		Checks []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("JSON parse: %v\noutput:\n%s", err, out.String())
+	}
+	for _, c := range result.Checks {
+		if c.Name == "tessdata_prefix" {
+			if c.Status != statusOK {
+				t.Errorf("RG-1: tessdata_prefix status = %q, want %q; detail=%q", c.Status, statusOK, c.Message)
+			}
+			return
+		}
+	}
+	t.Error("RG-1: tessdata_prefix check not present in output")
+}
+
+// RG-2 (CT-2): neither config nor env set → warnCheck.
+func TestDoctorTessdata_BothAbsent(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	content := "[server]\ntoken = \"test-token\"\n"
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+	t.Setenv("TESSDATA_PREFIX", "")
+
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--json"})
+	_ = run()
+
+	var result struct {
+		Checks []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("JSON parse: %v\noutput:\n%s", err, out.String())
+	}
+	for _, c := range result.Checks {
+		if c.Name == "tessdata_prefix" {
+			if c.Status != statusWarn {
+				t.Errorf("RG-2: tessdata_prefix status = %q, want %q; detail=%q", c.Status, statusWarn, c.Message)
+			}
+			return
+		}
+	}
+	t.Error("RG-2: tessdata_prefix check not present in output")
+}
+
+// RG-3 (CT-3): only env var set (no config) → okCheck.
+func TestDoctorTessdata_EnvOnly(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	content := "[server]\ntoken = \"test-token\"\n"
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+	t.Setenv("TESSDATA_PREFIX", "/from/env")
+
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--json"})
+	_ = run()
+
+	var result struct {
+		Checks []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("JSON parse: %v\noutput:\n%s", err, out.String())
+	}
+	for _, c := range result.Checks {
+		if c.Name == "tessdata_prefix" {
+			if c.Status != statusOK {
+				t.Errorf("RG-3: tessdata_prefix status = %q, want %q; detail=%q", c.Status, statusOK, c.Message)
+			}
+			return
+		}
+	}
+	t.Error("RG-3: tessdata_prefix check not present in output")
+}

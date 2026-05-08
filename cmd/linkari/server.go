@@ -306,11 +306,12 @@ func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug 
 	return s
 }
 
-// CacheLitProbe runs the lit/TESSDATA_PREFIX health probe once and stores the
-// result on the server for use by handleHealth. Called at startup so the probe
-// uses real OS lookups without blocking the health endpoint per-request.
-func (s *Server) CacheLitProbe() {
-	s.litProbe = probeHealth(exec.LookPath, os.Getenv)
+// CacheLitProbe runs the lit/tessdata health probe once and stores the result
+// on the server for use by handleHealth. tessDataPrefix is read from the config
+// struct so the probe is correct even before initClaudeConfig sets TESSDATA_PREFIX
+// in the process environment. EPIC-109 M2.
+func (s *Server) CacheLitProbe(tessDataPrefix string) {
+	s.litProbe = probeHealth(exec.LookPath, tessDataPrefix)
 	slog.Info("lit health probe",
 		"event_type", "lit_health_probe",
 		"status", s.litProbe.Status,
