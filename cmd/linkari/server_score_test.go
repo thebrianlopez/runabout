@@ -757,6 +757,7 @@ func TestScoreAsync_ImageFileMetadataOnly(t *testing.T) {
 // TestScoreAsync_ImageVision verifies an image share with a readable temp file
 // triggers the vision path and cleans up the temp file.
 func TestScoreAsync_ImageVision(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	isolateEventsDir(t)
 
 	prev := execContentClassify

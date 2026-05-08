@@ -85,6 +85,7 @@ func writePromptFile(t *testing.T, body string) string {
 // stdin.
 func runScore(t *testing.T, dbPath, content string, args ...string) (string, error) {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir()) // prevent real config.toml from loading SM refs
 	cmd := scoreCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)

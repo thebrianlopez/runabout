@@ -207,6 +207,7 @@ func installWhisperStubYT(t *testing.T, tx string, err error) {
 // subtitles and ytFallbackToAudio=true, scoreYouTubeAsync produces a scored row.
 // EPIC-003 M3.
 func TestScoreYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	// Install a hermetic eng profile so this test runs in clean checkouts.
 	installTestProfileDir(t, "eng")
 
@@ -530,6 +531,7 @@ func TestYtAudioFallback_TimeoutExpiry(t *testing.T) {
 // finds no subtitles and the audio fallback succeeds, the scored row's events
 // contain subtitle_type="audio". EPIC-006 M3.
 func TestScoreYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	installTestProfileDir(t, "eng")
 
 	prevFallback := ytFallbackToAudio
