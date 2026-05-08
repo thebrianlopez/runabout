@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -275,10 +276,16 @@ func TestScoreYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 
 // TestScoreYouTubeAsync_FallbackStepFailures verifies that individual failures
 // in the audio fallback steps result in a failed queue row. EPIC-003 M3.
+// ytAudioMaxRetries is set to 0 so the dead-letter path terminates immediately
+// rather than putting the row in "pending" retry state.
 func TestScoreYouTubeAsync_FallbackStepFailures(t *testing.T) {
 	prevFallback := ytFallbackToAudio
 	ytFallbackToAudio = true
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
+
+	prevRetries := ytAudioMaxRetries
+	ytAudioMaxRetries = 0
+	t.Cleanup(func() { ytAudioMaxRetries = prevRetries })
 
 	cases := []struct {
 		name          string
@@ -809,5 +816,120 @@ func TestTranscribeYouTubeAsync_BT2_NormalizationWired(t *testing.T) {
 
 	if capturedURL != canonical {
 		t.Errorf("BT-2: execYtdlp received %q, want canonical %q", capturedURL, canonical)
+	}
+}
+
+// RG-1 (POMO_whisper-audio-fallback-oom-kills): Only one whisper-cli process
+// runs at a time across concurrent audio fallback jobs.
+// When the semaphore is held, a second job emits yt_audio_queued_pending_semaphore
+// and waits rather than spawning a second whisper-cli instance.
+func TestAudioFallback_SemaphoreCap1(t *testing.T) {
+	prevFallback := ytFallbackToAudio
+	ytFallbackToAudio = true
+	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
+
+	// Reset semaphore to a clean state and set max_retries=0 so failures are terminal.
+	ytAudioSem = make(chan struct{}, 1)
+	prevRetries := ytAudioMaxRetries
+	ytAudioMaxRetries = 0
+	t.Cleanup(func() { ytAudioMaxRetries = prevRetries })
+
+	installYtdlpNoSubtitlesStub(t)
+
+	// hold gates the download stub: the first job holds the channel open until
+	// the test releases it. This keeps the semaphore occupied while we launch a
+	// second job and verify it blocks.
+	hold := make(chan struct{})
+	prevAudio := execYtdlpAudio
+	var audioCallCount int32
+	execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+		atomic.AddInt32(&audioCallCount, 1)
+		// Block until released (only the first call enters; second waits on semaphore).
+		<-hold
+		return "", ytVideoMeta{}, fmt.Errorf("stub: released")
+	}
+	t.Cleanup(func() { execYtdlpAudio = prevAudio })
+
+	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
+	evtLogger, err := NewEventLogger(evtPath)
+	if err != nil {
+		t.Fatalf("NewEventLogger: %v", err)
+	}
+	defer evtLogger.Close()
+
+	q := newTestQueue(t)
+
+	makeReq := func(id string) ShareRequest {
+		req := ShareRequest{
+			Type:    "url",
+			URL:     "https://www.youtube.com/watch?v=" + id,
+			Profile: "eng",
+		}
+		rowID, enqErr := q.Enqueue(&req)
+		if enqErr != nil {
+			t.Fatalf("Enqueue %s: %v", id, enqErr)
+		}
+		if err := q.MarkRelayed(rowID); err != nil {
+			t.Fatalf("MarkRelayed %s: %v", id, err)
+		}
+		req.QueueRowID = rowID
+		return req
+	}
+
+	req1 := makeReq("job1")
+	req2 := makeReq("job2")
+
+	done1 := make(chan struct{})
+	go func() {
+		defer close(done1)
+		scoreYouTubeAsync(req1, q, "yt-dlp", evtLogger, "")
+	}()
+
+	// Wait until job1 has entered the download stub and is holding the semaphore.
+	deadline := time.After(3 * time.Second)
+	for atomic.LoadInt32(&audioCallCount) == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("job1 never entered audio stub")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	// Launch job2 while job1 holds the semaphore.
+	done2 := make(chan struct{})
+	go func() {
+		defer close(done2)
+		scoreYouTubeAsync(req2, q, "yt-dlp", evtLogger, "")
+	}()
+
+	// Give job2 time to attempt semaphore acquire and emit the queued event.
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify job2 has NOT entered the download stub (semaphore is still held by job1).
+	if atomic.LoadInt32(&audioCallCount) != 1 {
+		t.Errorf("RG-1: audioCallCount = %d after 50ms, want 1 (semaphore must block job2)", atomic.LoadInt32(&audioCallCount))
+	}
+
+	// Release job1.
+	close(hold)
+	select {
+	case <-done1:
+	case <-time.After(5 * time.Second):
+		t.Fatal("job1 timed out after release")
+	}
+	select {
+	case <-done2:
+	case <-time.After(5 * time.Second):
+		t.Fatal("job2 timed out after job1 released semaphore")
+	}
+
+	// Verify yt_audio_queued_pending_semaphore was emitted by job2.
+	evtLogger.Close()
+	rawEvents, readErr := os.ReadFile(evtPath)
+	if readErr != nil {
+		t.Fatalf("read events file: %v", readErr)
+	}
+	if !strings.Contains(string(rawEvents), `"yt_audio_queued_pending_semaphore"`) {
+		t.Errorf("RG-1: expected yt_audio_queued_pending_semaphore event, got:\n%s", rawEvents)
 	}
 }
