@@ -129,7 +129,8 @@ type YouTubeSubsSource struct {
 	events       *EventLogger
 }
 
-func (s *YouTubeSubsSource) Name() string { return "yt_monitored" }
+func (s *YouTubeSubsSource) Name() string         { return "yt_monitored" }
+func (s *YouTubeSubsSource) AuthDeps() []string   { return []string{"google_youtube"} }
 
 // Start polls subscription channels every hour with exponential backoff on error.
 // Matches the timing of the former backgroundWorkerPool worker.
@@ -179,7 +180,8 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 	start := time.Now()
 
 	if events != nil {
-		_ = events.Emit("subscription_poll_start", map[string]interface{}{
+		_ = events.Emit("source_start", map[string]interface{}{
+			"source":  "yt_monitored",
 			"profile": profile,
 		})
 	}
@@ -194,6 +196,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 		)
 		if events != nil {
 			_ = events.Emit("subscriptions_api_error", map[string]interface{}{
+				"source":      "yt_monitored",
 				"profile":     profile,
 				"error_class": "auth_error",
 				"error":       err.Error(),
@@ -221,6 +224,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 		)
 		if events != nil {
 			_ = events.Emit(evType, map[string]interface{}{
+				"source":      "yt_monitored",
 				"profile":     profile,
 				"error_class": errClass,
 				"error":       err.Error(),
@@ -232,6 +236,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 	if len(subs) == 0 {
 		if events != nil {
 			_ = events.Emit("subscription_digest_empty", map[string]interface{}{
+				"source":  "yt_monitored",
 				"profile": profile,
 			})
 		}
@@ -253,6 +258,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 		)
 		if events != nil {
 			_ = events.Emit("subscriptions_api_error", map[string]interface{}{
+				"source":      "yt_monitored",
 				"profile":     profile,
 				"error_class": "channels_list_error",
 				"error":       err.Error(),
@@ -282,6 +288,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 			)
 			if events != nil {
 				_ = events.Emit("subscriptions_api_error", map[string]interface{}{
+					"source":      "yt_monitored",
 					"profile":     profile,
 					"error_class": "playlist_items_error",
 					"error":       err.Error(),
@@ -305,6 +312,14 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 			}
 			if !isNew {
 				totalSkipped++
+				if events != nil {
+					_ = events.Emit("source_item_skipped", map[string]interface{}{
+						"source":   "yt_monitored",
+						"profile":  profile,
+						"video_id": item.VideoID,
+						"reason":   "already_seen",
+					})
+				}
 				continue
 			}
 
@@ -327,7 +342,8 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 			totalEnqueued++
 
 			if events != nil {
-				_ = events.Emit("subscription_video_enqueued", map[string]interface{}{
+				_ = events.Emit("source_item_enqueued", map[string]interface{}{
+					"source":       "yt_monitored",
 					"profile":      profile,
 					"channel_id":   sub.ChannelID,
 					"video_id":     item.VideoID,
@@ -338,6 +354,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 
 		if events != nil {
 			_ = events.Emit("subscription_channel_discovered", map[string]interface{}{
+				"source":          "yt_monitored",
 				"profile":         profile,
 				"channel_id":      sub.ChannelID,
 				"new_video_count": newVideoCount,
@@ -347,7 +364,8 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 
 	durMS := time.Since(start).Milliseconds()
 	slog.Info("watchSubscriptionsAsync: complete",
-		"event_type", "subscription_poll_complete",
+		"event_type", "source_complete",
+		"source", "yt_monitored",
 		"profile", profile,
 		"channels_polled", channelsPolled,
 		"videos_enqueued", totalEnqueued,
@@ -355,7 +373,8 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 		"duration_ms", durMS,
 	)
 	if events != nil {
-		_ = events.Emit("subscription_poll_complete", map[string]interface{}{
+		_ = events.Emit("source_complete", map[string]interface{}{
+			"source":          "yt_monitored",
 			"profile":         profile,
 			"channels_polled": channelsPolled,
 			"videos_enqueued": totalEnqueued,
@@ -374,13 +393,15 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 			slog.Warn("watchSubscriptionsAsync: EnqueueSubscriptionDigest failed", "error", err)
 		} else if events != nil {
 			_ = events.Emit("subscription_digest_sent", map[string]interface{}{
-				"profile":       profile,
+				"source":         "yt_monitored",
+				"profile":        profile,
 				"worth_watching": worthWatching,
-				"skipped":       skipped,
+				"skipped":        skipped,
 			})
 		}
 	} else if events != nil {
 		_ = events.Emit("subscription_digest_empty", map[string]interface{}{
+			"source":  "yt_monitored",
 			"profile": profile,
 		})
 	}

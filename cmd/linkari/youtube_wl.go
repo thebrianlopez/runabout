@@ -62,7 +62,8 @@ type YouTubeWatchLaterSource struct {
 	events       *EventLogger
 }
 
-func (s *YouTubeWatchLaterSource) Name() string { return "yt_watch_later" }
+func (s *YouTubeWatchLaterSource) Name() string         { return "yt_watch_later" }
+func (s *YouTubeWatchLaterSource) AuthDeps() []string   { return []string{"google_youtube"} }
 
 // Start polls the Watch Later playlist every hour until ctx is cancelled.
 func (s *YouTubeWatchLaterSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
@@ -93,7 +94,8 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 	start := time.Now()
 
 	if events != nil {
-		_ = events.Emit("watchlater_sync_start", map[string]interface{}{
+		_ = events.Emit("source_start", map[string]interface{}{
+			"source":  "yt_watch_later",
 			"profile": profile,
 		})
 	}
@@ -102,12 +104,14 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 	if err != nil {
 		slog.Warn("syncWatchLaterAsync: auth error",
 			"event_type", "watchlater_api_error",
+			"source", "yt_watch_later",
 			"profile", profile,
 			"error_class", "auth_error",
 			"error", err,
 		)
 		if events != nil {
 			_ = events.Emit("watchlater_api_error", map[string]interface{}{
+				"source":      "yt_watch_later",
 				"profile":     profile,
 				"error_class": "auth_error",
 				"error":       err.Error(),
@@ -129,6 +133,7 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 				errClass = "quota_exhausted"
 				slog.Warn("syncWatchLaterAsync: quota exhausted",
 					"event_type", "watchlater_quota_exhausted",
+					"source", "yt_watch_later",
 					"profile", profile,
 					"page", pageNum,
 					"error_class", errClass,
@@ -136,6 +141,7 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 				)
 				if events != nil {
 					_ = events.Emit("watchlater_quota_exhausted", map[string]interface{}{
+						"source":      "yt_watch_later",
 						"profile":     profile,
 						"page":        pageNum,
 						"error_class": errClass,
@@ -144,12 +150,14 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 			} else {
 				slog.Warn("syncWatchLaterAsync: API error",
 					"event_type", "watchlater_api_error",
+					"source", "yt_watch_later",
 					"profile", profile,
 					"error_class", errClass,
 					"error", err,
 				)
 				if events != nil {
 					_ = events.Emit("watchlater_api_error", map[string]interface{}{
+						"source":      "yt_watch_later",
 						"profile":     profile,
 						"error_class": errClass,
 						"error":       err.Error(),
@@ -161,6 +169,7 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 
 		if events != nil {
 			_ = events.Emit("watchlater_page_fetched", map[string]interface{}{
+				"source":     "yt_watch_later",
 				"profile":    profile,
 				"page":       pageNum,
 				"item_count": len(items),
@@ -170,7 +179,8 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 		if len(items) == 0 && pageNum == 1 {
 			if events != nil {
 				_ = events.Emit("watchlater_empty", map[string]interface{}{
-					"profile": profile,
+					"source":   "yt_watch_later",
+					"profile":  profile,
 				})
 			}
 			break
@@ -188,7 +198,8 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 			if !isNew {
 				skipped++
 				if events != nil {
-					_ = events.Emit("watchlater_video_skipped", map[string]interface{}{
+					_ = events.Emit("source_item_skipped", map[string]interface{}{
+						"source":   "yt_watch_later",
 						"profile":  profile,
 						"video_id": item.VideoID,
 						"reason":   "already_seen",
@@ -214,7 +225,8 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 
 			enqueued++
 			if events != nil {
-				_ = events.Emit("watchlater_video_enqueued", map[string]interface{}{
+				_ = events.Emit("source_item_enqueued", map[string]interface{}{
+					"source":       "yt_watch_later",
 					"profile":      profile,
 					"video_id":     item.VideoID,
 					"queue_row_id": rowID,
@@ -230,14 +242,16 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 
 	durMS := time.Since(start).Milliseconds()
 	slog.Info("syncWatchLaterAsync: complete",
-		"event_type", "watchlater_sync_complete",
+		"event_type", "source_complete",
+		"source", "yt_watch_later",
 		"profile", profile,
 		"enqueued", enqueued,
 		"skipped", skipped,
 		"duration_ms", durMS,
 	)
 	if events != nil {
-		_ = events.Emit("watchlater_sync_complete", map[string]interface{}{
+		_ = events.Emit("source_complete", map[string]interface{}{
+			"source":      "yt_watch_later",
 			"profile":     profile,
 			"enqueued":    enqueued,
 			"skipped":     skipped,
