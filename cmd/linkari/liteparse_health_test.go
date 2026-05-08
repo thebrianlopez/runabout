@@ -101,7 +101,7 @@ func TestCT5_ContentWarningSetOnLiteParseFailure(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	scoreAsync(req, q, &stubEvaluator{score: 50, verdict: "ok"}, nil)
+	scoreAsync(req, q, &stubEvaluator{score: 50, verdict: "ok"}, nil, nil)
 
 	item, err := q.GetByID(id)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestCT7_ContentWarningEmptyOnSuccess(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	scoreAsync(req, q, &stubEvaluator{score: 50, verdict: "ok"}, nil)
+	scoreAsync(req, q, &stubEvaluator{score: 50, verdict: "ok"}, nil, nil)
 
 	item, err := q.GetByID(id)
 	if err != nil {
@@ -301,7 +301,7 @@ func TestBT1_NonPDFShareHasNoContentWarning(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	scoreAsync(req, q, &stubEvaluator{score: 60, verdict: "ok"}, nil)
+	scoreAsync(req, q, &stubEvaluator{score: 60, verdict: "ok"}, nil, nil)
 
 	item, err := q.GetByID(id)
 	if err != nil {
@@ -357,7 +357,7 @@ func TestRG1_SuccessfulPDFDoesNotSetContentWarning(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	scoreAsync(req, q, &stubEvaluator{score: 70, verdict: "Worth saving"}, nil)
+	scoreAsync(req, q, &stubEvaluator{score: 70, verdict: "Worth saving"}, nil, nil)
 
 	item, err := q.GetByID(id)
 	if err != nil {

@@ -268,7 +268,7 @@ func TestBT2_ScoreAsyncWritesConfidenceToQueue(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	scoreAsync(req, q, &stubEvaluator{score: 60, verdict: "ok"}, nil)
+	scoreAsync(req, q, &stubEvaluator{score: 60, verdict: "ok"}, nil, nil)
 
 	item, err := q.GetByID(id)
 	if err != nil {
@@ -305,7 +305,7 @@ func TestBT3_ScoreAsyncWritesNegativeOneOnFallback(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	scoreAsync(req, q, &stubEvaluator{score: 60, verdict: "ok"}, nil)
+	scoreAsync(req, q, &stubEvaluator{score: 60, verdict: "ok"}, nil, nil)
 
 	item, err := q.GetByID(id)
 	if err != nil {
@@ -337,7 +337,7 @@ func TestRG1_NonPDFShareDoesNotCallLiteParse(t *testing.T) {
 		Profile: "eng",
 		URL:     "https://example.com/rg1",
 	}
-	scoreAsync(req, nil, &stubEvaluator{score: 70, verdict: "ok"}, nil)
+	scoreAsync(req, nil, &stubEvaluator{score: 70, verdict: "ok"}, nil, nil)
 
 	if liteCalled {
 		t.Error("RG-1: execLiteParse was called for a non-document share")

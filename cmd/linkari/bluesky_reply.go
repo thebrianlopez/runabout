@@ -23,9 +23,6 @@ import (
 var execPublishReply = defaultExecPublishReply
 var execGetRecord = defaultExecGetRecord
 
-// bskyClientForScoring is set by the serve command after bskyClient is wired.
-// Avoids threading bskyClient through scoreAsync's signature. EPIC-015 M4.
-var bskyClientForScoring *BlueskyClient
 
 type bskyReplyRef struct {
 	URI string `json:"uri"`

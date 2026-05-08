@@ -694,7 +694,7 @@ func runScoreFileAsyncSync(t *testing.T, req *ShareRequest, q *Queue, eval Evalu
 	t.Helper()
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: eval, done: done}
-	go scoreAsync(req, q, wrapped, nil)
+	go scoreAsync(req, q, wrapped, nil, nil)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
@@ -888,7 +888,7 @@ func TestScoreAsync_EvalFailureMarksQueueRow(t *testing.T) {
 	eval := &stubEvaluator{err: fmt.Errorf("total eval failure")}
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: eval, done: done}
-	go scoreAsync(req, q, wrapped, nil)
+	go scoreAsync(req, q, wrapped, nil, nil)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):

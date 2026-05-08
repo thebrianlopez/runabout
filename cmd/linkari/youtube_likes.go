@@ -19,7 +19,8 @@ type YouTubeLikedSource struct {
 	events       *EventLogger
 }
 
-func (s *YouTubeLikedSource) Name() string { return "yt_liked" }
+func (s *YouTubeLikedSource) Name() string       { return "yt_liked" }
+func (s *YouTubeLikedSource) AuthDeps() []string { return []string{"google_youtube"} }
 
 // Start polls the Liked Videos playlist every hour until ctx is cancelled.
 func (s *YouTubeLikedSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
@@ -49,7 +50,8 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 	start := time.Now()
 
 	if events != nil {
-		_ = events.Emit("likedvideos_sync_start", map[string]interface{}{
+		_ = events.Emit("source_start", map[string]interface{}{
+			"source":  "yt_liked",
 			"profile": profile,
 		})
 	}
@@ -58,12 +60,14 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 	if err != nil {
 		slog.Warn("syncLikedVideosAsync: auth error",
 			"event_type", "likedvideos_api_error",
+			"source", "yt_liked",
 			"profile", profile,
 			"error_class", "auth_error",
 			"error", err,
 		)
 		if events != nil {
 			_ = events.Emit("likedvideos_api_error", map[string]interface{}{
+				"source":      "yt_liked",
 				"profile":     profile,
 				"error_class": "auth_error",
 				"error":       err.Error(),
@@ -85,6 +89,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 				errClass = "quota_exhausted"
 				slog.Warn("syncLikedVideosAsync: quota exhausted",
 					"event_type", "likedvideos_quota_exhausted",
+					"source", "yt_liked",
 					"profile", profile,
 					"page", pageNum,
 					"error_class", errClass,
@@ -92,6 +97,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 				)
 				if events != nil {
 					_ = events.Emit("likedvideos_quota_exhausted", map[string]interface{}{
+						"source":      "yt_liked",
 						"profile":     profile,
 						"page":        pageNum,
 						"error_class": errClass,
@@ -100,12 +106,14 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 			} else {
 				slog.Warn("syncLikedVideosAsync: API error",
 					"event_type", "likedvideos_api_error",
+					"source", "yt_liked",
 					"profile", profile,
 					"error_class", errClass,
 					"error", err,
 				)
 				if events != nil {
 					_ = events.Emit("likedvideos_api_error", map[string]interface{}{
+						"source":      "yt_liked",
 						"profile":     profile,
 						"error_class": errClass,
 						"error":       err.Error(),
@@ -117,6 +125,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 
 		if events != nil {
 			_ = events.Emit("likedvideos_page_fetched", map[string]interface{}{
+				"source":     "yt_liked",
 				"profile":    profile,
 				"page":       pageNum,
 				"item_count": len(items),
@@ -126,6 +135,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 		if len(items) == 0 && pageNum == 1 {
 			if events != nil {
 				_ = events.Emit("likedvideos_empty", map[string]interface{}{
+					"source":  "yt_liked",
 					"profile": profile,
 				})
 			}
@@ -144,7 +154,8 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 			if !isNew {
 				skipped++
 				if events != nil {
-					_ = events.Emit("likedvideos_video_skipped", map[string]interface{}{
+					_ = events.Emit("source_item_skipped", map[string]interface{}{
+						"source":   "yt_liked",
 						"profile":  profile,
 						"video_id": item.VideoID,
 						"reason":   "already_seen",
@@ -170,7 +181,8 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 
 			enqueued++
 			if events != nil {
-				_ = events.Emit("likedvideos_video_enqueued", map[string]interface{}{
+				_ = events.Emit("source_item_enqueued", map[string]interface{}{
+					"source":       "yt_liked",
 					"profile":      profile,
 					"video_id":     item.VideoID,
 					"queue_row_id": rowID,
@@ -186,14 +198,16 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 
 	durMS := time.Since(start).Milliseconds()
 	slog.Info("syncLikedVideosAsync: complete",
-		"event_type", "likedvideos_sync_complete",
+		"event_type", "source_complete",
+		"source", "yt_liked",
 		"profile", profile,
 		"enqueued", enqueued,
 		"skipped", skipped,
 		"duration_ms", durMS,
 	)
 	if events != nil {
-		_ = events.Emit("likedvideos_sync_complete", map[string]interface{}{
+		_ = events.Emit("source_complete", map[string]interface{}{
+			"source":      "yt_liked",
 			"profile":     profile,
 			"enqueued":    enqueued,
 			"skipped":     skipped,
