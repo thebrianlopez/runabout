@@ -68,6 +68,8 @@ type QueueItem struct {
 	ArtifactPath   string `json:"artifact_path,omitempty" db:"artifact_path"` // F2: capture artifact file path
 	ContentWarning      string   `json:"content_warning,omitempty"`           // EPIC-102: "lit_parse_failed" when extraction failed
 	ExtractionConfidence *float64 `json:"extraction_confidence,omitempty"`     // EPIC-104: mean per-page confidence; -1.0 = JSON parse fallback; nil = non-PDF or pre-feature
+	RetryCount int   `json:"retry_count,omitempty"` // EPIC-108 M3: audio fallback retry attempts completed
+	RetryAfter int64 `json:"retry_after,omitempty"` // EPIC-108 M3: Unix timestamp; 0 = process immediately
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -219,6 +221,9 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE queue ADD COLUMN content_warning TEXT DEFAULT NULL",
 		// EPIC-104: mean per-page confidence from --format json; -1.0 = JSON parse fallback; NULL = non-PDF or pre-feature.
 		"ALTER TABLE queue ADD COLUMN extraction_confidence REAL",
+		// EPIC-108 M3: dead-letter retry counters for audio fallback jobs.
+		"ALTER TABLE queue ADD COLUMN retry_count INTEGER DEFAULT 0",
+		"ALTER TABLE queue ADD COLUMN retry_after INTEGER DEFAULT 0",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -559,11 +564,12 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,''), COALESCE(artifact_path,''), COALESCE(content_warning,''), extraction_confidence"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,''), COALESCE(artifact_path,''), COALESCE(content_warning,''), extraction_confidence, COALESCE(retry_count,0), COALESCE(retry_after,0)"
 
-// Pending returns all items with status=pending, ordered by id ASC (FIFO).
+// Pending returns all items with status=pending whose retry_after has elapsed,
+// ordered by id ASC (FIFO). Rows with retry_after=0 are always included (default).
 func (q *Queue) Pending() ([]QueueItem, error) {
-	return q.query("SELECT "+queueCols+" FROM queue WHERE status='pending' ORDER BY id ASC")
+	return q.query("SELECT "+queueCols+" FROM queue WHERE status='pending' AND retry_after<=strftime('%s','now') ORDER BY id ASC")
 }
 
 // List returns items filtered by status (empty string = all), limited to n rows.
@@ -628,6 +634,26 @@ func (q *Queue) MarkFailedWithReason(id int64, reason string) error {
 	_, err := q.db.Exec(
 		"UPDATE queue SET status='failed', error_reason=? WHERE id=?",
 		reason, id,
+	)
+	return err
+}
+
+// EnqueueAudioRetry resets a failed audio-fallback row to pending with an
+// exponential backoff delay. retryCount is the new total attempt count (1-based).
+// Backoff schedule: attempt 1→30s, 2→120s, 3+→600s. EPIC-108 M3.
+func (q *Queue) EnqueueAudioRetry(id int64, retryCount int) error {
+	backoffs := []int64{30, 120, 600}
+	idx := retryCount - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(backoffs) {
+		idx = len(backoffs) - 1
+	}
+	retryAfter := time.Now().Unix() + backoffs[idx]
+	_, err := q.db.Exec(
+		"UPDATE queue SET status='pending', retry_count=?, retry_after=?, error_reason='yt_audio_pending_retry' WHERE id=?",
+		retryCount, retryAfter, id,
 	)
 	return err
 }
@@ -2003,7 +2029,7 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 		var it QueueItem
 		var score int
 		var isScreenshotInt, isShortsInt int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source, &it.ArtifactPath, &it.ContentWarning, &it.ExtractionConfidence); err != nil {
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source, &it.ArtifactPath, &it.ContentWarning, &it.ExtractionConfidence, &it.RetryCount, &it.RetryAfter); err != nil {
 			return nil, err
 		}
 		if score != 0 {

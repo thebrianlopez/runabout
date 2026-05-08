@@ -27,7 +27,7 @@ import (
 func TestCT1_LitNotPresent(t *testing.T) {
 	probe := probeHealth(
 		func(string) (string, error) { return "", errors.New("not found") },
-		func(string) string { return "/data/tessdata" },
+		"/data/tessdata",
 	)
 	if probe.LitPresent {
 		t.Error("CT-1: LitPresent should be false when lookPath fails")
@@ -39,7 +39,7 @@ func TestCT1_LitNotPresent(t *testing.T) {
 func TestCT2_TessdataPrefixUnset(t *testing.T) {
 	probe := probeHealth(
 		func(string) (string, error) { return "/usr/local/bin/lit", nil },
-		func(string) string { return "" }, // env var empty
+		"", // tessdata not configured
 	)
 	if probe.TessdataPrefixSet {
 		t.Error("CT-2: TessdataPrefixSet should be false when env var is empty")
@@ -51,7 +51,7 @@ func TestCT2_TessdataPrefixUnset(t *testing.T) {
 func TestCT3_HealthDegradedWhenLitAbsent(t *testing.T) {
 	probe := probeHealth(
 		func(string) (string, error) { return "", errors.New("not found") },
-		func(string) string { return "/data/tessdata" },
+		"/data/tessdata",
 	)
 	if probe.Status != "degraded" {
 		t.Errorf("CT-3: Status = %q, want \"degraded\"", probe.Status)
@@ -63,7 +63,7 @@ func TestCT3_HealthDegradedWhenLitAbsent(t *testing.T) {
 func TestCT4_HealthOKWhenBothPresent(t *testing.T) {
 	probe := probeHealth(
 		func(string) (string, error) { return "/usr/local/bin/lit", nil },
-		func(string) string { return "/data/tessdata" },
+		"/data/tessdata",
 	)
 	if probe.Status != "ok" {
 		t.Errorf("CT-4: Status = %q, want \"ok\"", probe.Status)
@@ -325,7 +325,7 @@ func TestBT2_LitVersionPopulated(t *testing.T) {
 			}
 			return "", errors.New("not found")
 		},
-		func(string) string { return "/data/tessdata" },
+		"/data/tessdata",
 	)
 	// LitPresent must be true; LitVersion is populated when `lit --version` succeeds.
 	// In this unit test the real binary is not invoked, so LitVersion may be empty.

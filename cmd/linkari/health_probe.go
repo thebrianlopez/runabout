@@ -12,17 +12,17 @@ import (
 // Populated by probeHealth and embedded in the GET /health response.
 type HealthProbe struct {
 	LitPresent        bool   // true when lit binary is on PATH
-	TessdataPrefixSet bool   // true when TESSDATA_PREFIX env var is non-empty
+	TessdataPrefixSet bool   // true when tessdata_prefix is configured or env var is set
 	LitVersion        string // output of `lit --version`; empty when lit absent or version unavailable
 	Status            string // "ok" | "degraded"
 }
 
-// probeHealth checks whether the lit binary is available and TESSDATA_PREFIX is set.
-// lookPath and getenv are injected so tests can exercise all branches without
-// touching the real filesystem or environment.
-func probeHealth(lookPath func(string) (string, error), getenv func(string) string) HealthProbe {
+// probeHealth checks whether the lit binary is available and tessdata is configured.
+// tessDataPrefix is read from the config struct (primary); lookPath is injected so
+// tests can exercise all branches without touching the real filesystem. EPIC-109 M2.
+func probeHealth(lookPath func(string) (string, error), tessDataPrefix string) HealthProbe {
 	probe := HealthProbe{
-		TessdataPrefixSet: getenv("TESSDATA_PREFIX") != "",
+		TessdataPrefixSet: tessDataPrefix != "",
 	}
 
 	if _, err := lookPath("lit"); err == nil {

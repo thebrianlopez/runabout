@@ -459,6 +459,18 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.YouTube.FallbackToAudio {
 		ytFallbackToAudio = true
 	}
+	// EPIC-108 M1: resize semaphore to configured concurrency (default 1).
+	if cfg != nil && cfg.Whisper.MaxConcurrency > 0 {
+		ytAudioSem = make(chan struct{}, cfg.Whisper.MaxConcurrency)
+	}
+	// EPIC-108 M2: override whisper deadline when explicitly configured.
+	if cfg != nil && cfg.Whisper.TimeoutSecs > 0 {
+		ytWhisperTimeoutSecs = cfg.Whisper.TimeoutSecs
+	}
+	// EPIC-108 M3: override dead-letter retry limit when explicitly configured.
+	if cfg != nil && cfg.Whisper.MaxRetries > 0 {
+		ytAudioMaxRetries = cfg.Whisper.MaxRetries
+	}
 	slog.Info("claude config resolved",
 		"event_type", "claude_config_init",
 		"claude_path", claudeBinaryPath,
