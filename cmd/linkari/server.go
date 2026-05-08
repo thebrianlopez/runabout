@@ -234,6 +234,9 @@ type Server struct {
 	// GAP-08: metrics collection. nil when metrics.enabled=false in server.yaml.
 	metrics *MetricsCollector
 
+	// EPIC-096 F7: source health registry. nil until SetRegistry is called.
+	registry *SourceRegistry
+
 	// F2: capture pipeline state.
 	wg               sync.WaitGroup                // tracks in-flight captureAsync goroutines
 	captureRenderers map[string]CaptureRenderer    // actionID → renderer; guarded by captureRenderersMu
@@ -327,6 +330,11 @@ func (s *Server) SetShield(shield *Shield) {
 // NewMetricsCollector; no-op when m is nil (metrics.enabled=false).
 func (s *Server) SetMetrics(m *MetricsCollector) {
 	s.metrics = m
+}
+
+// SetRegistry wires the SourceRegistry for /sources health reporting (EPIC-096 F7).
+func (s *Server) SetRegistry(r *SourceRegistry) {
+	s.registry = r
 }
 
 // SetTsnetAddr records the tsnet Funnel address for health reporting.
@@ -556,6 +564,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// EPIC-018 M5: Watch Later sync trigger.
 	mux.HandleFunc("POST /sync/youtube-watchlater", s.handleSyncWatchLater)
 	mux.HandleFunc("POST /sync/youtube-likedvideos", s.handleSyncLikedVideos)
+	// EPIC-096 F7: source health metrics.
+	mux.HandleFunc("GET /sources", s.handleSources)
 }
 
 // registerFunnelRoutes adds the public-facing route allowlist for the Funnel
@@ -598,6 +608,21 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	for _, line := range s.ring.Lines() {
 		io.WriteString(w, line)
 	}
+}
+
+// handleSources returns a JSON array of source health snapshots (EPIC-096 F7).
+func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
+	if !s.authenticateRequest(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.registry == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.registry.HealthSnapshot())
 }
 
 func (s *Server) handleActions(w http.ResponseWriter, r *http.Request) {
