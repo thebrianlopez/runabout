@@ -408,7 +408,7 @@ func classificationPreamble(profile, rawURL string, source string, ct ContentTyp
 //
 // Must be launched as a goroutine from handleTemplate.
 // Takes eval as a parameter so tests can inject a stub Evaluator.
-func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
+func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger, bskyClient *BlueskyClient) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -1165,7 +1165,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			itemProfile, *itemScore, itemSlug, itemVerdict, itemURL,
 			sc.GapSummary(3), "", classifySource, contentWarning)
 		// EPIC-015 M4: Bluesky verdict reply — fire-and-forget; never blocks FCM.
-		_ = publishVerdictReply(context.Background(), bskyClientForScoring, itemURL, *itemScore, itemVerdict, q, 1)
+		_ = publishVerdictReply(context.Background(), bskyClient, itemURL, *itemScore, itemVerdict, q, 1)
 	}
 
 	slog.Info("score_async: complete",
@@ -1189,14 +1189,14 @@ func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLog
 	if req.Type == "" && req.URL != "" {
 		req.Type = "url"
 	}
-	scoreAsync(req, q, eval, events)
+	scoreAsync(req, q, eval, events, nil)
 }
 
 // scoreFileAsync delegates to scoreAsync. EPIC-077 M5: retained for the same
 // reason as scoreURLAsync. handleTemplate dispatch will be updated to call
 // scoreAsync directly.
 func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
-	scoreAsync(req, q, eval, events)
+	scoreAsync(req, q, eval, events, nil)
 }
 
 // isCameraPhoto returns true when a share request looks like a raw camera photo

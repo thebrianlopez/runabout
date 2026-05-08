@@ -164,12 +164,13 @@ type BlueskyFirehoseSource struct {
 // Name returns the stable source identifier used as the seen_content.source key.
 func (s *BlueskyFirehoseSource) Name() string { return "bsky_firehose" }
 
-// Start runs the WebSocket loop with exponential backoff. Returns immediately if
-// client is nil (source auto-skipped when Bluesky auth is not configured).
+// AuthDeps declares the auth providers required before Start() is called.
+// The registry skips this source when the "bluesky" provider is not ready.
+func (s *BlueskyFirehoseSource) AuthDeps() []string { return []string{"bluesky"} }
+
+// Start runs the WebSocket loop with exponential backoff.
+// Called only when AuthDeps() are satisfied — client is guaranteed non-nil.
 func (s *BlueskyFirehoseSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
-	if s.client == nil {
-		return nil
-	}
 	runFirehoseWorker(ctx, q, s.client, slog.Default())
 	return nil
 }
@@ -220,7 +221,8 @@ func runFirehoseWorker(ctx context.Context, q *Queue, bskyClient *BlueskyClient,
 		connectURL = fmt.Sprintf("%s?cursor=%d", relayURL, lastSeq)
 	}
 	slog.Info("firehose worker started",
-		"event_type", "firehose_worker_started",
+		"event_type", "source_start",
+		"source", "bsky_firehose",
 		"relay_url", connectURL,
 		"cursor", lastSeq,
 	)

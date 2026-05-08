@@ -80,9 +80,10 @@ type Router struct {
 	debug        bool
 	mu           sync.RWMutex
 	queue        *Queue
-	whisperModel string       // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
-	ytdlpPath    string       // EPIC-009: path to yt-dlp binary for YouTube transcription
-	events       *EventLogger // EPIC-076: classification telemetry; nil when event logging not configured
+	bskyClient   *BlueskyClient // EPIC-094: threaded for scoreAsync verdict replies
+	whisperModel string         // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
+	ytdlpPath    string         // EPIC-009: path to yt-dlp binary for YouTube transcription
+	events       *EventLogger   // EPIC-076: classification telemetry; nil when event logging not configured
 }
 
 // SetQueue wires the queue for server-side uinit_* scoring (EPIC-060 M1).
@@ -90,6 +91,13 @@ type Router struct {
 func (r *Router) SetQueue(q *Queue) {
 	r.mu.Lock()
 	r.queue = q
+	r.mu.Unlock()
+}
+
+// SetBskyClient wires the Bluesky client for verdict reply publishing (EPIC-094).
+func (r *Router) SetBskyClient(c *BlueskyClient) {
+	r.mu.Lock()
+	r.bskyClient = c
 	r.mu.Unlock()
 }
 
@@ -515,7 +523,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	//   - "document": lit parse text extraction, metadata fallback
 	//   - "image": metadata synthesis
 	if ac.ServerScore && (req.Type == "image" || req.Type == "document" || req.Type == "url" || req.Type == "") {
-		go scoreAsync(req, r.queue, HaikuJSONEvaluator{}, r.events)
+		go scoreAsync(req, r.queue, HaikuJSONEvaluator{}, r.events, r.bskyClient)
 		switch req.Type {
 		case "image", "document":
 			return "Scoring file — verdict via FCM", nil

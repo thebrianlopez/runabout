@@ -593,8 +593,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// EPIC-013 M3: resume persisted Bluesky session on startup.
 			if queue != nil {
 				resumeBlueskySessionsOnStartup(cmd.Context(), queue, srv)
-				// EPIC-015 M4: expose the bskyClient to scoreAsync via package-level var.
-				bskyClientForScoring = srv.bskyClient
+				// EPIC-094: thread bskyClient through Router instead of package-level var.
+				router.SetBskyClient(srv.bskyClient)
 			}
 			srv.SetBlocklist(serverFileCfg.Blocklist)
 			srv.SetCORSOrigins(serverFileCfg.CORSOrigins)
@@ -720,6 +720,10 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					slog.Warn("subscription poller requires action=uinit_auto but it is not registered — subscription videos will fail at replay; add uinit_auto to actions.yaml")
 				}
 				registry := NewSourceRegistry()
+				// EPIC-094: register auth providers so the registry can skip
+				// sources whose credentials are not available at startup.
+				registry.RegisterAuth("bluesky", &blueskyAuthProvider{client: srv.bskyClient})
+				registry.RegisterAuth("google_youtube", &googleYouTubeAuthProvider{clientID: srv.googleClientID})
 				for _, src := range registeredSources(srv) {
 					registry.Register(src)
 				}
