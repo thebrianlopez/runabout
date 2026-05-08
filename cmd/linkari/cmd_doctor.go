@@ -242,13 +242,26 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
-			// --- Check: TESSDATA_PREFIX env var (EPIC-102) ---
+			// --- Check: tessdata_prefix (EPIC-109 M1) ---
+			// PRIMARY: cfg.LiteParse.TessDataPrefix (config struct)
+			// FALLBACK: TESSDATA_PREFIX env var
+			// REASON: TESSDATA_PREFIX is only set in the process env by cmd_triage.go
+			// during `linkari serve` startup; `doctor` does not run that init path.
 			{
-				if val := os.Getenv("TESSDATA_PREFIX"); val == "" {
+				cfgVal := ""
+				if serverCfg != nil {
+					cfgVal = serverCfg.LiteParse.TessDataPrefix
+				}
+				envVal := os.Getenv("TESSDATA_PREFIX") // FALLBACK: set by serve init path
+				effective := cfgVal
+				if effective == "" {
+					effective = envVal
+				}
+				if effective == "" {
 					addCheck(warnCheck("tessdata_prefix",
-						"TESSDATA_PREFIX not set — OCR fallback via lit will be unavailable"))
+						"tessdata_prefix not set in config and TESSDATA_PREFIX not in env — OCR via lit will be unavailable"))
 				} else {
-					addCheck(okCheck("tessdata_prefix", val))
+					addCheck(okCheck("tessdata_prefix", effective))
 				}
 			}
 

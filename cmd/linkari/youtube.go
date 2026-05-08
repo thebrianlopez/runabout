@@ -34,6 +34,32 @@ var ytTimeoutSeconds = 30
 // Default true (EPIC-003 M5). Overridable via server.yaml youtube.fallback_to_audio: false.
 var ytFallbackToAudio = true
 
+// ytAudioSem serializes whisper-cli invocations to prevent concurrent model loads
+// from exhausting available memory (EPIC-108 M1). Cap=1 by default; resized by
+// initClaudeConfig when [server.whisper].max_concurrency is set.
+var ytAudioSem = make(chan struct{}, 1)
+
+// ytWhisperTimeoutSecs overrides the computed whisper deadline when > 0.
+// Set by initClaudeConfig from [server.whisper].timeout_secs. EPIC-108 M2.
+var ytWhisperTimeoutSecs int
+
+// ytAudioMaxRetries is the dead-letter retry limit for audio fallback jobs.
+// Default 3; configurable via [server.whisper].max_retries. EPIC-108 M3.
+var ytAudioMaxRetries = 3
+
+// whisperDeadlineSecs returns the wall-clock budget for a single whisper-cli run.
+// If configSecs > 0 it wins; otherwise uses max(audioDurationSecs×2, 900).
+func whisperDeadlineSecs(audioDurationSecs, configSecs int) int {
+	if configSecs > 0 {
+		return configSecs
+	}
+	d := audioDurationSecs * 2
+	if d < 900 {
+		d = 900
+	}
+	return d
+}
+
 // execYtdlpAudio is the test seam for yt-dlp audio download invocation.
 // Replace in tests to inject mock output without spawning a real subprocess.
 // EPIC-001 M3.
@@ -391,20 +417,23 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 	if q != nil {
 		q.SetProgress(rowID, "transcribing_audio")
 	}
-	whisperCtx, whisperCancel := context.WithTimeout(ctx, 300*time.Second)
+	// EPIC-108 M2: dynamic deadline — max(duration×2, 900s); configurable via [server.whisper].timeout_secs.
+	deadlineSecs := whisperDeadlineSecs(meta.Duration, ytWhisperTimeoutSecs)
+	whisperCtx, whisperCancel := context.WithTimeout(ctx, time.Duration(deadlineSecs)*time.Second)
 	transcript, whisperErr := execWhisper(whisperCtx, wavPath, whisperModel)
 	whisperCancel()
 	if whisperErr != nil {
-		// EPIC-005 M1: wrap deadline exceeded as yt_audio_timeout so callers can
-		// surface a specific verdict rather than the generic yt_no_subtitles reason.
 		if errors.Is(whisperErr, context.DeadlineExceeded) {
-			slog.Warn("yt_audio_fallback_failed",
-				"event_type", "yt_audio_fallback_failed",
+			slog.Warn("yt_audio_timeout",
+				"event_type", "yt_audio_timeout",
 				"row_id", rowID,
-				"step", "whisper",
-				"error_reason", "yt_audio_timeout",
+				"deadline_secs", deadlineSecs,
 			)
 			if events != nil {
+				_ = events.Emit("yt_audio_timeout", map[string]interface{}{
+					"row_id":       rowID,
+					"deadline_secs": deadlineSecs,
+				})
 				_ = events.Emit("yt_audio_fallback_failed", map[string]interface{}{
 					"row_id":       rowID,
 					"step":         "whisper",
@@ -536,7 +565,26 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 		// before giving up. Only activated for yt_no_subtitles (not binary missing
 		// or extraction timeouts which imply a network or binary problem).
 		if verdict == "yt_no_subtitles" && ytFallbackToAudio {
+			// EPIC-108 M1: acquire semaphore before spawning whisper-cli.
+			select {
+			case ytAudioSem <- struct{}{}:
+				// acquired immediately
+			default:
+				if events != nil {
+					_ = events.Emit("yt_audio_queued_pending_semaphore", map[string]interface{}{"row_id": rowID})
+				}
+				slog.Info("yt_audio_fallback: waiting for semaphore",
+					"event_type", "yt_audio_queued_pending_semaphore",
+					"row_id", rowID,
+				)
+				select {
+				case ytAudioSem <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+			}
 			transcript, meta, err = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events, whisperModel)
+			<-ytAudioSem
 			if err == nil {
 				meta.SubtitleType = "audio"
 				// Fallback succeeded — continue with transcript below.
@@ -554,6 +602,36 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 				"verdict", verdict,
 				"error", err,
 			)
+			// EPIC-108 M3: dead-letter requeue with exponential backoff.
+			if q != nil {
+				if row, gErr := q.GetByID(rowID); gErr == nil && row != nil && row.RetryCount < ytAudioMaxRetries {
+					nextAttempt := row.RetryCount + 1
+					if rErr := q.EnqueueAudioRetry(rowID, nextAttempt); rErr == nil {
+						slog.Info("yt_audio_retry_enqueued",
+							"event_type", "yt_audio_retry_enqueued",
+							"row_id", rowID,
+							"attempt", nextAttempt,
+						)
+						if events != nil {
+							_ = events.Emit("yt_audio_retry_enqueued", map[string]interface{}{
+								"row_id":  rowID,
+								"attempt": nextAttempt,
+							})
+						}
+						return
+					}
+				}
+				q.MarkFailedWithReason(rowID, "yt_audio_terminal_failed")
+				slog.Warn("yt_audio_terminal_failed",
+					"event_type", "yt_audio_terminal_failed",
+					"row_id", rowID,
+				)
+				if events != nil {
+					_ = events.Emit("yt_audio_terminal_failed", map[string]interface{}{"row_id": rowID})
+				}
+				enqueuePrefilterPush(q, &req, "yt_audio_terminal_failed")
+			}
+			return
 		}
 		if q != nil {
 			q.MarkFailedWithReason(rowID, verdict)
@@ -794,7 +872,26 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 		}
 		// EPIC-001 M3: same audio fallback gate as scoreYouTubeAsync.
 		if verdict == "yt_no_subtitles" && ytFallbackToAudio {
+			// EPIC-108 M1: acquire semaphore before spawning whisper-cli.
+			select {
+			case ytAudioSem <- struct{}{}:
+				// acquired immediately
+			default:
+				if events != nil {
+					_ = events.Emit("yt_audio_queued_pending_semaphore", map[string]interface{}{"row_id": rowID})
+				}
+				slog.Info("yt_audio_fallback: waiting for semaphore",
+					"event_type", "yt_audio_queued_pending_semaphore",
+					"row_id", rowID,
+				)
+				select {
+				case ytAudioSem <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+			}
 			transcript, meta, err = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events, whisperModel)
+			<-ytAudioSem
 			if err == nil {
 				meta.SubtitleType = "audio"
 				goto txSubtitleReady
@@ -810,6 +907,36 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 				"verdict", verdict,
 				"error", err,
 			)
+			// EPIC-108 M3: dead-letter requeue with exponential backoff.
+			if q != nil {
+				if row, gErr := q.GetByID(rowID); gErr == nil && row != nil && row.RetryCount < ytAudioMaxRetries {
+					nextAttempt := row.RetryCount + 1
+					if rErr := q.EnqueueAudioRetry(rowID, nextAttempt); rErr == nil {
+						slog.Info("yt_audio_retry_enqueued",
+							"event_type", "yt_audio_retry_enqueued",
+							"row_id", rowID,
+							"attempt", nextAttempt,
+						)
+						if events != nil {
+							_ = events.Emit("yt_audio_retry_enqueued", map[string]interface{}{
+								"row_id":  rowID,
+								"attempt": nextAttempt,
+							})
+						}
+						return
+					}
+				}
+				q.MarkFailedWithReason(rowID, "yt_audio_terminal_failed")
+				slog.Warn("yt_audio_terminal_failed",
+					"event_type", "yt_audio_terminal_failed",
+					"row_id", rowID,
+				)
+				if events != nil {
+					_ = events.Emit("yt_audio_terminal_failed", map[string]interface{}{"row_id": rowID})
+				}
+				enqueuePrefilterPush(q, &req, "yt_audio_terminal_failed")
+			}
+			return
 		}
 		if q != nil {
 			q.MarkFailedWithReason(rowID, verdict)

@@ -68,7 +68,8 @@ func (s ServerConfig) IsZero() bool {
 		s.GoogleClientID == "" && s.SessionTTLDays == 0 &&
 		!s.Sandbox.Enabled &&
 		s.ImageNoiseGateMaxBytes == 0 && s.MaxScoringCostUSD == 0 &&
-		s.LiteParseePath == ""
+		s.LiteParseePath == "" &&
+		s.Whisper.MaxConcurrency == 0 && s.Whisper.TimeoutSecs == 0 && s.Whisper.MaxRetries == 0
 }
 
 // YouTubeConfig holds per-field tuning for yt-dlp extraction. EPIC-090 M5.
@@ -83,6 +84,14 @@ type YouTubeConfig struct {
 	SubtitleLangs   string `toml:"subtitle_langs"`    // yt-dlp --sub-langs value (default: "en.*,en")
 	TimeoutSeconds  int    `toml:"timeout_seconds"`   // extraction timeout in seconds (default: 30)
 	FallbackToAudio bool   `toml:"fallback_to_audio"` // EPIC-001 M3: download audio + whisper when no subtitles (default: true via package var)
+}
+
+// WhisperConfig holds resource-control knobs for whisper-cli invocations.
+// Nested under [server.whisper] in config.toml. EPIC-108.
+type WhisperConfig struct {
+	MaxConcurrency int `toml:"max_concurrency"` // max concurrent whisper-cli processes (default 1)
+	TimeoutSecs    int `toml:"timeout_secs"`    // whisper wall-clock deadline; 0 = max(duration×2, 900)
+	MaxRetries     int `toml:"max_retries"`     // dead-letter retry limit for audio fallback (default 3)
 }
 
 // RelayedWatchdogConfig is the resolved runtime view of the watchdog knobs,
@@ -347,6 +356,7 @@ type ServerConfig struct {
 	LiteParseePath string        `toml:"liteparse_path"` // path to lit binary (default: lit on PATH; install: brew install llamaindex-liteparse)
 	LiteParse      LiteParseConfig `toml:"liteparse"`  // EPIC-104: confidence-aware extraction config
 	YouTube        YouTubeConfig `toml:"youtube"`        // EPIC-090 M5: per-field YouTube tuning
+	Whisper        WhisperConfig `toml:"whisper"`        // EPIC-108: whisper-cli concurrency knobs
 
 	// EPIC-001: Google Sign-In config.
 	GoogleClientID     string `toml:"google_client_id"`     // ${secretsmanager:...} or literal; resolved via expandConfigRefs
