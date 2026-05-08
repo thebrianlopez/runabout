@@ -9,6 +9,7 @@ use (
 	./cmd/linkari-labeler
 	./cmd/plaid-service
 	./cmd/protonexport
+	./cmd/runway
 	./cmd/ts-go
 	./cmd/wasend
 	./cmd/workctl

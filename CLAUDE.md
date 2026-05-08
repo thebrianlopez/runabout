@@ -1,5 +1,5 @@
 
-# runabout — bluesky-support-linkari
+# runabout — project-runway
 
 ## Repo Context
 
@@ -7,7 +7,7 @@
 |-------|-------|
 | **Repo** | `runabout` |
 | **Role** | `` |
-| **Workspace** | `bluesky-support-linkari` |
+| **Workspace** | `project-runway` |
 | **Workspace manifest** | `../CLAUDE.md` |
 
 Read `../CLAUDE.md` for workspace-level context, sibling repos, and environment facts.
@@ -16,7 +16,7 @@ Read `../CLAUDE.md` for workspace-level context, sibling repos, and environment 
 
 ## Role — What This Repo Owns
 
-This repo serves the **** role in the `bluesky-support-linkari` workspace.
+This repo serves the **** role in the `project-runway` workspace.
 
 Scope your changes to this role. If work requires changes in a sibling repo, coordinate via the workspace manifest — do not cross-commit.
 
