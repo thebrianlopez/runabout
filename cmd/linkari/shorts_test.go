@@ -192,6 +192,7 @@ func TestShortsRG1RubricFallbackNeverEmpty(t *testing.T) {
 
 // M12: End-to-end integration: Shorts URL → is_shorts=1 → push_outbox.content_type='youtube_shorts'.
 func TestShortsAsync_M12_Integration(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	installTestProfileDir(t, "eng")
 
 	prevNorm := execNormalizeURL

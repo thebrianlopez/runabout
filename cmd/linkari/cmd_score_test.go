@@ -11,6 +11,7 @@ import (
 // also enqueue a digest row in push_outbox so the server's outbox worker
 // flushes it via FCM. Previously the CLI bypassed this path entirely.
 func TestScoreCmd_AutoArchiveEnqueuesDigestPush(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // prevent real config.toml from loading SM refs
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 
 	cmd := scoreWriteCmd()
