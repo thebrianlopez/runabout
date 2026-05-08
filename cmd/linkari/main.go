@@ -727,6 +727,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				for _, src := range registeredSources(srv) {
 					registry.Register(src)
 				}
+				srv.SetRegistry(registry)
 				go registry.Start(cmd.Context(), queue, func(req *ShareRequest) error {
 					_, err := queue.Enqueue(req)
 					return err
