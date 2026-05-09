@@ -10,6 +10,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -19,6 +20,11 @@ import (
 	"github.com/coder/websocket"
 	"github.com/fxamacker/cbor/v2"
 )
+
+// errCursorExpired is returned by processFirehoseMessage when the relay sends
+// an op=-1 error frame. runFirehoseWorker resets to live tail (cursor=0) on
+// this signal rather than retrying with the same stale cursor indefinitely.
+var errCursorExpired = errors.New("relay error frame — cursor expired or rejected")
 
 // firehosePost represents a decoded Bluesky post from the firehose.
 type firehosePost struct {
@@ -64,7 +70,19 @@ func processFirehoseMessage(ctx context.Context, q *Queue, msg []byte) error {
 		return nil // CT-4: skip malformed
 	}
 	if header.Op != 1 {
-		return nil // op=-1 is an error frame; skip non-message ops
+		// Relay error frame (op=-1). Decode body for observability, then signal
+		// the worker to reset to live tail — retrying the same cursor is futile.
+		var relayErr struct {
+			Error   string `cbor:"error"`
+			Message string `cbor:"message"`
+		}
+		_ = dec.Decode(&relayErr)
+		slog.Warn("firehose relay error frame",
+			"event_type", "firehose_relay_error",
+			"relay_error", relayErr.Error,
+			"relay_message", relayErr.Message,
+		)
+		return errCursorExpired
 	}
 	if header.T != "#commit" {
 		return nil // #sync, #identity, #account, #info — not handled in MVP
@@ -206,6 +224,9 @@ func connectAndRead(ctx context.Context, q *Queue, url string) error {
 			return err
 		}
 		if err := processFirehoseMessage(ctx, q, msg); err != nil {
+			if errors.Is(err, errCursorExpired) {
+				return err // propagate to runFirehoseWorker for cursor reset
+			}
 			slog.Warn("firehose process error", "error", err)
 		}
 	}
@@ -244,9 +265,13 @@ func runFirehoseWorker(ctx context.Context, q *Queue, bskyClient *BlueskyClient,
 		}
 
 		if err != nil {
+			errorClass := "websocket_error"
+			if errors.Is(err, errCursorExpired) {
+				errorClass = "cursor_expired"
+			}
 			slog.Warn("firehose disconnected",
 				"event_type", "firehose_disconnected",
-				"error_class", "websocket_error",
+				"error_class", errorClass,
 				"backoff_secs", int(backoff.Seconds()),
 			)
 		}
@@ -259,8 +284,17 @@ func runFirehoseWorker(ctx context.Context, q *Queue, bskyClient *BlueskyClient,
 
 		backoff = time.Duration(math.Min(float64(backoff*2), float64(maxBackoff)))
 
-		// Update cursor for reconnect.
-		lastSeq, _ = q.LoadLastFirehoseSeq()
+		// Update cursor for reconnect. On cursor expiry reset to live tail (0)
+		// so the relay doesn't reject the connection again with the same stale seq.
+		if errors.Is(err, errCursorExpired) {
+			slog.Info("firehose cursor reset to live tail",
+				"event_type", "firehose_cursor_reset",
+				"old_cursor", lastSeq,
+			)
+			lastSeq = 0
+		} else {
+			lastSeq, _ = q.LoadLastFirehoseSeq()
+		}
 		connectURL = relayURL
 		if lastSeq > 0 {
 			connectURL = fmt.Sprintf("%s?cursor=%d", relayURL, lastSeq)
