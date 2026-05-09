@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -85,7 +86,11 @@ func processFirehoseMessage(ctx context.Context, q *Queue, msg []byte) error {
 		return errCursorExpired
 	}
 	if header.T != "#commit" {
-		return nil // #sync, #identity, #account, #info — not handled in MVP
+		slog.Debug("firehose frame skipped",
+			"event_type", "firehose_frame_skipped",
+			"frame_type", header.T,
+		)
+		return nil
 	}
 
 	var body firehoseBody
@@ -132,26 +137,36 @@ func handleFirehosePost(ctx context.Context, q *Queue, post *firehosePost) error
 	}
 	_ = q.MarkContentSeen("bsky_firehose", post.AtURI, 0)
 
-	// Fetch all subscriptions.
+	// Collect all subscriptions into a slice before doing any writes.
+	// With MaxOpenConns=1, holding an open rows cursor while calling write
+	// methods would deadlock — both need the same single connection.
 	rows, err := q.db.Query("SELECT profile, keyword FROM firehose_subscriptions")
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-
-	textLower := strings.ToLower(post.Text + " " + post.AtURI)
+	type subscription struct{ profile, keyword string }
+	var subs []subscription
 	for rows.Next() {
-		var profile, keyword string
-		if err := rows.Scan(&profile, &keyword); err != nil {
+		var s subscription
+		if err := rows.Scan(&s.profile, &s.keyword); err != nil {
 			continue
 		}
-		if !strings.Contains(textLower, keyword) {
+		subs = append(subs, s)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	textLower := strings.ToLower(post.Text + " " + post.AtURI)
+	for _, s := range subs {
+		if !strings.Contains(textLower, s.keyword) {
 			continue
 		}
 
 		req := &ShareRequest{
 			URL:     post.AtURI,
-			Profile: profile,
+			Profile: s.profile,
 			Type:    "url",
 		}
 		rowID, err := q.EnqueueWithSource(req, "firehose")
@@ -161,7 +176,7 @@ func handleFirehosePost(ctx context.Context, q *Queue, post *firehosePost) error
 		}
 
 		// Enqueue notify push — NOT digest — to avoid throttle window consumption.
-		_, err = q.EnqueuePushWithProfile("notify", profile, 0,
+		_, err = q.EnqueuePushWithProfile("notify", s.profile, 0,
 			fmt.Sprintf("firehose-%d", rowID), "Firehose Match", post.AtURI, "")
 		if err != nil {
 			slog.Warn("firehose push error", "error", err)
@@ -170,12 +185,12 @@ func handleFirehosePost(ctx context.Context, q *Queue, post *firehosePost) error
 			"event_type", "firehose_commit_matched",
 			"seq", post.Seq,
 			"at_uri", post.AtURI,
-			"keyword", keyword,
-			"profile", profile,
+			"keyword", s.keyword,
+			"profile", s.profile,
 			"queue_id", rowID,
 		)
 	}
-	return rows.Err()
+	return nil
 }
 
 // BlueskyFirehoseSource wraps runFirehoseWorker behind the ContentSource interface.
@@ -215,6 +230,27 @@ func connectAndRead(ctx context.Context, q *Queue, url string) error {
 		"relay_url", url,
 	)
 
+	// Emit frame throughput every 60s so a zero-throughput connected firehose
+	// is observable without waiting for disconnect (POMO: firehose-cbor-decode-failure item 4).
+	var framesDecoded atomic.Int64
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				slog.Info("firehose throughput",
+					"event_type", "firehose_frames_decoded",
+					"frames_last_60s", framesDecoded.Swap(0),
+				)
+			case <-done:
+				return
+			}
+		}
+	}()
+
 	for {
 		_, msg, err := conn.Read(ctx)
 		if err != nil {
@@ -223,6 +259,7 @@ func connectAndRead(ctx context.Context, q *Queue, url string) error {
 			}
 			return err
 		}
+		framesDecoded.Add(1)
 		if err := processFirehoseMessage(ctx, q, msg); err != nil {
 			if errors.Is(err, errCursorExpired) {
 				return err // propagate to runFirehoseWorker for cursor reset
