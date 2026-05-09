@@ -1653,3 +1653,26 @@ func TestSeenContent_CT9_NewQueueIdempotent(t *testing.T) {
 		t.Error("CT-9: item should still be seen after Queue reopen")
 	}
 }
+
+// TestQueueRG_NoConcurrentBusy is a regression guard for the 2026-05-09
+// SQLITE_BUSY incident where concurrent goroutines calling EnqueueTranscriptPush
+// lost 6/8 FCM push notifications under burst load. Verifies that two goroutines
+// writing to push_outbox concurrently via the same *Queue both succeed.
+// Root fix: SetMaxOpenConns(1) in NewQueue.
+func TestQueueRG_NoConcurrentBusy(t *testing.T) {
+	q := newTestQueue(t)
+
+	errc := make(chan error, 2)
+	for i := range 2 {
+		slug := fmt.Sprintf("rg-busy-%d", i)
+		go func() {
+			errc <- q.EnqueueTranscriptPush("eng", slug, "test", "https://youtube.com/watch?v=test")
+		}()
+	}
+
+	for range 2 {
+		if err := <-errc; err != nil {
+			t.Errorf("concurrent EnqueueTranscriptPush: %v", err)
+		}
+	}
+}
