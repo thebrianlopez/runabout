@@ -78,6 +78,13 @@ func whisperDeadlineSecs(audioDurationSecs, configSecs int) int {
 // EPIC-001 M3.
 var execYtdlpAudio = runYtdlpAudioDownload
 
+// enqueueTranscriptPushFn is the test seam for FCM transcript push delivery.
+// Replace in tests to simulate push success or failure without a real Queue.
+// EPIC-110 M1.
+var enqueueTranscriptPushFn = func(q *Queue, profile, slug, verdict, url string) error {
+	return q.EnqueueTranscriptPush(profile, slug, verdict, url)
+}
+
 // ytVideoMeta is the subset of yt-dlp JSON output we care about.
 // EPIC-090 M4: added Duration and SubtitleType.
 // EPIC-012 M4: added IsShorts and ChannelID.
@@ -506,13 +513,8 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 			)
 			if events != nil {
 				_ = events.Emit("yt_audio_timeout", map[string]interface{}{
-					"row_id":       rowID,
+					"row_id":        rowID,
 					"deadline_secs": deadlineSecs,
-				})
-				_ = events.Emit("yt_audio_fallback_failed", map[string]interface{}{
-					"row_id":       rowID,
-					"step":         "whisper",
-					"error_reason": "yt_audio_timeout",
 				})
 			}
 			return "", meta, fmt.Errorf("yt_audio_timeout: %w", whisperErr)
@@ -1057,6 +1059,23 @@ txSubtitleReady:
 		})
 	}
 
+	// M2: F3 contract — reject empty transcripts before any delivery attempt.
+	// FDD §5: "F3 reads transcript_text only after a *_ok event; never processes
+	// a partial/empty transcript." EPIC-110 M2.
+	if strings.TrimSpace(transcript) == "" {
+		slog.Warn("transcribe_youtube: empty transcript — guard triggered",
+			"event_type", "yt_transcript_empty_guard",
+			"row_id", rowID,
+		)
+		if events != nil {
+			_ = events.Emit("yt_transcript_empty_guard", map[string]interface{}{"row_id": rowID})
+		}
+		if q != nil {
+			q.MarkFailedWithReason(rowID, "yt_transcript_empty")
+		}
+		return
+	}
+
 	// Step 3: save transcript file.
 	txPath, err := saveTranscriptFile(rowID, profile, "", transcript, "youtube", videoURL, meta.Title, meta.ID, meta.Duration, meta.SubtitleType)
 	if err != nil {
@@ -1070,16 +1089,36 @@ txSubtitleReady:
 		)
 	}
 
-	// Step 4: FCM push via EnqueueTranscriptPush — bypasses min-score floor
-	// and throttle. Verdict "transcribed" is the notification body. EPIC-090 M2.
+	// Step 4: FCM push via enqueueTranscriptPushFn — bypasses min-score floor
+	// and throttle. Emits yt_transcript_delivered on success, fcm_push_failed
+	// on error (non-fatal — vnote is stored). EPIC-110 M3.
 	if q != nil {
 		slug := fmt.Sprintf("yt-tx-%d", rowID)
 		verdict := "transcribed"
 		if meta.Title != "" {
 			verdict = meta.Title
 		}
-		if err := q.EnqueueTranscriptPush(profile, slug, verdict, videoURL); err != nil {
-			slog.Warn("transcribe_youtube: EnqueueTranscriptPush failed", "row_id", rowID, "error", err)
+		if pushErr := enqueueTranscriptPushFn(q, profile, slug, verdict, videoURL); pushErr != nil {
+			slog.Warn("transcribe_youtube: EnqueueTranscriptPush failed",
+				"event_type", "fcm_push_failed",
+				"row_id", rowID,
+				"error", pushErr,
+			)
+			if events != nil {
+				_ = events.Emit("fcm_push_failed", map[string]interface{}{
+					"row_id": rowID,
+					"url":    videoURL,
+					"error":  pushErr.Error(),
+				})
+			}
+		} else {
+			if events != nil {
+				_ = events.Emit("yt_transcript_delivered", map[string]interface{}{
+					"row_id": rowID,
+					"url":    videoURL,
+					"title":  meta.Title,
+				})
+			}
 		}
 	}
 
