@@ -110,10 +110,17 @@ func (q *Queue) PushConfig() *PushConfig {
 
 // NewQueue opens (or creates) the SQLite database at dbPath.
 func NewQueue(dbPath string, debug bool) (*Queue, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	// _busy_timeout=5000: wait up to 5s for a write lock instead of returning
+	// SQLITE_BUSY immediately. Defense-in-depth alongside SetMaxOpenConns(1).
+	db, err := sql.Open("sqlite", dbPath+"?_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open queue db: %w", err)
 	}
+	// Serialize all SQLite access through a single connection. SQLite allows
+	// only one writer at a time; multiple connections under concurrent load
+	// produce SQLITE_BUSY (observed: 75% push loss rate during 8-job whisper
+	// burst — release checklist §6, 2026-05-09).
+	db.SetMaxOpenConns(1)
 
 	// Integrity check before any schema work — catches SQLITE_CORRUPT (11) that
 	// would otherwise surface as non-fatal errors during later startup steps
