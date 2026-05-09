@@ -8,6 +8,7 @@ package main
 // kind='digest' — to avoid consuming the per-profile digest throttle window.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -27,9 +28,10 @@ type firehosePost struct {
 	Seq   int64
 }
 
-// firehoseHeader is the first element of a CBOR firehose message.
+// firehoseHeader is the first of two concatenated CBOR values in an ATProto frame.
+// op=1 is a normal message; op=-1 is an error frame.
 type firehoseHeader struct {
-	Op int    `cbor:"op"`
+	Op int64  `cbor:"op"`
 	T  string `cbor:"t"`
 }
 
@@ -46,30 +48,32 @@ type firehoseBody struct {
 // processFirehoseMessage decodes a raw WebSocket message and dispatches post
 // records. Returns nil (skip) on malformed CBOR — never propagates decode errors
 // so the worker stays alive. CT-4 contract.
+//
+// ATProto framing: each WebSocket frame contains two concatenated CBOR values
+// (header map, body map) — NOT a CBOR array. Validated against go-indigo
+// events/consumer.go:HandleRepoStream.
 func processFirehoseMessage(ctx context.Context, q *Queue, msg []byte) error {
-	// CBOR array: [header, body]
-	var parts []cbor.RawMessage
-	if err := cbor.Unmarshal(msg, &parts); err != nil {
+	dec := cbor.NewDecoder(bytes.NewReader(msg))
+
+	var header firehoseHeader
+	if err := dec.Decode(&header); err != nil {
 		slog.Warn("firehose decode error",
 			"event_type", "firehose_decode_error",
-			"error_class", "cbor_decode",
+			"error_class", "header_decode",
 		)
 		return nil // CT-4: skip malformed
 	}
-	if len(parts) < 2 {
-		return nil
+	if header.Op != 1 {
+		return nil // op=-1 is an error frame; skip non-message ops
 	}
-
-	var header firehoseHeader
-	if err := cbor.Unmarshal(parts[0], &header); err != nil || header.T != "#commit" {
-		return nil
+	if header.T != "#commit" {
+		return nil // #sync, #identity, #account, #info — not handled in MVP
 	}
 
 	var body firehoseBody
-	if err := cbor.Unmarshal(parts[1], &body); err != nil {
+	if err := dec.Decode(&body); err != nil {
 		slog.Warn("firehose decode error",
 			"event_type", "firehose_decode_error",
-			"seq", 0,
 			"error_class", "body_decode",
 		)
 		return nil

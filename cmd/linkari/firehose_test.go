@@ -6,6 +6,8 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
 // CT-1: keyword match → queue row with source='firehose'; push_outbox kind='notify'
@@ -308,4 +310,54 @@ func TestFirehoseIntegration(t *testing.T) {
 		}
 	}
 	t.Fatal("no push_outbox row found")
+}
+
+// RG-N: Real ATProto frame decodes correctly end-to-end.
+// Builds a frame with two concatenated CBOR maps (NOT a CBOR array) matching
+// the wire format of com.atproto.sync.subscribeRepos. Source: POMO
+// PERSONAL_20260509T000717Z_POMO_firehose-cbor-decode-failure.
+//
+// Regression guard: this test must pass after any change to processFirehoseMessage.
+// If it breaks, the ATProto framing assumption has regressed.
+func TestFirehoseRGN_RealFrameDecodes(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	if err := q.AddFirehoseSubscription("default", "regressiontest"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build a real ATProto-format frame: two concatenated CBOR maps.
+	header := firehoseHeader{Op: 1, T: "#commit"}
+	body := firehoseBody{
+		Seq:  999,
+		Repo: "did:plc:regressiontest",
+		Ops: []struct {
+			Action string `cbor:"action"`
+			Path   string `cbor:"path"`
+		}{
+			{Action: "create", Path: "app.bsky.feed.post/rgntest"},
+		},
+	}
+
+	hBytes, err := cbor.Marshal(header)
+	if err != nil {
+		t.Fatalf("marshal header: %v", err)
+	}
+	bBytes, err := cbor.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	frame := append(hBytes, bBytes...)
+
+	if err := processFirehoseMessage(context.Background(), q, frame); err != nil {
+		t.Fatalf("processFirehoseMessage returned error: %v", err)
+	}
+
+	items, _ := q.List("pending", 10)
+	for _, item := range items {
+		if item.URL == "at://did:plc:regressiontest/app.bsky.feed.post/rgntest" {
+			return
+		}
+	}
+	t.Fatal("RG-N: real ATProto frame was not decoded and enqueued — framing regression")
 }

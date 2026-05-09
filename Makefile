@@ -23,6 +23,7 @@ LIMA_SOCKET    ?= $(HOME)/.lima/$(LIMA_VM)/containerd.sock
 	container-build container-push lima-start lima-test \
 	install-bmux-completions install-linkari-completions \
 	jira-poller install-jira-poller run-jira-poller lint-jira-poller \
+	auth-bluesky auth-google \
 	$(ALL)
 
 # --- Aggregate targets ---
@@ -160,6 +161,52 @@ linkari-serve-local-tls: linkari
 
 linkari-logs-local-tls:
 	@curl -sN "https://localhost:8080/logs/stream?token=mytoken"
+
+# ─── Auth targets ───────────────────────────────────────────────────────────
+
+LINKARI_PORT  ?= 8080
+LINKARI_BASE   = http://localhost:$(LINKARI_PORT)
+LINKARI_DB    := $(HOME)/.config/linkari/queue.db
+BSKY_HANDLE   ?=
+BSKY_PASSWORD ?=
+BSKY_HOST     ?=
+
+# Authenticate Bluesky via the running linkari server.
+# Requires: linkari serve running, Google OAuth completed (session token in DB).
+# Usage: make auth-bluesky BSKY_HANDLE=you.bsky.social BSKY_PASSWORD=xxxx-xxxx-xxxx-xxxx
+# For a custom PDS: make auth-bluesky BSKY_HANDLE=... BSKY_PASSWORD=... BSKY_HOST=https://your-pds.example.com
+auth-bluesky:
+	@test -n "$(BSKY_HANDLE)"   || { echo "❌ BSKY_HANDLE unset  (e.g. make auth-bluesky BSKY_HANDLE=you.bsky.social BSKY_PASSWORD=xxxx-xxxx-xxxx-xxxx)"; exit 1; }
+	@test -n "$(BSKY_PASSWORD)" || { echo "❌ BSKY_PASSWORD unset (e.g. make auth-bluesky BSKY_HANDLE=you.bsky.social BSKY_PASSWORD=xxxx-xxxx-xxxx-xxxx)"; exit 1; }
+	@test -f "$(LINKARI_DB)"    || { echo "❌ DB not found at $(LINKARI_DB) — run linkari serve first"; exit 1; }
+	@tok=$$(sqlite3 $(LINKARI_DB) "SELECT token FROM sessions ORDER BY created_at DESC LIMIT 1;"); \
+	 test -n "$$tok" || { echo "❌ No session token in DB — complete Google OAuth first (make auth-google)"; exit 1; }; \
+	 body="{\"handle\":\"$(BSKY_HANDLE)\",\"password\":\"$(BSKY_PASSWORD)\"}"; \
+	 if [ -n "$(BSKY_HOST)" ]; then body="{\"handle\":\"$(BSKY_HANDLE)\",\"password\":\"$(BSKY_PASSWORD)\",\"host\":\"$(BSKY_HOST)\"}"; fi; \
+	 echo "Authenticating Bluesky handle=$(BSKY_HANDLE)..."; \
+	 curl -sf -X POST $(LINKARI_BASE)/auth/bluesky \
+	   -H "Authorization: Bearer $$tok" \
+	   -H "Content-Type: application/json" \
+	   -d "$$body" | python3 -m json.tool
+	@echo "✅ Bluesky auth submitted — restart linkari serve and watch for: source_start source=bsky_firehose"
+
+# Exchange a Google ID token for a Linkari session token.
+# The ID token comes from Google Sign-In on the Android app (or any Google Sign-In client).
+# Usage: make auth-google GOOGLE_ID_TOKEN=<id_token_from_sign_in>
+# On success, prints the Linkari session token — store it for use with auth-bluesky.
+GOOGLE_ID_TOKEN ?=
+
+auth-google:
+	@test -n "$(GOOGLE_ID_TOKEN)" || { \
+	  echo "❌ GOOGLE_ID_TOKEN unset"; \
+	  echo "   Get it from the Android app's Google Sign-In flow, then:"; \
+	  echo "   make auth-google GOOGLE_ID_TOKEN=<token>"; \
+	  exit 1; }
+	@echo "Exchanging Google ID token for Linkari session..."
+	@curl -sf -X POST $(LINKARI_BASE)/auth/google \
+	  -H "Content-Type: application/json" \
+	  -d "{\"id_token\":\"$(GOOGLE_ID_TOKEN)\"}" | python3 -m json.tool
+	@echo "✅ Copy session_token from above — use it with auth-bluesky"
 
 serve-linkari:
 	@echo "Starting linkari on :8080..."
