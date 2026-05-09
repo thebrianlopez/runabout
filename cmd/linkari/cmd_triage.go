@@ -471,6 +471,16 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.Whisper.MaxRetries > 0 {
 		ytAudioMaxRetries = cfg.Whisper.MaxRetries
 	}
+	// EPIC-109 M4: subtitle extraction resource knobs.
+	if cfg != nil && cfg.YouTube.SubtitleTimeoutSecs > 0 {
+		ytSubtitleTimeoutSecs = cfg.YouTube.SubtitleTimeoutSecs
+	}
+	if cfg != nil && cfg.YouTube.MaxConcurrency > 0 {
+		ytSubtitleSem = make(chan struct{}, cfg.YouTube.MaxConcurrency)
+	}
+	if cfg != nil && cfg.YouTube.MaxRetries > 0 {
+		ytSubtitleMaxRetries = cfg.YouTube.MaxRetries
+	}
 	slog.Info("claude config resolved",
 		"event_type", "claude_config_init",
 		"claude_path", claudeBinaryPath,
