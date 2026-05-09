@@ -506,17 +506,20 @@ func TestYtAudioFallback_TimeoutExpiry(t *testing.T) {
 		t.Errorf("error = %q; want prefix 'yt_audio_timeout'", fallbackErr.Error())
 	}
 
-	// EPIC-005 M2: yt_audio_fallback_failed event must be emitted with step=whisper.
+	// F2 TDD CT-2: timeout emits yt_audio_timeout; yt_audio_fallback_failed is NOT
+	// emitted on timeout (the two events are distinct error classes per FDD §5).
+	// EPIC-108 updated this contract; yt_audio_fallback_failed is reserved for
+	// non-timeout whisper-cli exits.
 	evtLogger.Close()
 	rawEvents, readErr := os.ReadFile(evtPath)
 	if readErr != nil {
 		t.Fatalf("read events file: %v", readErr)
 	}
-	if !strings.Contains(string(rawEvents), `"yt_audio_fallback_failed"`) {
-		t.Errorf("expected yt_audio_fallback_failed event in %s, got: %s", evtPath, rawEvents)
+	if !strings.Contains(string(rawEvents), `"yt_audio_timeout"`) {
+		t.Errorf("expected yt_audio_timeout event in %s, got: %s", evtPath, rawEvents)
 	}
-	if !strings.Contains(string(rawEvents), `"whisper"`) {
-		t.Errorf("expected step=whisper in yt_audio_fallback_failed event, got: %s", rawEvents)
+	if strings.Contains(string(rawEvents), `"yt_audio_fallback_failed"`) {
+		t.Errorf("yt_audio_fallback_failed must NOT be emitted on timeout (use yt_audio_timeout): %s", rawEvents)
 	}
 
 	// Temp dir must be cleaned up even on timeout.
