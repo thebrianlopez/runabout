@@ -81,9 +81,12 @@ type LiteParseConfig struct {
 }
 
 type YouTubeConfig struct {
-	SubtitleLangs   string `toml:"subtitle_langs"`    // yt-dlp --sub-langs value (default: "en.*,en")
-	TimeoutSeconds  int    `toml:"timeout_seconds"`   // extraction timeout in seconds (default: 30)
-	FallbackToAudio bool   `toml:"fallback_to_audio"` // EPIC-001 M3: download audio + whisper when no subtitles (default: true via package var)
+	SubtitleLangs       string `toml:"subtitle_langs"`        // yt-dlp --sub-langs value (default: "en.*,en")
+	TimeoutSeconds      int    `toml:"timeout_seconds"`       // extraction timeout in seconds (default: 30)
+	FallbackToAudio     bool   `toml:"fallback_to_audio"`     // EPIC-001 M3: download audio + whisper when no subtitles (default: true via package var)
+	SubtitleTimeoutSecs int    `toml:"subtitle_timeout_secs"` // EPIC-109: wall-clock deadline for F1 subtitle extraction (default: 30)
+	MaxConcurrency      int    `toml:"max_concurrency"`       // EPIC-109: max concurrent yt-dlp subtitle jobs (default: 3)
+	MaxRetries          int    `toml:"max_retries"`           // EPIC-109: dead-letter retry limit for yt_dlp_failed (default: 2)
 }
 
 // WhisperConfig holds resource-control knobs for whisper-cli invocations.

@@ -34,6 +34,19 @@ var ytTimeoutSeconds = 30
 // Default true (EPIC-003 M5). Overridable via server.yaml youtube.fallback_to_audio: false.
 var ytFallbackToAudio = true
 
+// ytSubtitleTimeoutSecs is the yt-dlp subtitle extraction deadline in seconds.
+// Default 30; configurable via [server.youtube].subtitle_timeout_secs. EPIC-109.
+var ytSubtitleTimeoutSecs = 30
+
+// ytSubtitleMaxRetries is the dead-letter retry limit for yt_dlp_failed on
+// subtitle extraction. Default 2; configurable via [server.youtube].max_retries. EPIC-109.
+var ytSubtitleMaxRetries = 2
+
+// ytSubtitleSem bounds concurrent yt-dlp subtitle invocations to at most
+// max_concurrency simultaneous jobs. Default cap=3; resized by initClaudeConfig
+// from [server.youtube].max_concurrency. EPIC-109.
+var ytSubtitleSem = make(chan struct{}, 3)
+
 // ytAudioSem serializes whisper-cli invocations to prevent concurrent model loads
 // from exhausting available memory (EPIC-108 M1). Cap=1 by default; resized by
 // initClaudeConfig when [server.whisper].max_concurrency is set.
@@ -150,6 +163,68 @@ func stripSRT(raw string) string {
 // inject mock output without spawning a real subprocess.
 // EPIC-090 M4: returns ytVideoMeta (title + id + duration + subtitle_type) instead of title string.
 var execYtdlp = runYtdlpExtract
+
+// extractYTSubtitles invokes execYtdlp for subtitle extraction, emits the
+// appropriate event, and returns the outcome as a named event string.
+//
+// Return values:
+//   - "yt_subtitles_ok"  — subtitles found; transcript is non-empty; err is nil
+//   - "yt_no_subtitles"  — yt-dlp exited normally with no subtitle track; err is nil; caller triggers F2
+//   - "yt_dlp_failed"    — yt-dlp error or timeout; err is non-nil; caller dead-letters the row
+//
+// The function acquires ytSubtitleSem before invoking execYtdlp and emits
+// a structured event on the EventLogger for each outcome. EPIC-109 M2.
+func extractYTSubtitles(ctx context.Context, ytPath, videoURL string, rowID int64, events *EventLogger) (subtitleEvent string, transcript string, meta ytVideoMeta, err error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(ytSubtitleTimeoutSecs)*time.Second)
+	defer cancel()
+
+	select {
+	case ytSubtitleSem <- struct{}{}:
+	case <-ctx.Done():
+		if events != nil {
+			_ = events.Emit("yt_dlp_failed", map[string]interface{}{
+				"row_id": rowID, "url": videoURL, "step": "subtitle", "error_reason": "timeout",
+			})
+		}
+		return "yt_dlp_failed", "", ytVideoMeta{}, ctx.Err()
+	}
+	defer func() { <-ytSubtitleSem }()
+
+	transcript, meta, err = execYtdlp(ctx, ytPath, videoURL)
+	if err == nil {
+		if events != nil {
+			_ = events.Emit("yt_subtitles_ok", map[string]interface{}{
+				"row_id": rowID, "url": videoURL, "transcript_text": transcript,
+			})
+		}
+		return "yt_subtitles_ok", transcript, meta, nil
+	}
+
+	errStr := err.Error()
+
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		if events != nil {
+			_ = events.Emit("yt_dlp_failed", map[string]interface{}{
+				"row_id": rowID, "url": videoURL, "step": "subtitle", "error_reason": "timeout",
+			})
+		}
+		return "yt_dlp_failed", "", meta, fmt.Errorf("yt_dlp_failed: timeout")
+	}
+
+	if strings.Contains(errStr, "no subtitles") {
+		if events != nil {
+			_ = events.Emit("yt_no_subtitles", map[string]interface{}{"row_id": rowID, "url": videoURL})
+		}
+		return "yt_no_subtitles", "", meta, nil
+	}
+
+	if events != nil {
+		_ = events.Emit("yt_dlp_failed", map[string]interface{}{
+			"row_id": rowID, "url": videoURL, "step": "subtitle", "error_reason": errStr,
+		})
+	}
+	return "yt_dlp_failed", "", meta, err
+}
 
 // runYtdlpExtract invokes yt-dlp to extract subtitles for the given YouTube
 // URL. It returns the plain-text transcript and video metadata, or an error
@@ -532,39 +607,55 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 		videoURL = normalized
 	}
 
-	// Step 2: yt-dlp extraction.
-	transcript, meta, err := execYtdlp(ctx, ytPath, videoURL)
-	if err != nil {
-		errStr := err.Error()
-		var verdict string
-		switch {
-		case strings.Contains(errStr, "not found"):
-			verdict = "yt_dlp_unavailable"
-		case strings.Contains(errStr, "no subtitles"):
-			verdict = "yt_no_subtitles"
-		default:
-			verdict = "yt_extraction_failed"
+	// Step 2: yt-dlp subtitle extraction with dead-letter retry (EPIC-109 M3).
+	var transcript string
+	var meta ytVideoMeta
+	var subtitleEvent string
+	for attempt := 1; attempt <= ytSubtitleMaxRetries+1; attempt++ {
+		var subErr error
+		subtitleEvent, transcript, meta, subErr = extractYTSubtitles(ctx, ytPath, videoURL, rowID, events)
+		if subtitleEvent == "yt_subtitles_ok" {
+			goto subtitleReady
 		}
+		if subtitleEvent == "yt_no_subtitles" {
+			break
+		}
+		// yt_dlp_failed — extractYTSubtitles already emitted the event.
+		_ = subErr
+		if attempt > ytSubtitleMaxRetries {
+			slog.Warn("yt_dlp_terminal_failed",
+				"event_type", "yt_dlp_terminal_failed",
+				"row_id", rowID,
+				"total_attempts", attempt,
+			)
+			if events != nil {
+				_ = events.Emit("yt_dlp_terminal_failed", map[string]interface{}{
+					"row_id": rowID, "url": videoURL, "total_attempts": attempt,
+				})
+			}
+			if q != nil {
+				q.MarkFailedWithReason(rowID, "yt_dlp_terminal_failed")
+				enqueuePrefilterPush(q, &req, "yt_dlp_terminal_failed")
+			}
+			return
+		}
+	}
+	// yt_no_subtitles: audio fallback or fail.
+	if subtitleEvent == "yt_no_subtitles" {
 		slog.Warn("score_youtube: extraction failed",
 			"event_type", "yt_transcript_failed",
 			"row_id", rowID,
 			"url", videoURL,
-			"verdict", verdict,
-			"error", err,
+			"verdict", "yt_no_subtitles",
 		)
 		if events != nil {
 			_ = events.Emit("yt_transcript_failed", map[string]interface{}{
 				"row_id":  rowID,
 				"url":     videoURL,
-				"verdict": verdict,
-				"error":   errStr,
+				"verdict": "yt_no_subtitles",
 			})
 		}
-		// EPIC-001 M3: audio fallback — when subtitles are unavailable and the
-		// config gate is enabled, attempt yt-dlp audio download → ffmpeg → whisper
-		// before giving up. Only activated for yt_no_subtitles (not binary missing
-		// or extraction timeouts which imply a network or binary problem).
-		if verdict == "yt_no_subtitles" && ytFallbackToAudio {
+		if ytFallbackToAudio {
 			// EPIC-108 M1: acquire semaphore before spawning whisper-cli.
 			select {
 			case ytAudioSem <- struct{}{}:
@@ -583,24 +674,23 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 					return
 				}
 			}
-			transcript, meta, err = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events, whisperModel)
+			var audioErr error
+			transcript, meta, audioErr = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events, whisperModel)
 			<-ytAudioSem
-			if err == nil {
+			if audioErr == nil {
 				meta.SubtitleType = "audio"
-				// Fallback succeeded — continue with transcript below.
 				goto subtitleReady
 			}
-			// EPIC-005 M1: surface yt_audio_timeout specifically so the queue row
-			// verdict reflects the actual failure mode rather than yt_no_subtitles.
-			if strings.HasPrefix(err.Error(), "yt_audio_timeout") {
-				verdict = "yt_audio_timeout"
+			audioVerdict := "yt_no_subtitles"
+			if strings.HasPrefix(audioErr.Error(), "yt_audio_timeout") {
+				audioVerdict = "yt_audio_timeout"
 			}
 			slog.Warn("score_youtube: audio fallback also failed",
 				"event_type", "score_youtube_fallback_failed",
 				"row_id", rowID,
 				"url", videoURL,
-				"verdict", verdict,
-				"error", err,
+				"verdict", audioVerdict,
+				"error", audioErr,
 			)
 			// EPIC-108 M3: dead-letter requeue with exponential backoff.
 			if q != nil {
@@ -634,9 +724,8 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 			return
 		}
 		if q != nil {
-			q.MarkFailedWithReason(rowID, verdict)
-			// Defer push to here so fallback path doesn't trigger a premature notification.
-			enqueuePrefilterPush(q, &req, verdict)
+			q.MarkFailedWithReason(rowID, "yt_no_subtitles")
+			enqueuePrefilterPush(q, &req, "yt_no_subtitles")
 		}
 		return
 	}

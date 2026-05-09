@@ -193,7 +193,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
-			// --- Check: yt-dlp binary (EPIC-009 M5) ---
+			// --- Check: yt-dlp binary (EPIC-009 M5; version report EPIC-109 M4) ---
 			{
 				ytPath := "yt-dlp"
 				if serverCfg != nil && serverCfg.YtdlpPath != "" {
@@ -203,7 +203,11 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					addCheck(warnCheck("ytdlp",
 						fmt.Sprintf("yt-dlp not found at %q — YouTube URL transcription will fail (install yt-dlp or set ytdlp_path in server.yaml)", ytPath)))
 				} else {
-					addCheck(okCheck("ytdlp", resolved))
+					ver := resolved
+					if out, verErr := exec.Command(resolved, "--version").Output(); verErr == nil {
+						ver = strings.TrimSpace(string(out))
+					}
+					addCheck(okCheck("ytdlp", ver))
 				}
 			}
 
