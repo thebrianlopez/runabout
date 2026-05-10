@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval effiscore
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := bmux fetchpage protonexport linkari linkari-labeler plaid-service wasend workctl ghwatch ts-go jira-poller
+SEPARATE := bmux fetchpage protonexport linkari linkari-labeler plaid-service wasend workctl ghwatch ts-go jira-poller runway
 
 ALL := $(CORE) $(SEPARATE)
 
@@ -285,6 +285,14 @@ ghwatch:
 install-ghwatch:
 	@echo "Installing ghwatch → $(INSTALL_DIR)/ghwatch"
 	@cd cmd/workctl && go install $(LDFLAGS) ./cmd/ghwatch
+
+runway:
+	@echo "Building runway..."
+	@cd cmd/runway && go build $(LDFLAGS) -o ../../bin/runway .
+
+install-runway:
+	@echo "Installing runway → $(INSTALL_DIR)/runway"
+	@cd cmd/runway && go install $(LDFLAGS) .
 
 # ─── Container image targets (EPIC-038 M9) ─────────────────────────────────
 
