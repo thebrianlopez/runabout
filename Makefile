@@ -65,7 +65,7 @@ $(CORE):
 	@go build $(LDFLAGS) -o bin/$@ ./cmd/$@
 
 $(addprefix install-,$(CORE)):
-	@echo "Installing $(subst install-,,$@) → $(INSTALL_DIR)/$(subst install-,,$@)"
+	@echo "Installing $(subst install-,,$@) -> $(INSTALL_DIR)/$(subst install-,,$@)"
 	@go install $(LDFLAGS) ./cmd/$(subst install-,,$@)
 
 # --- Separate-module tools ---
@@ -84,7 +84,7 @@ fetchpage: setup-fetchpage
 	@cd cmd/fetchpage && go build $(LDFLAGS) -o ../../bin/fetchpage .
 
 install-fetchpage: setup-fetchpage
-	@echo "Installing fetchpage → $(INSTALL_DIR)/fetchpage"
+	@echo "Installing fetchpage -> $(INSTALL_DIR)/fetchpage"
 	@cd cmd/fetchpage && go install $(LDFLAGS) .
 
 bmux:
@@ -92,20 +92,20 @@ bmux:
 	@cd cmd/bmux && go build $(LDFLAGS) -o ../../bin/bmux .
 
 install-bmux:
-	@echo "Installing bmux → $(INSTALL_DIR)/bmux"
+	@echo "Installing bmux -> $(INSTALL_DIR)/bmux"
 	@cd cmd/bmux && go install $(LDFLAGS) .
 
 install-bmux-completions: install-bmux
 	@mkdir -p $(HOME)/.config/fish/completions
 	@$(INSTALL_DIR)/bmux completion fish > $(HOME)/.config/fish/completions/bmux.fish
-	@echo "Installed fish completions → $(HOME)/.config/fish/completions/bmux.fish"
+	@echo "Installed fish completions -> $(HOME)/.config/fish/completions/bmux.fish"
 
 plaid-service:
 	@echo "Building plaid-service..."
 	@cd cmd/plaid-service && go build $(LDFLAGS) -o ../../bin/plaid-service .
 
 install-plaid-service:
-	@echo "Installing plaid-service → $(INSTALL_DIR)/plaid-service"
+	@echo "Installing plaid-service -> $(INSTALL_DIR)/plaid-service"
 	@cd cmd/plaid-service && go install $(LDFLAGS) .
 
 protonexport:
@@ -113,7 +113,7 @@ protonexport:
 	@cd cmd/protonexport && go build $(LDFLAGS) -o ../../bin/protonexport .
 
 install-protonexport:
-	@echo "Installing protonexport → $(INSTALL_DIR)/protonexport"
+	@echo "Installing protonexport -> $(INSTALL_DIR)/protonexport"
 	@cd cmd/protonexport && go install $(LDFLAGS) .
 
 linkari:
@@ -121,7 +121,7 @@ linkari:
 	@cd cmd/linkari && go build $(LDFLAGS) -o ../../bin/linkari .
 
 install-linkari:
-	@echo "Installing linkari → $(INSTALL_DIR)/linkari"
+	@echo "Installing linkari -> $(INSTALL_DIR)/linkari"
 	@cd cmd/linkari && go install $(LDFLAGS) .
 
 # Generate fish completions and install to ~/.config/fish/completions/.
@@ -129,14 +129,14 @@ install-linkari:
 install-linkari-completions: install-linkari
 	@mkdir -p $(HOME)/.config/fish/completions
 	@$(INSTALL_DIR)/linkari completion fish > $(HOME)/.config/fish/completions/linkari.fish
-	@echo "Installed fish completions → $(HOME)/.config/fish/completions/linkari.fish"
+	@echo "Installed fish completions -> $(HOME)/.config/fish/completions/linkari.fish"
 
 linkari-labeler:
 	@echo "Building linkari-labeler..."
 	@cd cmd/linkari-labeler && go build $(LDFLAGS) -o ../../bin/linkari-labeler .
 
 install-linkari-labeler:
-	@echo "Installing linkari-labeler → $(INSTALL_DIR)/linkari-labeler"
+	@echo "Installing linkari-labeler -> $(INSTALL_DIR)/linkari-labeler"
 	@cd cmd/linkari-labeler && go install $(LDFLAGS) .
 
 AWS_PROFILE ?= brianonpoint
@@ -162,7 +162,7 @@ linkari-serve-local-tls: linkari
 linkari-logs-local-tls:
 	@curl -sN "https://localhost:8080/logs/stream?token=mytoken"
 
-# ─── Auth targets ───────────────────────────────────────────────────────────
+# --- Auth targets -----------------------------------------------------------
 
 LINKARI_PORT  ?= 8080
 LINKARI_BASE   = http://localhost:$(LINKARI_PORT)
@@ -176,11 +176,11 @@ BSKY_HOST     ?=
 # Usage: make auth-bluesky BSKY_HANDLE=you.bsky.social BSKY_PASSWORD=xxxx-xxxx-xxxx-xxxx
 # For a custom PDS: make auth-bluesky BSKY_HANDLE=... BSKY_PASSWORD=... BSKY_HOST=https://your-pds.example.com
 auth-bluesky:
-	@test -n "$(BSKY_HANDLE)"   || { echo "❌ BSKY_HANDLE unset  (e.g. make auth-bluesky BSKY_HANDLE=you.bsky.social BSKY_PASSWORD=xxxx-xxxx-xxxx-xxxx)"; exit 1; }
-	@test -n "$(BSKY_PASSWORD)" || { echo "❌ BSKY_PASSWORD unset (e.g. make auth-bluesky BSKY_HANDLE=you.bsky.social BSKY_PASSWORD=xxxx-xxxx-xxxx-xxxx)"; exit 1; }
-	@test -f "$(LINKARI_DB)"    || { echo "❌ DB not found at $(LINKARI_DB) — run linkari serve first"; exit 1; }
+	@test -n "$(BSKY_HANDLE)"   || { echo "ERROR: BSKY_HANDLE unset  (e.g. make auth-bluesky BSKY_HANDLE=you.bsky.social BSKY_PASSWORD=xxxx-xxxx-xxxx-xxxx)"; exit 1; }
+	@test -n "$(BSKY_PASSWORD)" || { echo "ERROR: BSKY_PASSWORD unset (e.g. make auth-bluesky BSKY_HANDLE=you.bsky.social BSKY_PASSWORD=xxxx-xxxx-xxxx-xxxx)"; exit 1; }
+	@test -f "$(LINKARI_DB)"    || { echo "ERROR: DB not found at $(LINKARI_DB) - run linkari serve first"; exit 1; }
 	@tok=$$(sqlite3 $(LINKARI_DB) "SELECT token FROM sessions ORDER BY created_at DESC LIMIT 1;"); \
-	 test -n "$$tok" || { echo "❌ No session token in DB — complete Google OAuth first (make auth-google)"; exit 1; }; \
+	 test -n "$$tok" || { echo "ERROR: No session token in DB - complete Google OAuth first (make auth-google)"; exit 1; }; \
 	 body="{\"handle\":\"$(BSKY_HANDLE)\",\"password\":\"$(BSKY_PASSWORD)\"}"; \
 	 if [ -n "$(BSKY_HOST)" ]; then body="{\"handle\":\"$(BSKY_HANDLE)\",\"password\":\"$(BSKY_PASSWORD)\",\"host\":\"$(BSKY_HOST)\"}"; fi; \
 	 echo "Authenticating Bluesky handle=$(BSKY_HANDLE)..."; \
@@ -188,7 +188,7 @@ auth-bluesky:
 	   -H "Authorization: Bearer $$tok" \
 	   -H "Content-Type: application/json" \
 	   -d "$$body" | python3 -m json.tool
-	@echo "✅ Bluesky auth submitted — restart linkari serve and watch for: source_start source=bsky_firehose"
+	@echo "OK: Bluesky auth submitted - restart linkari serve and watch for: source_start source=bsky_firehose"
 
 # Exchange a Google ID token for a Linkari session token.
 # The ID token comes from Google Sign-In on the Android app (or any Google Sign-In client).
@@ -198,7 +198,7 @@ GOOGLE_ID_TOKEN ?=
 
 auth-google:
 	@test -n "$(GOOGLE_ID_TOKEN)" || { \
-	  echo "❌ GOOGLE_ID_TOKEN unset"; \
+	  echo "ERROR: GOOGLE_ID_TOKEN unset"; \
 	  echo "   Get it from the Android app's Google Sign-In flow, then:"; \
 	  echo "   make auth-google GOOGLE_ID_TOKEN=<token>"; \
 	  exit 1; }
@@ -206,26 +206,26 @@ auth-google:
 	@curl -sf -X POST $(LINKARI_BASE)/auth/google \
 	  -H "Content-Type: application/json" \
 	  -d "{\"id_token\":\"$(GOOGLE_ID_TOKEN)\"}" | python3 -m json.tool
-	@echo "✅ Copy session_token from above — use it with auth-bluesky"
+	@echo "OK: Copy session_token from above - use it with auth-bluesky"
 
 serve-linkari:
 	@echo "Starting linkari on :8080..."
-	@test -n "$(AWS_PROFILE)" || { echo "❌ AWS_PROFILE unset (required to fetch $(AWS_BEARER_SECRET_ID))"; exit 1; }
+	@test -n "$(AWS_PROFILE)" || { echo "ERROR: AWS_PROFILE unset (required to fetch $(AWS_BEARER_SECRET_ID))"; exit 1; }
 	@tok=$$($(FETCH_TOKEN)) && test -n "$$tok" && \
 		LINKARI_TOKEN=$$tok LINKARI_FIREBASE_SA=$(HOME)/.config/linkari/firebase-sa.json bin/linkari serve
 
 serve-linkari-tls:
 	@echo "Starting linkari on :8080 (TLS)..."
-	@test -n "$(AWS_PROFILE)" || { echo "❌ AWS_PROFILE unset (required to fetch $(AWS_BEARER_SECRET_ID))"; exit 1; }
+	@test -n "$(AWS_PROFILE)" || { echo "ERROR: AWS_PROFILE unset (required to fetch $(AWS_BEARER_SECRET_ID))"; exit 1; }
 	@tok=$$($(FETCH_TOKEN)) && test -n "$$tok" && \
 		LINKARI_TOKEN=$$tok LINKARI_FIREBASE_SA=$(HOME)/.config/linkari/firebase-sa.json bin/linkari serve --tls
 
 logs-linkari:
-	@test -n "$(AWS_PROFILE)" || { echo "❌ AWS_PROFILE unset"; exit 1; }
+	@test -n "$(AWS_PROFILE)" || { echo "ERROR: AWS_PROFILE unset"; exit 1; }
 	@tok=$$($(FETCH_TOKEN)) && curl -sN "http://localhost:8080/logs/stream?token=$$tok"
 
 logs-linkari-tls:
-	@test -n "$(AWS_PROFILE)" || { echo "❌ AWS_PROFILE unset"; exit 1; }
+	@test -n "$(AWS_PROFILE)" || { echo "ERROR: AWS_PROFILE unset"; exit 1; }
 	@tok=$$($(FETCH_TOKEN)) && curl -sN "https://localhost:8080/logs/stream?token=$$tok"
 
 ts-go:
@@ -233,21 +233,21 @@ ts-go:
 	@cd cmd/ts-go && go build $(LDFLAGS) -o ../../bin/ts-go .
 
 install-ts-go:
-	@echo "Installing ts-go → $(INSTALL_DIR)/ts-go"
+	@echo "Installing ts-go -> $(INSTALL_DIR)/ts-go"
 	@cd cmd/ts-go && go install $(LDFLAGS) .
 
 test-ts-go:
 	@echo "Running ts-go tests (requires C compiler for CGo)..."
 	@cd cmd/ts-go && go test -count=1 ./...
 
-# ─── jira-poller targets ────────────────────────────────────────────────────
+# --- jira-poller targets ----------------------------------------------------
 
 jira-poller:
 	@echo "Building jira-poller..."
 	@cd cmd/jira-poller && go build $(LDFLAGS) -o ../../bin/jira-poller .
 
 install-jira-poller:
-	@echo "Installing jira-poller → $(INSTALL_DIR)/jira-poller"
+	@echo "Installing jira-poller -> $(INSTALL_DIR)/jira-poller"
 	@cd cmd/jira-poller && go install $(LDFLAGS) .
 
 run-jira-poller: jira-poller
@@ -267,7 +267,7 @@ wasend:
 	@cd cmd/wasend && go build $(LDFLAGS) -o ../../bin/wasend .
 
 install-wasend:
-	@echo "Installing wasend → $(INSTALL_DIR)/wasend"
+	@echo "Installing wasend -> $(INSTALL_DIR)/wasend"
 	@cd cmd/wasend && go install $(LDFLAGS) .
 
 workctl:
@@ -275,7 +275,7 @@ workctl:
 	@cd cmd/workctl && go build $(LDFLAGS) -o ../../bin/workctl ./cmd/workctl
 
 install-workctl:
-	@echo "Installing workctl → $(INSTALL_DIR)/workctl"
+	@echo "Installing workctl -> $(INSTALL_DIR)/workctl"
 	@cd cmd/workctl && go install $(LDFLAGS) ./cmd/workctl
 
 ghwatch:
@@ -283,7 +283,7 @@ ghwatch:
 	@cd cmd/workctl && go build $(LDFLAGS) -o ../../bin/ghwatch ./cmd/ghwatch
 
 install-ghwatch:
-	@echo "Installing ghwatch → $(INSTALL_DIR)/ghwatch"
+	@echo "Installing ghwatch -> $(INSTALL_DIR)/ghwatch"
 	@cd cmd/workctl && go install $(LDFLAGS) ./cmd/ghwatch
 
 runway:
@@ -291,10 +291,10 @@ runway:
 	@cd cmd/runway && go build $(LDFLAGS) -o ../../bin/runway .
 
 install-runway:
-	@echo "Installing runway → $(INSTALL_DIR)/runway"
+	@echo "Installing runway -> $(INSTALL_DIR)/runway"
 	@cd cmd/runway && go install $(LDFLAGS) .
 
-# ─── Container image targets (EPIC-038 M9) ─────────────────────────────────
+# --- Container image targets (EPIC-038 M9) ----------------------------------
 
 # Build container images for the local native platform only (fast, for dev iteration).
 # Requires Docker on PATH. IMAGE_REGISTRY can be overridden:
@@ -306,7 +306,7 @@ container-build:
 	@docker build -f container/Dockerfile.claude-sandbox \
 		--build-arg CLAUDE_BIN_PATH="$(shell which claude)" \
 		-t $(IMAGE_REGISTRY)/claude-sandbox:latest container/
-	@echo "✅ Container images built (native platform)"
+	@echo "OK: Container images built (native platform)"
 
 # Push multi-arch (linux/amd64 + linux/arm64) images to the registry.
 # Requires: docker buildx with a builder that supports multi-arch (docker buildx create --use).
@@ -321,7 +321,7 @@ container-push:
 	@docker buildx build --platform linux/amd64,linux/arm64 --push \
 		--build-arg CLAUDE_BIN_PATH="$(shell which claude)" \
 		-f container/Dockerfile.claude-sandbox -t $(IMAGE_REGISTRY)/claude-sandbox:latest container/
-	@echo "✅ Multi-arch container images pushed to $(IMAGE_REGISTRY)"
+	@echo "OK: Multi-arch container images pushed to $(IMAGE_REGISTRY)"
 
 # Start the Lima gVisor VM. First run takes ~5 minutes (Ubuntu + gVisor download).
 # Uses infra/lima-gvisor.yaml for VM configuration.
@@ -330,14 +330,14 @@ lima-start:
 	@limactl start infra/lima-gvisor.yaml --name $(LIMA_VM) || limactl start $(LIMA_VM)
 	@echo "Waiting for containerd socket..."
 	@limactl shell $(LIMA_VM) -- bash -c 'for i in $$(seq 30); do systemctl is-active containerd >/dev/null 2>&1 && break; sleep 2; done'
-	@echo "✅ Lima VM '$(LIMA_VM)' running with gVisor"
+	@echo "OK: Lima VM '$(LIMA_VM)' running with gVisor"
 	@limactl shell $(LIMA_VM) -- /opt/gvisor/runsc --version
 
 # Run a smoke test inside the Lima VM: start a gVisor container and verify it runs.
 # Skips automatically when the Lima socket is absent (CI without Lima installed).
 lima-test:
 	@if ! limactl list 2>/dev/null | grep -q $(LIMA_VM); then \
-		echo "⚠️  Lima VM '$(LIMA_VM)' not running — skipping lima-test"; \
+		echo "WARN: Lima VM '$(LIMA_VM)' not running - skipping lima-test"; \
 		exit 0; \
 	fi
 	@echo "Running gVisor smoke test inside $(LIMA_VM)..."
@@ -345,7 +345,7 @@ lima-test:
 		--snapshotter=overlayfs \
 		--runtime=runsc \
 		alpine sh -c 'echo "gVisor OK: $$(uname -r)"'
-	@echo "✅ gVisor smoke test passed"
+	@echo "OK: gVisor smoke test passed"
 
 # Run integration tests (requires Lima VM running with containers loaded).
 # Use: make integration-test
@@ -353,4 +353,4 @@ integration-test: lima-test
 	@echo "Running integration tests against Lima VM..."
 	@cd cmd/linkari && LINKARI_RUNTIME_SOCKET=$(LIMA_SOCKET) \
 		go test -v -tags=integration -run TestContainer ./...
-	@echo "✅ Integration tests passed"
+	@echo "OK: Integration tests passed"
