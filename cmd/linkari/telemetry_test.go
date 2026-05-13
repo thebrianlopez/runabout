@@ -64,21 +64,21 @@ func TestCT7_ShouldEmitTTLZeroAlwaysEmits(t *testing.T) {
 }
 
 func TestCT8_BuildEventHookClass(t *testing.T) {
-	ev := buildEvent("ts-go", "fish", 0, 0, map[string]string{})
+	ev := buildEvent("ts-go", "fish", i64p(0), 0, map[string]string{})
 	if ev.EventClass != "hook" {
 		t.Errorf("CT-8: buildEvent(ts-go,fish).EventClass = %q, want \"hook\"", ev.EventClass)
 	}
 }
 
 func TestCT9_BuildEventUserIntentClass(t *testing.T) {
-	ev := buildEvent("linkari", "search", 10, 0, map[string]string{})
+	ev := buildEvent("linkari", "search", i64p(10), 0, map[string]string{})
 	if ev.EventClass != "user_intent" {
 		t.Errorf("CT-9: buildEvent(linkari,search).EventClass = %q, want \"user_intent\"", ev.EventClass)
 	}
 }
 
 func TestCT10_EventClassInJSONL(t *testing.T) {
-	ev := buildEvent("ts-go", "fish", 0, 0, map[string]string{})
+	ev := buildEvent("ts-go", "fish", i64p(0), 0, map[string]string{})
 	data, err := json.Marshal(ev)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestCT11_HookEventSuppressedWithinTTL(t *testing.T) {
 	eventsPath := filepath.Join(dir, "events", dateStr+".jsonl")
 
 	emit := func() {
-		ev := buildEvent("ts-go", "fish", 0, 0, map[string]string{})
+		ev := buildEvent("ts-go", "fish", i64p(0), 0, map[string]string{})
 		if ev.EventClass == "hook" && !shouldEmitHookEvent(ev.Command, ev.CWD, 60*time.Second) {
 			return
 		}
@@ -131,7 +131,7 @@ func TestCT12_UserIntentAlwaysWritten(t *testing.T) {
 	eventsPath := filepath.Join(dir, "events", dateStr+".jsonl")
 
 	emit := func() {
-		ev := buildEvent("linkari", "search", 5, 0, map[string]string{})
+		ev := buildEvent("linkari", "search", i64p(5), 0, map[string]string{})
 		if ev.EventClass == "hook" && !shouldEmitHookEvent(ev.Command, ev.CWD, 60*time.Second) {
 			return
 		}
@@ -149,6 +149,8 @@ func TestCT12_UserIntentAlwaysWritten(t *testing.T) {
 		t.Errorf("CT-12: expected 2 user-intent events, got %d", countLFt(data))
 	}
 }
+
+func i64p(v int64) *int64 { return &v }
 
 func countLFt(data []byte) int {
 	n := 0

@@ -49,7 +49,7 @@ func (t *tracker) emit(cmdErr error) {
 		exitCode = 1
 	}
 
-	duration := time.Since(t.start).Milliseconds()
+	durationMs := time.Since(t.start).Milliseconds()
 	subcmd := t.cmd.Name()
 
 	flags := map[string]string{}
@@ -57,7 +57,7 @@ func (t *tracker) emit(cmdErr error) {
 		flags[f.Name] = f.Value.String()
 	})
 
-	event := buildEvent(t.cliName, subcmd, duration, exitCode, flags)
+	event := buildEvent(t.cliName, subcmd, &durationMs, exitCode, flags)
 
 	if event.EventClass == "hook" && !shouldEmitHookEvent(event.Command, event.CWD, 60*time.Second) {
 		return
@@ -79,7 +79,7 @@ type event struct {
 	SessionID     string                 `json:"session_id"`
 	User          string                 `json:"user"`
 	CWD           string                 `json:"cwd"`
-	DurationMs    int64                  `json:"duration_ms"`
+	DurationMs    *int64                 `json:"duration_ms"`
 	ExitCode      int                    `json:"exit_code"`
 	Agent         *string                `json:"agent"`
 	Epic          *string                `json:"epic"`
@@ -136,7 +136,7 @@ func shouldEmitHookEvent(command, cwd string, ttl time.Duration) bool {
 }
 
 // buildEvent constructs a schema v2 event struct.
-func buildEvent(cliName, subcmd string, durationMs int64, exitCode int, flags map[string]string) event {
+func buildEvent(cliName, subcmd string, durationMs *int64, exitCode int, flags map[string]string) event {
 	cwd, _ := os.Getwd()
 	user := os.Getenv("USER")
 	sid := os.Getenv("__fish_session_id")
