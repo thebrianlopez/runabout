@@ -116,18 +116,26 @@ func hookRateLimitSentinel(command, cwd string) string {
 }
 
 // isHookRateLimited returns true if a hook-class event for (command, cwd) was
-// emitted within the last hookRateLimitTTL. If not, it touches the sentinel so
-// the next call within the TTL will be suppressed.
+// emitted within the last hookRateLimitTTL. If not, it atomically claims the
+// sentinel so concurrent duplicate callers are suppressed.
 func isHookRateLimited(command, cwd string) bool {
 	sentinel := hookRateLimitSentinel(command, cwd)
-	dir := filepath.Dir(sentinel)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(sentinel), 0o755); err != nil {
 		return false
 	}
-	if info, err := os.Stat(sentinel); err == nil && time.Since(info.ModTime()) < hookRateLimitTTL {
-		return true
+	if info, err := os.Stat(sentinel); err == nil {
+		if time.Since(info.ModTime()) < hookRateLimitTTL {
+			return true // within TTL
+		}
+		os.Remove(sentinel) //nolint:errcheck — stale, remove before atomic re-create
 	}
-	os.WriteFile(sentinel, nil, 0o644) //nolint:errcheck
+	// O_EXCL: only one concurrent caller succeeds; losers are treated as
+	// rate-limited to suppress the duplicate-pair emission from two hook registrations.
+	f, err := os.OpenFile(sentinel, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return true // lost the race — suppress this duplicate
+	}
+	f.Close()
 	return false
 }
 
@@ -135,7 +143,10 @@ func isHookRateLimited(command, cwd string) bool {
 func buildEvent(cliName, subcmd string, durationMs int64, exitCode int, flags map[string]string) event {
 	cwd, _ := os.Getwd()
 	user := os.Getenv("USER")
-	sid := os.Getenv("__fish_session_id")
+	sid := os.Getenv("CLAUDE_CODE_SESSION_ID")
+	if sid == "" {
+		sid = os.Getenv("__fish_session_id")
+	}
 	if sid == "" {
 		sid = "unknown"
 	}
