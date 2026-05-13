@@ -70,22 +70,18 @@ $(addprefix install-,$(CORE)):
 
 # --- Separate-module tools ---
 
-PLAYWRIGHT_MARKER := $(HOME)/Library/Caches/ms-playwright/.fetchpage-setup
-
-setup-fetchpage: $(PLAYWRIGHT_MARKER)
-
-$(PLAYWRIGHT_MARKER):
-	@echo "Installing Playwright driver (one-time setup)..."
-	@cd cmd/fetchpage && go run github.com/playwright-community/playwright-go/cmd/playwright install --with-deps
-	@touch $(PLAYWRIGHT_MARKER)
+setup-fetchpage:
+	@python3 -c "import cloakbrowser" 2>/dev/null || pip install cloakbrowser -q
 
 fetchpage: setup-fetchpage
-	@echo "Building fetchpage..."
-	@cd cmd/fetchpage && go build $(LDFLAGS) -o ../../bin/fetchpage .
+	@echo "Installing fetchpage script → bin/fetchpage"
+	@cp cmd/fetchpage/fetchpage.py bin/fetchpage
+	@chmod +x bin/fetchpage
 
 install-fetchpage: setup-fetchpage
-	@echo "Installing fetchpage -> $(INSTALL_DIR)/fetchpage"
-	@cd cmd/fetchpage && go install $(LDFLAGS) .
+	@echo "Installing fetchpage → $(INSTALL_DIR)/fetchpage"
+	@cp cmd/fetchpage/fetchpage.py $(INSTALL_DIR)/fetchpage
+	@chmod +x $(INSTALL_DIR)/fetchpage
 
 bmux:
 	@echo "Building bmux..."
