@@ -185,7 +185,7 @@ func emitPushEvent(eventType string, meta map[string]interface{}) {
 		SessionID:     "server",
 		User:          "",
 		CWD:           "",
-		DurationMs:    0,
+		DurationMs:    nil,
 		ExitCode:      0,
 		Metadata:      meta,
 	}
