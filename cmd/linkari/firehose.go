@@ -181,6 +181,10 @@ func handleFirehosePost(ctx context.Context, q *Queue, post *firehosePost) error
 		if err != nil {
 			slog.Warn("firehose push error", "error", err)
 		}
+		// Mark the queue row relayed immediately — the push notification above is
+		// the delivery mechanism. Without this, StartReplay picks up the row and
+		// fails with "no action for \"\"" since firehose rows carry no action.
+		q.MarkRelayed(rowID)
 		slog.Info("firehose commit matched",
 			"event_type", "firehose_commit_matched",
 			"seq", post.Seq,
