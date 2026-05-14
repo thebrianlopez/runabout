@@ -29,18 +29,9 @@ func TestFirehoseCT1_KeywordMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := q.List("pending", 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, item := range items {
-		if item.URL == post.AtURI && item.Source == "firehose" {
-			found = true
-			break
-		}
-	}
-	if !found {
+	var rowCount int
+	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=? AND source='firehose'", post.AtURI).Scan(&rowCount)
+	if rowCount == 0 {
 		t.Fatal("expected queue row with source='firehose'")
 	}
 
@@ -154,13 +145,8 @@ func TestFirehoseBT1_DeduplicateGuard(t *testing.T) {
 	// Second enqueue within 5-min window → should be skipped
 	_ = handleFirehosePost(context.Background(), q, post)
 
-	items, _ := q.List("pending", 100)
-	count := 0
-	for _, item := range items {
-		if item.URL == post.AtURI {
-			count++
-		}
-	}
+	var count int
+	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=?", post.AtURI).Scan(&count)
 	if count != 1 {
 		t.Fatalf("expected 1 queue row (dedup), got %d", count)
 	}
@@ -286,16 +272,10 @@ func TestFirehoseIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify queue row with source='firehose'
-	items, _ := q.List("pending", 10)
-	var found bool
-	for _, item := range items {
-		if item.URL == post.AtURI && item.Source == "firehose" {
-			found = true
-			break
-		}
-	}
-	if !found {
+	// Verify queue row with source='firehose' (status='relayed' — marked immediately after push)
+	var rowCount int
+	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=? AND source='firehose'", post.AtURI).Scan(&rowCount)
+	if rowCount == 0 {
 		t.Fatal("no queue row with source=firehose")
 	}
 
@@ -353,11 +333,9 @@ func TestFirehoseRGN_RealFrameDecodes(t *testing.T) {
 		t.Fatalf("processFirehoseMessage returned error: %v", err)
 	}
 
-	items, _ := q.List("pending", 10)
-	for _, item := range items {
-		if item.URL == "at://did:plc:regressiontest/app.bsky.feed.post/rgntest" {
-			return
-		}
+	var rgnCount int
+	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=?", "at://did:plc:regressiontest/app.bsky.feed.post/rgntest").Scan(&rgnCount)
+	if rgnCount == 0 {
+		t.Fatal("RG-N: real ATProto frame was not decoded and enqueued — framing regression")
 	}
-	t.Fatal("RG-N: real ATProto frame was not decoded and enqueued — framing regression")
 }
