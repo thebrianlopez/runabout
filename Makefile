@@ -71,7 +71,7 @@ $(addprefix install-,$(CORE)):
 # --- Separate-module tools ---
 
 setup-fetchpage:
-	@python3 -c "import cloakbrowser" 2>/dev/null || pip install cloakbrowser -q
+	@python3 -c "import cloakbrowser" 2>/dev/null || python3 -m pip install cloakbrowser -q
 
 fetchpage: setup-fetchpage
 	@echo "Installing fetchpage script → bin/fetchpage"
