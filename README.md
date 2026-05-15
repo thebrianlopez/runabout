@@ -196,6 +196,26 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 
 **Shield:** `X-Linkari-Client` header validation on the Funnel mux. Two modes: `log` (default, debug logging) and `enforce` (403 on invalid/missing headers). CORS preflight (OPTIONS) is always exempt.
 
+**Integration source control (`[server.sources]`):** Each ingestion source can be independently enabled or disabled via `config.toml`. All flags default to `true` — omitting the block is identical to all-enabled. SIGHUP reloads the flags; a toggled-off source stops on its next poll tick. Disabled sources emit a `source_disabled` event.
+
+| Flag | Default | Controls |
+|------|---------|---------|
+| `youtube_watch_later_enabled` | `true` | `yt_watch_later` Watch Later playlist sync |
+| `youtube_monitored_enabled` | `true` | `yt_monitored` subscription channel poller |
+| `youtube_liked_enabled` | `true` | `yt_liked` Liked Videos sync |
+| `bluesky_firehose_enabled` | `true` | `bsky_firehose` Bluesky relay scoring |
+
+**YouTube sub-behavior toggles (`[server.youtube]`):** Two pipeline stages — Enqueue and Transcribe (Whisper audio fallback) — can be independently gated per source. Dedup (`seen_content`) always runs regardless of flags. All flags default to `true`.
+
+| Flag | Default | Controls |
+|------|---------|---------|
+| `auto_enqueue_subscriptions` | `true` | Write `yt_monitored` items to score queue |
+| `auto_enqueue_watch_later` | `true` | Write `yt_watch_later` items to score queue |
+| `transcribe_subscriptions` | `true` | Whisper audio fallback for `yt_monitored` items with no subtitles |
+| `transcribe_watch_later` | `true` | Whisper audio fallback for `yt_watch_later` items with no subtitles |
+
+Note: `transcribe=false` only skips the Whisper stage — yt-dlp subtitle extraction still runs, and scoring proceeds normally if subtitles are found.
+
 **Endpoints:**
 
 | Endpoint | Method | Description |
