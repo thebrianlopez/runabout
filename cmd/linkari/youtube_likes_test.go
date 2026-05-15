@@ -349,6 +349,41 @@ func TestLikedVideosRG2_ConcurrentSyncReturns409(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// RG-3: yt_liked emits uinit_auto — replay routing must succeed
+// Regression guard for POMO youtube-likes-default-action-routing-gap:
+// previously emitted Action:"default" which is not a registered action,
+// causing replay to fail with "no action for \"default\"".
+// ---------------------------------------------------------------------------
+
+func TestLikedVideosRG3_ActionIsUinitAuto(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+
+	if err := q.SetYouTubeRefreshToken("default", "fake-tok", time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := execYouTubePlaylistItems
+	defer func() { execYouTubePlaylistItems = orig }()
+	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+		return []ytPlaylistItem{{VideoID: "rg3-vid", Title: "RG-3 Video"}}, "", nil
+	}
+
+	syncLikedVideosAsync("default", q, nil, "", "", true)
+
+	items, err := q.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(items) == 0 {
+		t.Fatal("expected 1 pending queue item")
+	}
+	if items[0].Action != "uinit_auto" {
+		t.Fatalf("expected Action=%q, got %q — unregistered action causes replay routing failure", "uinit_auto", items[0].Action)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Integration: end-to-end stub → enqueue → score
 // ---------------------------------------------------------------------------
 
