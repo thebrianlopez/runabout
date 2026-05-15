@@ -176,7 +176,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 					Type:    "url",
 					Profile: profile,
 					Title:   item.Title,
-					Action:  "default",
+					Action:  "uinit_auto",
 				}
 				rowID, err := q.Enqueue(req)
 				if err != nil {
