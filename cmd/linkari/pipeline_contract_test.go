@@ -467,7 +467,7 @@ func TestTranscribeYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		transcribeYouTubeAsync(req, q, "yt-dlp", nil, "")
+		transcribeYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
 	}()
 	select {
 	case <-finished:

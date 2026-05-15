@@ -84,6 +84,7 @@ type Router struct {
 	whisperModel string         // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
 	ytdlpPath    string         // EPIC-009: path to yt-dlp binary for YouTube transcription
 	events       *EventLogger   // EPIC-076: classification telemetry; nil when event logging not configured
+	serverConfig *ServerConfig  // EPIC-098 F3: server config for YouTube sub-behavior toggles
 }
 
 // SetQueue wires the queue for server-side uinit_* scoring (EPIC-060 M1).
@@ -121,6 +122,14 @@ func (r *Router) SetYtdlpPath(path string) {
 func (r *Router) SetEvents(e *EventLogger) {
 	r.mu.Lock()
 	r.events = e
+	r.mu.Unlock()
+}
+
+// SetServerConfig wires the server config for YouTube sub-behavior toggles (EPIC-098 F3).
+// Called during server initialization in main.go.
+func (r *Router) SetServerConfig(cfg *ServerConfig) {
+	r.mu.Lock()
+	r.serverConfig = cfg
 	r.mu.Unlock()
 }
 
@@ -493,7 +502,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		if ytPath == "" {
 			ytPath = ytdlpBinaryPath
 		}
-		go transcribeYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel)
+		go transcribeYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel, r.serverConfig)
 		return "Fetching YouTube transcript — ready via FCM", nil
 	}
 
@@ -505,7 +514,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		if ytPath == "" {
 			ytPath = ytdlpBinaryPath
 		}
-		go scoreYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel)
+		go scoreYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel, r.serverConfig)
 		return "Transcribing YouTube — verdict via FCM", nil
 	}
 

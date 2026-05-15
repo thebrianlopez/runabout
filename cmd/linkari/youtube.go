@@ -181,7 +181,8 @@ var execYtdlp = runYtdlpExtract
 //
 // The function acquires ytSubtitleSem before invoking execYtdlp and emits
 // a structured event on the EventLogger for each outcome. EPIC-109 M2.
-func extractYTSubtitles(ctx context.Context, ytPath, videoURL string, rowID int64, events *EventLogger) (subtitleEvent string, transcript string, meta ytVideoMeta, err error) {
+// EPIC-098 F3: Added serverConfig parameter for transcription gate access.
+func extractYTSubtitles(ctx context.Context, ytPath, videoURL string, rowID int64, events *EventLogger, serverConfig *ServerConfig) (subtitleEvent string, transcript string, meta ytVideoMeta, err error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(ytSubtitleTimeoutSecs)*time.Second)
 	defer cancel()
 
@@ -580,7 +581,7 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 //  4. Evaluate via HaikuJSONEvaluator
 //  5. UpdateScore → status=scored
 //  6. EnqueueDigestIfDue → FCM push (content_type="youtube" for M5 title template)
-func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger, whisperModel string) {
+func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger, whisperModel string, serverConfig *ServerConfig) {
 	outerTimeout := 120 * time.Second
 	if ytFallbackToAudio {
 		outerTimeout = 10 * time.Minute
@@ -615,7 +616,7 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 	var subtitleEvent string
 	for attempt := 1; attempt <= ytSubtitleMaxRetries+1; attempt++ {
 		var subErr error
-		subtitleEvent, transcript, meta, subErr = extractYTSubtitles(ctx, ytPath, videoURL, rowID, events)
+		subtitleEvent, transcript, meta, subErr = extractYTSubtitles(ctx, ytPath, videoURL, rowID, events, serverConfig)
 		if subtitleEvent == "yt_subtitles_ok" {
 			goto subtitleReady
 		}
@@ -658,6 +659,27 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 			})
 		}
 		if ytFallbackToAudio {
+			// EPIC-098 M5: transcription gate — skip Whisper if config disables it for this source.
+			if q != nil && serverConfig != nil {
+				source := q.SourceForQueueRow(rowID)
+				if (source == "yt_monitored" && !serverConfig.YouTube.TranscribeSubscriptions) ||
+					(source == "yt_watch_later" && !serverConfig.YouTube.TranscribeWatchLater) {
+					slog.Debug("yt_transcription_skipped_by_config",
+						"event_type", "yt_transcription_skipped_by_config",
+						"row_id", rowID,
+						"source", source,
+					)
+					if events != nil {
+						_ = events.Emit("yt_transcription_skipped_by_config", map[string]interface{}{
+							"row_id": rowID,
+							"source": source,
+						})
+					}
+					q.MarkFailedWithReason(rowID, "yt_no_subtitles_transcription_disabled")
+					return
+				}
+			}
+
 			// EPIC-108 M1: acquire semaphore before spawning whisper-cli.
 			select {
 			case ytAudioSem <- struct{}{}:
@@ -904,7 +926,7 @@ subtitleReady:
 //  1. yt-dlp extract → transcript + ytVideoMeta
 //  2. saveTranscriptFile (source="youtube", extended frontmatter)
 //  3. EnqueueTranscriptPush → FCM push with content_type="youtube_transcript"
-func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger, whisperModel string) {
+func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger, whisperModel string, serverConfig *ServerConfig) {
 	outerTimeout := 120 * time.Second
 	if ytFallbackToAudio {
 		outerTimeout = 10 * time.Minute

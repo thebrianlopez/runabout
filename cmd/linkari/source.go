@@ -249,13 +249,67 @@ func (r *SourceRegistry) healthRecord(name string) *sourceHealthRecord {
 	return h
 }
 
-// registeredSources returns all production content sources.
+// registeredSources returns production content sources filtered by config flags.
+// Sources with enabled=false are skipped and emit a source_disabled event.
+// EPIC-097 F1: Per-source enable/disable via [server.sources] config block.
 // Auth providers are registered separately via registry.RegisterAuth().
 func registeredSources(srv *Server) []ContentSource {
-	return []ContentSource{
-		&BlueskyFirehoseSource{client: srv.bskyClient},
-		&YouTubeWatchLaterSource{clientID: srv.googleClientID, clientSecret: srv.googleClientSecret, events: srv.events},
-		&YouTubeLikedSource{clientID: srv.googleClientID, clientSecret: srv.googleClientSecret, events: srv.events},
-		&YouTubeSubsSource{clientID: srv.googleClientID, clientSecret: srv.googleClientSecret, events: srv.events},
+	sc := srv.serverConfig.Sources
+	var sources []ContentSource
+
+	if sc.BlueskyFirehoseEnabled {
+		sources = append(sources, &BlueskyFirehoseSource{client: srv.bskyClient})
+	} else {
+		emitSourceDisabled(srv, "bsky_firehose")
 	}
+
+	if sc.YouTubeWatchLaterEnabled {
+		sources = append(sources, &YouTubeWatchLaterSource{
+			clientID:     srv.googleClientID,
+			clientSecret: srv.googleClientSecret,
+			events:       srv.events,
+			autoEnqueue:  srv.serverConfig.YouTube.AutoEnqueueWatchLater, // EPIC-098 F3
+		})
+	} else {
+		emitSourceDisabled(srv, "yt_watch_later")
+	}
+
+	if sc.YouTubeLikedEnabled {
+		sources = append(sources, &YouTubeLikedSource{
+			clientID:     srv.googleClientID,
+			clientSecret: srv.googleClientSecret,
+			events:       srv.events,
+			autoEnqueue:  true, // EPIC-098 F3: yt_liked uses simple auto-enqueue for now
+		})
+	} else {
+		emitSourceDisabled(srv, "yt_liked")
+	}
+
+	if sc.YouTubeMonitoredEnabled {
+		sources = append(sources, &YouTubeSubsSource{
+			clientID:     srv.googleClientID,
+			clientSecret: srv.googleClientSecret,
+			events:       srv.events,
+			autoEnqueue:  srv.serverConfig.YouTube.AutoEnqueueSubscriptions, // EPIC-098 F3
+		})
+	} else {
+		emitSourceDisabled(srv, "yt_monitored")
+	}
+
+	if len(sources) == 0 {
+		slog.Warn("sources_all_disabled", "count", 0)
+	}
+
+	return sources
+}
+
+// emitSourceDisabled emits a source_disabled event for a source skipped by config.
+func emitSourceDisabled(srv *Server, sourceName string) {
+	if srv.events != nil {
+		_ = srv.events.Emit("source_disabled", map[string]interface{}{
+			"source": sourceName,
+			"reason": "config_disabled",
+		})
+	}
+	slog.Info("source_disabled", "source", sourceName, "reason", "config_disabled")
 }

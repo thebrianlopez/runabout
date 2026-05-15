@@ -258,7 +258,7 @@ func TestScoreYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", nil, "")
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
 	}()
 	select {
 	case <-done:
@@ -370,7 +370,7 @@ func TestScoreYouTubeAsync_FallbackStepFailures(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				scoreYouTubeAsync(req, q, "yt-dlp", nil, "")
+				scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
 			}()
 			select {
 			case <-done:
@@ -584,7 +584,7 @@ func TestScoreYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", evtLogger, "")
+		scoreYouTubeAsync(req, q, "yt-dlp", evtLogger, "", nil)
 	}()
 	select {
 	case <-done:
@@ -647,7 +647,7 @@ func TestTranscribeYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		transcribeYouTubeAsync(req, q, "yt-dlp", evtLogger, "")
+		transcribeYouTubeAsync(req, q, "yt-dlp", evtLogger, "", nil)
 	}()
 	select {
 	case <-done:
@@ -698,7 +698,7 @@ func TestRouteYouTubeURL_MissingType(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", nil, "")
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
 	}()
 	select {
 	case <-done:
@@ -757,7 +757,7 @@ func TestScoreYouTubeAsync_BT1_NormalizationWired(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", nil, "")
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
 	}()
 	select {
 	case <-done:
@@ -811,7 +811,7 @@ func TestTranscribeYouTubeAsync_BT2_NormalizationWired(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		transcribeYouTubeAsync(req, q, "yt-dlp", nil, "")
+		transcribeYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
 	}()
 	select {
 	case <-done:
@@ -887,7 +887,7 @@ func TestAudioFallback_SemaphoreCap1(t *testing.T) {
 	done1 := make(chan struct{})
 	go func() {
 		defer close(done1)
-		scoreYouTubeAsync(req1, q, "yt-dlp", evtLogger, "")
+		scoreYouTubeAsync(req1, q, "yt-dlp", evtLogger, "", nil)
 	}()
 
 	// Wait until job1 has entered the download stub and is holding the semaphore.
@@ -904,7 +904,7 @@ func TestAudioFallback_SemaphoreCap1(t *testing.T) {
 	done2 := make(chan struct{})
 	go func() {
 		defer close(done2)
-		scoreYouTubeAsync(req2, q, "yt-dlp", evtLogger, "")
+		scoreYouTubeAsync(req2, q, "yt-dlp", evtLogger, "", nil)
 	}()
 
 	// Give job2 time to attempt semaphore acquire and emit the queued event.

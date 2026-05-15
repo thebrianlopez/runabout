@@ -17,6 +17,7 @@ type YouTubeLikedSource struct {
 	clientID     string
 	clientSecret string
 	events       *EventLogger
+	autoEnqueue  bool // EPIC-098 F3: gate for queue.Enqueue() calls (future use)
 }
 
 func (s *YouTubeLikedSource) Name() string       { return "yt_liked" }
@@ -31,13 +32,15 @@ func (s *YouTubeLikedSource) Start(ctx context.Context, q *Queue, emit func(*Sha
 			return nil
 		case <-time.After(interval):
 		}
-		syncLikedVideosAsync("default", q, s.events, s.clientID, s.clientSecret)
+		// EPIC-098 F3: pass autoEnqueue flag (currently always true for yt_liked)
+		syncLikedVideosAsync("default", q, s.events, s.clientID, s.clientSecret, s.autoEnqueue)
 	}
 }
 
 // syncLikedVideosAsync fetches the Liked Videos playlist and enqueues unseen
 // videos for scoring. Runs in a goroutine; errors are logged, not returned.
-func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string) {
+// EPIC-098 F3: autoEnqueue gates queue.Enqueue() calls.
+func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("syncLikedVideosAsync panic", "recover", r)
@@ -165,28 +168,42 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 			}
 
 			videoURL := "https://www.youtube.com/watch?v=" + item.VideoID
-			req := &ShareRequest{
-				URL:     videoURL,
-				Type:    "url",
-				Profile: profile,
-				Title:   item.Title,
-				Action:  "default",
-			}
-			rowID, err := q.Enqueue(req)
-			if err != nil {
-				slog.Warn("syncLikedVideosAsync: enqueue failed", "video_id", item.VideoID, "error", err)
-				continue
-			}
-			_ = q.MarkContentSeen("yt_liked", item.VideoID, rowID)
 
-			enqueued++
-			if events != nil {
-				_ = events.Emit("source_item_enqueued", map[string]interface{}{
-					"source":       "yt_liked",
-					"profile":      profile,
-					"video_id":     item.VideoID,
-					"queue_row_id": rowID,
-				})
+			// EPIC-098 F3: dedup write happens BEFORE the enqueue gate
+			if autoEnqueue {
+				req := &ShareRequest{
+					URL:     videoURL,
+					Type:    "url",
+					Profile: profile,
+					Title:   item.Title,
+					Action:  "default",
+				}
+				rowID, err := q.Enqueue(req)
+				if err != nil {
+					slog.Warn("syncLikedVideosAsync: enqueue failed", "video_id", item.VideoID, "error", err)
+					continue
+				}
+				_ = q.MarkContentSeen("yt_liked", item.VideoID, rowID)
+
+				enqueued++
+				if events != nil {
+					_ = events.Emit("source_item_enqueued", map[string]interface{}{
+						"source":       "yt_liked",
+						"profile":      profile,
+						"video_id":     item.VideoID,
+						"queue_row_id": rowID,
+					})
+				}
+			} else {
+				// Observe-only mode: track dedup but don't enqueue
+				_ = q.MarkContentSeen("yt_liked", item.VideoID, 0)
+				if events != nil {
+					_ = events.Emit("yt_enqueue_skipped_by_config", map[string]interface{}{
+						"source":   "yt_liked",
+						"video_id": item.VideoID,
+					})
+				}
+				slog.Debug("yt_enqueue_skipped_by_config", "source", "yt_liked", "video_id", item.VideoID)
 			}
 		}
 
