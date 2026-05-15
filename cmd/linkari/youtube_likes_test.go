@@ -68,7 +68,7 @@ func TestLikedVideosCT2_SyncOnePage(t *testing.T) {
 		}, "", nil
 	}
 
-	syncLikedVideosAsync("default", q, nil, "", "")
+	syncLikedVideosAsync("default", q, nil, "", "", true)
 
 	if !called {
 		t.Fatal("execYouTubePlaylistItems was not called")
@@ -181,7 +181,7 @@ func TestLikedVideosCT5_Pagination(t *testing.T) {
 		}
 	}
 
-	syncLikedVideosAsync("default", q, nil, "", "")
+	syncLikedVideosAsync("default", q, nil, "", "", true)
 
 	if pageCount != 2 {
 		t.Fatalf("expected 2 pages fetched, got %d", pageCount)
@@ -217,7 +217,7 @@ func TestLikedVideosBT1_PlaylistIDIsLL(t *testing.T) {
 		return nil, "", nil
 	}
 
-	syncLikedVideosAsync("default", q, nil, "", "")
+	syncLikedVideosAsync("default", q, nil, "", "", true)
 
 	if gotPlaylistID != "LL" {
 		t.Fatalf("expected PlaylistId=LL, got %q", gotPlaylistID)
@@ -263,7 +263,7 @@ func TestLikedVideosBT3_QuotaExhaustion(t *testing.T) {
 	}
 	defer el.Close()
 
-	syncLikedVideosAsync("default", q, el, "", "")
+	syncLikedVideosAsync("default", q, el, "", "", true)
 
 	items, err := q.Pending()
 	if err != nil {

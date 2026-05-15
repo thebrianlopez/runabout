@@ -90,7 +90,7 @@ func TestF3CT_EmptyTranscriptGuard(t *testing.T) {
 	pushCalled := installPushStub(t, nil)
 
 	req := enqueueDeliveryReq(t, q, "https://www.youtube.com/watch?v=empty1")
-	transcribeYouTubeAsync(req, q, "yt-dlp", el, "")
+	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", nil)
 
 	raw := readDeliveryLog(t, el, evtPath)
 
@@ -133,7 +133,7 @@ func TestF3CT_DeliveryEmitsEvent(t *testing.T) {
 	pushCalled := installPushStub(t, nil)
 
 	req := enqueueDeliveryReq(t, q, "https://www.youtube.com/watch?v=good1")
-	transcribeYouTubeAsync(req, q, "yt-dlp", el, "")
+	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", nil)
 
 	raw := readDeliveryLog(t, el, evtPath)
 
@@ -172,7 +172,7 @@ func TestF3CT_FCMFailureEmitsEvent(t *testing.T) {
 	pushCalled := installPushStub(t, fmt.Errorf("sqlite: table push_outbox is locked"))
 
 	req := enqueueDeliveryReq(t, q, "https://www.youtube.com/watch?v=pfail1")
-	transcribeYouTubeAsync(req, q, "yt-dlp", el, "")
+	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", nil)
 
 	raw := readDeliveryLog(t, el, evtPath)
 

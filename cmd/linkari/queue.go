@@ -2210,6 +2210,18 @@ func (q *Queue) IsNewContent(source, itemID string) (bool, error) {
 	return count == 0, nil
 }
 
+// SourceForQueueRow returns the content source tag (e.g. "yt_monitored", "yt_watch_later")
+// for the given queue row by looking up the seen_content table's queue_id FK.
+// Returns empty string if no mapping exists (e.g. manual shares, firehose items).
+func (q *Queue) SourceForQueueRow(queueID int64) string {
+	var source string
+	err := q.db.QueryRow(`SELECT source FROM seen_content WHERE queue_id = ? LIMIT 1`, queueID).Scan(&source)
+	if err != nil {
+		return ""
+	}
+	return source
+}
+
 // MarkContentSeen records that (source, itemID) has been processed.
 // Idempotent: safe to call multiple times for the same pair.
 // queueID is the row ID from q.Enqueue(); pass 0 if enqueue was skipped.

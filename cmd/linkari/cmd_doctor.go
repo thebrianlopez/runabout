@@ -109,6 +109,40 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
+			// --- Check 1b: sources configuration (EPIC-097 F1) ---
+			if serverCfg != nil {
+				src := serverCfg.Sources
+				enabled := []string{}
+				disabled := []string{}
+				if src.YouTubeWatchLaterEnabled {
+					enabled = append(enabled, "yt_watch_later")
+				} else {
+					disabled = append(disabled, "yt_watch_later")
+				}
+				if src.YouTubeMonitoredEnabled {
+					enabled = append(enabled, "yt_monitored")
+				} else {
+					disabled = append(disabled, "yt_monitored")
+				}
+				if src.YouTubeLikedEnabled {
+					enabled = append(enabled, "yt_liked")
+				} else {
+					disabled = append(disabled, "yt_liked")
+				}
+				if src.BlueskyFirehoseEnabled {
+					enabled = append(enabled, "bsky_firehose")
+				} else {
+					disabled = append(disabled, "bsky_firehose")
+				}
+				msg := fmt.Sprintf("enabled=%v", enabled)
+				if len(disabled) > 0 {
+					msg = fmt.Sprintf("%s disabled=%v", msg, disabled)
+					addCheck(warnCheck("sources_config", msg))
+				} else {
+					addCheck(okCheck("sources_config", msg))
+				}
+			}
+
 			// --- Checks 2-4: secret fields (token, firebase_sa, tsnet_authkey) ---
 			resolutions := resolveAllSecrets(serverCfg)
 

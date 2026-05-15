@@ -50,7 +50,7 @@ func TestSubtitleExtraction_CT1_SubtitlesFound(t *testing.T) {
 		return "This is the subtitle text.", ytVideoMeta{Title: "Test", ID: "abc123", Duration: 120, SubtitleType: "auto"}, nil
 	}
 
-	subtitleEvent, transcript, meta, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=abc123", 1, el)
+	subtitleEvent, transcript, meta, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=abc123", 1, el, nil)
 
 	if err != nil {
 		t.Fatalf("CT-1: unexpected error: %v", err)
@@ -85,7 +85,7 @@ func TestSubtitleExtraction_CT2_NoSubtitles(t *testing.T) {
 		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: no subtitles found for test-url")
 	}
 
-	subtitleEvent, transcript, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=nosubs", 2, el)
+	subtitleEvent, transcript, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=nosubs", 2, el, nil)
 
 	// yt_no_subtitles is a normal signal — caller triggers F2, no dead-letter.
 	if err != nil {
@@ -118,7 +118,7 @@ func TestSubtitleExtraction_CT3_YtDlpFailure(t *testing.T) {
 		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: exit status 1: ERROR: Unable to extract video data")
 	}
 
-	subtitleEvent, _, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=fail", 3, el)
+	subtitleEvent, _, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=fail", 3, el, nil)
 
 	if err == nil {
 		t.Error("CT-3: expected non-nil error for yt_dlp_failed")
@@ -155,7 +155,7 @@ func TestSubtitleExtraction_CT4_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
 
-	subtitleEvent, _, _, err := extractYTSubtitles(ctx, "yt-dlp", "https://www.youtube.com/watch?v=timeout", 4, el)
+	subtitleEvent, _, _, err := extractYTSubtitles(ctx, "yt-dlp", "https://www.youtube.com/watch?v=timeout", 4, el, nil)
 
 	if err == nil {
 		t.Error("CT-4: expected error on timeout")
@@ -224,7 +224,7 @@ func TestSubtitleExtraction_CT5_DeadLetterRetrySucceeds(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", nil, "")
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
 	}()
 	select {
 	case <-done:
@@ -286,7 +286,7 @@ func TestSubtitleExtraction_CT6_TerminalFailure(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", el, "")
+		scoreYouTubeAsync(req, q, "yt-dlp", el, "", nil)
 	}()
 	select {
 	case <-done:
@@ -323,7 +323,7 @@ func TestSubtitleExtraction_CT7_TimeoutConfigWired(t *testing.T) {
 		}
 	}
 
-	subtitleEvent, transcript, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=cfg1", 7, el)
+	subtitleEvent, transcript, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=cfg1", 7, el, nil)
 
 	// Must succeed — 10ms is well within the 5s config limit.
 	if err != nil {
@@ -381,7 +381,7 @@ func TestSubtitleExtraction_CT8_ConcurrencyCap3(t *testing.T) {
 		url := fmt.Sprintf("https://www.youtube.com/watch?v=job%d", i)
 		go func() {
 			defer close(ch)
-			extractYTSubtitles(context.Background(), "yt-dlp", url, int64(i), el) //nolint:errcheck
+			extractYTSubtitles(context.Background(), "yt-dlp", url, int64(i), el, nil) //nolint:errcheck
 		}()
 	}
 
