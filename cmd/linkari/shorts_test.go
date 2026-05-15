@@ -234,7 +234,7 @@ func TestShortsAsync_M12_Integration(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", nil, "")
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
 	}()
 	select {
 	case <-done:

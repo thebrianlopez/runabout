@@ -87,6 +87,23 @@ type YouTubeConfig struct {
 	SubtitleTimeoutSecs int    `toml:"subtitle_timeout_secs"` // EPIC-109: wall-clock deadline for F1 subtitle extraction (default: 30)
 	MaxConcurrency      int    `toml:"max_concurrency"`       // EPIC-109: max concurrent yt-dlp subtitle jobs (default: 3)
 	MaxRetries          int    `toml:"max_retries"`           // EPIC-109: dead-letter retry limit for yt_dlp_failed (default: 2)
+
+	// EPIC-098 F3: sub-behavior toggles for YouTube sources
+	// AutoEnqueue gates queue.Enqueue() calls; Transcribe gates Whisper audio fallback
+	TranscribeSubscriptions  bool `toml:"transcribe_subscriptions"`   // default: true; false = skip Whisper for yt_monitored items without subtitles
+	TranscribeWatchLater     bool `toml:"transcribe_watch_later"`     // default: true; false = skip Whisper for yt_watch_later items without subtitles
+	AutoEnqueueSubscriptions bool `toml:"auto_enqueue_subscriptions"` // default: true; false = observe-only (track dedup but don't enqueue for scoring)
+	AutoEnqueueWatchLater    bool `toml:"auto_enqueue_watch_later"`   // default: true; false = observe-only for Watch Later
+}
+
+// SourcesConfig holds per-source enabled flags for all integration sources.
+// EPIC-097 F1: Each source can be independently enabled/disabled via config.toml.
+// All flags default to true for backward compatibility.
+type SourcesConfig struct {
+	YouTubeWatchLaterEnabled bool `toml:"youtube_watch_later_enabled"` // yt_watch_later source
+	YouTubeMonitoredEnabled  bool `toml:"youtube_monitored_enabled"`   // yt_monitored (subscriptions) source
+	YouTubeLikedEnabled      bool `toml:"youtube_liked_enabled"`       // yt_liked source
+	BlueskyFirehoseEnabled   bool `toml:"bluesky_firehose_enabled"`    // bsky_firehose source
 }
 
 // WhisperConfig holds resource-control knobs for whisper-cli invocations.
@@ -420,6 +437,10 @@ type ServerConfig struct {
 	// GAP-07/GAP-08: metrics collection config. Controls whether MetricsCollector
 	// is initialized at startup. Default (absent/nil): enabled. SIGHUP-reloadable.
 	Metrics MetricsYAMLConfig `toml:"metrics"`
+
+	// EPIC-097 F1: per-source enabled flags for all integration sources.
+	// All flags default to true for backward compatibility.
+	Sources SourcesConfig `toml:"sources"`
 }
 
 // ShareConfig controls how share requests map their received action/profile to

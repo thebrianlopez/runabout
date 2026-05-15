@@ -199,6 +199,9 @@ type Server struct {
 	startAt time.Time
 	tsnetAddr string // Funnel FQDN; empty when tsnet is not enabled
 
+	// EPIC-097 F1: server config for source enable/disable flags.
+	serverConfig ServerConfig
+
 	fcmMu          sync.Mutex
 	fcmToken       string
 	fcmTokenSource oauth2.TokenSource // nil when Firebase is not configured
@@ -2402,7 +2405,7 @@ func (s *Server) handleSyncWatchLater(w http.ResponseWriter, r *http.Request) {
 			watchLaterSyncing = false
 			watchLaterSyncMu.Unlock()
 		}()
-		syncWatchLaterAsync(profile, s.queue, s.events, s.googleClientID, s.googleClientSecret)
+		syncWatchLaterAsync(profile, s.queue, s.events, s.googleClientID, s.googleClientSecret, true)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
@@ -2436,7 +2439,7 @@ func (s *Server) handleSyncLikedVideos(w http.ResponseWriter, r *http.Request) {
 			likedVideosSyncing = false
 			likedVideosSyncMu.Unlock()
 		}()
-		syncLikedVideosAsync(profile, s.queue, s.events, s.googleClientID, s.googleClientSecret)
+		syncLikedVideosAsync(profile, s.queue, s.events, s.googleClientID, s.googleClientSecret, true)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)

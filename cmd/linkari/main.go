@@ -192,6 +192,37 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 			serverFileCfg := &cfg.Server
 
+			// EPIC-097 F1 M2: Default-initialize SourcesConfig with all flags true
+			// before any filtering logic runs. Go's zero-value for bool is false,
+			// so without this, omitted [server.sources] would silently disable all sources.
+			if !serverFileCfg.Sources.YouTubeWatchLaterEnabled &&
+				!serverFileCfg.Sources.YouTubeMonitoredEnabled &&
+				!serverFileCfg.Sources.YouTubeLikedEnabled &&
+				!serverFileCfg.Sources.BlueskyFirehoseEnabled {
+				// All fields are zero (false) - apply defaults
+				serverFileCfg.Sources = SourcesConfig{
+					YouTubeWatchLaterEnabled: true,
+					YouTubeMonitoredEnabled:  true,
+					YouTubeLikedEnabled:      true,
+					BlueskyFirehoseEnabled:   true,
+				}
+				slog.Debug("sources_config_defaults_applied", "reason", "all_flags_zero")
+			}
+
+			// EPIC-098 F3 M2: Default-initialize YouTubeConfig sub-behavior toggles
+			// All flags default to true for backward compatibility
+			if !serverFileCfg.YouTube.TranscribeSubscriptions &&
+				!serverFileCfg.YouTube.TranscribeWatchLater &&
+				!serverFileCfg.YouTube.AutoEnqueueSubscriptions &&
+				!serverFileCfg.YouTube.AutoEnqueueWatchLater {
+				// All fields are zero (false) - apply defaults
+				serverFileCfg.YouTube.TranscribeSubscriptions = true
+				serverFileCfg.YouTube.TranscribeWatchLater = true
+				serverFileCfg.YouTube.AutoEnqueueSubscriptions = true
+				serverFileCfg.YouTube.AutoEnqueueWatchLater = true
+				slog.Debug("youtube_config_defaults_applied", "reason", "all_flags_zero")
+			}
+
 			// err is used throughout this function for assignment without :=.
 			var err error
 
@@ -549,6 +580,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 
 			srv := NewServer(token, router, queue, ring, debug, fcmTokenSource)
+			srv.serverConfig = *serverFileCfg
 			srv.SetShield(shield)
 			srv.jiraToken = jiraToken
 			srv.jiraAPIUsername = jiraAPIUsername

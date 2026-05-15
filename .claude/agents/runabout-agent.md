@@ -35,6 +35,49 @@ You receive a milestone target: **M2**, **M3**, or **M4**.
 | `internal/perfgate` | Run benchmarks, compute statistics, evaluate performance gates |
 | `internal/shellprof` | Instrument fish functions, profile execution, build call graphs |
 
+## Go Source Navigation (ts-go)
+
+This repo uses `ts-go` for structural Go analysis. Always use it before reading .go files to minimize turns and preserve context window.
+
+### Navigation Rules
+
+1. **ALWAYS run `ts-go` first** — Before `read` on any .go file >100 lines:
+   ```bash
+   ts-go funcs --format compact <file>           # List functions with line ranges
+   ts-go types --format compact <file>           # List types (structs, interfaces)
+   ```
+
+2. **Extract specific functions** — Get only what you need:
+   ```bash
+   ts-go extract <file> <function_name>          # Function body + doc comments
+   ```
+
+3. **Reserve `read` for**:
+   - Files <100 lines
+   - When you need full implementation details after orientation
+   - Long test files where you need context
+
+4. **Batch ts-go calls** — Use parallel tool calls to orient quickly:
+   ```bash
+   # Good: 4 parallel calls in one turn
+   ts-go funcs cmd/linkari/config.go
+   ts-go funcs cmd/linkari/source.go
+   ts-go types cmd/linkari/config.go
+   ```
+
+### Example Workflow
+
+```bash
+# Instead of reading 680 lines of config.go:
+ts-go types --format compact cmd/linkari/config.go | grep -i "ServerConfig"
+
+# Find where registeredSources lives:
+ts-go funcs --format compact cmd/linkari/source.go | grep registeredSources
+
+# Extract just that function:
+ts-go extract cmd/linkari/source.go registeredSources
+```
+
 ## Verification
 
 ```bash

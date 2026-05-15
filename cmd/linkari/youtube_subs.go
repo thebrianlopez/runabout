@@ -127,6 +127,7 @@ type YouTubeSubsSource struct {
 	clientID     string
 	clientSecret string
 	events       *EventLogger
+	autoEnqueue  bool // EPIC-098 F3: gate for queue.Enqueue() calls
 }
 
 func (s *YouTubeSubsSource) Name() string         { return "yt_monitored" }
@@ -152,7 +153,8 @@ func (s *YouTubeSubsSource) Start(ctx context.Context, q *Queue, emit func(*Shar
 			return nil
 		case <-time.After(delay):
 		}
-		if err := watchSubscriptionsAsync("default", q, s.events, s.clientID, s.clientSecret); err != nil {
+		// EPIC-098 F3: pass autoEnqueue flag to control queue writes
+		if err := watchSubscriptionsAsync("default", q, s.events, s.clientID, s.clientSecret, s.autoEnqueue); err != nil {
 			consecutive++
 			slog.Warn("yt_monitored source error",
 				"consecutive_failures", consecutive,
@@ -167,7 +169,9 @@ func (s *YouTubeSubsSource) Start(ctx context.Context, q *Queue, emit func(*Shar
 // watchSubscriptionsAsync polls all subscription channels and enqueues new
 // videos for scoring. Designed to run as a periodic background worker.
 // EPIC-019 M6 + M10.
-func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string) (retErr error) {
+// EPIC-098 F3: autoEnqueue gates queue.Enqueue() calls; when false, videos are
+// tracked in dedup but not enqueued for scoring (observe-only mode).
+func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("watchSubscriptionsAsync panic", "recover", r)
@@ -324,31 +328,46 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 			}
 
 			videoURL := "https://www.youtube.com/watch?v=" + item.VideoID
-			req := &ShareRequest{
-				URL:     videoURL,
-				Type:    "url",
-				Profile: profile,
-				Title:   item.Title,
-				Action:  "uinit_auto",
-			}
-			rowID, err := q.Enqueue(req)
-			if err != nil {
-				slog.Warn("watchSubscriptionsAsync: enqueue failed", "video_id", item.VideoID, "error", err)
-				continue
-			}
-			_ = q.MarkContentSeen("yt_monitored", item.VideoID, rowID)
 
-			newVideoCount++
-			totalEnqueued++
+			// EPIC-098 F3: dedup write happens BEFORE the enqueue gate (RG-2 invariant)
+			// This ensures re-enabling auto_enqueue doesn't cause backfill of old items
+			if autoEnqueue {
+				req := &ShareRequest{
+					URL:     videoURL,
+					Type:    "url",
+					Profile: profile,
+					Title:   item.Title,
+					Action:  "uinit_auto",
+				}
+				rowID, err := q.Enqueue(req)
+				if err != nil {
+					slog.Warn("watchSubscriptionsAsync: enqueue failed", "video_id", item.VideoID, "error", err)
+					continue
+				}
+				_ = q.MarkContentSeen("yt_monitored", item.VideoID, rowID)
 
-			if events != nil {
-				_ = events.Emit("source_item_enqueued", map[string]interface{}{
-					"source":       "yt_monitored",
-					"profile":      profile,
-					"channel_id":   sub.ChannelID,
-					"video_id":     item.VideoID,
-					"queue_row_id": rowID,
-				})
+				newVideoCount++
+				totalEnqueued++
+
+				if events != nil {
+					_ = events.Emit("source_item_enqueued", map[string]interface{}{
+						"source":       "yt_monitored",
+						"profile":      profile,
+						"channel_id":   sub.ChannelID,
+						"video_id":     item.VideoID,
+						"queue_row_id": rowID,
+					})
+				}
+			} else {
+				// Observe-only mode: track dedup but don't enqueue (EPIC-098 F3)
+				_ = q.MarkContentSeen("yt_monitored", item.VideoID, 0)
+				if events != nil {
+					_ = events.Emit("yt_enqueue_skipped_by_config", map[string]interface{}{
+						"source":   "yt_monitored",
+						"video_id": item.VideoID,
+					})
+				}
+				slog.Debug("yt_enqueue_skipped_by_config", "source", "yt_monitored", "video_id", item.VideoID)
 			}
 		}
 

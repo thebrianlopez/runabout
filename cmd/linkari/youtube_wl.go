@@ -60,10 +60,11 @@ type YouTubeWatchLaterSource struct {
 	clientID     string
 	clientSecret string
 	events       *EventLogger
+	autoEnqueue  bool // EPIC-098 F3: gate for queue.Enqueue() calls
 }
 
-func (s *YouTubeWatchLaterSource) Name() string         { return "yt_watch_later" }
-func (s *YouTubeWatchLaterSource) AuthDeps() []string   { return []string{"google_youtube"} }
+func (s *YouTubeWatchLaterSource) Name() string       { return "yt_watch_later" }
+func (s *YouTubeWatchLaterSource) AuthDeps() []string { return []string{"google_youtube"} }
 
 // Start polls the Watch Later playlist every hour until ctx is cancelled.
 func (s *YouTubeWatchLaterSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
@@ -74,14 +75,17 @@ func (s *YouTubeWatchLaterSource) Start(ctx context.Context, q *Queue, emit func
 			return nil
 		case <-time.After(interval):
 		}
-		syncWatchLaterAsync("default", q, s.events, s.clientID, s.clientSecret)
+		// EPIC-098 F3: pass autoEnqueue flag to control queue writes
+		syncWatchLaterAsync("default", q, s.events, s.clientID, s.clientSecret, s.autoEnqueue)
 	}
 }
 
 // syncWatchLaterAsync fetches the Watch Later playlist and enqueues unseen
 // videos for scoring. Runs in a goroutine; errors are logged, not returned.
 // EPIC-018 M4 + M8.
-func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string) {
+// EPIC-098 F3: autoEnqueue gates queue.Enqueue() calls; when false, videos are
+// tracked in dedup but not enqueued for scoring (observe-only mode).
+func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("syncWatchLaterAsync panic", "recover", r)
@@ -209,28 +213,42 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 			}
 
 			videoURL := "https://www.youtube.com/watch?v=" + item.VideoID
-			req := &ShareRequest{
-				URL:     videoURL,
-				Type:    "url",
-				Profile: profile,
-				Title:   item.Title,
-				Action:  "default",
-			}
-			rowID, err := q.Enqueue(req)
-			if err != nil {
-				slog.Warn("syncWatchLaterAsync: enqueue failed", "video_id", item.VideoID, "error", err)
-				continue
-			}
-			_ = q.MarkContentSeen("yt_watch_later", item.VideoID, rowID)
 
-			enqueued++
-			if events != nil {
-				_ = events.Emit("source_item_enqueued", map[string]interface{}{
-					"source":       "yt_watch_later",
-					"profile":      profile,
-					"video_id":     item.VideoID,
-					"queue_row_id": rowID,
-				})
+			// EPIC-098 F3: dedup write happens BEFORE the enqueue gate (RG-2 invariant)
+			if autoEnqueue {
+				req := &ShareRequest{
+					URL:     videoURL,
+					Type:    "url",
+					Profile: profile,
+					Title:   item.Title,
+					Action:  "default",
+				}
+				rowID, err := q.Enqueue(req)
+				if err != nil {
+					slog.Warn("syncWatchLaterAsync: enqueue failed", "video_id", item.VideoID, "error", err)
+					continue
+				}
+				_ = q.MarkContentSeen("yt_watch_later", item.VideoID, rowID)
+
+				enqueued++
+				if events != nil {
+					_ = events.Emit("source_item_enqueued", map[string]interface{}{
+						"source":       "yt_watch_later",
+						"profile":      profile,
+						"video_id":     item.VideoID,
+						"queue_row_id": rowID,
+					})
+				}
+			} else {
+				// Observe-only mode: track dedup but don't enqueue (EPIC-098 F3)
+				_ = q.MarkContentSeen("yt_watch_later", item.VideoID, 0)
+				if events != nil {
+					_ = events.Emit("yt_enqueue_skipped_by_config", map[string]interface{}{
+						"source":   "yt_watch_later",
+						"video_id": item.VideoID,
+					})
+				}
+				slog.Debug("yt_enqueue_skipped_by_config", "source", "yt_watch_later", "video_id", item.VideoID)
 			}
 		}
 
