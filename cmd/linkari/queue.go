@@ -71,6 +71,8 @@ type QueueItem struct {
 	RetryCount  int    `json:"retry_count,omitempty"`  // EPIC-108 M3: audio fallback retry attempts completed
 	RetryAfter  int64  `json:"retry_after,omitempty"`  // EPIC-108 M3: Unix timestamp; 0 = process immediately
 	ErrorReason string `json:"error_reason,omitempty"` // EPIC-111 F2: terminal failure reason; populated for status=failed
+	ContentHash string `json:"content_hash,omitempty"` // EPIC-111 F3: SHA-256 hex of raw fetched bytes (set at intake)
+	TraceID     string `json:"trace_id,omitempty"`     // EPIC-111 F3: UUID v4 persisted at intake; immutable across retries
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -232,6 +234,9 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		// EPIC-108 M3: dead-letter retry counters for audio fallback jobs.
 		"ALTER TABLE queue ADD COLUMN retry_count INTEGER DEFAULT 0",
 		"ALTER TABLE queue ADD COLUMN retry_after INTEGER DEFAULT 0",
+		// EPIC-111 F3 M8: replay-safe fields for content drift detection and event correlation.
+		"ALTER TABLE queue ADD COLUMN content_hash TEXT DEFAULT ''",
+		"ALTER TABLE queue ADD COLUMN trace_id TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -498,14 +503,23 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 // Enqueue inserts a share request into the queue with status=pending.
 // req.ClassifySource (EPIC-077 M1) is persisted to the classify_source column
 // to record which pre-enqueue cascade stage determined the profile.
+// EPIC-111 F3 M9: generates trace_id (UUID v4) and computes content_hash from
+// request text/URL bytes at intake so all pipeline events share a stable trace.
 func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
+	traceID := generateTraceID()
+	// content_hash is computed from available request content at intake.
+	// For URL shares, this is the URL bytes (refined to fetched content in scoreAsync).
+	// For file/audio shares, request.Text carries metadata or transcript path.
+	contentData := []byte(req.URL + req.Text)
+	contentHashVal := ContentHash(contentData)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size, slug)
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size, slug, trace_id, content_hash)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.URL, req.Text, req.Type, req.Action, req.Profile, now, req.Title,
 		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename, req.ClassifySource,
 		boolToInt(req.IsScreenshot), req.FileSize, urlToSlug(req.URL),
+		traceID, contentHashVal,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue: %w", err)
@@ -516,6 +530,7 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 		"id", id,
 		"type", req.Type,
 		"classify_source", req.ClassifySource,
+		"trace_id", traceID,
 	)
 	return id, nil
 }
@@ -573,7 +588,7 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,''), COALESCE(artifact_path,''), COALESCE(content_warning,''), extraction_confidence, COALESCE(retry_count,0), COALESCE(retry_after,0), COALESCE(error_reason,'')"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,''), COALESCE(artifact_path,''), COALESCE(content_warning,''), extraction_confidence, COALESCE(retry_count,0), COALESCE(retry_after,0), COALESCE(error_reason,''), COALESCE(content_hash,''), COALESCE(trace_id,'')"
 
 // Pending returns all items with status=pending whose retry_after has elapsed,
 // ordered by id ASC (FIFO). Rows with retry_after=0 are always included (default).
@@ -2039,7 +2054,7 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 		var it QueueItem
 		var score int
 		var isScreenshotInt, isShortsInt int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source, &it.ArtifactPath, &it.ContentWarning, &it.ExtractionConfidence, &it.RetryCount, &it.RetryAfter, &it.ErrorReason); err != nil {
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source, &it.ArtifactPath, &it.ContentWarning, &it.ExtractionConfidence, &it.RetryCount, &it.RetryAfter, &it.ErrorReason, &it.ContentHash, &it.TraceID); err != nil {
 			return nil, err
 		}
 		if score != 0 {
