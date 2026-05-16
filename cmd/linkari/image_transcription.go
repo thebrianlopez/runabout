@@ -35,7 +35,7 @@ var imageShortCircuitBypassMinCharsOnce sync.Once
 // imageTextExtractionEnabled gates F1/F2/F3. When false, extractImageText is
 // never called and scoreAsync falls through to the current metadata-only path.
 // Set from ServerConfig.ImageTextExtractionEnabled at startup; defaults to false
-// for safe rollout (feature must be explicitly enabled in server.yaml).
+// for safe rollout (feature must be explicitly enabled in config.toml).
 var imageTextExtractionEnabled = false
 
 // imageTextResultSchema is the --json-schema argument for the F1 pre-pass call.

@@ -577,7 +577,7 @@ func TestF3_CT7_SuppressShortCircuit_ZeroThreshold(t *testing.T) {
 // imageShortCircuitBypassMinChars must have a default of 20 when config absent.
 func TestF3_CT8_DefaultThreshold_Is20(t *testing.T) {
 	// The default is encoded in the package-level var imageShortCircuitBypassMinChars.
-	// When server.yaml omits the key, ServerConfig.ImageShortCircuitBypassMinChars is 0
+	// When config.toml omits the key, ServerConfig.ImageShortCircuitBypassMinChars is 0
 	// and initClaudeConfig must fall back to 20.
 	if imageShortCircuitBypassMinChars != 20 {
 		t.Errorf("imageShortCircuitBypassMinChars default = %d; want 20", imageShortCircuitBypassMinChars)
