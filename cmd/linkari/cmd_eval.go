@@ -134,6 +134,65 @@ Default fixtures directory (both subcommands), in priority order:
 	cmd.AddCommand(evalCaptureCmd())
 	cmd.AddCommand(evalRunCmd())
 	cmd.AddCommand(evalRefreshGoldensCmd())
+	cmd.AddCommand(evalStatsCmd())
+	return cmd
+}
+
+// evalStatsCmd implements `linkari eval stats --fixtures <dir> [--min-fixtures N] [--json]`
+func evalStatsCmd() *cobra.Command {
+	var (
+		fixturesDir string
+		minFixtures int
+		jsonOutput  bool
+	)
+	cmd := &cobra.Command{
+		Use:   "stats",
+		Short: "Report fixture corpus coverage per profile (EPIC-112 F3)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if fixturesDir == "" {
+				fixturesDir = defaultFixturesDir()
+			}
+			result, err := RunEvalStats(fixturesDir)
+			if err != nil {
+				return err
+			}
+
+			if jsonOutput {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(result)
+			}
+
+			// Human table output
+			fmt.Fprintf(cmd.OutOrStdout(), "%-12s %6s %s\n", "Profile", "Count", "Status")
+			fmt.Fprintf(cmd.OutOrStdout(), "%-12s %6s %s\n", "-------", "-----", "------")
+			for _, profile := range sortedProfileIDs() {
+				count := result.Profiles[profile]
+				status := "✓"
+				if count < minFixtures {
+					status = "✗"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%-12s %6d %s\n", profile, count, status)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "\nTotal: %d fixtures across %d profiles\n",
+				result.Total, len(result.Profiles))
+			if len(result.Missing) > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "Missing: %v\n", result.Missing)
+			}
+
+			if minFixtures > 0 {
+				for profile, count := range result.Profiles {
+					if count < minFixtures {
+						return fmt.Errorf("profile %q has %d fixtures, below --min-fixtures=%d", profile, count, minFixtures)
+					}
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&fixturesDir, "fixtures", "", "fixtures directory (default: testdata/triage)")
+	cmd.Flags().IntVar(&minFixtures, "min-fixtures", 0, "exit 1 if any profile has fewer than N fixtures")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output valid JSON (StatsResult schema)")
 	return cmd
 }
 
