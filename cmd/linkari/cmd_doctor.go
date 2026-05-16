@@ -359,6 +359,30 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				})
 			}
 
+			// --- Check 11a: routing config validation (EPIC-111 F4 M12) ---
+			{
+				// Load the current config to extract any routing block.
+				// If no routing block is present, defaults are used and always valid.
+				cfg := loadArchiveThresholdConfig()
+				var routingCfg RoutingConfig
+				if cfg != nil {
+					routingCfg = cfg.Routing
+				}
+				if routingCfg.DefaultThreshold == 0 {
+					routingCfg = defaultRoutingConfig()
+				}
+				if err := ValidateRoutingConfig(routingCfg); err != nil {
+					addCheck(failCheck("routing_config",
+						fmt.Sprintf("routing block invalid: %v", err)))
+				} else {
+					addCheck(okCheck("routing_config",
+						fmt.Sprintf("threshold=%d, confidence_gate=%.2f, %d route overrides",
+							routingCfg.DefaultThreshold,
+							routingCfg.ExtractionConfidenceGate,
+							len(routingCfg.RouteThresholds))))
+				}
+			}
+
 			// --- Check 11: log_file writable (if configured) ---
 			if serverCfg != nil && serverCfg.LogFile != "" {
 				logDir := filepath.Dir(serverCfg.LogFile)
