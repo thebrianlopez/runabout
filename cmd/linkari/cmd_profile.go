@@ -37,6 +37,52 @@ func profileCmd() *cobra.Command {
 		Short: "Profile manifest tooling (EPIC-044 M3)",
 	}
 	cmd.AddCommand(profileLintCmd())
+	cmd.AddCommand(profileTestCmd())
+	return cmd
+}
+
+// profileTestCmd implements `linkari profile test <profile.yaml> [--fixtures <dir>] [--tolerance N]`
+func profileTestCmd() *cobra.Command {
+	var (
+		fixturesDir string
+		tolerance   int
+	)
+	cmd := &cobra.Command{
+		Use:   "test <profile.yaml>",
+		Short: "Compare HEAD vs working-tree profile scoring on fixture corpus (EPIC-112 F4)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			profilePath := args[0]
+			if fixturesDir == "" {
+				fixturesDir = defaultFixturesDir()
+			}
+			scorer := registeredScorerFn()
+			result, err := RunProfileTest(profilePath, fixturesDir, tolerance, scorer)
+			if err != nil {
+				return err
+			}
+			if len(result.Fixtures) == 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "profile test: no fixtures found for profile (check --fixtures path)\n")
+				return nil
+			}
+
+			// Table output
+			fmt.Fprintf(cmd.OutOrStdout(), "%-36s %6s %6s %6s %s\n", "Fixture", "Before", "After", "Delta", "Status")
+			fmt.Fprintf(cmd.OutOrStdout(), "%-36s %6s %6s %6s %s\n", "-------", "------", "-----", "-----", "------")
+			for _, f := range result.Fixtures {
+				deltaStr := fmt.Sprintf("%+d", f.Delta)
+				fmt.Fprintf(cmd.OutOrStdout(), "%-36s %6d %6d %6s %s\n",
+					f.ID, f.BeforeScore, f.AfterScore, deltaStr, f.Status)
+			}
+
+			if result.HasFailure {
+				return fmt.Errorf("profile test: one or more fixtures exceed tolerance (%d)", tolerance)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&fixturesDir, "fixtures", "", "fixtures directory (default: testdata/triage)")
+	cmd.Flags().IntVar(&tolerance, "tolerance", 10, "score delta tolerance threshold")
 	return cmd
 }
 
