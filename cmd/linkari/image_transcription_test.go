@@ -390,10 +390,121 @@ func TestF2_CT7_SaveImageTranscript_WriteFailure(t *testing.T) {
 	}
 }
 
-// F2-CT-8: Integration regression — Screenshot_20260420_163121_Chrome.jpg scores >0.
-// This test is a stub in M1; it will be wired in M3.
+// F2-CT-8 / RG-1: Integration regression — Screenshot_20260420_163121_Chrome.jpg scores >0.
+// Wired in M3. Runs the full scoreAsync pipeline with a mock claude that transcribes
+// visible text, and verifies the resulting queue row scores above 0.
 func TestF2_CT8_RG1_ChromeScreenshot_ScoresAboveZero(t *testing.T) {
-	t.Skip("RG-1: stub in M1 — wired in M3 after scoreAsync changes")
+	isolateEventsDir(t)
+	installTestProfileDir(t, "image_triage")
+
+	// Create a small test PNG that represents the Chrome screenshot fixture.
+	imgDir := t.TempDir()
+	imgPath := filepath.Join(imgDir, "Screenshot_20260420_163121_Chrome.jpg")
+	// Write a minimal PNG (image data doesn't matter — claude is mocked).
+	img := makeTestImage(t)
+	imgBytes, err := os.ReadFile(img)
+	if err != nil {
+		t.Fatalf("read test image: %v", err)
+	}
+	if err := os.WriteFile(imgPath, imgBytes, 0o644); err != nil {
+		t.Fatalf("write fixture image: %v", err)
+	}
+
+	// Enable image text extraction for this test.
+	origEnabled := imageTextExtractionEnabled
+	origThreshold := imageShortCircuitBypassMinChars
+	imageTextExtractionEnabled = true
+	imageShortCircuitBypassMinChars = 20
+	t.Cleanup(func() {
+		imageTextExtractionEnabled = origEnabled
+		imageShortCircuitBypassMinChars = origThreshold
+	})
+
+	// Mock the claude CLI for F1 text extraction: returns extracted text JSON.
+	extractedTextJSON := `{"type":"result","result":"{\"text\":\"Important article: Go 1.22 release notes and memory improvements\"}","is_error":false,"total_cost_usd":0.001}`
+	mockClaudeScript(t, extractedTextJSON, 0)
+
+	// Override runClaudeHaikuVision so the vision scoring step returns a valid triage verdict.
+	// The HaikuVisionEvaluator.Evaluate calls runClaudeHaikuVision and parses its output.
+	prevRunVision := runClaudeHaikuVision
+	runClaudeHaikuVision = func(_ context.Context, _, _, _ string, _ string) ([]byte, error) {
+		// Return a valid envelope with rubric_scores populated (required when score > 0).
+		verdict := `{"score":75,"verdict":"Chrome article worth reading","rubric_scores":{"Relevance":75,"Depth":70,"Novelty":75,"Clarity":80,"Actionability":75},"action_items":[],"tags":"tech","topic_tags":["go","programming"]}`
+		envelope := fmt.Sprintf(`{"type":"result","result":%q,"is_error":false,"total_cost_usd":0.002}`, verdict)
+		return []byte(envelope), nil
+	}
+	t.Cleanup(func() { runClaudeHaikuVision = prevRunVision })
+
+	// Set transcripts dir to a temp dir.
+	origTranscriptDir := transcriptDir
+	transcriptDir = t.TempDir()
+	t.Cleanup(func() { transcriptDir = origTranscriptDir })
+
+	q := newTestQueue(t)
+	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
+
+	req := &ShareRequest{
+		Type:           "image",
+		Filename:       "Screenshot_20260420_163121_Chrome.jpg",
+		MimeType:       "image/jpeg",
+		FileSize:       int64(len(imgBytes)),
+		CallingPackage: "com.android.chrome",
+		IsScreenshot:   true,
+		RelativePath:   "Pictures/Screenshots/Screenshot_20260420_163121_Chrome.jpg",
+		AudioPath:      imgPath,
+	}
+	id, err := q.Enqueue(req)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := q.MarkRelayed(id); err != nil {
+		t.Fatalf("MarkRelayed: %v", err)
+	}
+	req.QueueRowID = id
+
+	// scoreAsync replaces the passed-in eval with HaikuVisionEvaluator for image shares.
+	// Synchronize by polling the queue row for terminal status (scored/archived/failed).
+	go scoreAsync(req, q, nil, nil, nil)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		items, lErr := q.List("", 20)
+		if lErr == nil {
+			for _, it := range items {
+				if it.ID == id && isTerminal(it.Status) {
+					goto scored
+				}
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+scored:
+
+	items, err := q.List("", 20)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found bool
+	for _, it := range items {
+		if it.ID == id && (it.Status == "scored" || it.Status == "archived") {
+			found = true
+			if it.Score == nil || *it.Score == 0 {
+				t.Errorf("RG-1: Chrome screenshot row_id=%d scored 0; want >0", id)
+			}
+			if it.Score != nil && *it.Score > 0 {
+				t.Logf("RG-1 PASS: Chrome screenshot row_id=%d scored %d", id, *it.Score)
+			}
+		}
+	}
+	if !found {
+		var statuses []string
+		for _, it := range items {
+			if it.ID == id {
+				statuses = append(statuses, it.Status)
+			}
+		}
+		t.Errorf("RG-1: Chrome screenshot row not in scored/archived state; statuses=%v", statuses)
+	}
 }
 
 // ─── F3 Contract Tests ────────────────────────────────────────────────────────

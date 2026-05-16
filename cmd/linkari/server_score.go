@@ -847,48 +847,197 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 						})
 					}
 					// Skip vision — fall through to metadata-only eval below.
-				} else if isCameraPhoto(req) {
-					// EPIC-083 M1-2: camera photo noise gate — gallery app +
-					// camera timestamp filename + no text context + not screenshot.
-					slog.Info("score_async: camera photo gate — skipping vision",
-						"event_type", "score_prefilter_skip",
-						"row_id", req.QueueRowID,
-						"file_size", req.FileSize,
-						"filename", req.Filename,
-						"stage", "camera_photo_gate",
-					)
-					if events != nil {
-						events.Emit("score_prefilter_skip", map[string]any{
-							"row_id":   req.QueueRowID,
-							"filename": req.Filename,
-							"stage":    "camera_photo_gate",
-						})
-					}
-					// Skip vision — fall through to metadata-only eval below.
 				} else {
-					// EPIC-083 M1-4: renamed from image_noise_gate_skip to
-					// score_prefilter_skip with stage field.
-					hasMetadata := req.ExtraText != "" || req.ExtraSubject != ""
-					if req.FileSize > 0 && req.FileSize < imageNoiseGateMinBytes && !hasMetadata {
-						slog.Info("score_async: image noise gate — skipping vision",
+					// EPIC-122 F1/F2/F3: image text extraction pre-pass.
+					// Run before the camera-photo gate so extracted text can suppress
+					// the short-circuit for text-rich screenshots.
+					var imageExtractedText string
+					if imageTextExtractionEnabled {
+						extractStart := time.Now()
+						var extractErr error
+						imageExtractedText, extractErr = extractImageText(ctx, req.AudioPath, visionModelName)
+						extractLatencyMs := time.Since(extractStart).Milliseconds()
+						if extractErr != nil {
+							slog.Warn("score_async: image text extraction failed — falling through",
+								"event_type", "image_text_extraction_failed",
+								"row_id", req.QueueRowID,
+								"error_reason", extractErr.Error(),
+								"latency_ms", extractLatencyMs,
+							)
+							if events != nil {
+								events.Emit("image_text_extraction_failed", map[string]any{
+									"row_id":       req.QueueRowID,
+									"error_reason": extractErr.Error(),
+									"latency_ms":   extractLatencyMs,
+								})
+							}
+						} else {
+							hasText := imageExtractedText != ""
+							slog.Info("score_async: image text extracted",
+								"event_type", "image_text_extracted",
+								"row_id", req.QueueRowID,
+								"text_length", len(imageExtractedText),
+								"has_text", hasText,
+								"latency_ms", extractLatencyMs,
+							)
+							if events != nil {
+								events.Emit("image_text_extracted", map[string]any{
+									"row_id":     req.QueueRowID,
+									"text_length": len(imageExtractedText),
+									"has_text":   hasText,
+									"latency_ms": extractLatencyMs,
+								})
+							}
+						}
+
+						// F2: persist transcript and enrich content parts.
+						if imageExtractedText != "" {
+							meta := TranscriptMetadata{
+								CallingPackage: req.CallingPackage,
+								IsScreenshot:   req.IsScreenshot,
+								RelativePath:   req.RelativePath,
+								URL:            req.URL,
+								MimeType:       req.MimeType,
+								Timestamp:      time.Now().UTC(),
+							}
+							transcriptPath, saveErr := saveImageTranscript(transcriptDir, req.QueueRowID, req.Filename, imageExtractedText, meta)
+							if saveErr != nil {
+								slog.Warn("score_async: image transcript save failed — continuing scoring",
+									"event_type", "image_transcript_write_failed",
+									"row_id", req.QueueRowID,
+									"error_reason", saveErr.Error(),
+									"transcripts_dir", transcriptDir,
+								)
+								if events != nil {
+									events.Emit("image_transcript_write_failed", map[string]any{
+										"row_id":          req.QueueRowID,
+										"error_reason":    saveErr.Error(),
+										"transcripts_dir": transcriptDir,
+									})
+								}
+							} else {
+								if fi, fiErr := os.Stat(transcriptPath); fiErr == nil {
+									slog.Info("score_async: image transcript saved",
+										"event_type", "image_transcript_saved",
+										"row_id", req.QueueRowID,
+										"file_path", transcriptPath,
+										"file_size_bytes", fi.Size(),
+									)
+									if events != nil {
+										events.Emit("image_transcript_saved", map[string]any{
+											"row_id":          req.QueueRowID,
+											"file_path":       transcriptPath,
+											"file_size_bytes": fi.Size(),
+										})
+									}
+								}
+							}
+
+							// Enrich content parts with provenance + transcript.
+							enrichedParts := buildImageParts(req, imageExtractedText)
+							content = strings.Join(enrichedParts, "\n")
+
+							// Emit metadata enrichment event.
+							var present, absent []string
+							for _, field := range []string{"calling_package", "relative_path", "url"} {
+								switch field {
+								case "calling_package":
+									if req.CallingPackage != "" {
+										present = append(present, field)
+									} else {
+										absent = append(absent, field)
+									}
+								case "relative_path":
+									if req.RelativePath != "" {
+										present = append(present, field)
+									} else {
+										absent = append(absent, field)
+									}
+								case "url":
+									if req.URL != "" {
+										present = append(present, field)
+									} else {
+										absent = append(absent, field)
+									}
+								}
+							}
+							present = append(present, "is_screenshot", "transcribed_text")
+							slog.Info("score_async: image metadata enriched",
+								"event_type", "image_metadata_enrichment",
+								"row_id", req.QueueRowID,
+								"fields_present", present,
+								"fields_absent", absent,
+							)
+							if events != nil {
+								events.Emit("image_metadata_enrichment", map[string]any{
+									"row_id":         req.QueueRowID,
+									"fields_present": present,
+									"fields_absent":  absent,
+								})
+							}
+						}
+					}
+
+					// F3: camera photo gate — suppressed when extracted text > threshold.
+					if isCameraPhoto(req) && !shouldSuppressShortCircuit(imageExtractedText, imageShortCircuitBypassMinChars) {
+						// EPIC-083 M1-2: camera photo noise gate — gallery app +
+						// camera timestamp filename + no text context + not screenshot.
+						slog.Info("score_async: camera photo gate — skipping vision",
 							"event_type", "score_prefilter_skip",
 							"row_id", req.QueueRowID,
 							"file_size", req.FileSize,
 							"filename", req.Filename,
-							"min_bytes", imageNoiseGateMinBytes,
-							"stage", "noise_gate_min_size",
+							"stage", "camera_photo_gate",
 						)
 						if events != nil {
 							events.Emit("score_prefilter_skip", map[string]any{
-								"row_id":    req.QueueRowID,
-								"file_size": req.FileSize,
-								"filename":  req.Filename,
-								"stage":     "noise_gate_min_size",
+								"row_id":   req.QueueRowID,
+								"filename": req.Filename,
+								"stage":    "camera_photo_gate",
 							})
 						}
 						// Skip vision — fall through to metadata-only eval below.
 					} else {
-						eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+						if isCameraPhoto(req) && shouldSuppressShortCircuit(imageExtractedText, imageShortCircuitBypassMinChars) {
+							// F3: short-circuit bypassed because extracted text exceeds threshold.
+							slog.Info("score_async: camera photo short-circuit bypassed",
+								"event_type", "image_short_circuit_bypassed",
+								"row_id", req.QueueRowID,
+								"text_length", len(imageExtractedText),
+								"reason", "extracted_text_above_threshold",
+							)
+							if events != nil {
+								events.Emit("image_short_circuit_bypassed", map[string]any{
+									"row_id":      req.QueueRowID,
+									"text_length": len(imageExtractedText),
+									"reason":      "extracted_text_above_threshold",
+								})
+							}
+						}
+						// EPIC-083 M1-4: renamed from image_noise_gate_skip to
+						// score_prefilter_skip with stage field.
+						hasMetadata := req.ExtraText != "" || req.ExtraSubject != "" || imageExtractedText != ""
+						if req.FileSize > 0 && req.FileSize < imageNoiseGateMinBytes && !hasMetadata {
+							slog.Info("score_async: image noise gate — skipping vision",
+								"event_type", "score_prefilter_skip",
+								"row_id", req.QueueRowID,
+								"file_size", req.FileSize,
+								"filename", req.Filename,
+								"min_bytes", imageNoiseGateMinBytes,
+								"stage", "noise_gate_min_size",
+							)
+							if events != nil {
+								events.Emit("score_prefilter_skip", map[string]any{
+									"row_id":    req.QueueRowID,
+									"file_size": req.FileSize,
+									"filename":  req.Filename,
+									"stage":     "noise_gate_min_size",
+								})
+							}
+							// Skip vision — fall through to metadata-only eval below.
+						} else {
+							eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+						}
 					}
 				}
 			}
