@@ -43,6 +43,20 @@ test:
 	go test ./...
 	cd cmd/jira-poller && go test ./...
 
+# EPIC-112 F5 M2: Copy profile YAMLs from personal-docs to testdata/profiles snapshot.
+# Run this whenever personal-docs profiles are updated to keep CI in sync.
+.PHONY: update-profiles
+update-profiles:
+	cp ~/code/personal/docs/prompts/profiles/eng.yaml \
+	   ~/code/personal/docs/prompts/profiles/life.yaml \
+	   ~/code/personal/docs/prompts/profiles/travel.yaml \
+	   ~/code/personal/docs/prompts/profiles/fashion.yaml \
+	   ~/code/personal/docs/prompts/profiles/music.yaml \
+	   ~/code/personal/docs/prompts/profiles/finance.yaml \
+	   ~/code/personal/docs/prompts/profiles/dining.yaml \
+	   cmd/linkari/testdata/profiles/
+	@echo "Updated testdata/profiles with 7 profile snapshots"
+
 # Validate claude CLI flag contract against the installed binary.
 # Skips gracefully when claude is not on PATH.
 .PHONY: test-claude-contract
