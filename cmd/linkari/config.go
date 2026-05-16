@@ -300,6 +300,9 @@ type Config struct {
 	// DomainRoutes maps URL patterns to override actions (F1).
 	// Evaluated before scoped-auth; first-match wins.
 	DomainRoutes []DomainRoute `toml:"domain_routes"`
+	// Routing holds action routing thresholds (EPIC-111 F4 M12).
+	// Optional — defaults applied when absent (DefaultThreshold=80, ExtractionConfidenceGate=0.5).
+	Routing RoutingConfig `toml:"routing" yaml:"routing"`
 }
 
 // ServerConfig holds runtime knobs for `linkari serve` that previously lived
