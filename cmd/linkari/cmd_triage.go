@@ -295,13 +295,8 @@ func loadProfileTemplateJSON(profile string) (path, content string, err error) {
 // profileTemplateLookup is the shared directory-search implementation for
 // loadProfileTemplate and loadProfileTemplateJSON.
 func profileTemplateLookup(profile string, render func(*ProfileManifest) (string, error)) (path, content string, err error) {
-	var dirs []string
-	if orgPath := os.Getenv("ORG_PATH"); orgPath != "" {
-		dirs = append(dirs, filepath.Join(orgPath, "docs", "prompts", "profiles"))
-	}
-	if home, herr := os.UserHomeDir(); herr == nil {
-		dirs = append(dirs, filepath.Join(home, "code", "personal", "docs", "prompts", "profiles"))
-	}
+	// EPIC-112 F5 M2: use ProfileSearchPath which includes LINKARI_PROFILE_PATH override.
+	dirs := ProfileSearchPath()
 	var checked []string
 	for _, d := range dirs {
 		yamlPath := filepath.Join(d, profile+".yaml")
@@ -351,13 +346,8 @@ func loadProfileTemplateForModeJSON(profile, mode string) (path, content string,
 // profileTemplateForModeLookup is the shared implementation for
 // loadProfileTemplateForMode and loadProfileTemplateForModeJSON.
 func profileTemplateForModeLookup(profile, mode string, render func(*ProfileManifest) (string, error)) (path, content string, err error) {
-	var dirs []string
-	if orgPath := os.Getenv("ORG_PATH"); orgPath != "" {
-		dirs = append(dirs, filepath.Join(orgPath, "docs", "prompts", "profiles"))
-	}
-	if home, herr := os.UserHomeDir(); herr == nil {
-		dirs = append(dirs, filepath.Join(home, "code", "personal", "docs", "prompts", "profiles"))
-	}
+	// EPIC-112 F5 M2: use ProfileSearchPath which includes LINKARI_PROFILE_PATH override.
+	dirs := ProfileSearchPath()
 	var checked []string
 	for _, d := range dirs {
 		yamlPath := filepath.Join(d, profile+".yaml")
