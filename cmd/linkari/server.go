@@ -1448,6 +1448,13 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// EPIC-111 F2 M5: truncate error_reason to 200 chars at API response layer.
+	for i := range items {
+		if len(items[i].ErrorReason) > 200 {
+			items[i].ErrorReason = items[i].ErrorReason[:200]
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
 }
@@ -2092,7 +2099,7 @@ func (s *Server) handleTestPush(w http.ResponseWriter, r *http.Request) {
 		testURL     = "https://linkari.test/ping"
 	)
 
-	if err := sendOutboxFCM(s, deviceToken, testScore, testSlug, testVerdict, testURL, "", "", "", "", ""); err != nil {
+	if err := sendOutboxFCM(s, deviceToken, testScore, testSlug, testVerdict, testURL, "", "", "", "", "", ""); err != nil {
 		slog.WarnContext(ctx, "test push: FCM send failed", "error", err)
 		emitPushEvent("push_test_failed", map[string]interface{}{
 			"reason":    "fcm_send_failed",

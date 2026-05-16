@@ -68,8 +68,9 @@ type QueueItem struct {
 	ArtifactPath   string `json:"artifact_path,omitempty" db:"artifact_path"` // F2: capture artifact file path
 	ContentWarning      string   `json:"content_warning,omitempty"`           // EPIC-102: "lit_parse_failed" when extraction failed
 	ExtractionConfidence *float64 `json:"extraction_confidence,omitempty"`     // EPIC-104: mean per-page confidence; -1.0 = JSON parse fallback; nil = non-PDF or pre-feature
-	RetryCount int   `json:"retry_count,omitempty"` // EPIC-108 M3: audio fallback retry attempts completed
-	RetryAfter int64 `json:"retry_after,omitempty"` // EPIC-108 M3: Unix timestamp; 0 = process immediately
+	RetryCount  int    `json:"retry_count,omitempty"`  // EPIC-108 M3: audio fallback retry attempts completed
+	RetryAfter  int64  `json:"retry_after,omitempty"`  // EPIC-108 M3: Unix timestamp; 0 = process immediately
+	ErrorReason string `json:"error_reason,omitempty"` // EPIC-111 F2: terminal failure reason; populated for status=failed
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -299,6 +300,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE push_outbox ADD COLUMN action_route TEXT NOT NULL DEFAULT ''",     // EPIC-072 M9
 		"ALTER TABLE push_outbox ADD COLUMN classify_source TEXT NOT NULL DEFAULT ''",  // EPIC-077 M6
 		"ALTER TABLE push_outbox ADD COLUMN content_warning TEXT NOT NULL DEFAULT ''",  // EPIC-102
+		"ALTER TABLE push_outbox ADD COLUMN error_reason TEXT NOT NULL DEFAULT ''",     // EPIC-111 F2 M6: failure reason for status=failed pushes
 	}
 	for _, m := range pushMigrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -571,7 +573,7 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,''), COALESCE(artifact_path,''), COALESCE(content_warning,''), extraction_confidence, COALESCE(retry_count,0), COALESCE(retry_after,0)"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,''), COALESCE(artifact_path,''), COALESCE(content_warning,''), extraction_confidence, COALESCE(retry_count,0), COALESCE(retry_after,0), COALESCE(error_reason,'')"
 
 // Pending returns all items with status=pending whose retry_after has elapsed,
 // ordered by id ASC (FIFO). Rows with retry_after=0 are always included (default).
@@ -1466,6 +1468,7 @@ type PushItem struct {
 	ContentType    string // EPIC-071 M3: "voice_note" for audio shares
 	ClassifySource string // EPIC-077 M6: cascade stage that produced the profile
 	ContentWarning string // EPIC-102: "lit_parse_failed" when extraction failed
+	ErrorReason    string // EPIC-111 F2 M6: populated for status=failed pushes
 }
 
 // EnqueuePush inserts a pending row into push_outbox and returns its id.
@@ -1661,7 +1664,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 		limit = 50
 	}
 	rows, err := q.db.Query(
-		`SELECT id, score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at, last_error, gap_summary, content_type, COALESCE(classify_source,''), COALESCE(content_warning,'')
+		`SELECT id, score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at, last_error, gap_summary, content_type, COALESCE(classify_source,''), COALESCE(content_warning,''), COALESCE(error_reason,'')
 		 FROM push_outbox WHERE status='pending' AND next_attempt <= ? ORDER BY id ASC LIMIT ?`,
 		time.Now().Unix(), limit,
 	)
@@ -1672,7 +1675,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 	var items []PushItem
 	for rows.Next() {
 		var p PushItem
-		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Profile, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError, &p.GapSummary, &p.ContentType, &p.ClassifySource, &p.ContentWarning); err != nil {
+		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Profile, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError, &p.GapSummary, &p.ContentType, &p.ClassifySource, &p.ContentWarning, &p.ErrorReason); err != nil {
 			return nil, err
 		}
 		items = append(items, p)
@@ -2036,7 +2039,7 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 		var it QueueItem
 		var score int
 		var isScreenshotInt, isShortsInt int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source, &it.ArtifactPath, &it.ContentWarning, &it.ExtractionConfidence, &it.RetryCount, &it.RetryAfter); err != nil {
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source, &it.ArtifactPath, &it.ContentWarning, &it.ExtractionConfidence, &it.RetryCount, &it.RetryAfter, &it.ErrorReason); err != nil {
 			return nil, err
 		}
 		if score != 0 {
