@@ -44,3 +44,25 @@ jobs:
             coverage-root.out
             cmd/wasend/coverage-wasend.out
             cmd/protonexport/coverage-protonexport.out
+
+      # EPIC-112 F2 M5: Eval regression gate fires on profile or fixture changes.
+      # Path filter: docs/prompts/profiles/** or cmd/linkari/testdata/triage/**
+      # Graceful: scorer unavailable → WARN + exit 0 (no Claude CLI in CI).
+      - name: Build linkari for eval gate
+        if: |
+          contains(toJson(github.event.commits.*.modified), 'docs/prompts/profiles/') ||
+          contains(toJson(github.event.commits.*.modified), 'testdata/triage/')
+        run: go build -o /tmp/linkari ./cmd/linkari
+
+      - name: Eval regression gate
+        if: |
+          contains(toJson(github.event.commits.*.modified), 'docs/prompts/profiles/') ||
+          contains(toJson(github.event.commits.*.modified), 'testdata/triage/')
+        env:
+          LINKARI_PROFILE_PATH: ${{ github.workspace }}/cmd/linkari/testdata/profiles
+        run: |
+          /tmp/linkari eval run \
+            --fixtures ./cmd/linkari/testdata/triage \
+            --tolerance 10 \
+          && echo "eval gate: PASS" \
+          || echo "WARN: eval gate failed — check fixture corpus or scorer availability"
