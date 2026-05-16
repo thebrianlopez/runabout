@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"log/slog"
+)
 
 // RoutingConfig holds configurable action routing thresholds loaded from actions.yaml.
 type RoutingConfig struct {
@@ -47,6 +50,10 @@ func ValidateRoutingConfig(cfg RoutingConfig) error {
 // Gate 2: block if score < per-route threshold
 func computeActionRouteWithConfig(score int, profile string, cfg RoutingConfig, extractionConfidence *float64) string {
 	if extractionConfidence != nil && *extractionConfidence < cfg.ExtractionConfidenceGate {
+		slog.Info("routing_blocked_low_confidence",
+			"extraction_confidence", *extractionConfidence,
+			"confidence_gate", cfg.ExtractionConfidenceGate,
+		)
 		return ""
 	}
 	// Profile → route mapping (same as computeActionRoute)
