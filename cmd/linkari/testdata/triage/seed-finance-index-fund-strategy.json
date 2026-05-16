@@ -1,0 +1,15 @@
+{
+  "id": "index-fund-strategy",
+  "captured_at": "2026-05-16T00:00:00Z",
+  "source": "eval-seed",
+  "url": "https://example.com/index-funds",
+  "profile": "finance",
+  "content": "Low-cost index funds consistently outperform actively managed funds over 20-year periods due to lower expense ratios and reduced trading costs. A three-fund portfolio (total market, international, bonds) provides broad diversification.",
+  "golden": {
+    "score": 80,
+    "verdict": "Strong Yes — fundamental personal finance strategy backed by decades of data.",
+    "raw_markdown": "**Score: 80** — Strong Yes",
+    "prompt_version": "seed-v1.0",
+    "prompt_hash": "pqr678"
+  }
+}

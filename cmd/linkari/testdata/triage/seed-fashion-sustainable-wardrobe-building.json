@@ -1,0 +1,15 @@
+{
+  "id": "sustainable-wardrobe-building",
+  "captured_at": "2026-05-16T00:00:00Z",
+  "source": "eval-seed",
+  "url": "https://example.com/sustainable-fashion",
+  "profile": "fashion",
+  "content": "Building a sustainable wardrobe starts with identifying your core aesthetic and investing in versatile, high-quality pieces. A capsule wardrobe of 30 items can cover 90% of daily outfit needs.",
+  "golden": {
+    "score": 68,
+    "verdict": "Worth reading — practical framework for sustainable fashion decisions.",
+    "raw_markdown": "**Score: 68** — Worth reading",
+    "prompt_version": "seed-v1.0",
+    "prompt_hash": "jkl012"
+  }
+}
