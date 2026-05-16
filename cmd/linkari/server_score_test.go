@@ -884,6 +884,8 @@ func TestScoreAsync_EvalFailureMarksQueueRow(t *testing.T) {
 	if err := q.MarkRelayed(id); err != nil {
 		t.Fatalf("mark relayed: %v", err)
 	}
+	// EPIC-111 M3: seed retry_count=ScoringMaxAttempts-1=1 so the eval failure hits terminal.
+	q.db.Exec("UPDATE queue SET retry_count=1 WHERE id=?", id)
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{err: fmt.Errorf("total eval failure")}
@@ -897,7 +899,7 @@ func TestScoreAsync_EvalFailureMarksQueueRow(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 
-	// Verify row is marked as failed with error_reason="eval_failed".
+	// Verify row is marked failed with scoring_retry_exhausted (EPIC-111 M3: retryOrFail format).
 	var status, reason string
 	err = q.db.QueryRow(
 		"SELECT status, COALESCE(error_reason,'') FROM queue WHERE id=?", id,
@@ -908,8 +910,8 @@ func TestScoreAsync_EvalFailureMarksQueueRow(t *testing.T) {
 	if status != "failed" {
 		t.Errorf("status = %q, want %q", status, "failed")
 	}
-	if reason != "eval_failed" {
-		t.Errorf("error_reason = %q, want %q", reason, "eval_failed")
+	if !strings.Contains(reason, "scoring_retry_exhausted") {
+		t.Errorf("error_reason = %q, want to contain scoring_retry_exhausted", reason)
 	}
 }
 

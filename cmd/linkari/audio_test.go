@@ -299,7 +299,8 @@ func TestScoreAudioAsync_HappyPath(t *testing.T) {
 	}
 }
 
-// 2. Whisper failure — queue row marked failed.
+// 2. Whisper failure — queue row is retried (EPIC-111 M2: extraction retry).
+// First failure sets status='pending' with retry_count=1 and retry_after=now+30s.
 func TestScoreAudioAsync_WhisperFailure(t *testing.T) {
 	isolateEventsDir(t)
 	installFfmpegStub(t)
@@ -314,11 +315,19 @@ func TestScoreAudioAsync_WhisperFailure(t *testing.T) {
 
 	runScoreAudioSkip(t, audioFile, "eng", q, id)
 
-	items, _ := q.List("", 20)
-	for _, it := range items {
-		if it.ID == id && it.Status != "failed" {
-			t.Errorf("status = %q, want failed", it.Status)
-		}
+	var status string
+	var retryCount int
+	var retryAfter int64
+	q.db.QueryRow("SELECT status, retry_count, retry_after FROM queue WHERE id=?", id).Scan(&status, &retryCount, &retryAfter)
+
+	if status != "pending" {
+		t.Errorf("status = %q, want pending (retry scheduled)", status)
+	}
+	if retryCount != 1 {
+		t.Errorf("retry_count = %d, want 1", retryCount)
+	}
+	if retryAfter <= 0 {
+		t.Errorf("retry_after = %d, want > 0 (backoff delay)", retryAfter)
 	}
 }
 

@@ -97,7 +97,8 @@ func TestScoreAsyncTerminalStatus(t *testing.T) {
 		jinaCode int
 		jinaBody string
 		// evalErr overrides stubEvaluator.err when non-nil.
-		evalErr error
+		evalErr           error
+		initialRetryCount int // seed retry_count before running; use ScoringMaxAttempts-1 to force terminal
 	}
 	cases := []testCase{
 		{
@@ -115,6 +116,9 @@ func TestScoreAsyncTerminalStatus(t *testing.T) {
 			jinaCode: http.StatusOK,
 			jinaBody: "excellent content about engineering and transformers",
 			evalErr:  fmt.Errorf("stubbed eval error"),
+			// EPIC-111: retryOrFail uses retry_count to determine exhaustion.
+			// Seed to ScoringMaxAttempts-1=1 so the first eval failure hits terminal.
+			initialRetryCount: 1,
 		},
 		{
 			name:     "happy_path",
@@ -153,6 +157,9 @@ func TestScoreAsyncTerminalStatus(t *testing.T) {
 			if err := q.MarkRelayed(id); err != nil {
 				t.Fatalf("MarkRelayed: %v", err)
 			}
+			if tc.initialRetryCount > 0 {
+				q.db.Exec("UPDATE queue SET retry_count=? WHERE id=?", tc.initialRetryCount, id)
+			}
 			req.QueueRowID = id
 
 			inner := &stubEvaluator{score: 85, verdict: "Worth reading"}
@@ -189,23 +196,26 @@ func TestScoreAsyncTerminalStatus(t *testing.T) {
 // processVoiceNoteAsync exits with the queue row in a terminal status.
 func TestProcessVoiceNoteAsyncTerminalStatus(t *testing.T) {
 	type testCase struct {
-		name        string
-		ffmpegErr   error
-		whisperTx   string
-		whisperErr  error
-		wantStatus  []string
+		name              string
+		ffmpegErr         error
+		whisperTx         string
+		whisperErr        error
+		wantStatus        []string
+		initialRetryCount int // seed retry_count; use ExtractionMaxAttempts-1=2 to force terminal
 	}
 	cases := []testCase{
 		{
-			name:       "ffmpeg_failure",
-			ffmpegErr:  fmt.Errorf("ffmpeg: no such file"),
-			wantStatus: []string{"failed"},
+			name:              "ffmpeg_failure",
+			ffmpegErr:         fmt.Errorf("ffmpeg: no such file"),
+			wantStatus:        []string{"failed"},
+			initialRetryCount: 2, // EPIC-111: force terminal on first retryOrFail call
 		},
 		{
-			name:       "whisper_failure",
-			ffmpegErr:  nil,
-			whisperErr: fmt.Errorf("whisper crashed"),
-			wantStatus: []string{"failed"},
+			name:              "whisper_failure",
+			ffmpegErr:         nil,
+			whisperErr:        fmt.Errorf("whisper crashed"),
+			wantStatus:        []string{"failed"},
+			initialRetryCount: 2, // EPIC-111: force terminal on first retryOrFail call
 		},
 		{
 			name:       "empty_transcript",
@@ -246,6 +256,9 @@ func TestProcessVoiceNoteAsyncTerminalStatus(t *testing.T) {
 			id, err := q.Enqueue(req)
 			if err != nil {
 				t.Fatalf("Enqueue: %v", err)
+			}
+			if tc.initialRetryCount > 0 {
+				q.db.Exec("UPDATE queue SET retry_count=? WHERE id=?", tc.initialRetryCount, id)
 			}
 			req.QueueRowID = id
 
@@ -385,6 +398,8 @@ func TestVisionDoubleFailure_MarksFailedNotScored(t *testing.T) {
 	if err := q.MarkRelayed(id); err != nil {
 		t.Fatalf("MarkRelayed: %v", err)
 	}
+	// EPIC-111: seed retry_count=ScoringMaxAttempts-1 to force terminal on eval failure.
+	q.db.Exec("UPDATE queue SET retry_count=1 WHERE id=?", id)
 	req.QueueRowID = id
 
 	done := make(chan struct{})
