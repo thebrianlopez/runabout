@@ -143,7 +143,7 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 			)
 			continue
 		}
-		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary, p.ContentType, p.ClassifySource, p.ContentWarning); err != nil {
+		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary, p.ContentType, p.ClassifySource, p.ContentWarning, p.ErrorReason); err != nil {
 			attempts := p.Attempts + 1
 			if attempts >= pushMaxAttempts {
 				_ = s.queue.MarkPushDead(p.ID, err.Error())
@@ -240,7 +240,7 @@ func emitShareActionResolved(res ShareResolution, url string, queueID int64) {
 // EPIC-077 M6: classifySource parameter added — included in FCM data payload
 // so the Android client can surface classification provenance in debug views.
 // EPIC-102: contentWarning parameter added — "lit_parse_failed" when PDF extraction failed.
-func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, profile, gapSummary, contentType, classifySource, contentWarning string) error {
+func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, profile, gapSummary, contentType, classifySource, contentWarning, errorReason string) error {
 	tok, err := s.fcmTokenSource.Token()
 	if err != nil {
 		return fmt.Errorf("obtaining oauth2 token: %w", err)
@@ -286,6 +286,12 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 		}
 	}
 
+	// EPIC-111 F2 M6: derive queue item status from errorReason presence.
+	itemStatus := "scored"
+	if errorReason != "" {
+		itemStatus = "failed"
+	}
+
 	payload := map[string]interface{}{
 		"message": map[string]interface{}{
 			"token": deviceToken,
@@ -303,6 +309,8 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 				"content_type":    contentType,
 				"classify_source": classifySource,
 				"content_warning": contentWarning,
+				"status":          itemStatus,
+				"error_reason":    errorReason,
 			},
 			"android": map[string]string{
 				"priority": "high",
