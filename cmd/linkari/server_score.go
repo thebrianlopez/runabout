@@ -936,11 +936,11 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			}
 		}
 		slog.Warn("score_async: evaluate failed", logArgs...)
-		// EPIC-080 M2: mark queue row as failed so it doesn't stay stuck in
-		// relayed status forever (watchdog can't rescue file shares).
+		// EPIC-111 M3: scoring retry — 2 attempts (60s → dead) before marking failed.
+		// Resets status='pending' with retry_after so the replay loop re-picks the row.
 		if q != nil && req.QueueRowID > 0 {
-			if mErr := q.MarkFailedWithReason(req.QueueRowID, "eval_failed"); mErr != nil {
-				slog.Warn("score_async: MarkFailedWithReason failed", "row_id", req.QueueRowID, "error", mErr)
+			if rErr := retryOrFail(context.Background(), q.db, req.QueueRowID, "scoring", err); rErr != nil {
+				slog.Warn("score_async: retryOrFail failed", "row_id", req.QueueRowID, "error", rErr)
 			}
 		}
 		return
@@ -1932,7 +1932,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			)
 		}
 		if q != nil {
-			q.MarkFailedWithReason(rowID, "ffmpeg_failed")
+			// EPIC-111 M2: extraction retry — 3 attempts (30s → 5m → dead).
+			_ = retryOrFail(ctx, q.db, rowID, "extraction", err)
 		}
 		return
 	}
@@ -2008,7 +2009,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 					)
 				}
 				if q != nil {
-					q.MarkFailedWithReason(rowID, fmt.Sprintf("transcription_failed_chunk_%d", i+1))
+					// EPIC-111 M2: extraction retry for chunk transcription failures.
+					_ = retryOrFail(ctx, q.db, rowID, "extraction", fmt.Errorf("transcription_failed_chunk_%d: %w", i+1, err))
 				}
 				return
 			}
@@ -2042,7 +2044,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 				)
 			}
 			if q != nil {
-				q.MarkFailedWithReason(rowID, "transcription_failed")
+				// EPIC-111 M2: extraction retry for single-pass whisper failures.
+				_ = retryOrFail(ctx, q.db, rowID, "extraction", err)
 			}
 			return
 		}
