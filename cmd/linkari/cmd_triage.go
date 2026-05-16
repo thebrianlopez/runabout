@@ -471,12 +471,17 @@ func initClaudeConfig(cfg *ServerConfig) {
 	if cfg != nil && cfg.YouTube.MaxRetries > 0 {
 		ytSubtitleMaxRetries = cfg.YouTube.MaxRetries
 	}
+	// EPIC-122: image transcription config (F1 feature flag, F3 threshold).
+	initImageTranscriptionConfig(cfg)
+
 	slog.Info("claude config resolved",
 		"event_type", "claude_config_init",
 		"claude_path", claudeBinaryPath,
 		"vision_model", visionModelName,
 		"scoring_model", claudeModel,
 		"image_noise_gate_min_bytes", imageNoiseGateMinBytes,
+		"image_text_extraction_enabled", imageTextExtractionEnabled,
+		"image_short_circuit_bypass_min_chars", imageShortCircuitBypassMinChars,
 	)
 
 	// EPIC-008 M5: startup smoke test — validate the claude binary is
