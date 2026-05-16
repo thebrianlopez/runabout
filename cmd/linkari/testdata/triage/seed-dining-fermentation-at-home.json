@@ -1,0 +1,15 @@
+{
+  "id": "fermentation-at-home",
+  "captured_at": "2026-05-16T00:00:00Z",
+  "source": "eval-seed",
+  "url": "https://example.com/fermentation",
+  "profile": "dining",
+  "content": "Home fermentation basics: kimchi, kombucha, and sourdough are the entry points. Each teaches the same core principle — cultivating beneficial bacteria through controlled environment, salt concentration, and time.",
+  "golden": {
+    "score": 76,
+    "verdict": "Worth reading — practical introduction to fermentation with clear starting points.",
+    "raw_markdown": "**Score: 76** — Worth reading",
+    "prompt_version": "seed-v1.0",
+    "prompt_hash": "stu901"
+  }
+}

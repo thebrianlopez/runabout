@@ -1,0 +1,15 @@
+{
+  "id": "lo-fi-production-techniques",
+  "captured_at": "2026-05-16T00:00:00Z",
+  "source": "eval-seed",
+  "url": "https://example.com/lofi-production",
+  "profile": "music",
+  "content": "Lo-fi production achieves its characteristic warmth through vinyl simulation plugins, tape saturation, subtle pitch wobble, and heavy use of room reverb. Sample-based workflows using chopped jazz and soul records are a common starting point.",
+  "golden": {
+    "score": 74,
+    "verdict": "Worth reading — concrete production techniques applicable to lo-fi beat making.",
+    "raw_markdown": "**Score: 74** — Worth reading",
+    "prompt_version": "seed-v1.0",
+    "prompt_hash": "mno345"
+  }
+}
