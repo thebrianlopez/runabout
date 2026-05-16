@@ -1,0 +1,15 @@
+{
+  "id": "habit-stacking-productivity",
+  "captured_at": "2026-05-16T00:00:00Z",
+  "source": "eval-seed",
+  "url": "https://example.com/habit-stacking",
+  "profile": "life",
+  "content": "Habit stacking is a productivity technique where you link new habits to existing routines. Research shows this dramatically increases adherence by anchoring behavior to established neural pathways.",
+  "golden": {
+    "score": 72,
+    "verdict": "Worth reading — practical productivity framework with clear implementation steps.",
+    "raw_markdown": "**Score: 72** — Worth reading",
+    "prompt_version": "seed-v1.0",
+    "prompt_hash": "def456"
+  }
+}

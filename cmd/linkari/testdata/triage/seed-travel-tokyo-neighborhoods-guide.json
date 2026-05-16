@@ -1,0 +1,15 @@
+{
+  "id": "tokyo-neighborhoods-guide",
+  "captured_at": "2026-05-16T00:00:00Z",
+  "source": "eval-seed",
+  "url": "https://example.com/tokyo-guide",
+  "profile": "travel",
+  "content": "Guide to Tokyo neighborhoods: Shimokitazawa for indie culture, Yanaka for old Tokyo atmosphere, Koenji for vintage shops. Each offers a distinct character away from tourist centers.",
+  "golden": {
+    "score": 78,
+    "verdict": "Worth reading — detailed neighborhood breakdown with actionable location recommendations.",
+    "raw_markdown": "**Score: 78** — Worth reading",
+    "prompt_version": "seed-v1.0",
+    "prompt_hash": "ghi789"
+  }
+}

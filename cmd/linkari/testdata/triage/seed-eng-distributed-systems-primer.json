@@ -1,0 +1,15 @@
+{
+  "id": "distributed-systems-primer",
+  "captured_at": "2026-05-16T00:00:00Z",
+  "source": "eval-seed",
+  "url": "https://example.com/distributed-systems",
+  "profile": "eng",
+  "content": "A comprehensive overview of distributed systems fundamentals including CAP theorem, consensus algorithms, and fault tolerance patterns used in modern cloud-native architectures.",
+  "golden": {
+    "score": 85,
+    "verdict": "Strong Yes — core distributed systems content highly relevant to an AI/ML Architect building multi-agent systems.",
+    "raw_markdown": "**Score: 85** — Strong Yes",
+    "prompt_version": "seed-v1.0",
+    "prompt_hash": "abc123"
+  }
+}
