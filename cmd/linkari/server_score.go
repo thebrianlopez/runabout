@@ -858,18 +858,33 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 						imageExtractedText, extractErr = extractImageText(ctx, req.AudioPath, visionModelName)
 						extractLatencyMs := time.Since(extractStart).Milliseconds()
 						if extractErr != nil {
-							slog.Warn("score_async: image text extraction failed — falling through",
-								"event_type", "image_text_extraction_failed",
-								"row_id", req.QueueRowID,
-								"error_reason", extractErr.Error(),
-								"latency_ms", extractLatencyMs,
-							)
-							if events != nil {
-								events.Emit("image_text_extraction_failed", map[string]any{
-									"row_id":       req.QueueRowID,
-									"error_reason": extractErr.Error(),
-									"latency_ms":   extractLatencyMs,
-								})
+							isTimeout := errors.Is(extractErr, context.DeadlineExceeded)
+							if isTimeout {
+								slog.Warn("score_async: image text extraction timed out — falling through",
+									"event_type", "image_text_extraction_timeout",
+									"row_id", req.QueueRowID,
+									"latency_ms", 30000, // F1 subprocess contract: 30s hard timeout
+								)
+								if events != nil {
+									events.Emit("image_text_extraction_timeout", map[string]any{
+										"row_id":     req.QueueRowID,
+										"latency_ms": int64(30000),
+									})
+								}
+							} else {
+								slog.Warn("score_async: image text extraction failed — falling through",
+									"event_type", "image_text_extraction_failed",
+									"row_id", req.QueueRowID,
+									"error_reason", extractErr.Error(),
+									"latency_ms", extractLatencyMs,
+								)
+								if events != nil {
+									events.Emit("image_text_extraction_failed", map[string]any{
+										"row_id":       req.QueueRowID,
+										"error_reason": extractErr.Error(),
+										"latency_ms":   extractLatencyMs,
+									})
+								}
 							}
 						} else {
 							hasText := imageExtractedText != ""
@@ -881,11 +896,14 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 								"latency_ms", extractLatencyMs,
 							)
 							if events != nil {
+								// EPIC-122 M4: cost_usd included per TDD §9 (not tracked for pre-pass calls;
+								// set to 0 until cost attribution is wired through extractImageText return value).
 								events.Emit("image_text_extracted", map[string]any{
-									"row_id":     req.QueueRowID,
+									"row_id":      req.QueueRowID,
 									"text_length": len(imageExtractedText),
-									"has_text":   hasText,
-									"latency_ms": extractLatencyMs,
+									"has_text":    hasText,
+									"cost_usd":    float64(0),
+									"latency_ms":  extractLatencyMs,
 								})
 							}
 						}
@@ -1032,6 +1050,12 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 									"file_size": req.FileSize,
 									"filename":  req.Filename,
 									"stage":     "noise_gate_min_size",
+								})
+								// EPIC-122 M4: dedicated image_noise_gate_skip event (DEBUG) per TDD §9.
+								events.Emit("image_noise_gate_skip", map[string]any{
+									"row_id":          req.QueueRowID,
+									"file_size_bytes": req.FileSize,
+									"reason":          "below_min_size",
 								})
 							}
 							// Skip vision — fall through to metadata-only eval below.
