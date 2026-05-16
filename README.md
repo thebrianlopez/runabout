@@ -256,10 +256,17 @@ All endpoints except `/healthz`, `/logs`, `/logs/stream`, and `/auth/*` require 
 | Gate | Config Key | Default | Trigger |
 |------|-----------|---------|---------|
 | `oversize_file` | `image_noise_gate_max_bytes` | 15 MB | File exceeds max bytes |
-| `camera_photo_gate` | *(heuristic, no config)* | — | Gallery app + camera filename pattern (`IMG_/DSC_/PXL_` prefix) + no text metadata |
+| `camera_photo_gate` | *(heuristic, no config)* | — | Gallery app + camera filename pattern (`IMG_/DSC_/PXL_` prefix) + no text metadata. Bypassed when `image_text_extraction_enabled=true` and extracted text exceeds `image_short_circuit_bypass_min_chars`. |
 | `noise_gate_min_size` | `image_noise_gate_min_bytes` | 1 KB | File below min bytes with no text metadata |
 
 When any gate fires, vision eval is skipped and the share falls through to metadata-only scoring. Each gate emits a `score_prefilter_skip` event.
+
+**Image text extraction pre-pass (EPIC-122):** When `image_text_extraction_enabled = true` (default: `false`), a Claude Haiku vision call runs before scoring for all `type=image` shares that pass the noise gate. The call transcribes all visible text verbatim (`model: claude-haiku-4-5`, 30s timeout, `max_concurrency=1`). When extracted text exceeds `image_short_circuit_bypass_min_chars` (default: `20`), the camera-photo short-circuit is suppressed and the transcript is included in the scoring prompt — 9 fields instead of 5 (`calling_package`, `relative_path`, `is_screenshot`, `url`, `transcribed_text` appended when present). Transcript files are persisted to `transcripts_dir` at `YYYYMMDD_<rowID>_IMG_<slug>.md`. CLI failure or timeout falls through to current scoring behavior; the share is never blocked. Feature is disabled by default for safe rollout.
+
+| Config Field | Type | Default | Description |
+|-------------|------|---------|-------------|
+| `image_text_extraction_enabled` | bool | `false` | Enable Haiku vision pre-pass before image scoring. Set to `true` in `[server]` to activate. |
+| `image_short_circuit_bypass_min_chars` | int | `20` | Minimum extracted-text length (chars) required to suppress the camera-photo short-circuit and activate full rubric. |
 
 **Rejection taxonomy:** Shares can be rejected (prefiltered) before or during scoring. Each reason code produces a specific queue row effect and optionally triggers an FCM push notification to the user.
 
