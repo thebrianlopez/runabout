@@ -444,6 +444,15 @@ type ServerConfig struct {
 	// EPIC-097 F1: per-source enabled flags for all integration sources.
 	// All flags default to true for backward compatibility.
 	Sources SourcesConfig `toml:"sources"`
+
+	// EPIC-122 F1: feature flag for image text extraction via claude vision pre-pass.
+	// Default: false (must be explicitly enabled in server.yaml for safe rollout).
+	ImageTextExtractionEnabled bool `toml:"image_text_extraction_enabled"`
+
+	// EPIC-122 F3: minimum extracted-text length (chars) required to suppress the
+	// personal-photo short-circuit instruction. Default: 20.
+	// Set via server.yaml: image_short_circuit_bypass_min_chars.
+	ImageShortCircuitBypassMinChars int `toml:"image_short_circuit_bypass_min_chars"`
 }
 
 // ShareConfig controls how share requests map their received action/profile to

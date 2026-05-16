@@ -154,9 +154,11 @@ func TestF1_CT6_ExtractImageText_ContextTimeout(t *testing.T) {
 	imagePath := makeTestImage(t)
 
 	// Mock claude that sleeps for 10 seconds (longer than our 2s timeout).
+	// Use "exec sleep" so the shell replaces itself with sleep (no orphan child),
+	// which ensures exec.CommandContext kills sleep directly.
 	dir := t.TempDir()
 	script := filepath.Join(dir, "claude")
-	body := "#!/bin/sh\nsleep 10\nprintf '{\"type\":\"result\",\"result\":\"{\\\"text\\\":\\\"hello\\\"}\",\"is_error\":false}'\n"
+	body := "#!/bin/sh\nexec sleep 10\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatalf("write mock claude: %v", err)
 	}
