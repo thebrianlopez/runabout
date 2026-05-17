@@ -58,7 +58,7 @@ func (t *tracker) emit(cmdErr error) {
 
 	ev := buildEvent(t.cliName, subcmd, duration, exitCode, flags)
 
-	if ev.EventClass == "hook" && isHookRateLimited(ev.Command, ev.CWD) {
+	if ev.EventClass == "hook" && (!hookCWDAllowed(ev.CWD) || isHookRateLimited(ev.Command, ev.CWD)) {
 		return
 	}
 
@@ -105,6 +105,17 @@ func classifySubcmd(subcmd string) string {
 		return "hook"
 	}
 	return "user_intent"
+}
+
+// hookCWDAllowed returns false for the user's home directory. Hook events from
+// home are terminal-startup artifacts (fish opens in ~ before any cd) rather
+// than command-use signal, so they are suppressed unconditionally.
+func hookCWDAllowed(cwd string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return true
+	}
+	return cwd != home
 }
 
 // hookRateLimitSentinel returns the path to the per-(command,cwd) sentinel file.
