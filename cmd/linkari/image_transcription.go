@@ -87,6 +87,7 @@ func extractImageText(ctx context.Context, imagePath string, visionModel string)
 	defer os.Remove(spFile)
 
 	// Build prompt that instructs claude to read the image file via the Read tool.
+	// Format mirrors runClaudeHaikuVision so the tool-use turn cycle is identical.
 	prompt := fmt.Sprintf("Read the image file at %s and transcribe all visible text.", imagePath)
 
 	// Enforce 30s timeout per subprocess contract (the outer ctx may have a longer deadline).
@@ -100,7 +101,7 @@ func extractImageText(ctx context.Context, imagePath string, visionModel string)
 
 	cmd := exec.CommandContext(callCtx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
 		Model:        model,
-		MaxTurns:     "2",
+		MaxTurns:     "3", // Read tool needs 3 turns: invoke + result + final output
 		AllowedTools: "Read",
 		OutputFormat: "json",
 		JSONSchema:   imageTextResultSchema,

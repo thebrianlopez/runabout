@@ -583,3 +583,38 @@ func TestF3_CT8_DefaultThreshold_Is20(t *testing.T) {
 		t.Errorf("imageShortCircuitBypassMinChars default = %d; want 20", imageShortCircuitBypassMinChars)
 	}
 }
+
+// ─── Live CLI Smoke Test ──────────────────────────────────────────────────────
+
+// TestExtractImageTextLiveCLI is a smoke test that calls extractImageText with
+// the real claude binary against a small test fixture image.
+//
+// Gate: RUN_LIVE_CLI_TESTS=1 (not set in CI).
+//
+// Acceptance criteria:
+//   - No CLI exit-1 error — the subprocess must complete successfully.
+//   - Returns ("", nil) for no-text images or (text, nil) for text-containing images.
+//   - Returns ("", err) only for genuine subprocess failures, which fail the test.
+func TestExtractImageTextLiveCLI(t *testing.T) {
+	if os.Getenv("RUN_LIVE_CLI_TESTS") != "1" {
+		t.Skip("set RUN_LIVE_CLI_TESTS=1 to run live CLI tests")
+	}
+
+	// Use the committed 1x1 PNG fixture — small enough to be fast, valid enough
+	// for the claude CLI to accept as a binary file read via the Read tool.
+	fixturePath := filepath.Join("testdata", "fixture_1x1.png")
+	if _, err := os.Stat(fixturePath); err != nil {
+		t.Fatalf("test fixture not found at %q: %v", fixturePath, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	text, err := extractImageText(ctx, fixturePath, visionModelName)
+	if err != nil {
+		t.Fatalf("extractImageText returned CLI error (exit-1 bug): %v", err)
+	}
+	// Both ("", nil) and (text, nil) are acceptable — the fixture is a blank
+	// 1x1 white pixel with no text, so empty is the expected result.
+	t.Logf("extractImageText result: %q (len=%d)", text, len(text))
+}
