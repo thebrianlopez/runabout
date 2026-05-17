@@ -311,8 +311,8 @@ brews:
       bin.install "runway"
     test: |
       system "#{bin}/mdq", "--version"
-      system "#{bin}/bmux", "version"
-      system "#{bin}/workctl", "version"
+      system "#{bin}/bmux", "--version"
+      system "#{bin}/workctl", "--version"
 
   # ts-go formula: CGo build, darwin only
   - name: ts-go
