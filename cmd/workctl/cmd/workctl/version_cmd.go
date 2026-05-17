@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/version"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/version"
 )
 
 func versionCmd() *cobra.Command {

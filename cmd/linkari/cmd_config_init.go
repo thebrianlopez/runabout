@@ -13,7 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/xdgpath"
+	"github.com/thebrianlopez/runabout/cmd/linkari/internal/xdgpath"
 )
 
 // serverYAMLTemplate is the canonical config.toml starter template.

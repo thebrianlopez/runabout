@@ -11,14 +11,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/api"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/cache"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/export"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/summary"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ui"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/version"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/api"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/cache"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/export"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/summary"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ui"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/version"
 )
 
 // resolved holds the resolved config populated by PersistentPreRunE.

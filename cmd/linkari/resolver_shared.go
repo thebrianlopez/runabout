@@ -11,7 +11,7 @@ package main
 import (
 	"os"
 
-	"github.com/blo-grindr/runabout/internal/secrets"
+	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
 // SecretResolution holds the resolved result of a single secret field.

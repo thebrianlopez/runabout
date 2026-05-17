@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/pipeline"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/pipeline"
 )
 
 // EventsSource wraps EventsClient to satisfy pipeline.Source.

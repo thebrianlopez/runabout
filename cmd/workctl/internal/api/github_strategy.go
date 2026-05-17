@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
 )
 
 // APIStrategy defines which GitHub API to use for data collection

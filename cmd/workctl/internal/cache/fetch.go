@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
 )
 
 // fetchGroup deduplicates concurrent API calls for the same cache key.

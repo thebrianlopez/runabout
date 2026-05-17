@@ -1,4 +1,4 @@
-module github.com/blo-grindr/runabout
+module github.com/thebrianlopez/runabout
 
 go 1.26.1
 

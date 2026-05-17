@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/export"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/export"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
 )
 
 func TestResolveIdentityExplicitTakesPriority(t *testing.T) {

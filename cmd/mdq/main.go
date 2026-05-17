@@ -5,9 +5,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/blo-grindr/runabout/internal/mdq"
-	"github.com/blo-grindr/runabout/internal/telemetry"
-	versionpkg "github.com/blo-grindr/runabout/internal/version"
+	"github.com/thebrianlopez/runabout/internal/mdq"
+	"github.com/thebrianlopez/runabout/internal/telemetry"
+	versionpkg "github.com/thebrianlopez/runabout/internal/version"
 	"github.com/spf13/cobra"
 )
 

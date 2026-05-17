@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ui"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ui"
 )
 
 func quarterlyCmd() *cobra.Command {

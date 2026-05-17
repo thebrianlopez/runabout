@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blo-grindr/runabout/cmd/runway/internal/scoring"
+	"github.com/thebrianlopez/runabout/cmd/runway/internal/scoring"
 )
 
 // --- mock HTTP ---

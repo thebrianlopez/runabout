@@ -17,10 +17,10 @@ import (
 	awsssm "github.com/aws/aws-sdk-go-v2/service/ssm"
 	"gopkg.in/yaml.v3"
 
-	"github.com/blo-grindr/runabout/cmd/runway/internal/ingestion"
-	"github.com/blo-grindr/runabout/cmd/runway/internal/scoring"
-	"github.com/blo-grindr/runabout/cmd/runway/internal/serving"
-	"github.com/blo-grindr/runabout/cmd/runway/internal/tailoring"
+	"github.com/thebrianlopez/runabout/cmd/runway/internal/ingestion"
+	"github.com/thebrianlopez/runabout/cmd/runway/internal/scoring"
+	"github.com/thebrianlopez/runabout/cmd/runway/internal/serving"
+	"github.com/thebrianlopez/runabout/cmd/runway/internal/tailoring"
 )
 
 const usage = `Usage: runway match <jd-url>

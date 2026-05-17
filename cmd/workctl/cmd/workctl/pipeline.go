@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/api"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/cache"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/pipeline"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ui"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/api"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/cache"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/pipeline"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ui"
 )
 
 // localActivity holds data from the no-credential local sources (EPIC-015).

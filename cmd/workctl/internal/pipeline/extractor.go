@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
 )
 
 // Tier identifies the automation layer an Extractor operates at.

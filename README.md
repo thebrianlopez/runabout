@@ -1,12 +1,12 @@
 # runabout
 
-[![CI](https://github.com/blo-grindr/runabout/actions/workflows/test.yml/badge.svg)](https://github.com/blo-grindr/runabout/actions/workflows/test.yml)
+[![CI](https://github.com/thebrianlopez/runabout/actions/workflows/test.yml/badge.svg)](https://github.com/thebrianlopez/runabout/actions/workflows/test.yml)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://go.dev)
 ![Tools](https://img.shields.io/badge/tools-13_CLIs-blue)
 
 Go devtools monorepo — thirteen CLI tools for shell optimization and personal workflows.
 
-These tools occupy the **Go CLI layer** of an [automation knowledge topology](https://github.com/blo-grindr/infra-knowledge) — they represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
+These tools represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
 
 - **mdq** — query fields and tables across markdown files
 - **perfgate** — statistical before/after performance gating
@@ -504,7 +504,7 @@ Three images: `ffmpeg` (audio conversion), `whisper` (speech-to-text), `claude-s
 
 ## Telemetry
 
-Every tool emits schema v2 JSONL events to `~/.automation-metrics/events/YYYY-MM-DD.jsonl` via `emit_jsonl`. Events include command, subcommand, duration, exit code, and flags — correlated by `session_id` across the full [automation topology](https://github.com/blo-grindr/infra-knowledge).
+Every tool emits schema v2 JSONL events to `~/.automation-metrics/events/YYYY-MM-DD.jsonl` via `emit_jsonl`. Events include command, subcommand, duration, exit code, and flags — correlated by `session_id` across all tools in the suite.
 
 This telemetry feeds topology consumers like `agrad` (graduation signals) and `aregress` (regression detection), which track whether a tool is earning its place at the Go CLI layer or should be simplified back to a shell function.
 

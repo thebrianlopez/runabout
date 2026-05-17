@@ -23,14 +23,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/api"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/cache"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/export"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/pipeline"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/templates"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/api"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/cache"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/export"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/pipeline"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/templates"
 )
 
 // ── EPIC-001: GitHub Activity Integration ───────────────────────────────────

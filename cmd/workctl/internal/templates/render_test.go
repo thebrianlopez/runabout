@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/templates"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/templates"
 )
 
 // Run with -update to regenerate golden files.

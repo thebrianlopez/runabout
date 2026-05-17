@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/pipeline"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/pipeline"
 )
 
 // RulesExtractor implements pipeline.Extractor at TierRules.

@@ -12,11 +12,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ai"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/api"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/export"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/pipeline"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ai"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/api"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/export"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/pipeline"
 )
 
 // ── Compiler assertions ──────────────────────────────────────────────────────

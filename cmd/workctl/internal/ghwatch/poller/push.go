@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/go-github/v81/github"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/client"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/event"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/client"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
 )
 
 // PushPoller polls for push events on a repository.

@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/go-github/v81/github"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/event"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
 )
 
 func TestWorkflowPoller_Poll_NewRun(t *testing.T) {

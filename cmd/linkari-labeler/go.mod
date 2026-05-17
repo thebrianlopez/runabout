@@ -1,4 +1,4 @@
-module github.com/blo-grindr/runabout/cmd/linkari-labeler
+module github.com/thebrianlopez/runabout/cmd/linkari-labeler
 
 go 1.26.1
 

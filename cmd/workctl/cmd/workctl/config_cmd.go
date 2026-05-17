@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ui"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ui"
 )
 
 func configCmd() *cobra.Command {

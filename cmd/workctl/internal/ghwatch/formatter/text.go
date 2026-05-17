@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/event"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
 )
 
 // Text writes human-readable, fixed-width output to w.

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/jiraclient"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/jiraclient"
 )
 
 // newTestClient builds an atlassianClient pointed at the given httptest server.

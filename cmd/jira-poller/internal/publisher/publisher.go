@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/types"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/types"
 	_ "modernc.org/sqlite"
 )
 

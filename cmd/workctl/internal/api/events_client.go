@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
 )
 
 // EventsClient reads ~/.automation-metrics/events/ JSONL files and returns

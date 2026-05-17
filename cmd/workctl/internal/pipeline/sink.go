@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
 )
 
 // ReportData is the pipeline-level data contract passed to Sinks.

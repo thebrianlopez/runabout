@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
 )
 
 func TestParseFishHistory(t *testing.T) {

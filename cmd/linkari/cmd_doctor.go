@@ -19,8 +19,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/spf13/cobra"
 
-	"github.com/blo-grindr/runabout/internal/secrets"
-	"github.com/blo-grindr/runabout/cmd/linkari/internal/xdgpath"
+	"github.com/thebrianlopez/runabout/internal/secrets"
+	"github.com/thebrianlopez/runabout/cmd/linkari/internal/xdgpath"
 )
 
 // doctorCheck is the result of one pre-flight check.
