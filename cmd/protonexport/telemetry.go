@@ -155,6 +155,23 @@ func writeEvent(e event) error {
 	return err
 }
 
+// buildEmitCmd constructs a beads emit shell command string for the given
+// invocation parameters. The returned string is safe for eval in a POSIX shell
+// — all single-quoted arguments use '\'' escaping for embedded single quotes.
+func buildEmitCmd(cliName, subcmd string, durationMs int64, exitCode int, flags map[string]string) (string, error) {
+	metaJSON, err := json.Marshal(map[string]interface{}{"flags": scrubFlags(flags)})
+	if err != nil {
+		return "", fmt.Errorf("marshal flags: %w", err)
+	}
+	sq := func(s string) string {
+		return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	}
+	return fmt.Sprintf(
+		"beads emit --layer go_cli --event-type command --command %s --duration-ms %d --exit-code %d %s",
+		sq(cliName+" "+subcmd), durationMs, exitCode, sq(string(metaJSON)),
+	), nil
+}
+
 // sensitivePatterns lists flag name substrings whose values must be redacted.
 var sensitivePatterns = []string{"authkey", "token", "secret", "password", "key"}
 
