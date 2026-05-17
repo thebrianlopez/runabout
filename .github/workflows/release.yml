@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   release:
     # macOS required for ts-go (CGo + tree-sitter). CGO_ENABLED=0 tools
