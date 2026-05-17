@@ -13,8 +13,8 @@ func TestExtractRepoNameFromURL(t *testing.T) {
 	}{
 		{
 			name: "standard GitHub API URL",
-			url:  "https://api.github.com/repos/grindrllc/infra-terraform",
-			want: "grindrllc/infra-terraform",
+			url:  "https://api.github.com/repos/example-org/infra-terraform",
+			want: "example-org/infra-terraform",
 		},
 		{
 			name: "URL with trailing slash",
@@ -28,8 +28,8 @@ func TestExtractRepoNameFromURL(t *testing.T) {
 		},
 		{
 			name: "malformed URL (no /repos/)",
-			url:  "https://github.com/grindrllc/infra-terraform",
-			want: "https://github.com/grindrllc/infra-terraform", // Fallback: return original
+			url:  "https://github.com/example-org/infra-terraform",
+			want: "https://github.com/example-org/infra-terraform", // Fallback: return original
 		},
 		{
 			name: "empty URL",
@@ -58,7 +58,7 @@ func TestConvertSearchResultToActivity(t *testing.T) {
 
 // BenchmarkExtractRepoNameFromURL benchmarks the repo name extraction
 func BenchmarkExtractRepoNameFromURL(b *testing.B) {
-	url := "https://api.github.com/repos/grindrllc/infra-terraform"
+	url := "https://api.github.com/repos/example-org/infra-terraform"
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {

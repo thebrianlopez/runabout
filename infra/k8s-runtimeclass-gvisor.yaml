@@ -8,13 +8,13 @@
 # Prerequisites on each EKS worker node:
 #   1. containerd configured with [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
 #   2. /usr/local/bin/runsc (or the path configured in containerd.toml)
-#   3. Node label: linkari.grindr.com/gvisor=true  (for scheduling affinity)
+#   3. Node label: linkari.thebrianlopez.com/gvisor=true  (for scheduling affinity)
 #
 # Apply:
-#   kubectl --context grindr-<env>-eks apply -f infra/k8s-runtimeclass-gvisor.yaml
+#   kubectl --context <your-cluster-context> apply -f infra/k8s-runtimeclass-gvisor.yaml
 #
 # Validate:
-#   kubectl --context grindr-<env>-eks get runtimeclass gvisor -o yaml
+#   kubectl --context <your-cluster-context> get runtimeclass gvisor -o yaml
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
@@ -26,10 +26,10 @@ handler: runsc
 scheduling:
   # Only schedule gVisor pods on nodes that have the runsc handler installed.
   # Nodes must carry this label — apply it during node bootstrap:
-  #   kubectl label node <node> linkari.grindr.com/gvisor=true
+  #   kubectl label node <node> linkari.thebrianlopez.com/gvisor=true
   nodeClassification:
     tolerations:
-      - key: "linkari.grindr.com/gvisor"
+      - key: "linkari.thebrianlopez.com/gvisor"
         operator: "Equal"
         value: "true"
         effect: "NoSchedule"

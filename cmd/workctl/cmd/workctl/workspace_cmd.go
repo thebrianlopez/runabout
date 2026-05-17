@@ -48,7 +48,7 @@ Jira mode (default):
 
 GitHub mode (-R flag):
   workctl workspace init 42 -R owner/repo        # GitHub issue #42
-  workctl workspace init 100 -R grindrllc/my-svc # GitHub issue #100
+  workctl workspace init 100 -R your-org/my-svc # GitHub issue #100
 
 Common flags:
   workctl ws init ISRE-1234 -f                   # force re-init`,
