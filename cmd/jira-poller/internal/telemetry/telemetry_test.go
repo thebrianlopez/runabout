@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/telemetry"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/telemetry"
 	"go.opentelemetry.io/otel"
 )
 

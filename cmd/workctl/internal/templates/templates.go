@@ -17,7 +17,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
 )
 
 //go:embed trends.tmpl

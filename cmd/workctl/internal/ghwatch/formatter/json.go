@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/event"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
 )
 
 // JSON writes one JSON object per line (JSONL) to w.

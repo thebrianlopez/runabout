@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
 )
 
 // resolveIdentity merges explicit identity config with metadata from parsed exports.

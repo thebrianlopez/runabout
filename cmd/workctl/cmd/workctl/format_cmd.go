@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/export"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/templates"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ui"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/export"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/templates"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ui"
 )
 
 // reportFormat is a validated output format value.

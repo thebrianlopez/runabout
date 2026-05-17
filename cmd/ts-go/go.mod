@@ -1,4 +1,4 @@
-module github.com/blo-grindr/runabout/cmd/ts-go
+module github.com/thebrianlopez/runabout/cmd/ts-go
 
 go 1.26.1
 

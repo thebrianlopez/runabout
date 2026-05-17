@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/export"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/export"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
 )
 
 // math is used for infra_ratio_pct verification

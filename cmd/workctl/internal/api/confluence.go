@@ -8,8 +8,8 @@ import (
 
 	"github.com/ctreminiom/go-atlassian/v2/pkg/infra/models"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
-	localModels "github.com/blo-grindr/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
+	localModels "github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
 )
 
 // GetAllConfluenceArticles retrieves all Confluence pages contributed to by a user within a date range

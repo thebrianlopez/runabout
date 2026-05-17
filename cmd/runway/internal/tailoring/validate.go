@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/blo-grindr/runabout/cmd/runway/internal/scoring"
+	"github.com/thebrianlopez/runabout/cmd/runway/internal/scoring"
 )
 
 // detectFabrication returns true if the tailored resume contains content

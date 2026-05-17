@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/workspace"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/workspace"
 )
 
 func TestIsValidJiraKey(t *testing.T) {

@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/api"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ui"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/workspace"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/api"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ui"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/workspace"
 )
 
 func workspaceCmd() *cobra.Command {

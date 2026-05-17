@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
 )
 
 // captureStdout redirects os.Stdout during fn() and returns the captured output.

@@ -8,7 +8,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
 )
 
 // ---------------------------------------------------------------------------

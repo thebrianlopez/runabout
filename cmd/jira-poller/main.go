@@ -17,15 +17,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
 
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/auth"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/config"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/dedupe"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/jiraclient"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/metrics"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/poller"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/publisher"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/telemetry"
-	"github.com/blo-grindr/runabout/internal/secrets"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/auth"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/dedupe"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/jiraclient"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/metrics"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/poller"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/publisher"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/telemetry"
+	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
 // Build-time variables injected via -ldflags.

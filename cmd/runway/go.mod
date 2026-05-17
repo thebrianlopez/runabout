@@ -1,4 +1,4 @@
-module github.com/blo-grindr/runabout/cmd/runway
+module github.com/thebrianlopez/runabout/cmd/runway
 
 go 1.26.1
 

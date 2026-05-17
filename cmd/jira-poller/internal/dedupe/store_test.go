@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/dedupe"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/dedupe"
 )
 
 func openTestDB(t *testing.T) *sql.DB {

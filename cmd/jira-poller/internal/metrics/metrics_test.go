@@ -3,7 +3,7 @@ package metrics_test
 import (
 	"testing"
 
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/metrics"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )

@@ -13,8 +13,8 @@ import (
 	cboff "github.com/cenkalti/backoff/v4"
 	"github.com/google/go-github/v81/github"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
 )
 
 // GitHubClient wraps the go-github client with rate limiting

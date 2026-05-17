@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/go-github/v81/github"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/client"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/client"
 )
 
 // newTestClient creates a client.Client backed by a test server.

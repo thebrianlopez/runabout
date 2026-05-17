@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/export"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/export"
 )
 
 func TestConvertToPDF_PandocAbsent(t *testing.T) {

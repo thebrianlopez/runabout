@@ -12,7 +12,7 @@ gomod:
   proxy: false
 
 builds:
-  # ── Root module tools (github.com/blo-grindr/runabout) ──────────────────────
+  # ── Root module tools (github.com/thebrianlopez/runabout) ──────────────────────
 
   - id: mdq
     binary: mdq

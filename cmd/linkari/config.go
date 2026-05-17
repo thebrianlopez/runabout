@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/blo-grindr/runabout/internal/secrets"
+	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
 // PushConfig holds the runtime knobs used by Queue.EnqueueDigestIfDue.

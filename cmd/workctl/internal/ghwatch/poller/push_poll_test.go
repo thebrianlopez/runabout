@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/go-github/v81/github"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/event"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
 )
 
 func TestPushPoller_Poll_FiltersPushEvents(t *testing.T) {

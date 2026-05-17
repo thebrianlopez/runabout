@@ -1,9 +1,9 @@
-module github.com/blo-grindr/runabout/cmd/jira-poller
+module github.com/thebrianlopez/runabout/cmd/jira-poller
 
 go 1.26.1
 
 require (
-	github.com/blo-grindr/runabout v0.0.0
+	github.com/thebrianlopez/runabout v0.0.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	go.opentelemetry.io/otel v1.43.0
@@ -72,4 +72,4 @@ require (
 // GOWORK=off tidy fallback: workspace mode ignores this replace; kept for
 // GOWORK=off go mod tidy runs so go-atlassian transitive deps can be resolved
 // without needing to clone the private runabout repo from VCS.
-replace github.com/blo-grindr/runabout => ../..
+replace github.com/thebrianlopez/runabout => ../..
