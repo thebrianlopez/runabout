@@ -1,0 +1,18 @@
+# gitleaks configuration for thebrianlopez/runabout
+# Run: gitleaks detect --source . --config .gitleaks.toml
+
+title = "runabout gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "go-proton-api test fixtures — vendored PGP test key, not a real credential"
+paths = [
+  "cmd/protonexport/go-proton-api/testdata/prv.asc",
+  "cmd/protonexport/go-proton-api/testdata/pub.asc",
+]
+
+[[allowlists]]
+description = "Tailscale discokey values in committed log file (ephemeral WireGuard session keys, rotate per session)"
+commits = ["3d495e8e9ee69729789c5b9610a6eb5acd1f4411"]

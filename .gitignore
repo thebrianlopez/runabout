@@ -8,6 +8,9 @@ bin/
 cmd/plaid-service/plaid-service
 .DS_Store
 
+# Runtime log files — never commit; contain ephemeral session state
+*.log
+
 docs/
 docs
 dev-docs/
