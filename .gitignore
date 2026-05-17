@@ -24,6 +24,8 @@ dev-docs
 cmd/linkari/testdata/triage/*.json
 !cmd/linkari/testdata/triage/seed-*.json
 cmd/wasend/wasend
+cmd/fetchpage/fetchpage
+cmd/sharehook/sharehook
 cmd/bmux/bmux
 cmd/ts-go/ts-go
 cmd/workctl/workctl
@@ -37,3 +39,12 @@ cmd/shellprof/shellprof
 cmd/effiscore/effiscore
 cmd/castex/castex
 internal/registry/
+
+# Root-level compiled binaries (built by make, not installed to ~/go/bin)
+/mdq
+/sharehook
+
+# Internal agent coordination — never commit
+.claude-dispatch/
+**/.beads/
+**/.cursor/
