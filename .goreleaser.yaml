@@ -1,0 +1,331 @@
+version: 2
+
+project_name: runabout
+
+before:
+  hooks:
+    - go work sync
+
+# Use local workspace — replace directives in go.work point to local paths
+# that the module proxy cannot resolve.
+gomod:
+  proxy: false
+
+builds:
+  # ── Root module tools (github.com/blo-grindr/runabout) ──────────────────────
+
+  - id: mdq
+    binary: mdq
+    main: ./cmd/mdq
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: perfgate
+    binary: perfgate
+    main: ./cmd/perfgate
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: shellprof
+    binary: shellprof
+    main: ./cmd/shellprof
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: hookval
+    binary: hookval
+    main: ./cmd/hookval
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: effiscore
+    binary: effiscore
+    main: ./cmd/effiscore
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  # ── Separate-module tools ────────────────────────────────────────────────────
+
+  - id: bmux
+    binary: bmux
+    main: .
+    dir: ./cmd/bmux
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: protonexport
+    binary: protonexport
+    main: .
+    dir: ./cmd/protonexport
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: linkari
+    binary: linkari
+    main: .
+    dir: ./cmd/linkari
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: linkari-labeler
+    binary: linkari-labeler
+    main: .
+    dir: ./cmd/linkari-labeler
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: plaid-service
+    binary: plaid-service
+    main: .
+    dir: ./cmd/plaid-service
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: wasend
+    binary: wasend
+    main: .
+    dir: ./cmd/wasend
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  # workctl module hosts two binaries under cmd/workctl/cmd/{workctl,ghwatch}
+  - id: workctl
+    binary: workctl
+    main: ./cmd/workctl
+    dir: ./cmd/workctl
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: ghwatch
+    binary: ghwatch
+    main: ./cmd/ghwatch
+    dir: ./cmd/workctl
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: jira-poller
+    binary: jira-poller
+    main: .
+    dir: ./cmd/jira-poller
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: runway
+    binary: runway
+    main: .
+    dir: ./cmd/runway
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  # ts-go: requires CGo (tree-sitter C bindings) — darwin only.
+  # Cross-compiling CGo to linux/arm64 requires a cross-toolchain not available
+  # in the standard macOS GitHub Actions runner. Linux users: go install directly.
+  - id: ts-go
+    binary: ts-go
+    main: .
+    dir: ./cmd/ts-go
+    env: [CGO_ENABLED=1]
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  # fetchpage is a Python script (cmd/fetchpage/fetchpage.py) — not a Go binary.
+  # It is excluded from goreleaser; install via: cp cmd/fetchpage/fetchpage.py ~/go/bin/fetchpage
+
+archives:
+  # Combined archive for all CGO_ENABLED=0 tools, darwin + linux
+  - id: runabout
+    builds:
+      - mdq
+      - perfgate
+      - shellprof
+      - hookval
+      - effiscore
+      - bmux
+      - protonexport
+      - linkari
+      - linkari-labeler
+      - plaid-service
+      - wasend
+      - workctl
+      - ghwatch
+      - jira-poller
+      - runway
+    name_template: "runabout_{{.Version}}_{{.Os}}_{{.Arch}}"
+    format: tar.gz
+
+  # Separate archive for ts-go (CGo, darwin only)
+  - id: ts-go-archive
+    builds: [ts-go]
+    name_template: "ts-go_{{.Version}}_{{.Os}}_{{.Arch}}"
+    format: tar.gz
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+release:
+  github:
+    owner: thebrianlopez
+    name: runabout
+  draft: false
+  prerelease: auto
+
+brews:
+  # Main formula: all CGO_ENABLED=0 tools, darwin + linux
+  - name: runabout
+    ids: [runabout]
+    directory: Formula
+    repository:
+      owner: thebrianlopez
+      name: homebrew-runabout
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/thebrianlopez/runabout"
+    description: "Personal developer tools — mdq, bmux, workctl, linkari, runway, and more"
+    license: "MIT"
+    install: |
+      bin.install "mdq"
+      bin.install "perfgate"
+      bin.install "shellprof"
+      bin.install "hookval"
+      bin.install "effiscore"
+      bin.install "bmux"
+      bin.install "protonexport"
+      bin.install "linkari"
+      bin.install "linkari-labeler"
+      bin.install "plaid-service"
+      bin.install "wasend"
+      bin.install "workctl"
+      bin.install "ghwatch"
+      bin.install "jira-poller"
+      bin.install "runway"
+    test: |
+      system "#{bin}/mdq", "--version"
+      system "#{bin}/bmux", "version"
+      system "#{bin}/workctl", "version"
+
+  # ts-go formula: CGo build, darwin only
+  - name: ts-go
+    ids: [ts-go-archive]
+    directory: Formula
+    repository:
+      owner: thebrianlopez
+      name: homebrew-runabout
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/thebrianlopez/runabout"
+    description: "Tree-sitter-based structural Go source analysis CLI"
+    license: "MIT"
+    install: |
+      bin.install "ts-go"
+    test: |
+      system "#{bin}/ts-go", "--version"
