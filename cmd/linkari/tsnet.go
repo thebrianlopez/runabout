@@ -136,7 +136,7 @@ func (t *TsnetServer) Close() error {
 	return firstErr
 }
 
-// FQDN returns the node's full DNS name (e.g. "linkari.tail8adc06.ts.net").
+// FQDN returns the node's full DNS name (e.g. "linkari.<tailnet>.ts.net").
 func (t *TsnetServer) FQDN() string {
 	return t.fqdn
 }
