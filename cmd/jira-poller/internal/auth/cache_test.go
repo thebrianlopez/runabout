@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/auth"
-	"github.com/blo-grindr/runabout/internal/secrets"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/auth"
+	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
 // fakeSM is an in-memory SecretsManagerAPI for tests.

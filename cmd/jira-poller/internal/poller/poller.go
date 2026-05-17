@@ -15,11 +15,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/config"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/dedupe"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/jiraclient"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/publisher"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/types"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/dedupe"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/jiraclient"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/publisher"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/types"
 )
 
 // Sentinel errors.

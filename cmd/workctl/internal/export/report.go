@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
 )
 
 // --------------------------------------------------------------------------

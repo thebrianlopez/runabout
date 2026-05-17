@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
 )
 
 // GenerateJiraSummary prints summary statistics for Jira issues to stdout

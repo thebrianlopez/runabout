@@ -3,7 +3,7 @@ package ai
 import (
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
 )
 
 // Source identifies the origin system for a piece of data.

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blo-grindr/runabout/internal/secrets"
+	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
 // Sentinel errors for the auth package. Callers use errors.Is to check them.

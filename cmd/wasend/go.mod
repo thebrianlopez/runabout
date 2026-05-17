@@ -1,4 +1,4 @@
-module github.com/blo-grindr/runabout/cmd/wasend
+module github.com/thebrianlopez/runabout/cmd/wasend
 
 go 1.26.1
 

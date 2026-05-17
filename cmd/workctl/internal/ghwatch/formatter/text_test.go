@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/event"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
 )
 
 func TestText_PushEvent(t *testing.T) {

@@ -26,7 +26,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/blo-grindr/runabout/internal/secrets"
+	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
 // resolveServerField picks the highest-precedence non-empty value from

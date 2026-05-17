@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/config"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/jiraclient"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/poller"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/publisher"
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/types"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/jiraclient"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/poller"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/publisher"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/types"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────

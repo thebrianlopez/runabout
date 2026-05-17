@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/jira-poller/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/config"
 )
 
 // clearEnv unsets all env vars used by the config package to prevent test

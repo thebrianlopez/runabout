@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/insights"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/pipeline"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/insights"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/pipeline"
 )
 
 // SignalsEnvelope is the top-level JSON schema for .signals.json sidecar files.

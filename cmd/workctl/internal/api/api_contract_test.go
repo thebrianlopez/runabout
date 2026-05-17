@@ -15,8 +15,8 @@ import (
 
 	"github.com/google/go-github/v81/github"
 	"golang.org/x/time/rate"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
 )
 
 // testClient returns a GitHubClient suitable for pure-logic tests.

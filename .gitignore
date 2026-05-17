@@ -6,6 +6,9 @@ bin/
 /linkari-labeler
 .claude/worktrees/
 cmd/plaid-service/plaid-service
+cmd/linkari/linkari
+cmd/linkari/sharehook
+cmd/protonexport/protonexport
 .DS_Store
 
 # Runtime log files — never commit; contain ephemeral session state
@@ -20,3 +23,17 @@ dev-docs
 # Only seed-*.json files ship in-repo for `go test ./...`.
 cmd/linkari/testdata/triage/*.json
 !cmd/linkari/testdata/triage/seed-*.json
+cmd/wasend/wasend
+cmd/bmux/bmux
+cmd/ts-go/ts-go
+cmd/workctl/workctl
+cmd/jira-poller/jira-poller
+cmd/runway/runway
+cmd/linkari-labeler/linkari-labeler
+cmd/hookval/hookval
+cmd/mdq/mdq
+cmd/perfgate/perfgate
+cmd/shellprof/shellprof
+cmd/effiscore/effiscore
+cmd/castex/castex
+internal/registry/

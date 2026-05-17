@@ -8,8 +8,8 @@ import (
 
 	"github.com/ctreminiom/go-atlassian/v2/pkg/infra/models"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/config"
-	localModels "github.com/blo-grindr/runabout/cmd/workctl/internal/models"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
+	localModels "github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
 )
 
 // JiraIssueInfo holds the essential fields of a Jira issue for workspace init.

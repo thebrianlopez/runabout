@@ -1,4 +1,4 @@
-module github.com/blo-grindr/runabout/cmd/workctl
+module github.com/thebrianlopez/runabout/cmd/workctl
 
 go 1.26.1
 

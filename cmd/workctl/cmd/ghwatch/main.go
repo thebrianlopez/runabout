@@ -12,11 +12,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/client"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/event"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/formatter"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/poller"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/state"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/client"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/formatter"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/poller"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/state"
 )
 
 var version = "dev"

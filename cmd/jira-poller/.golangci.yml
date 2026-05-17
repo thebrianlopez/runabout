@@ -20,7 +20,7 @@ linters:
 
 linters-settings:
   goimports:
-    local-prefixes: github.com/blo-grindr/runabout
+    local-prefixes: github.com/thebrianlopez/runabout
   gocritic:
     enabled-tags:
       - diagnostic

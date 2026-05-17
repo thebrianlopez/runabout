@@ -20,7 +20,7 @@ replace (
 	// provide this automatically, but the workspace resolver falls through to
 	// VCS when v0.0.0 appears in a submodule require — explicit replace prevents
 	// the git ls-remote call for the private repo.
-	github.com/blo-grindr/runabout v0.0.0 => .
+	github.com/thebrianlopez/runabout v0.0.0 => .
 
 	// EPIC-016: Resolve workspace cloud.google.com/go ambiguity.
 	// Old grpc transitive chain (grpc@v1.19/v1.23/v1.33 → go-control-plane → genproto)

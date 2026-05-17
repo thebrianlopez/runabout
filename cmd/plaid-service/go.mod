@@ -1,4 +1,4 @@
-module github.com/blo-grindr/runabout/cmd/plaid-service
+module github.com/thebrianlopez/runabout/cmd/plaid-service
 
 go 1.26.1
 

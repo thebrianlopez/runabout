@@ -1,4 +1,4 @@
-module github.com/blo-grindr/runabout/cmd/fetchpage
+module github.com/thebrianlopez/runabout/cmd/fetchpage
 
 go 1.26.1
 

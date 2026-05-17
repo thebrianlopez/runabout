@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/telemetry"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/telemetry"
 )
 
 func main() {

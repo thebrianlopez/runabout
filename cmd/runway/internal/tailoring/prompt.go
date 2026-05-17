@@ -6,7 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/blo-grindr/runabout/cmd/runway/internal/scoring"
+	"github.com/thebrianlopez/runabout/cmd/runway/internal/scoring"
 )
 
 // buildTailorPrompt constructs the LLM tailoring prompt.

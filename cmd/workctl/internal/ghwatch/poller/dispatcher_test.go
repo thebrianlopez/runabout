@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/event"
-	"github.com/blo-grindr/runabout/cmd/workctl/internal/ghwatch/formatter"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
+	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/formatter"
 )
 
 // fakePoller implements EventPoller for testing.
