@@ -205,6 +205,7 @@ type Server struct {
 	fcmMu          sync.Mutex
 	fcmToken       string
 	fcmTokenSource oauth2.TokenSource // nil when Firebase is not configured
+	fcmEndpoint    string             // FCM HTTP v1 API endpoint; derived from SA project_id
 
 	notifyMinScore int // configurable floor for FCM push in /notify; 0 = use per-profile archiveThreshold
 
@@ -2215,9 +2216,6 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// fcmEndpoint is the FCM HTTP v1 API endpoint (used by the push outbox worker).
-// FCM project ID is read from LINKARI_FCM_PROJECT_ID environment variable at startup.
-var fcmEndpoint = "https://fcm.googleapis.com/v1/projects/" + os.Getenv("LINKARI_FCM_PROJECT_ID") + "/messages:send"
 
 // firstSentence extracts the first sentence from text, truncating to maxLen.
 // It splits on ". ", "— ", or newline boundaries to find a natural break.

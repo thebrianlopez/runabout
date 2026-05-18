@@ -323,7 +323,7 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 		return fmt.Errorf("marshaling FCM payload: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, fcmEndpoint, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, s.fcmEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("creating FCM request: %w", err)
 	}
