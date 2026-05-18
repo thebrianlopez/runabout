@@ -258,7 +258,11 @@ func registeredSources(srv *Server) []ContentSource {
 	var sources []ContentSource
 
 	if sc.BlueskyFirehoseEnabled {
-		sources = append(sources, &BlueskyFirehoseSource{client: srv.bskyClient})
+		sources = append(sources, &BlueskyFirehoseSource{
+			client: srv.bskyClient,
+			eval:   HaikuJSONEvaluator{},
+			events: srv.events,
+		})
 	} else {
 		emitSourceDisabled(srv, "bsky_firehose")
 	}

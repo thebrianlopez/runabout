@@ -59,7 +59,8 @@ type firehoseBody struct {
 // ATProto framing: each WebSocket frame contains two concatenated CBOR values
 // (header map, body map) — NOT a CBOR array. Validated against go-indigo
 // events/consumer.go:HandleRepoStream.
-func processFirehoseMessage(ctx context.Context, q *Queue, msg []byte) error {
+func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg []byte) error {
+	q := fsc.Queue
 	dec := cbor.NewDecoder(bytes.NewReader(msg))
 
 	var header firehoseHeader
@@ -117,7 +118,7 @@ func processFirehoseMessage(ctx context.Context, q *Queue, msg []byte) error {
 			Repo:  body.Repo,
 			Seq:   body.Seq,
 		}
-		if err := handleFirehosePost(ctx, q, post); err != nil {
+		if err := handleFirehosePost(ctx, fsc, post); err != nil {
 			slog.Warn("firehose post handle error",
 				"seq", body.Seq,
 				"error", err,
@@ -127,9 +128,12 @@ func processFirehoseMessage(ctx context.Context, q *Queue, msg []byte) error {
 	return nil
 }
 
-// handleFirehosePost checks keyword subscriptions and enqueues matching posts.
-// Uses kind='notify' push rows — NOT kind='digest' — per EPIC-016 invariant.
-func handleFirehosePost(ctx context.Context, q *Queue, post *firehosePost) error {
+// handleFirehosePost checks keyword subscriptions and enqueues matching posts,
+// then launches scoreAsync in a goroutine bounded by fsc.ScoreSem (max 3 concurrent).
+// When fsc is nil (tests or legacy callers), scoring is skipped and the row stays pending.
+func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *firehosePost) error {
+	q := fsc.Queue
+
 	// Dedup guard: skip if same AT URI already seen (BT-1, BT-4).
 	isNew, err := q.IsNewContent("bsky_firehose", post.AtURI)
 	if err != nil || !isNew {
@@ -164,9 +168,11 @@ func handleFirehosePost(ctx context.Context, q *Queue, post *firehosePost) error
 			continue
 		}
 
+		resolvedProfile := resolveFirehoseProfile(s.profile)
 		req := &ShareRequest{
 			URL:     post.AtURI,
-			Profile: s.profile,
+			Text:    post.Text,
+			Profile: resolvedProfile,
 			Type:    "url",
 		}
 		rowID, err := q.EnqueueWithSource(req, "firehose")
@@ -174,25 +180,47 @@ func handleFirehosePost(ctx context.Context, q *Queue, post *firehosePost) error
 			slog.Warn("firehose enqueue error", "error", err)
 			continue
 		}
+		req.QueueRowID = rowID
 
-		// Enqueue notify push — NOT digest — to avoid throttle window consumption.
-		_, err = q.EnqueuePushWithProfile("notify", s.profile, 0,
-			fmt.Sprintf("firehose-%d", rowID), "Firehose Match", post.AtURI, "")
-		if err != nil {
-			slog.Warn("firehose push error", "error", err)
-		}
-		// Mark the queue row relayed immediately — the push notification above is
-		// the delivery mechanism. Without this, StartReplay picks up the row and
-		// fails with "no action for \"\"" since firehose rows carry no action.
-		q.MarkRelayed(rowID)
 		slog.Info("firehose commit matched",
 			"event_type", "firehose_commit_matched",
 			"seq", post.Seq,
 			"at_uri", post.AtURI,
 			"keyword", s.keyword,
-			"profile", s.profile,
+			"profile", resolvedProfile,
 			"queue_id", rowID,
 		)
+
+		// Launch scoreAsync in a goroutine, bounded by the semaphore (max 3 concurrent).
+		if fsc.Eval != nil {
+			go func(req *ShareRequest, keyword, profile string) {
+				// Log semaphore_wait if all 3 slots are busy (channel at capacity).
+				if len(fsc.ScoreSem) == cap(fsc.ScoreSem) {
+					slog.Warn("firehose scoring semaphore wait",
+						"event_type", "firehose_semaphore_wait",
+						"queue_id", req.QueueRowID,
+						"active_goroutines", cap(fsc.ScoreSem),
+					)
+				}
+				fsc.ScoreSem <- struct{}{}
+				defer func() { <-fsc.ScoreSem }()
+
+				start := time.Now()
+				slog.Info("firehose scoring started",
+					"event_type", "firehose_scoring_started",
+					"queue_id", req.QueueRowID,
+					"at_uri", req.URL,
+					"profile", profile,
+					"keyword", keyword,
+				)
+				scoreAsync(req, q, fsc.Eval, fsc.Events, fsc.BskyClient)
+				slog.Info("firehose scoring complete",
+					"event_type", "firehose_scoring_complete",
+					"queue_id", req.QueueRowID,
+					"latency_ms", time.Since(start).Milliseconds(),
+				)
+			}(req, s.keyword, resolvedProfile)
+		}
 	}
 	return nil
 }
@@ -200,6 +228,8 @@ func handleFirehosePost(ctx context.Context, q *Queue, post *firehosePost) error
 // BlueskyFirehoseSource wraps runFirehoseWorker behind the ContentSource interface.
 type BlueskyFirehoseSource struct {
 	client *BlueskyClient
+	eval   Evaluator    // M4: wired at registration time
+	events *EventLogger // M4: wired at registration time; nil = event logging disabled
 }
 
 // Name returns the stable source identifier used as the seen_content.source key.
@@ -212,7 +242,17 @@ func (s *BlueskyFirehoseSource) AuthDeps() []string { return []string{"bluesky"}
 // Start runs the WebSocket loop with exponential backoff.
 // Called only when AuthDeps() are satisfied — client is guaranteed non-nil.
 func (s *BlueskyFirehoseSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
-	runFirehoseWorker(ctx, q, s.client, slog.Default())
+	// Migrate any subscriptions still using the legacy 'default' profile (F2).
+	migrateFirehoseProfiles(q)
+
+	fsc := &firehoseScoreContext{
+		Queue:      q,
+		Eval:       s.eval,
+		Events:     s.events,
+		BskyClient: s.client,
+		ScoreSem:   make(chan struct{}, 3),
+	}
+	runFirehoseWorker(ctx, fsc, slog.Default())
 	return nil
 }
 
@@ -222,7 +262,7 @@ var execConnectAndRead = connectAndRead
 
 // connectAndRead opens a WebSocket connection to url and reads messages until
 // the context is cancelled or an error occurs.
-func connectAndRead(ctx context.Context, q *Queue, url string) error {
+func connectAndRead(ctx context.Context, fsc *firehoseScoreContext, url string) error {
 	conn, _, err := websocket.Dial(ctx, url, nil)
 	if err != nil {
 		return err
@@ -264,7 +304,7 @@ func connectAndRead(ctx context.Context, q *Queue, url string) error {
 			return err
 		}
 		framesDecoded.Add(1)
-		if err := processFirehoseMessage(ctx, q, msg); err != nil {
+		if err := processFirehoseMessage(ctx, fsc, msg); err != nil {
 			if errors.Is(err, errCursorExpired) {
 				return err // propagate to runFirehoseWorker for cursor reset
 			}
@@ -275,8 +315,8 @@ func connectAndRead(ctx context.Context, q *Queue, url string) error {
 
 // runFirehoseWorker connects to the Bluesky firehose and processes commits.
 // Reconnects with exponential backoff (1s → 5min max). Exits only on ctx.Done().
-// M5: started by serve command when bskyClient != nil.
-func runFirehoseWorker(ctx context.Context, q *Queue, bskyClient *BlueskyClient, logger *slog.Logger) {
+func runFirehoseWorker(ctx context.Context, fsc *firehoseScoreContext, logger *slog.Logger) {
+	q := fsc.Queue
 	relayURL := "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos"
 	backoff := time.Second
 	maxBackoff := 5 * time.Minute
@@ -300,7 +340,7 @@ func runFirehoseWorker(ctx context.Context, q *Queue, bskyClient *BlueskyClient,
 		default:
 		}
 
-		err := execConnectAndRead(ctx, q, connectURL)
+		err := execConnectAndRead(ctx, fsc, connectURL)
 		if ctx.Err() != nil {
 			return // context cancelled — normal shutdown
 		}

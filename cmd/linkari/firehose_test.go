@@ -10,7 +10,8 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
-// CT-1: keyword match → queue row with source='firehose'; push_outbox kind='notify'
+// CT-1: keyword match → queue row with source='firehose' and status='pending' (not 'relayed').
+// Score=0 push removed in EPIC-123 M3; scored push comes from scoreAsync (requires M4 wiring).
 func TestFirehoseCT1_KeywordMatch(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -24,27 +25,19 @@ func TestFirehoseCT1_KeywordMatch(t *testing.T) {
 		Repo:  "did:plc:abc",
 		Seq:   100,
 	}
-	err := handleFirehosePost(context.Background(), q, post)
+	err := handleFirehosePost(context.Background(), testFSC(q), post)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var rowCount int
-	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=? AND source='firehose'", post.AtURI).Scan(&rowCount)
-	if rowCount == 0 {
+	var status string
+	q.db.QueryRow("SELECT status FROM queue WHERE url=? AND source='firehose'", post.AtURI).Scan(&status)
+	if status == "" {
 		t.Fatal("expected queue row with source='firehose'")
 	}
-
-	pushes, _ := q.PendingPushes(10)
-	for _, p := range pushes {
-		if p.URL == post.AtURI {
-			if p.Kind != "notify" {
-				t.Fatalf("expected kind='notify', got %q", p.Kind)
-			}
-			return
-		}
+	if status == "relayed" {
+		t.Fatal("CT-1: firehose row must not be 'relayed' — MarkRelayed bypass removed (EPIC-123 M3)")
 	}
-	t.Fatal("no push row found for firehose post")
 }
 
 // CT-2: no-match commit → zero queue rows
@@ -61,7 +54,7 @@ func TestFirehoseCT2_NoMatch(t *testing.T) {
 		Repo:  "did:plc:abc",
 		Seq:   101,
 	}
-	err := handleFirehosePost(context.Background(), q, post)
+	err := handleFirehosePost(context.Background(), testFSC(q), post)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +93,7 @@ func TestFirehoseCT4_MalformedCBOR(t *testing.T) {
 	}
 
 	// processFirehoseMessage should return nil (skip) on malformed CBOR
-	err := processFirehoseMessage(context.Background(), q, []byte("not-cbor"))
+	err := processFirehoseMessage(context.Background(), testFSC(q), []byte("not-cbor"))
 	if err != nil {
 		t.Fatalf("expected nil (skip), got error: %v", err)
 	}
@@ -141,9 +134,9 @@ func TestFirehoseBT1_DeduplicateGuard(t *testing.T) {
 		Seq:   200,
 	}
 	// First enqueue
-	_ = handleFirehosePost(context.Background(), q, post)
+	_ = handleFirehosePost(context.Background(), testFSC(q), post)
 	// Second enqueue within 5-min window → should be skipped
-	_ = handleFirehosePost(context.Background(), q, post)
+	_ = handleFirehosePost(context.Background(), testFSC(q), post)
 
 	var count int
 	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=?", post.AtURI).Scan(&count)
@@ -190,8 +183,8 @@ func TestFirehoseBT4_DedupWindow(t *testing.T) {
 		Repo:  "did:plc:abc",
 		Seq:   300,
 	}
-	_ = handleFirehosePost(context.Background(), q, post)
-	_ = handleFirehosePost(context.Background(), q, post)
+	_ = handleFirehosePost(context.Background(), testFSC(q), post)
+	_ = handleFirehosePost(context.Background(), testFSC(q), post)
 
 	var count int
 	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=?", post.AtURI).Scan(&count)
@@ -214,7 +207,7 @@ func TestFirehoseRG1_ThrottleIsolation(t *testing.T) {
 			Repo:  "did:plc:abc",
 			Seq:   int64(400 + i),
 		}
-		_ = handleFirehosePost(context.Background(), q, post)
+		_ = handleFirehosePost(context.Background(), testFSC(q), post)
 	}
 
 	// EnqueueDigestIfDue for a DIFFERENT profile should still work
@@ -237,7 +230,7 @@ func TestFirehoseRG2_NoExitOnError(t *testing.T) {
 
 	// Override connectAndRead with a test version
 	origConnect := execConnectAndRead
-	execConnectAndRead = func(ctx context.Context, q *Queue, url string) error {
+	execConnectAndRead = func(ctx context.Context, fsc *firehoseScoreContext, url string) error {
 		calls++
 		if calls >= 2 {
 			cancel()
@@ -246,7 +239,7 @@ func TestFirehoseRG2_NoExitOnError(t *testing.T) {
 	}
 	defer func() { execConnectAndRead = origConnect }()
 
-	runFirehoseWorker(ctx, q, &BlueskyClient{}, nil)
+	runFirehoseWorker(ctx, testFSC(q), nil)
 
 	if calls < 2 {
 		t.Fatalf("expected at least 2 connect attempts, got %d", calls)
@@ -268,28 +261,27 @@ func TestFirehoseIntegration(t *testing.T) {
 		Repo:  "did:plc:abc",
 		Seq:   500,
 	}
-	if err := handleFirehosePost(context.Background(), q, post); err != nil {
+	if err := handleFirehosePost(context.Background(), testFSC(q), post); err != nil {
 		t.Fatal(err)
 	}
 
-	// Verify queue row with source='firehose' (status='relayed' — marked immediately after push)
-	var rowCount int
-	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=? AND source='firehose'", post.AtURI).Scan(&rowCount)
-	if rowCount == 0 {
+	// Verify queue row with source='firehose' and status='pending' (EPIC-123 M3: MarkRelayed removed).
+	var status string
+	q.db.QueryRow("SELECT status FROM queue WHERE url=? AND source='firehose'", post.AtURI).Scan(&status)
+	if status == "" {
 		t.Fatal("no queue row with source=firehose")
 	}
+	if status == "relayed" {
+		t.Fatal("integration: firehose row must not be 'relayed' — MarkRelayed bypass removed (EPIC-123 M3)")
+	}
 
-	// Verify push row with kind='notify' (not 'digest')
+	// No score=0 "Firehose Match" push may exist. Scored push comes from scoreAsync (M4+).
 	pushes, _ := q.PendingPushes(10)
 	for _, p := range pushes {
-		if p.URL == post.AtURI {
-			if p.Kind != "notify" {
-				t.Fatalf("expected kind='notify', got %q", p.Kind)
-			}
-			return
+		if p.URL == post.AtURI && p.Verdict == "Firehose Match" {
+			t.Fatal("integration: score=0 'Firehose Match' push must not be enqueued (EPIC-123 M3)")
 		}
 	}
-	t.Fatal("no push_outbox row found")
 }
 
 // RG-N: Real ATProto frame decodes correctly end-to-end.
@@ -329,7 +321,7 @@ func TestFirehoseRGN_RealFrameDecodes(t *testing.T) {
 	}
 	frame := append(hBytes, bBytes...)
 
-	if err := processFirehoseMessage(context.Background(), q, frame); err != nil {
+	if err := processFirehoseMessage(context.Background(), testFSC(q), frame); err != nil {
 		t.Fatalf("processFirehoseMessage returned error: %v", err)
 	}
 

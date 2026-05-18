@@ -1382,9 +1382,11 @@ func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug, 
 		return &existing[0], false, nil
 	}
 
-	// Try to find an existing relayed item by URL.
+	// Try to find an existing pending or relayed item by URL.
+	// 'pending' handles the firehose flow (EPIC-123 M3: MarkRelayed removed);
+	// 'relayed' handles the existing HTTP share flow.
 	relayed, err := q.query(
-		"SELECT "+queueCols+" FROM queue WHERE url=? AND status='relayed' ORDER BY id DESC LIMIT 1",
+		"SELECT "+queueCols+" FROM queue WHERE url=? AND status IN ('pending','relayed') ORDER BY id DESC LIMIT 1",
 		url,
 	)
 	if err != nil {
