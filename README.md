@@ -4,22 +4,22 @@
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://go.dev)
 ![Tools](https://img.shields.io/badge/tools-13_CLIs-blue)
 
-Go devtools monorepo — thirteen CLI tools for shell optimization and personal workflows.
+Go devtools monorepo - thirteen CLI tools for shell optimization and personal workflows.
 
 These tools represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
 
-- **mdq** — query fields and tables across markdown files
-- **perfgate** — statistical before/after performance gating
-- **shellprof** — fish shell function profiler with call graphs
-- **hookval** — validate Claude hook signal contract against schema
-- **effiscore** — Anthropic API efficiency scoring via Datadog metrics
-- **linkari** — Android share → tmux webhook bridge with AI-powered triage scoring
-- **wasend** — send WhatsApp messages from the command line
-- **fetchpage** — headless webpage fetcher via Playwright
-- **protonexport** — export ProtonMail conversations to markdown
-- **workctl** — fetch and export Atlassian & GitHub work data (weekly/quarterly summaries, career reports)
-- **ghwatch** — stream GitHub repository activity to the terminal (push, PRs, workflow runs)
-- **ts-go** — tree-sitter-based structural Go source analysis (signatures, types, body extraction, search, rewrite)
+- **mdq** - query fields and tables across markdown files
+- **perfgate** - statistical before/after performance gating
+- **shellprof** - fish shell function profiler with call graphs
+- **hookval** - validate Claude hook signal contract against schema
+- **effiscore** - Anthropic API efficiency scoring via Datadog metrics
+- **linkari** - Android share → tmux webhook bridge with AI-powered triage scoring
+- **wasend** - send WhatsApp messages from the command line
+- **fetchpage** - headless webpage fetcher via Playwright
+- **protonexport** - export ProtonMail conversations to markdown
+- **workctl** - fetch and export Atlassian & GitHub work data (weekly/quarterly summaries, career reports)
+- **ghwatch** - stream GitHub repository activity to the terminal (push, PRs, workflow runs)
+- **ts-go** - tree-sitter-based structural Go source analysis (signatures, types, body extraction, search, rewrite)
 
 **Last Updated:** 2026-05-05
 
@@ -87,7 +87,7 @@ Stats reported: mean, median, P95, stddev, min, max. Exit code 1 on gate failure
 
 ## shellprof
 
-Profile fish shell functions to find slow call paths. Shellprof surfaces call-graph data that feeds graduation decisions — identifying which fish functions are hot enough to warrant crystallization into Go.
+Profile fish shell functions to find slow call paths. Shellprof surfaces call-graph data that feeds graduation decisions - identifying which fish functions are hot enough to warrant crystallization into Go.
 
 ```bash
 # Profile a function (default: 3-level call depth)
@@ -183,20 +183,20 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 |-------|------|-------------|
 | `artifact_dir` | string | Directory for capture artifacts (e.g. `~/docs/captures`) |
 | `artifact_filename_template` | string | Go `text/template` for artifact filenames (e.g. `{{.Date}}_{{.Key}}.md`) |
-| `domain_routes` | map[string]string | Per-domain action override — maps domain patterns to action names (e.g. `"jira.atlassian.net" = "capture_jira_auto"`) |
-| `post_capture_command` | string | Optional shell command executed after the artifact is written. Template vars: `{{.Key}}`, `{{.ArtifactPath}}`, `{{.URL}}`, `{{.Date}}`. Execution is best-effort — non-zero exit logs `capture_command_error` but the queue row stays `status=captured`. Only `{{.Key}}` is validated (regex-gated) before substitution; no other content from the fetched payload reaches the command. |
+| `domain_routes` | map[string]string | Per-domain action override - maps domain patterns to action names (e.g. `"jira.atlassian.net" = "capture_jira_auto"`) |
+| `post_capture_command` | string | Optional shell command executed after the artifact is written. Template vars: `{{.Key}}`, `{{.ArtifactPath}}`, `{{.URL}}`, `{{.Date}}`. Execution is best-effort - non-zero exit logs `capture_command_error` but the queue row stays `status=captured`. Only `{{.Key}}` is validated (regex-gated) before substitution; no other content from the fetched payload reaches the command. |
 
-**Actions:** `text` (paste into existing pane), `url` (opens new tmux window via `uinit` with profile), `ginit` (parses Jira key, opens `ginit <KEY>`), `capture_jira_auto` (action kind `KindCapture` — intercepts Jira browse URLs and writes a structured markdown artifact to `docs/captures/` with YAML frontmatter instead of routing to the LLM scorer), `capture_confluence_auto` (same `KindCapture` path for Confluence page URLs — fetches ADF content and converts to markdown; unknown ADF node types are skipped with an `adf_unsupported_block` warning and the rest of the page still renders), `capture_github_pr_auto` (same `KindCapture` path for GitHub PR URLs matching `github.com/.*/pull/` — fetches PR metadata via GitHub REST API; works unauthenticated at 60 req/hr or authenticated when a GitHub token is configured; `ArtifactKey` format: `{owner}-{repo}-{prNumber}`; non-PR GitHub URLs fall through to the existing fetch path). Seven URL profiles: eng, life, travel, fashion, music, finance, dining. URL windows use `remain-on-exit failed` — auto-close on success, stay open on error. Domain heuristics auto-classify URLs into profiles (e.g. github.com → eng, booking.com → travel). Login-wall domains (Instagram, X/Twitter, Facebook) are pre-filtered to avoid wasting Haiku calls on inaccessible content; LinkedIn `/pulse/` articles are exempted as publicly accessible.
+**Actions:** `text` (paste into existing pane), `url` (opens new tmux window via `uinit` with profile), `ginit` (parses Jira key, opens `ginit <KEY>`), `capture_jira_auto` (action kind `KindCapture` - intercepts Jira browse URLs and writes a structured markdown artifact to `docs/captures/` with YAML frontmatter instead of routing to the LLM scorer), `capture_confluence_auto` (same `KindCapture` path for Confluence page URLs - fetches ADF content and converts to markdown; unknown ADF node types are skipped with an `adf_unsupported_block` warning and the rest of the page still renders), `capture_github_pr_auto` (same `KindCapture` path for GitHub PR URLs matching `github.com/.*/pull/` - fetches PR metadata via GitHub REST API; works unauthenticated at 60 req/hr or authenticated when a GitHub token is configured; `ArtifactKey` format: `{owner}-{repo}-{prNumber}`; non-PR GitHub URLs fall through to the existing fetch path). Seven URL profiles: eng, life, travel, fashion, music, finance, dining. URL windows use `remain-on-exit failed` - auto-close on success, stay open on error. Domain heuristics auto-classify URLs into profiles (e.g. github.com → eng, booking.com → travel). Login-wall domains (Instagram, X/Twitter, Facebook) are pre-filtered to avoid wasting Haiku calls on inaccessible content; LinkedIn `/pulse/` articles are exempted as publicly accessible.
 
-**Server-side scoring:** URL actions with `ServerScore: true` bypass the tmux → fish pipeline entirely — a goroutine fetches page content via Jina Reader, evaluates with Haiku, scores, archives, and sends FCM push. Unsupported domains (YouTube, Spotify, TikTok, etc.) return early without burning a Haiku call.
+**Server-side scoring:** URL actions with `ServerScore: true` bypass the tmux → fish pipeline entirely - a goroutine fetches page content via Jina Reader, evaluates with Haiku, scores, archives, and sends FCM push. Unsupported domains (YouTube, Spotify, TikTok, etc.) return early without burning a Haiku call.
 
-**Auth model (permanent):** All LLM scoring shells out to the `claude` CLI binary, which authenticates via the user's own Claude Code subscription (OAuth2 device flow). Linkari does not support Anthropic API keys, API client libraries, or direct Anthropic HTTP calls. Each user installs and runs Linkari on their own laptop — there is no shared API key deployment model.
+**Auth model (permanent):** All LLM scoring shells out to the `claude` CLI binary, which authenticates via the user's own Claude Code subscription (OAuth2 device flow). Linkari does not support Anthropic API keys, API client libraries, or direct Anthropic HTTP calls. Each user installs and runs Linkari on their own laptop - there is no shared API key deployment model.
 
-**Execution runtime:** Three runtime implementations — `LocalRuntime` (default, subprocess), `ContainerRuntime` (gVisor-sandboxed via containerd for ffmpeg/whisper), and `HybridRuntime` (routes ffmpeg/whisper through containers but keeps claude CLI local for OAuth2 reasons). Controlled by `sandbox.enabled` in `config.toml`.
+**Execution runtime:** Three runtime implementations - `LocalRuntime` (default, subprocess), `ContainerRuntime` (gVisor-sandboxed via containerd for ffmpeg/whisper), and `HybridRuntime` (routes ffmpeg/whisper through containers but keeps claude CLI local for OAuth2 reasons). Controlled by `sandbox.enabled` in `config.toml`.
 
 **Shield:** `X-Linkari-Client` header validation on the Funnel mux. Two modes: `log` (default, debug logging) and `enforce` (403 on invalid/missing headers). CORS preflight (OPTIONS) is always exempt.
 
-**Integration source control (`[server.sources]`):** Each ingestion source can be independently enabled or disabled via `config.toml`. All flags default to `true` — omitting the block is identical to all-enabled. SIGHUP reloads the flags; a toggled-off source stops on its next poll tick. Disabled sources emit a `source_disabled` event.
+**Integration source control (`[server.sources]`):** Each ingestion source can be independently enabled or disabled via `config.toml`. All flags default to `true` - omitting the block is identical to all-enabled. SIGHUP reloads the flags; a toggled-off source stops on its next poll tick. Disabled sources emit a `source_disabled` event.
 
 | Flag | Default | Controls |
 |------|---------|---------|
@@ -205,7 +205,7 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 | `youtube_liked_enabled` | `true` | `yt_liked` Liked Videos sync |
 | `bluesky_firehose_enabled` | `true` | `bsky_firehose` Bluesky relay scoring |
 
-**YouTube sub-behavior toggles (`[server.youtube]`):** Two pipeline stages — Enqueue and Transcribe (Whisper audio fallback) — can be independently gated per source. Dedup (`seen_content`) always runs regardless of flags. All flags default to `true`.
+**YouTube sub-behavior toggles (`[server.youtube]`):** Two pipeline stages - Enqueue and Transcribe (Whisper audio fallback) - can be independently gated per source. Dedup (`seen_content`) always runs regardless of flags. All flags default to `true`.
 
 | Flag | Default | Controls |
 |------|---------|---------|
@@ -214,7 +214,7 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 | `transcribe_subscriptions` | `true` | Whisper audio fallback for `yt_monitored` items with no subtitles |
 | `transcribe_watch_later` | `true` | Whisper audio fallback for `yt_watch_later` items with no subtitles |
 
-Note: `transcribe=false` only skips the Whisper stage — yt-dlp subtitle extraction still runs, and scoring proceeds normally if subtitles are found.
+Note: `transcribe=false` only skips the Whisper stage - yt-dlp subtitle extraction still runs, and scoring proceeds normally if subtitles are found.
 
 **Endpoints:**
 
@@ -256,12 +256,12 @@ All endpoints except `/healthz`, `/logs`, `/logs/stream`, and `/auth/*` require 
 | Gate | Config Key | Default | Trigger |
 |------|-----------|---------|---------|
 | `oversize_file` | `image_noise_gate_max_bytes` | 15 MB | File exceeds max bytes |
-| `camera_photo_gate` | *(heuristic, no config)* | — | Gallery app + camera filename pattern (`IMG_/DSC_/PXL_` prefix) + no text metadata. Bypassed when `image_text_extraction_enabled=true` and extracted text exceeds `image_short_circuit_bypass_min_chars`. |
+| `camera_photo_gate` | *(heuristic, no config)* | - | Gallery app + camera filename pattern (`IMG_/DSC_/PXL_` prefix) + no text metadata. Bypassed when `image_text_extraction_enabled=true` and extracted text exceeds `image_short_circuit_bypass_min_chars`. |
 | `noise_gate_min_size` | `image_noise_gate_min_bytes` | 1 KB | File below min bytes with no text metadata |
 
 When any gate fires, vision eval is skipped and the share falls through to metadata-only scoring. Each gate emits a `score_prefilter_skip` event.
 
-**Image text extraction pre-pass (EPIC-122):** When `image_text_extraction_enabled = true` (default: `false`), a Claude Haiku vision call runs before scoring for all `type=image` shares that pass the noise gate. The call transcribes all visible text verbatim (`model: claude-haiku-4-5`, 30s timeout, `max_concurrency=1`). When extracted text exceeds `image_short_circuit_bypass_min_chars` (default: `20`), the camera-photo short-circuit is suppressed and the transcript is included in the scoring prompt — 9 fields instead of 5 (`calling_package`, `relative_path`, `is_screenshot`, `url`, `transcribed_text` appended when present). Transcript files are persisted to `transcripts_dir` at `YYYYMMDD_<rowID>_IMG_<slug>.md`. CLI failure or timeout falls through to current scoring behavior; the share is never blocked. Feature is disabled by default for safe rollout.
+**Image text extraction pre-pass (EPIC-122):** When `image_text_extraction_enabled = true` (default: `false`), a Claude Haiku vision call runs before scoring for all `type=image` shares that pass the noise gate. The call transcribes all visible text verbatim (`model: claude-haiku-4-5`, 30s timeout, `max_concurrency=1`). When extracted text exceeds `image_short_circuit_bypass_min_chars` (default: `20`), the camera-photo short-circuit is suppressed and the transcript is included in the scoring prompt - 9 fields instead of 5 (`calling_package`, `relative_path`, `is_screenshot`, `url`, `transcribed_text` appended when present). Transcript files are persisted to `transcripts_dir` at `YYYYMMDD_<rowID>_IMG_<slug>.md`. CLI failure or timeout falls through to current scoring behavior; the share is never blocked. Feature is disabled by default for safe rollout.
 
 | Config Field | Type | Default | Description |
 |-------------|------|---------|-------------|
@@ -274,8 +274,8 @@ When any gate fires, vision eval is skipped and the share falls through to metad
 
 | Reason Code | Trigger | Queue Effect | User-Facing Verdict |
 |-------------|---------|-------------|---------------------|
-| `unsupported_pipeline` | URL matches streaming domains (YouTube, Spotify, TikTok, Twitch, SoundCloud, Netflix, Vimeo, Rumble, Dailymotion). Domain list configurable via `unsupported_pipeline_domains` in `config.toml`. | **Pre-enqueue (primary):** no queue row created, `score_prefilter_skip` event emitted (`phase: "pre_enqueue"`). **Safety-net in scoreAsync:** `MarkFailedWithReason` (fires only when `scoreAsync` is called directly, bypassing the HTTP handler). | "Video platform — not yet supported" |
-| `login_wall_domain` | URL matches login-walled domains (Instagram, X/Twitter, Facebook, LinkedIn non-`/pulse/`) | No queue row created (pre-enqueue) | "Login-walled site — can't access content" |
+| `unsupported_pipeline` | URL matches streaming domains (YouTube, Spotify, TikTok, Twitch, SoundCloud, Netflix, Vimeo, Rumble, Dailymotion). Domain list configurable via `unsupported_pipeline_domains` in `config.toml`. | **Pre-enqueue (primary):** no queue row created, `score_prefilter_skip` event emitted (`phase: "pre_enqueue"`). **Safety-net in scoreAsync:** `MarkFailedWithReason` (fires only when `scoreAsync` is called directly, bypassing the HTTP handler). | "Video platform - not yet supported" |
+| `login_wall_domain` | URL matches login-walled domains (Instagram, X/Twitter, Facebook, LinkedIn non-`/pulse/`) | No queue row created (pre-enqueue) | "Login-walled site - can't access content" |
 | `screenshot_no_text` | Screenshot with empty ExtraSubject + ExtraText | `MarkFailedWithReason` | "Screenshot had no extractable text" |
 | `fetch_failed` | Jina Reader HTTP error | `MarkFailedWithReason` | "Could not fetch page content" |
 | `empty_content` | Jina response body empty after truncation | `MarkFailedWithReason` | "Page had no readable content" |
@@ -311,7 +311,7 @@ FCM push for prefiltered shares is controlled by `notify_on_prefilter_skip` in `
 | Event Type | Description |
 |------------|-------------|
 | `classify_stage_win` | Classification cascade resolved a profile (fields: `profile`, `classify_source`, `phase`) |
-| `score_prefilter_summary` | Per-share pipeline summary (fields: `prefilter_stage`, `eval_skipped`, `latency_ms`, `cost_usd`, `type`) — always emitted via defer |
+| `score_prefilter_summary` | Per-share pipeline summary (fields: `prefilter_stage`, `eval_skipped`, `latency_ms`, `cost_usd`, `type`) - always emitted via defer |
 | `score_prefilter_skip` | Vision gate or login-wall rejection (fields: `stage`, `file_size` or `filename`) |
 | `score_repair_turn` | Scoring required a repair turn (fields: `cost_usd`, `profile`, `type`) |
 | `vision_token_correction` | Image token back-calculation applied (fields: `input_tokens`, `image_tokens_estimated`, `cost_usd`) |
@@ -350,16 +350,16 @@ FCM push for prefiltered shares is controlled by `notify_on_prefilter_skip` in `
 
 ## wasend
 
-Send WhatsApp messages from the command line. Supports two transports: **personal** (whatsmeow, QR login) and **cloud** (WhatsApp Business API, token-based — [EPIC-001 M4](docs/epics/PERSONAL_20260319T131921Z_WhatsApp_EPIC-001_whatsapp_business_api_account.md), planned).
+Send WhatsApp messages from the command line. Supports two transports: **personal** (whatsmeow, QR login) and **cloud** (WhatsApp Business API, token-based - [EPIC-001 M4](docs/epics/PERSONAL_20260319T131921Z_WhatsApp_EPIC-001_whatsapp_business_api_account.md), planned).
 
 ```bash
-# Personal (default) — authenticate via QR code
+# Personal (default) - authenticate via QR code
 wasend login
 wasend send -t 15551234567 "Hello from CLI"
 echo "Hello" | wasend send -t 15551234567 --stdin
 wasend logout
 
-# Cloud API (planned) — headless, token-based
+# Cloud API (planned) - headless, token-based
 wasend send --api cloud -t 15551234567 "Hello from CLI"
 wasend send --api cloud -t 15551234567 --template hello_world
 ```
@@ -428,7 +428,7 @@ Requires `$GITHUB_TOKEN` or `--token`.
 
 ## ts-go
 
-Structural Go source analysis using tree-sitter. Parses files in <5ms without a Go workspace or build context — use it to orient on large files before reading.
+Structural Go source analysis using tree-sitter. Parses files in <5ms without a Go workspace or build context - use it to orient on large files before reading.
 
 ```bash
 # List all function/method signatures with line ranges
@@ -504,14 +504,14 @@ Three images: `ffmpeg` (audio conversion), `whisper` (speech-to-text), `claude-s
 
 ## Telemetry
 
-Every tool emits schema v2 JSONL events to `~/.automation-metrics/events/YYYY-MM-DD.jsonl` via `emit_jsonl`. Events include command, subcommand, duration, exit code, and flags — correlated by `session_id` across all tools in the suite.
+Every tool emits schema v2 JSONL events to `~/.automation-metrics/events/YYYY-MM-DD.jsonl` via `emit_jsonl`. Events include command, subcommand, duration, exit code, and flags - correlated by `session_id` across all tools in the suite.
 
 This telemetry feeds topology consumers like `agrad` (graduation signals) and `aregress` (regression detection), which track whether a tool is earning its place at the Go CLI layer or should be simplified back to a shell function.
 
 ## Layout
 
 ```
-cmd/bmux/             # bmux entry point (separate module — golang.org/x/crypto SSH deps isolated)
+cmd/bmux/             # bmux entry point (separate module - golang.org/x/crypto SSH deps isolated)
   internal/           # config, ssh, daemon, pane, bridge, reconnect, io packages
 cmd/mdq/              # mdq entry point (root module)
 cmd/perfgate/         # perfgate entry point (root module)
@@ -519,7 +519,7 @@ cmd/shellprof/        # shellprof entry point (root module)
 cmd/hookval/          # hookval entry point (root module)
 cmd/effiscore/        # effiscore entry point (root module)
 cmd/fetchpage/        # fetchpage entry point (separate module)
-cmd/ts-go/            # ts-go entry point (separate module — tree-sitter CGo deps isolated)
+cmd/ts-go/            # ts-go entry point (separate module - tree-sitter CGo deps isolated)
 cmd/linkari/          # linkari entry point (separate module, ~80 files)
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
@@ -541,8 +541,8 @@ container/            # Dockerfiles for gVisor sandbox runtime (ffmpeg, whisper,
 
 Active development. Fourteen tools building and passing tests. `plaid-service` Phase 1 + 2 shipped and live.
 
-- `plaid-service` running on personal Tailnet — hourly Plaid sync, 390+ transactions in SQLite, `GET /health` at `http://plaid-service/health`
-- tsnet outbound client injected (F5) — all Plaid API traffic routes through Tailnet node `plaid-service`
+- `plaid-service` running on personal Tailnet - hourly Plaid sync, 390+ transactions in SQLite, `GET /health` at `http://plaid-service/health`
+- tsnet outbound client injected (F5) - all Plaid API traffic routes through Tailnet node `plaid-service`
 - jira-poller added as satellite module alongside plaid-service
 
 **Last Updated:** 2026-04-30
