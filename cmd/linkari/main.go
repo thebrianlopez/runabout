@@ -311,6 +311,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 
 			var fcmTokenSource oauth2.TokenSource
+			var fcmEndpoint string
 			if firebaseSA != "" {
 				saJSON, err := os.ReadFile(firebaseSA)
 				if err != nil {
@@ -323,6 +324,9 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					return fmt.Errorf("parsing firebase credentials: %w", err)
 				}
 				fcmTokenSource = creds.TokenSource
+				if creds.ProjectID != "" {
+					fcmEndpoint = "https://fcm.googleapis.com/v1/projects/" + creds.ProjectID + "/messages:send"
+				}
 			}
 
 			// Resolve queue database path.
@@ -580,6 +584,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 
 			srv := NewServer(token, router, queue, ring, debug, fcmTokenSource)
+			srv.fcmEndpoint = fcmEndpoint
 			srv.serverConfig = *serverFileCfg
 			srv.SetShield(shield)
 			srv.jiraToken = jiraToken
