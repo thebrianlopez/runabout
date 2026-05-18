@@ -6,7 +6,7 @@ before:
   hooks:
     - go work sync
 
-# Use local workspace — replace directives in go.work point to local paths
+# Use local workspace  -  replace directives in go.work point to local paths
 # that the module proxy cannot resolve.
 gomod:
   proxy: false
@@ -69,6 +69,19 @@ builds:
   - id: effiscore
     binary: effiscore
     main: ./cmd/effiscore
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: castex
+    binary: castex
+    main: ./cmd/castex
     env: [CGO_ENABLED=0]
     goos: [darwin, linux]
     goarch: [amd64, arm64]
@@ -222,7 +235,7 @@ builds:
       - -X main.commit={{.Commit}}
       - -X main.date={{.Date}}
 
-  # ts-go: requires CGo (tree-sitter C bindings) — darwin only.
+  # ts-go: requires CGo (tree-sitter C bindings)  -  darwin only.
   # Cross-compiling CGo to linux/arm64 requires a cross-toolchain not available
   # in the standard macOS GitHub Actions runner. Linux users: go install directly.
   - id: ts-go
@@ -239,7 +252,7 @@ builds:
       - -X main.commit={{.Commit}}
       - -X main.date={{.Date}}
 
-  # fetchpage is a Python script (cmd/fetchpage/fetchpage.py) — not a Go binary.
+  # fetchpage is a Python script (cmd/fetchpage/fetchpage.py)  -  not a Go binary.
   # It is excluded from goreleaser; install via: cp cmd/fetchpage/fetchpage.py ~/go/bin/fetchpage
 
 archives:
@@ -251,6 +264,7 @@ archives:
       - shellprof
       - hookval
       - effiscore
+      - castex
       - bmux
       - protonexport
       - linkari
@@ -291,7 +305,7 @@ brews:
       name: homebrew-runabout
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/thebrianlopez/runabout"
-    description: "Personal developer tools — mdq, bmux, workctl, linkari, runway, and more"
+    description: "Personal developer tools  -  mdq, bmux, workctl, linkari, runway, and more"
     license: "MIT"
     install: |
       bin.install "mdq"
@@ -299,6 +313,7 @@ brews:
       bin.install "shellprof"
       bin.install "hookval"
       bin.install "effiscore"
+      bin.install "castex"
       bin.install "bmux"
       bin.install "protonexport"
       bin.install "linkari"
@@ -313,6 +328,7 @@ brews:
       system "#{bin}/mdq", "--version"
       system "#{bin}/bmux", "--version"
       system "#{bin}/workctl", "--version"
+      system "#{bin}/castex", "--version"
 
   # ts-go formula: CGo build, darwin only
   - name: ts-go
