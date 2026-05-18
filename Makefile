@@ -5,7 +5,7 @@ LDFLAGS  = -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main
 INSTALL_DIR := $(shell go env GOPATH)/bin
 
 # Core tools (root module)
-CORE := mdq perfgate shellprof hookval effiscore
+CORE := mdq perfgate shellprof hookval effiscore castex
 
 # Separate-module tools (each has its own go.mod under cmd/)
 SEPARATE := bmux fetchpage protonexport linkari linkari-labeler plaid-service wasend workctl ghwatch ts-go jira-poller runway
@@ -135,7 +135,7 @@ install-linkari:
 	@cd cmd/linkari && go install $(LDFLAGS) .
 
 # Generate fish completions and install to ~/.config/fish/completions/.
-# Fish auto-loads anything in this directory — no edit to config.fish.
+# Fish auto-loads anything in this directory  -  no edit to config.fish.
 install-linkari-completions: install-linkari
 	@mkdir -p $(HOME)/.config/fish/completions
 	@$(INSTALL_DIR)/linkari completion fish > $(HOME)/.config/fish/completions/linkari.fish
@@ -203,7 +203,7 @@ auth-bluesky:
 # Exchange a Google ID token for a Linkari session token.
 # The ID token comes from Google Sign-In on the Android app (or any Google Sign-In client).
 # Usage: make auth-google GOOGLE_ID_TOKEN=<id_token_from_sign_in>
-# On success, prints the Linkari session token — store it for use with auth-bluesky.
+# On success, prints the Linkari session token  -  store it for use with auth-bluesky.
 GOOGLE_ID_TOKEN ?=
 
 auth-google:
@@ -320,7 +320,7 @@ container-build:
 
 # Push multi-arch (linux/amd64 + linux/arm64) images to the registry.
 # Requires: docker buildx with a builder that supports multi-arch (docker buildx create --use).
-# Images are pushed directly — docker load does not support multi-arch manifests.
+# Images are pushed directly  -  docker load does not support multi-arch manifests.
 #   make container-push IMAGE_REGISTRY=myregistry.io/linkari
 container-push:
 	@echo "Building and pushing multi-arch container images (registry=$(IMAGE_REGISTRY))..."

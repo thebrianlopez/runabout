@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -9,7 +10,7 @@ import (
 )
 
 // testFSC wraps a Queue in a minimal firehoseScoreContext for tests.
-// Eval is nil so scoreAsync is not called — tests verify DB state only.
+// Eval is nil so scoreAsync is not called  -  tests verify DB state only.
 func testFSC(q *Queue) *firehoseScoreContext {
 	return &firehoseScoreContext{Queue: q, ScoreSem: make(chan struct{}, 3)}
 }
@@ -33,6 +34,35 @@ func (e *contentCapturingEval) Evaluate(ctx context.Context, content, prompt str
 	return e.inner.Evaluate(ctx, content, prompt)
 }
 
+// semaphoreCapEval delays each Evaluate call and tracks peak concurrent invocations.
+// done is a buffered channel; each call sends once (non-blocking) so callers can
+// count completions without waiting for scoreAsync to fully return.
+type semaphoreCapEval struct {
+	inner   Evaluator
+	delay   time.Duration
+	current int32 // atomic
+	peak    int32 // atomic
+	done    chan struct{}
+}
+
+func (e *semaphoreCapEval) Name() string { return "semaphore-cap" }
+func (e *semaphoreCapEval) Evaluate(ctx context.Context, content, prompt string) (*Scorecard, error) {
+	cur := atomic.AddInt32(&e.current, 1)
+	for {
+		old := atomic.LoadInt32(&e.peak)
+		if cur <= old || atomic.CompareAndSwapInt32(&e.peak, old, cur) {
+			break
+		}
+	}
+	time.Sleep(e.delay)
+	atomic.AddInt32(&e.current, -1)
+	select {
+	case e.done <- struct{}{}:
+	default:
+	}
+	return e.inner.Evaluate(ctx, content, prompt)
+}
+
 // =====================================================================
 // EPIC-123 M1: Contract tests and regression guards for firehose scoring.
 // All tests in this file are expected to FAIL until M2/M3 implementation.
@@ -47,7 +77,7 @@ func (e *contentCapturingEval) Evaluate(ctx context.Context, content, prompt str
 // --- F1: Firehose scoreAsync Wiring ---
 
 // F1-CT-2: After handleFirehosePost, queue row must NOT be in 'relayed' status.
-// The MarkRelayed bypass must be removed — row stays 'pending' for scoreAsync.
+// The MarkRelayed bypass must be removed  -  row stays 'pending' for scoreAsync.
 func TestFirehoseScoring_F1CT2_NoMarkRelayed(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -69,7 +99,7 @@ func TestFirehoseScoring_F1CT2_NoMarkRelayed(t *testing.T) {
 		t.Fatalf("query queue row: %v", err)
 	}
 	if status == "relayed" {
-		t.Fatal("F1-CT-2: queue row must NOT be 'relayed' — MarkRelayed bypass must be removed")
+		t.Fatal("F1-CT-2: queue row must NOT be 'relayed'  -  MarkRelayed bypass must be removed")
 	}
 }
 
@@ -103,7 +133,7 @@ func TestFirehoseScoring_F1CT4_StatusTransitions(t *testing.T) {
 }
 
 // F1-RG-2: No push with score=0 and title="Firehose Match" may be enqueued.
-// The score=0 placeholder push must be removed — only scoreAsync sends pushes.
+// The score=0 placeholder push must be removed  -  only scoreAsync sends pushes.
 func TestFirehoseScoring_F1RG2_NoScoreZeroPush(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -122,7 +152,7 @@ func TestFirehoseScoring_F1RG2_NoScoreZeroPush(t *testing.T) {
 	pushes, _ := q.PendingPushes(100)
 	for _, p := range pushes {
 		if p.URL == post.AtURI && p.Verdict == "Firehose Match" {
-			t.Fatal("F1-RG-2: score=0 'Firehose Match' push must not be enqueued — only scoreAsync sends pushes")
+			t.Fatal("F1-RG-2: score=0 'Firehose Match' push must not be enqueued  -  only scoreAsync sends pushes")
 		}
 	}
 }
@@ -199,7 +229,7 @@ func TestFirehoseScoring_F2RG1_NoDefaultProfileInQueue(t *testing.T) {
 		t.Fatalf("query queue row: %v", err)
 	}
 	if profile == "default" {
-		t.Fatal("F2-RG-1: firehose queue row must not have profile='default' — must be resolved before enqueue")
+		t.Fatal("F2-RG-1: firehose queue row must not have profile='default'  -  must be resolved before enqueue")
 	}
 }
 
@@ -257,12 +287,12 @@ func TestFirehoseScoring_F1CT1_ScoreAsyncCalled(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("F1-CT-1: scoreAsync not called within 5s — Evaluator.Evaluate never invoked")
+		t.Fatal("F1-CT-1: scoreAsync not called within 5s  -  Evaluator.Evaluate never invoked")
 	}
 }
 
 // F1-CT-3: After firehose processing, exactly one push with score > 0 must be sent.
-// No score=0 "Firehose Match" push may exist — scoreAsync is the only push sender.
+// No score=0 "Firehose Match" push may exist  -  scoreAsync is the only push sender.
 func TestFirehoseScoring_F1CT3_ScoredPushReplaces(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -288,13 +318,55 @@ func TestFirehoseScoring_F1CT3_ScoredPushReplaces(t *testing.T) {
 }
 
 // F1-CT-5: At most 3 concurrent firehose scoring goroutines (semaphore cap).
-// Requires M3 firehoseScoreContext.ScoreSem wiring to verify.
 func TestFirehoseScoring_F1CT5_SemaphoreCap(t *testing.T) {
-	t.Fatal("F1-CT-5: concurrency cap not implemented — requires firehoseScoreContext.ScoreSem (M3)")
+	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("eng", "semaphore")
+
+	const n = 6
+	eval := &semaphoreCapEval{
+		inner: &stubEvaluator{score: 60, verdict: "Monitor"},
+		delay: 150 * time.Millisecond,
+		done:  make(chan struct{}, n),
+	}
+	fsc := testFSCWithEval(q, eval)
+
+	for i := 0; i < n; i++ {
+		post := &firehosePost{
+			AtURI: fmt.Sprintf("at://did:plc:test/app.bsky.feed.post/f1ct5-%d", i),
+			Text:  fmt.Sprintf("semaphore cap test post %d", i),
+			Repo:  "did:plc:test",
+			Seq:   int64(5000 + i),
+		}
+		if err := handleFirehosePost(context.Background(), fsc, post); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Wait for the first 3 evaluations (one full semaphore-cap batch).
+	// scoreAsync may block after Evaluate returns (resolvePushConfigOnce), so we
+	// signal completion from inside Evaluate via a buffered channel rather than
+	// waiting for scoreAsync to fully return.
+	deadline := time.After(5 * time.Second)
+	for i := 0; i < 3; i++ {
+		select {
+		case <-eval.done:
+		case <-deadline:
+			t.Fatalf("F1-CT-5: only %d of 3 expected evaluations completed in 5s", i)
+		}
+	}
+
+	if p := atomic.LoadInt32(&eval.peak); p > 3 {
+		t.Fatalf("F1-CT-5: peak concurrent Evaluate calls = %d, want <= 3 (semaphore cap)", p)
+	}
+	if atomic.LoadInt32(&eval.peak) == 0 {
+		t.Fatal("F1-CT-5: Evaluate never called - scoreAsync did not run")
+	}
 }
 
 // F1-CT-6: After restart, StartReplay picks up pending firehose queue rows.
-// Fails until MarkRelayed bypass is removed — rows must stay 'pending' for replay.
+// Fails until MarkRelayed bypass is removed  -  rows must stay 'pending' for replay.
 func TestFirehoseScoring_F1CT6_StartReplayPicksUpFirehose(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -310,7 +382,7 @@ func TestFirehoseScoring_F1CT6_StartReplayPicksUpFirehose(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// After the fix, firehose rows stay 'pending' — Pending() returns them for replay.
+	// After the fix, firehose rows stay 'pending'  -  Pending() returns them for replay.
 	// Currently fails: MarkRelayed sets status='relayed', so Pending() returns nothing.
 	items, err := q.Pending()
 	if err != nil {
@@ -318,13 +390,13 @@ func TestFirehoseScoring_F1CT6_StartReplayPicksUpFirehose(t *testing.T) {
 	}
 	for _, it := range items {
 		if it.URL == post.AtURI {
-			return // found — test passes post-M3
+			return // found  -  test passes post-M3
 		}
 	}
-	t.Fatal("F1-CT-6: firehose queue row not visible to StartReplay — row must stay 'pending' not 'relayed'")
+	t.Fatal("F1-CT-6: firehose queue row not visible to StartReplay  -  row must stay 'pending' not 'relayed'")
 }
 
-// F1-RG-1: scoreAsync is invoked within 5s — item never stays pending indefinitely.
+// F1-RG-1: scoreAsync is invoked within 5s  -  item never stays pending indefinitely.
 // Regression guard: ensures the MarkRelayed bypass removal doesn't leave items unscored.
 func TestFirehoseScoring_F1RG1_NeverScoringTimeout(t *testing.T) {
 	installJinaServer(t, jinaBodyServer(t, 404, ""))
@@ -349,7 +421,7 @@ func TestFirehoseScoring_F1RG1_NeverScoringTimeout(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("F1-RG-1: scoreAsync not called within 5s — firehose item would have scored_timeout")
+		t.Fatal("F1-RG-1: scoreAsync not called within 5s  -  firehose item would have scored_timeout")
 	}
 }
 
@@ -385,10 +457,10 @@ func TestFirehoseScoring_F3CT3_ScoreAsyncUsesText(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	if !atomic.CompareAndSwapInt32(&capturing.called, 1, 1) {
-		t.Fatal("F3-CT-3: content not captured — Evaluate was not called on contentCapturingEval")
+		t.Fatal("F3-CT-3: content not captured  -  Evaluate was not called on contentCapturingEval")
 	}
 	if capturing.content == "" {
-		t.Fatal("F3-CT-3: content passed to Evaluate is empty — text fallback not active")
+		t.Fatal("F3-CT-3: content passed to Evaluate is empty  -  text fallback not active")
 	}
 	if len(capturing.content) > 0 && len(postText) > 0 {
 		// The prompt includes postText as part of the content block.
@@ -430,7 +502,7 @@ func TestFirehoseScoring_F3RG1_TextReachesPrompt(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	if capturing.content == "" {
-		t.Fatal("F3-RG-1: scoring content is empty — post text was lost before reaching evaluator")
+		t.Fatal("F3-RG-1: scoring content is empty  -  post text was lost before reaching evaluator")
 	}
 }
 
@@ -456,7 +528,7 @@ func TestFirehoseScoring_F3CT2_EmptyTextPassthrough(t *testing.T) {
 	var count int
 	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=?", post.AtURI).Scan(&count)
 	if count == 0 {
-		t.Skip("F3-CT-2: post did not match any subscription (expected — keyword in URI may not match)")
+		t.Skip("F3-CT-2: post did not match any subscription (expected  -  keyword in URI may not match)")
 	}
 
 	var text string
@@ -556,20 +628,20 @@ func TestFirehoseScoring_Integration(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("integration: Evaluate never called — scoreAsync did not run")
+		t.Fatal("integration: Evaluate never called  -  scoreAsync did not run")
 	}
 	time.Sleep(50 * time.Millisecond) // allow post-eval status write to complete
 
 	var status string
 	q.db.QueryRow("SELECT status FROM queue WHERE url=?", post.AtURI).Scan(&status)
 	if status == "pending" || status == "relayed" {
-		t.Fatalf("integration: queue row still in %q — scoreAsync did not complete scoring", status)
+		t.Fatalf("integration: queue row still in %q  -  scoreAsync did not complete scoring", status)
 	}
 	if status == "" {
 		t.Fatal("integration: queue row not found")
 	}
 	// Status should be "scored" or "failed" (never "relayed" or stuck "pending").
 	if status != "scored" && status != "failed" {
-		t.Fatalf("integration: unexpected queue row status %q — want scored or failed", status)
+		t.Fatalf("integration: unexpected queue row status %q  -  want scored or failed", status)
 	}
 }
