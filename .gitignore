@@ -11,7 +11,7 @@ cmd/linkari/sharehook
 cmd/protonexport/protonexport
 .DS_Store
 
-# Runtime log files — never commit; contain ephemeral session state
+# Runtime log files  -  never commit; contain ephemeral session state
 *.log
 
 docs/
@@ -38,13 +38,12 @@ cmd/perfgate/perfgate
 cmd/shellprof/shellprof
 cmd/effiscore/effiscore
 cmd/castex/castex
-internal/registry/
 
 # Root-level compiled binaries (built by make, not installed to ~/go/bin)
 /mdq
 /sharehook
 
-# Internal agent coordination — never commit
+# Internal agent coordination  -  never commit
 .claude-dispatch/
 **/.beads/
 **/.cursor/
