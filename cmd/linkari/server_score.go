@@ -627,27 +627,39 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				content, err = fetchJinaContent(fetchCtx, rawURL)
 			}
 			domainFetchMs = time.Since(fetchStart).Milliseconds()
-			if err != nil {
-				slog.Warn("score_async: fetch failed",
-					"event_type", "score_async_fetch_error",
-					"url", rawURL,
-					"error", err,
-				)
-				if q != nil && req.QueueRowID > 0 {
-					_ = q.MarkFailedWithReason(req.QueueRowID, "fetch_failed")
-					enqueuePrefilterPush(q, req, "fetch_failed")
-				}
-				return
+			if err == nil {
+				rawContent = content
+				content = truncateRunes(content, contentTruncationRunes)
 			}
-			rawContent = content
-			content = truncateRunes(content, contentTruncationRunes)
-			if strings.TrimSpace(content) == "" {
-				slog.Warn("score_async: empty content", "event_type", "score_async_empty_content", "url", rawURL)
-				if q != nil && req.QueueRowID > 0 {
-					_ = q.MarkFailedWithReason(req.QueueRowID, "empty_content")
-					enqueuePrefilterPush(q, req, "empty_content")
+			// F3: AT-protocol URIs (at://) are not HTTP-fetchable — fall back to the
+			// pre-populated text from the firehose commit. Also handles other fetch failures
+			// where the caller passed text (e.g. Android share with text + URL).
+			if err != nil || strings.TrimSpace(content) == "" {
+				if req.Text != "" {
+					slog.Info("score_async: using pre-populated text (fetch failed or empty)",
+						"event_type", "score_async_text_fallback",
+						"url", rawURL,
+					)
+					content = req.Text
+				} else if err != nil {
+					slog.Warn("score_async: fetch failed",
+						"event_type", "score_async_fetch_error",
+						"url", rawURL,
+						"error", err,
+					)
+					if q != nil && req.QueueRowID > 0 {
+						_ = q.MarkFailedWithReason(req.QueueRowID, "fetch_failed")
+						enqueuePrefilterPush(q, req, "fetch_failed")
+					}
+					return
+				} else {
+					slog.Warn("score_async: empty content", "event_type", "score_async_empty_content", "url", rawURL)
+					if q != nil && req.QueueRowID > 0 {
+						_ = q.MarkFailedWithReason(req.QueueRowID, "empty_content")
+						enqueuePrefilterPush(q, req, "empty_content")
+					}
+					return
 				}
-				return
 			}
 
 			// Content-based profile reclassification when domain fallback triggered.
