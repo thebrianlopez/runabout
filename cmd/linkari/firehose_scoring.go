@@ -37,8 +37,27 @@ func resolveFirehoseProfile(profile string) string {
 	}
 }
 
+// firehoseActionForProfile derives a registered action ID from a profile name.
+// Known profiles map to uinit_{profile}. Unknown or empty profiles fall back
+// to uinit_eng to avoid empty action fields that break replay (F6).
+func firehoseActionForProfile(profile string) string {
+	switch profile {
+	case "eng":
+		return "uinit_eng"
+	default:
+		if profile == "" {
+			slog.Warn("firehose action derivation failed",
+				"event_type", "firehose_action_derivation_failed",
+				"error_class", "firehose_action_derivation_failed",
+				"profile", profile,
+			)
+		}
+		return "uinit_eng"
+	}
+}
+
 // migrateFirehoseProfiles updates all firehose_subscriptions rows with
-// profile='default' to 'eng'. Idempotent — safe to run on startup.
+// profile='default' to 'eng'. Idempotent  -  safe to run on startup.
 func migrateFirehoseProfiles(q *Queue) {
 	_, err := q.db.Exec("UPDATE firehose_subscriptions SET profile = 'eng' WHERE profile = 'default'")
 	if err != nil {
