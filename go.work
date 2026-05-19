@@ -16,11 +16,6 @@ use (
 )
 
 replace (
-	// F2: Explicit workspace self-reference bypass. go.work `use .` should
-	// provide this automatically, but the workspace resolver falls through to
-	// VCS when v0.0.0 appears in a submodule require — explicit replace prevents
-	// the git ls-remote call for the private repo.
-	github.com/thebrianlopez/runabout v0.0.0 => .
 
 	// EPIC-016: Resolve workspace cloud.google.com/go ambiguity.
 	// Old grpc transitive chain (grpc@v1.19/v1.23/v1.33 → go-control-plane → genproto)
@@ -29,6 +24,11 @@ replace (
 	// Redirect the old monorepo version to a post-split stub that no longer provides
 	// compute/metadata as a package, eliminating the ambiguous-import error.
 	cloud.google.com/go v0.26.0 => cloud.google.com/go v0.115.0
+	// F2: Explicit workspace self-reference bypass. go.work `use .` should
+	// provide this automatically, but the workspace resolver falls through to
+	// VCS when v0.0.0 appears in a submodule require — explicit replace prevents
+	// the git ls-remote call for the private repo.
+	github.com/thebrianlopez/runabout v0.0.0 => .
 	// EPIC-016: Resolve workspace genproto split ambiguity.
 	// cmd/protonexport/go-proton-api uses the old genproto monorepo
 	// (v0.0.0-20230410155749) which still provides googleapis/rpc/status as a
