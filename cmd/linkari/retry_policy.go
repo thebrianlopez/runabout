@@ -56,6 +56,13 @@ func retryOrFail(ctx context.Context, db *sql.DB, rowID int64, stage string, cau
 
 	if newCount >= maxAttempts {
 		reason := fmt.Sprintf("%s: %s", errorClass, truncatedCause)
+		if stage == "scoring" {
+			_, err := db.ExecContext(ctx,
+				"UPDATE queue SET status='failed', error_reason=?, retry_count=?, progress='score_failed' WHERE id=?",
+				reason, newCount, rowID,
+			)
+			return err
+		}
 		_, err := db.ExecContext(ctx,
 			"UPDATE queue SET status='failed', error_reason=?, retry_count=? WHERE id=?",
 			reason, newCount, rowID,
@@ -63,7 +70,7 @@ func retryOrFail(ctx context.Context, db *sql.DB, rowID int64, stage string, cau
 		return err
 	}
 
-	// Retriable — reset to pending so the replay loop picks it up after the backoff.
+	// Retriable  -  reset to pending so the replay loop picks it up after the backoff.
 	idx := newCount - 1
 	if idx >= len(schedule) {
 		idx = len(schedule) - 1

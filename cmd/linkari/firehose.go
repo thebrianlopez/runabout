@@ -398,6 +398,19 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 		// Launch scoreAsync in a goroutine, bounded by the semaphore (max 3 concurrent).
 		if fsc.Eval != nil {
 			go func(req *ShareRequest, keyword, profile string) {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("firehose scoring goroutine panicked",
+							"event_type", "firehose_scoring_panic",
+							"queue_id", req.QueueRowID,
+							"panic", r,
+						)
+						if req.QueueRowID > 0 {
+							_ = q.MarkFailedWithReason(req.QueueRowID, fmt.Sprintf("panic: %v", r))
+						}
+					}
+				}()
+
 				// Log semaphore_wait if all 3 slots are busy (channel at capacity).
 				if len(fsc.ScoreSem) == cap(fsc.ScoreSem) {
 					slog.Warn("firehose scoring semaphore wait",
@@ -418,8 +431,8 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 					"keyword", keyword,
 				)
 				scoreAsync(req, q, fsc.Eval, fsc.Events, fsc.BskyClient)
-				slog.Info("firehose scoring complete",
-					"event_type", "firehose_scoring_complete",
+				slog.Info("firehose scoring goroutine done",
+					"event_type", "firehose_scoring_done",
 					"queue_id", req.QueueRowID,
 					"latency_ms", time.Since(start).Milliseconds(),
 				)
