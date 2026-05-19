@@ -331,6 +331,26 @@ func TestFirehoseRGN_RealFrameDecodes(t *testing.T) {
 	}
 }
 
+// TestFirehoseM1_PostgateRejected: op.Path="app.bsky.feed.postgate/*" must NOT be enqueued.
+// With strings.Contains, "postgate" contains "post"  -  false positive.
+// HasPrefix("app.bsky.feed.post/") requires the trailing slash, rejecting postgates.
+func TestFirehoseM1_PostgateRejected(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("default", "bluesky")
+
+	frame := buildFirehoseFrame(t, 1001, "did:plc:test", "app.bsky.feed.postgate/someid", "bluesky discussion thread")
+	if err := processFirehoseMessage(context.Background(), testFSC(q), frame); err != nil {
+		t.Fatalf("processFirehoseMessage: %v", err)
+	}
+
+	var count int
+	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url LIKE '%postgate%'").Scan(&count)
+	if count > 0 {
+		t.Fatal("M1: postgate op was enqueued  -  HasPrefix guard not applied correctly")
+	}
+}
+
 // =====================================================================
 // EPIC-125: CAR Block Text Extraction  -  Contract Tests CT-1 through CT-8
 // Source TDD: PERSONAL_20260519T102524Z_Runabout_Firehose_CAR_Block_Text_Extraction_TDD.md

@@ -299,7 +299,7 @@ func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg 
 	textByPath := carExtractPostText(rawBlocks, body.Ops)
 
 	for _, op := range body.Ops {
-		if op.Action != "create" || !strings.Contains(op.Path, "app.bsky.feed.post") {
+		if op.Action != "create" || !strings.HasPrefix(op.Path, "app.bsky.feed.post/") {
 			continue
 		}
 		atURI := "at://" + body.Repo + "/" + op.Path
@@ -377,6 +377,7 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 			Text:    post.Text,
 			Profile: resolvedProfile,
 			Type:    "url",
+			Action:  firehoseActionForProfile(resolvedProfile),
 		}
 		rowID, err := q.EnqueueWithSource(req, "firehose")
 		if err != nil {

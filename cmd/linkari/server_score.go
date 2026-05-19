@@ -126,7 +126,7 @@ var galleryPackages = map[string]bool{
 var scoreSemaphore = make(chan struct{}, 10)
 
 // jinaHTTPClient is the HTTP client for Jina Reader requests. Uses a 35s
-// timeout to give Jina a margin above the 30s fetch context timeout —
+// timeout to give Jina a margin above the 30s fetch context timeout  - 
 // the context cancels first; this is a backstop for runaway connections.
 var jinaHTTPClient = &http.Client{Timeout: 35 * time.Second}
 
@@ -338,7 +338,7 @@ func runFfmpegSegment(ctx context.Context, wavPath string, segmentSecs int) ([]s
 		return nil, fmt.Errorf("ffmpeg segment: %w (stderr: %s)", err, stderr.String())
 	}
 
-	// Glob for produced chunks — ffmpeg names them sequentially.
+	// Glob for produced chunks  -  ffmpeg names them sequentially.
 	chunks, err := filepath.Glob(filepath.Join(dir, base+"_chunk_*.wav"))
 	if err != nil {
 		return nil, fmt.Errorf("glob chunks: %w", err)
@@ -356,7 +356,7 @@ const audioChunkSeconds = 600
 
 // audioChunkSizeThreshold is the WAV file size above which we chunk. Files
 // under this size are transcribed in a single whisper pass. 50MB WAV ≈ 26 min
-// at 16kHz mono — a reasonable breakpoint where whisper memory becomes a concern.
+// at 16kHz mono  -  a reasonable breakpoint where whisper memory becomes a concern.
 const audioChunkSizeThreshold = 50 << 20
 
 // ContentTypePDF is the document-type preamble prepended to the LLM prompt
@@ -384,11 +384,11 @@ func classificationPreamble(profile, rawURL string, source string, ct ContentTyp
 	)
 	switch ct {
 	case ContentTypeMarkdown:
-		return base + "This content is a GitHub README in markdown format — evaluate structure, documentation quality, and technical depth alongside the profile rubric.\n\n"
+		return base + "This content is a GitHub README in markdown format  -  evaluate structure, documentation quality, and technical depth alongside the profile rubric.\n\n"
 	case ContentTypeADF:
-		return base + "This content is from a Confluence page — evaluate for structured knowledge sharing, completeness, and actionability.\n\n"
+		return base + "This content is from a Confluence page  -  evaluate for structured knowledge sharing, completeness, and actionability.\n\n"
 	case ContentTypeJSON:
-		return base + "This content is structured JSON — evaluate the data's relevance and signal quality for the profile rubric.\n\n"
+		return base + "This content is structured JSON  -  evaluate the data's relevance and signal quality for the profile rubric.\n\n"
 	default:
 		// ContentTypePlain: return base unchanged (CT-1 byte-identical guarantee).
 		return base
@@ -412,7 +412,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// EPIC-083 M5-2: deferred prefilter summary — emits one event at function
+	// EPIC-083 M5-2: deferred prefilter summary  -  emits one event at function
 	// exit with the prefilter stage (if any), whether eval was skipped, latency,
 	// and cost. The pointer fields are updated as scoreAsync progresses.
 	scoreStart := time.Now()
@@ -451,17 +451,17 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	profile := req.Profile
 	var contentWarning string // EPIC-102: set to "lit_parse_failed" on execLiteParse error
 
-	// Screenshot detection — unconditional, orthogonal to profile assignment.
+	// Screenshot detection  -  unconditional, orthogonal to profile assignment.
 	detectScreenshot(req)
 
 	// EPIC-081 M2: route image file shares to image_triage profile.
-	// This bypasses the classification cascade — images always use
+	// This bypasses the classification cascade  -  images always use
 	// image_triage for vision-specific rubric evaluation.
 	if req.Type == "image" && profile == "" {
 		profile = "image_triage"
 	}
 
-	// Classification cascade — unified for URL and file shares.
+	// Classification cascade  -  unified for URL and file shares.
 	autoClassified := false
 	contentClassify := false
 	// GAP-04: inherit ClassifySource from the pre-enqueue fast cascade so that
@@ -480,7 +480,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			contentClassify = true
 		}
 	}
-	// EPIC-079 M1: removed default_fallback block — file shares now fall
+	// EPIC-079 M1: removed default_fallback block  -  file shares now fall
 	// through to stage-6 LLM classify in scoreAsync (classifyContentProfile)
 	// instead of being hardcoded to "eng".
 	if profile == "" && !isURLShare {
@@ -489,7 +489,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// EPIC-084 M3: when intent_metadata produces the generic default "eng",
 	// allow content-LLM reclassification. The cascade correctly stops at
 	// stage 1 (packageProfileMap hit), but "eng" is indistinguishable from
-	// the default — the content-LLM can do better for multi-topic packages
+	// the default  -  the content-LLM can do better for multi-topic packages
 	// like com.google.android.youtube.
 	if classifySource == "intent_metadata" && profile == "eng" {
 		contentClassify = true
@@ -560,7 +560,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	if isURLShare && unsupportedPipelineRE.MatchString(rawURL) {
 		prefilterStage = "unsupported_pipeline"
 		if q == nil || req.QueueRowID == 0 {
-			slog.Warn("score_async: unsupported pipeline reached without queue row — pre-enqueue gate may have been bypassed",
+			slog.Warn("score_async: unsupported pipeline reached without queue row  -  pre-enqueue gate may have been bypassed",
 				"event_type", "score_async_skip",
 				"url", rawURL,
 				"reason", "unsupported_pipeline",
@@ -585,7 +585,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// URLs matching isLoginWallDomain are now rejected before enqueue, so this
 	// check is no longer needed here.
 
-	// Content acquisition — branches on share type.
+	// Content acquisition  -  branches on share type.
 	// rawContent holds the pre-truncation fetch result; saveTranscriptFile must
 	// receive the full text so transcript files are not silently truncated.
 	var content, rawContent string
@@ -614,7 +614,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			}
 			content = screenshotContent
 		} else {
-			// Jina fetch for normal URL shares — routed via DomainRouter when available.
+			// Jina fetch for normal URL shares  -  routed via DomainRouter when available.
 			fetchCtx, fetchCancel := context.WithTimeout(ctx, 30*time.Second)
 			defer fetchCancel()
 			var err error
@@ -631,7 +631,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				rawContent = content
 				content = truncateRunes(content, contentTruncationRunes)
 			}
-			// F3: AT-protocol URIs (at://) are not HTTP-fetchable — fall back to the
+			// F3: AT-protocol URIs (at://) are not HTTP-fetchable  -  fall back to the
 			// pre-populated text from the firehose commit. Also handles other fetch failures
 			// where the caller passed text (e.g. Android share with text + URL).
 			if err != nil || strings.TrimSpace(content) == "" {
@@ -834,17 +834,17 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	}
 
 	// EPIC-079 M3: use vision evaluator for image shares with a readable file.
-	// EPIC-080 M7: when image file is absent, log degradation — the image is
+	// EPIC-080 M7: when image file is absent, log degradation  -  the image is
 	// not recoverable from the queue row after the HTTP handler completes.
-	// EPIC-081 M3: noise gate — skip vision subprocess for low-metadata images
+	// EPIC-081 M3: noise gate  -  skip vision subprocess for low-metadata images
 	// to save ~$0.04/call when the image is too small and has no text context.
 	if req.Type == "image" {
 		if req.AudioPath != "" {
 			if _, statErr := os.Stat(req.AudioPath); statErr == nil {
-				// EPIC-083 M1-3: upper-bound file size gate — validate against
+				// EPIC-083 M1-3: upper-bound file size gate  -  validate against
 				// actual file on disk (don't trust client-supplied FileSize alone).
 				if fi, fiErr := os.Stat(req.AudioPath); fiErr == nil && fi.Size() > imageNoiseGateMaxBytes {
-					slog.Info("score_async: oversize file gate — skipping vision",
+					slog.Info("score_async: oversize file gate  -  skipping vision",
 						"event_type", "score_prefilter_skip",
 						"row_id", req.QueueRowID,
 						"file_size", fi.Size(),
@@ -858,7 +858,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 							"stage":     "oversize_file",
 						})
 					}
-					// Skip vision — fall through to metadata-only eval below.
+					// Skip vision  -  fall through to metadata-only eval below.
 				} else {
 					// EPIC-122 F1/F2/F3: image text extraction pre-pass.
 					// Run before the camera-photo gate so extracted text can suppress
@@ -872,7 +872,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 						if extractErr != nil {
 							isTimeout := errors.Is(extractErr, context.DeadlineExceeded)
 							if isTimeout {
-								slog.Warn("score_async: image text extraction timed out — falling through",
+								slog.Warn("score_async: image text extraction timed out  -  falling through",
 									"event_type", "image_text_extraction_timeout",
 									"row_id", req.QueueRowID,
 									"latency_ms", 30000, // F1 subprocess contract: 30s hard timeout
@@ -884,7 +884,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 									})
 								}
 							} else {
-								slog.Warn("score_async: image text extraction failed — falling through",
+								slog.Warn("score_async: image text extraction failed  -  falling through",
 									"event_type", "image_text_extraction_failed",
 									"row_id", req.QueueRowID,
 									"error_reason", extractErr.Error(),
@@ -932,7 +932,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 							}
 							transcriptPath, saveErr := saveImageTranscript(transcriptDir, req.QueueRowID, req.Filename, imageExtractedText, meta)
 							if saveErr != nil {
-								slog.Warn("score_async: image transcript save failed — continuing scoring",
+								slog.Warn("score_async: image transcript save failed  -  continuing scoring",
 									"event_type", "image_transcript_write_failed",
 									"row_id", req.QueueRowID,
 									"error_reason", saveErr.Error(),
@@ -1008,11 +1008,11 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 						}
 					}
 
-					// F3: camera photo gate — suppressed when extracted text > threshold.
+					// F3: camera photo gate  -  suppressed when extracted text > threshold.
 					if isCameraPhoto(req) && !shouldSuppressShortCircuit(imageExtractedText, imageShortCircuitBypassMinChars) {
-						// EPIC-083 M1-2: camera photo noise gate — gallery app +
+						// EPIC-083 M1-2: camera photo noise gate  -  gallery app +
 						// camera timestamp filename + no text context + not screenshot.
-						slog.Info("score_async: camera photo gate — skipping vision",
+						slog.Info("score_async: camera photo gate  -  skipping vision",
 							"event_type", "score_prefilter_skip",
 							"row_id", req.QueueRowID,
 							"file_size", req.FileSize,
@@ -1026,7 +1026,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 								"stage":    "camera_photo_gate",
 							})
 						}
-						// Skip vision — fall through to metadata-only eval below.
+						// Skip vision  -  fall through to metadata-only eval below.
 					} else {
 						if isCameraPhoto(req) && shouldSuppressShortCircuit(imageExtractedText, imageShortCircuitBypassMinChars) {
 							// F3: short-circuit bypassed because extracted text exceeds threshold.
@@ -1048,7 +1048,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 						// score_prefilter_skip with stage field.
 						hasMetadata := req.ExtraText != "" || req.ExtraSubject != "" || imageExtractedText != ""
 						if req.FileSize > 0 && req.FileSize < imageNoiseGateMinBytes && !hasMetadata {
-							slog.Info("score_async: image noise gate — skipping vision",
+							slog.Info("score_async: image noise gate  -  skipping vision",
 								"event_type", "score_prefilter_skip",
 								"row_id", req.QueueRowID,
 								"file_size", req.FileSize,
@@ -1070,7 +1070,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 									"reason":          "below_min_size",
 								})
 							}
-							// Skip vision — fall through to metadata-only eval below.
+							// Skip vision  -  fall through to metadata-only eval below.
 						} else {
 							eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
 						}
@@ -1078,7 +1078,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				}
 			}
 		} else {
-			slog.Warn("score_async: image share without file — scoring with metadata only",
+			slog.Warn("score_async: image share without file  -  scoring with metadata only",
 				"event_type", "score_async_vision_degraded",
 				"row_id", req.QueueRowID,
 				"filename", req.Filename,
@@ -1088,12 +1088,12 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 
 	// Persona injection guard: sysPrompt must never reach eval.Evaluate empty.
 	// A blank sysPrompt causes Haiku to receive only the JSON schema constraint
-	// with no scoring rubric — it cannot produce a meaningful verdict.
+	// with no scoring rubric  -  it cannot produce a meaningful verdict.
 	// loadProfileTemplateJSON should always return a non-empty string for any
 	// resolved profile, but this guard catches edge cases (e.g., an empty YAML
 	// manifest or a RenderForJSON implementation returning "" without error).
 	if strings.TrimSpace(sysPrompt) == "" {
-		slog.Error("score_async: sysPrompt is empty after template load — aborting eval",
+		slog.Error("score_async: sysPrompt is empty after template load  -  aborting eval",
 			"event_type", "score_async_empty_sysprompt",
 			"profile", profile,
 			"row_id", req.QueueRowID,
@@ -1121,7 +1121,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			}
 		}
 		slog.Warn("score_async: evaluate failed", logArgs...)
-		// EPIC-111 M3: scoring retry — 2 attempts (60s → dead) before marking failed.
+		// EPIC-111 M3: scoring retry  -  2 attempts (60s → dead) before marking failed.
 		// Resets status='pending' with retry_after so the replay loop re-picks the row.
 		if q != nil && req.QueueRowID > 0 {
 			if rErr := retryOrFail(context.Background(), q.db, req.QueueRowID, "scoring", err); rErr != nil {
@@ -1134,7 +1134,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	costUSD = sc.CostUSD
 	sc.Profile = profile
 	sc.SourceType = "server-score"
-	// EPIC-082 M1: prompt traceability — populate hash and version from template.
+	// EPIC-082 M1: prompt traceability  -  populate hash and version from template.
 	sc.PromptHash = promptHash(sysPrompt)
 	sc.PromptVersion = promptVersionFromPath(tmplPath)
 
@@ -1155,20 +1155,32 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		visionCostThreshold       = 0.01 // minimum cost delta that justifies back-calculation
 	)
 
+	// F7: text-only guard  -  URL shares with pre-populated text (e.g. firehose AT-URI items)
+	// have no image content and must not trigger vision token back-calculation.
+	// Condition: no attached file, URL type, and text was pre-populated by the caller.
+	isTextOnlyURL := req.Filename == "" && req.Type == "url" && req.Text != ""
+	if isTextOnlyURL {
+		slog.Debug("score_async: text-only guard active  -  skipping vision token path",
+			"event_type", "score_text_only_guard",
+			"url", rawURL,
+			"text_len", len(req.Text),
+		)
+	}
+
 	// EPIC-085 M3: vision token back-calculation. When input_tokens is
 	// suspiciously low relative to cost, the vision model processed image tokens
 	// not reflected in the text token count. Back-calculate from cost delta
 	// using Haiku vision input pricing and write the corrected estimate.
 	// EPIC-088 M2: emit vision_token_correction_skipped when image share misses threshold.
 	if req.Type == "image" && sc.Usage != nil && (sc.Usage.InputTokens >= visionInputTokenThreshold || sc.CostUSD <= visionCostThreshold) {
-		slog.Warn("score_async: vision token correction skipped — thresholds not met",
+		slog.Warn("score_async: vision token correction skipped  -  thresholds not met",
 			"event_type", "vision_token_correction_skipped",
 			"input_tokens", tokenCount(sc.Usage, true),
 			"cost_usd", sc.CostUSD,
 			"row_id", req.QueueRowID,
 		)
 	}
-	if sc.Usage != nil && sc.Usage.InputTokens < visionInputTokenThreshold && sc.CostUSD > visionCostThreshold {
+	if !isTextOnlyURL && sc.Usage != nil && sc.Usage.InputTokens < visionInputTokenThreshold && sc.CostUSD > visionCostThreshold {
 		textCost := float64(sc.Usage.InputTokens)*haikuInputPricePerToken +
 			float64(sc.Usage.OutputTokens)*haikuOutputPricePerToken
 		imageCost := sc.CostUSD - textCost
@@ -1192,7 +1204,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				"type":                  req.Type,
 			})
 		}
-		// EPIC-088 M2: deferred token usage log — emitted after back-calculation so
+		// EPIC-088 M2: deferred token usage log  -  emitted after back-calculation so
 		// image_tokens_estimated reflects the corrected value rather than 0.
 		slog.Info("evaluator: token usage",
 			"backend", sc.Backend,
@@ -1205,7 +1217,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	}
 
 	// EPIC-083 M2-3: per-call cost ceiling monitoring. Logs when a single eval
-	// exceeds MaxScoringCostUSD — monitoring only, does not block processing.
+	// exceeds MaxScoringCostUSD  -  monitoring only, does not block processing.
 	if sc.CostUSD > 0 && sc.CostUSD > maxScoringCostUSD {
 		slog.Warn("score_async: cost exceeded ceiling",
 			"event_type", "score_cost_exceeded",
@@ -1240,7 +1252,11 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		}
 	}
 	if isURLShare && !req.IsScreenshot && content != "" {
-		if _, err := saveTranscriptFile(req.QueueRowID, profile, deriveSlugFromURL(rawURL), rawContent, "url", rawURL, "", "", 0, ""); err != nil {
+		transcriptText := rawContent
+		if transcriptText == "" {
+			transcriptText = req.Text
+		}
+		if _, err := saveTranscriptFile(req.QueueRowID, profile, deriveSlugFromURL(rawURL), transcriptText, "url", rawURL, "", "", 0, ""); err != nil {
 			slog.Warn("score_async: transcript save failed", "event_type", "transcript_save_failed", "type", req.Type, "row_id", req.QueueRowID, "error", err)
 		}
 	}
@@ -1254,7 +1270,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		return
 	}
 
-	// Persist — URL shares use ScoreByURL (URL-based dedup upsert);
+	// Persist  -  URL shares use ScoreByURL (URL-based dedup upsert);
 	// file shares use ScoreByID (row-ID key, idempotency guard).
 	var itemID int64
 	var itemScore *int
@@ -1296,7 +1312,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 
 	// EPIC-088 M3: persist scoring cost and image tokens after back-calculation.
 	// GAP-07: MetricsCollector.RecordScoringCost is the future hook point for
-	// linkari.llm.cost_usd emission — wire when a metrics backend is configured.
+	// linkari.llm.cost_usd emission  -  wire when a metrics backend is configured.
 	if sc.CostUSD > 0 || tokenImageCount(sc.Usage) > 0 {
 		if costErr := q.UpdateScoringCost(itemID, sc.CostUSD, tokenImageCount(sc.Usage)); costErr != nil {
 			slog.Warn("score_async: UpdateScoringCost failed", "id", itemID, "error", costErr)
@@ -1330,7 +1346,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				detectClusters(clusterCtx, q, itemProfile, 0, 0)
 			}()
 		default:
-			slog.Warn("score_async: cluster detection skipped — semaphore full",
+			slog.Warn("score_async: cluster detection skipped  -  semaphore full",
 				"event_type", "score_cluster_semaphore_full",
 				"profile", itemProfile,
 			)
@@ -1349,7 +1365,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		_, _ = q.EnqueueDigestIfDue(context.Background(),
 			itemProfile, *itemScore, itemSlug, itemVerdict, itemURL,
 			sc.GapSummary(3), "", classifySource, contentWarning)
-		// EPIC-015 M4: Bluesky verdict reply — fire-and-forget; never blocks FCM.
+		// EPIC-015 M4: Bluesky verdict reply  -  fire-and-forget; never blocks FCM.
 		_ = publishVerdictReply(context.Background(), bskyClient, itemURL, *itemScore, itemVerdict, q, 1)
 	}
 
@@ -1411,7 +1427,7 @@ var imageNoiseGateMinBytes int64 = 1024
 
 // maxScoringCostUSD is the per-call scoring cost ceiling (USD). When a single
 // eval.Evaluate call exceeds this amount, a score_cost_exceeded event is logged.
-// Monitoring only — does not block processing. Set from
+// Monitoring only  -  does not block processing. Set from
 // ServerConfig.MaxScoringCostUSD at startup; defaults to 0.05. EPIC-083 M2-3.
 var maxScoringCostUSD float64 = 0.05
 
@@ -1430,7 +1446,7 @@ func pricingForModel(model string) (inputPerToken, outputPerToken float64) {
 	case strings.Contains(model, "haiku"):
 		return haikuInputPricePerToken, haikuOutputPricePerToken
 	default:
-		// Unknown model — fall back to Haiku rates conservatively.
+		// Unknown model  -  fall back to Haiku rates conservatively.
 		return haikuInputPricePerToken, haikuOutputPricePerToken
 	}
 }
@@ -1467,7 +1483,7 @@ func parseSynopsisFromEnvelope(stdout []byte) (string, *envelopeMeta, error) {
 	if len(raw) == 0 {
 		return "", meta, fmt.Errorf("synopsis envelope has empty result")
 	}
-	// result may be a JSON-encoded string — unwrap once.
+	// result may be a JSON-encoded string  -  unwrap once.
 	if raw[0] == '"' {
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
@@ -1486,7 +1502,7 @@ func parseSynopsisFromEnvelope(stdout []byte) (string, *envelopeMeta, error) {
 }
 
 // imageNoiseGateMaxBytes is the maximum file size in bytes for vision scoring.
-// Images above this skip vision entirely — they're likely raw camera files or
+// Images above this skip vision entirely  -  they're likely raw camera files or
 // uncompressed exports. Set from ServerConfig.ImageNoiseGateMaxBytes at startup;
 // defaults to 15MB. EPIC-083 M1-3.
 var imageNoiseGateMaxBytes int64 = 15 * 1024 * 1024
@@ -1499,16 +1515,16 @@ var notifyOnPrefilterSkip = true
 // prefilterVerdicts maps internal prefilter reason codes to user-facing
 // notification verdicts. EPIC-084 M2. EPIC-090 M3: YouTube failure verdicts added.
 var prefilterVerdicts = map[string]string{
-	"unsupported_pipeline": "Video platform — not yet supported",
-	"login_wall_domain":    "Login-walled site — can't access content",
+	"unsupported_pipeline": "Video platform  -  not yet supported",
+	"login_wall_domain":    "Login-walled site  -  can't access content",
 	"empty_content":        "Page had no readable content",
 	"screenshot_no_text":   "Screenshot had no extractable text",
 	"fetch_failed":         "Could not fetch page content",
 	"no_metadata":          "File had no scorable metadata",
 	"template_error":       "Scoring configuration error",
 	// EPIC-090 M3: YouTube-specific failure codes.
-	"yt_no_subtitles":      "YouTube video has no subtitles — transcript unavailable",
-	"yt_dlp_unavailable":   "yt-dlp not found — YouTube transcription not configured",
+	"yt_no_subtitles":      "YouTube video has no subtitles  -  transcript unavailable",
+	"yt_dlp_unavailable":   "yt-dlp not found  -  YouTube transcription not configured",
 	"yt_extraction_failed": "YouTube transcript extraction failed",
 }
 
@@ -1562,7 +1578,7 @@ var validProfilesSorted = func() []string {
 // by default because "eng" is also the generic fallback. scoreAsync compensates
 // by enabling contentClassify when classifySource=="intent_metadata" and
 // profile=="eng". Entries mapping to non-"eng" profiles (e.g., "music",
-// "travel") genuinely suppress reclassification — the package signal is
+// "travel") genuinely suppress reclassification  -  the package signal is
 // definitive for those profiles.
 var packageProfileMap = map[string]string{
 	"com.spotify.music":                "music",
@@ -1608,7 +1624,7 @@ const CategoryFinance = 6
 //	CATEGORY_MAPS = 6, CATEGORY_PRODUCTIVITY = 7, CATEGORY_ACCESSIBILITY = 8
 var appCategoryProfileMap = map[int]string{
 	1: "music", // CATEGORY_AUDIO
-	// EPIC-081 M3: CATEGORY_IMAGE (3) removed — image shares are routed to
+	// EPIC-081 M3: CATEGORY_IMAGE (3) removed  -  image shares are routed to
 	// image_triage by scoreAsync's type-based routing (M2), not by app category.
 	4: "life",   // CATEGORY_SOCIAL
 	5: "eng",    // CATEGORY_NEWS
@@ -1616,7 +1632,7 @@ var appCategoryProfileMap = map[int]string{
 }
 
 // EPIC-075 M4: mimeProfileMap maps specific MIME types to Linkari profiles.
-// Only types with strong profile signal are included — generic types like
+// Only types with strong profile signal are included  -  generic types like
 // "application/pdf" or "image/jpeg" are omitted to avoid false positives.
 var mimeProfileMap = map[string]string{
 	"application/vnd.ms-excel":                                         "finance",
@@ -1773,7 +1789,7 @@ func classifyByFilename(filename string) string {
 }
 
 // EPIC-075 M3: subjectKeywords maps lowercase subject substrings to profiles.
-// Ordered by specificity — more specific terms first within each profile group.
+// Ordered by specificity  -  more specific terms first within each profile group.
 var subjectKeywords = []struct {
 	keyword string
 	profile string
@@ -1813,7 +1829,7 @@ func classifyBySubjectKeywords(subject string) string {
 
 // classifyByRelativePath returns a profile and isScreenshot flag based on
 // the MediaStore RELATIVE_PATH prefix. Screenshot entries (isScreenshot=true)
-// return an empty profile — the caller sets req.IsScreenshot instead.
+// return an empty profile  -  the caller sets req.IsScreenshot instead.
 func classifyByRelativePath(relPath string) (profile string, isScreenshot bool) {
 	for _, entry := range relativePathPrefixes {
 		if strings.HasPrefix(relPath, entry.prefix) {
@@ -1829,7 +1845,7 @@ func classifyByRelativePath(relPath string) (profile string, isScreenshot bool) 
 var screenshotFilenameRE = regexp.MustCompile(`(?i)^Screenshot[_\s\-]`)
 
 // detectScreenshot sets req.IsScreenshot=true when the RelativePath indicates
-// a screenshot origin. Runs unconditionally before profile classification —
+// a screenshot origin. Runs unconditionally before profile classification  - 
 // screenshot detection is an orthogonal concern that must not be skipped even
 // when a profile is already set. EPIC-077 M4.
 //
@@ -1844,7 +1860,7 @@ func detectScreenshot(req *ShareRequest) {
 		}
 		return
 	}
-	// RelativePath is empty — fall back to filename pattern.
+	// RelativePath is empty  -  fall back to filename pattern.
 	if req.Filename != "" && screenshotFilenameRE.MatchString(req.Filename) {
 		req.IsScreenshot = true
 	}
@@ -1855,19 +1871,19 @@ func detectScreenshot(req *ShareRequest) {
 // classifyIntentProfile helper used by scoreFileAsync. EPIC-077 M4.
 //
 // Cascade order:
-//  1. intent_metadata (package name, MIME type, app category) — highest confidence
+//  1. intent_metadata (package name, MIME type, app category)  -  highest confidence
 //  2. filename keywords
 //  3. subject keywords
 //  4. relativePath prefix (profile signal only; screenshot detection is separate)
-//  5. URL domain heuristic — only when req.URL is non-empty
-//  6. Haiku content LLM — only when contentClassify=true (URL domain fell through
+//  5. URL domain heuristic  -  only when req.URL is non-empty
+//  6. Haiku content LLM  -  only when contentClassify=true (URL domain fell through
 //     to "eng" fallback) or when all metadata stages missed and hints are available
 //
 // Returns (profile, source) where source names the winning cascade stage.
 // Returns ("", "") when no classification was possible.
 //
 // The contentClassify flag is set when URL domain matching returns the "eng"
-// fallback rather than a positive match — the caller may then run Haiku
+// fallback rather than a positive match  -  the caller may then run Haiku
 // classification on fetched page content to refine the profile.
 func classifyShareRequest(ctx context.Context, req *ShareRequest) (profile, source string) {
 	// Stage 1: intent metadata (package name, MIME type, app category).
@@ -1889,7 +1905,7 @@ func classifyShareRequest(ctx context.Context, req *ShareRequest) (profile, sour
 		}
 	}
 
-	// Stage 4: relativePath prefix (profile signal only — screenshot detection
+	// Stage 4: relativePath prefix (profile signal only  -  screenshot detection
 	// is handled by detectScreenshot, which runs unconditionally before this).
 	if req.RelativePath != "" {
 		if p, _ := classifyByRelativePath(req.RelativePath); p != "" {
@@ -1903,7 +1919,7 @@ func classifyShareRequest(ctx context.Context, req *ShareRequest) (profile, sour
 		if matched {
 			return classified, "url_domain"
 		}
-		// Domain fell through to "eng" fallback — signal caller to run content LLM.
+		// Domain fell through to "eng" fallback  -  signal caller to run content LLM.
 		// Return a sentinel so scoreURLAsync can trigger content classification.
 		return classified, "url_domain_fallback"
 	}
@@ -1935,7 +1951,7 @@ func classifyShareRequest(ctx context.Context, req *ShareRequest) (profile, sour
 
 // classifySourceToStage maps a classify_source string to a numeric stage label
 // for classify_stage_win telemetry. Returns "unknown" for empty or unrecognized
-// sources (GAP-04: the prior bug — classifySource left "" in scoreAsync when
+// sources (GAP-04: the prior bug  -  classifySource left "" in scoreAsync when
 // profile was caller-provided or image-overridden, causing "unknown" in metrics).
 func classifySourceToStage(source string) string {
 	switch source {
@@ -2024,7 +2040,7 @@ var execContentClassify = execHaiku
 // content into the best-matching profile. Returns the classified profile, or
 // empty string if the response is unparseable (caller falls back to "eng").
 func classifyContentProfile(ctx context.Context, content string) string {
-	// Truncate content aggressively — classification needs much less than scoring.
+	// Truncate content aggressively  -  classification needs much less than scoring.
 	snippet := truncateRunes(content, 2000)
 	out, err := execContentClassify(ctx, contentClassifyPrompt, snippet)
 	if err != nil {
@@ -2051,13 +2067,13 @@ func classifyContentProfile(ctx context.Context, content string) string {
 // independent of the HTTP request to accommodate 200MB uploads.
 //
 // EPIC-077 M5: renamed from scoreAudioAsync. Architecturally incompatible with
-// scoreAsync — uses hardcoded score=100, calls execHaiku directly (not via
+// scoreAsync  -  uses hardcoded score=100, calls execHaiku directly (not via
 // eval.Evaluate), has a 1800s timeout (vs 120s), and manages transcript files.
 // This pipeline is intentionally excluded from the URL/file unification.
 //
 // EPIC-071 M2: replaced eval.Evaluate (JSON scorecard) with execHaiku
 // (plain text synopsis) using the vnote_synopsis prompt template. Audio
-// shares no longer produce a numeric score — they produce a 1-2 sentence
+// shares no longer produce a numeric score  -  they produce a 1-2 sentence
 // synopsis pushed via FCM with content_type=voice_note.
 //
 // Pipeline: ffmpeg m4a→wav → [segment if large] → whisper transcribe →
@@ -2117,13 +2133,13 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			)
 		}
 		if q != nil {
-			// EPIC-111 M2: extraction retry — 3 attempts (30s → 5m → dead).
+			// EPIC-111 M2: extraction retry  -  3 attempts (30s → 5m → dead).
 			_ = retryOrFail(ctx, q.db, rowID, "extraction", err)
 		}
 		return
 	}
 
-	// Step 2: whisper transcribe — chunk if WAV is large enough.
+	// Step 2: whisper transcribe  -  chunk if WAV is large enough.
 	var transcript string
 	wavInfo, err := os.Stat(wavPath)
 	if err != nil {
@@ -2135,7 +2151,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	}
 
 	if wavInfo.Size() > audioChunkSizeThreshold {
-		// Large file — segment into chunks and transcribe sequentially.
+		// Large file  -  segment into chunks and transcribe sequentially.
 		if q != nil {
 			q.SetProgress(rowID, "segmenting")
 		}
@@ -2205,7 +2221,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		}
 		transcript = strings.Join(parts, "\n\n")
 	} else {
-		// Small file — single-pass transcription.
+		// Small file  -  single-pass transcription.
 		if q != nil {
 			q.SetProgress(rowID, "transcribing 1/1")
 		}
@@ -2294,7 +2310,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		}
 	}
 	if profile == "" {
-		// EPIC-081 M4: "life" default for voice notes — audio content is more
+		// EPIC-081 M4: "life" default for voice notes  -  audio content is more
 		// often personal/lifestyle than engineering. Replaces EPIC-077 M6's "eng".
 		profile = "life"
 		audioClassifySource = "default_fallback"
@@ -2319,7 +2335,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			"row_id", rowID,
 			"error", err,
 		)
-		// Non-fatal — continue to synopsis generation.
+		// Non-fatal  -  continue to synopsis generation.
 	} else {
 		slog.Info("score_audio: transcript saved",
 			"event_type", "score_audio_transcript_saved",
@@ -2357,7 +2373,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		}
 	}
 	if scoreErr == nil {
-		// EPIC-088 M1: per-step timeout — 60s for rubric scoring.
+		// EPIC-088 M1: per-step timeout  -  60s for rubric scoring.
 		rubricCtx, rubricCancel := context.WithTimeout(ctx, 60*time.Second)
 		sc, evalErr := eval.Evaluate(rubricCtx, transcript, scoreSysPrompt)
 		rubricCancel()
@@ -2412,7 +2428,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		q.SetProgress(rowID, "summarizing")
 	}
 
-	// EPIC-088 M1: per-step timeout — 30s for synopsis. Use execHaikuSynopsisJSON
+	// EPIC-088 M1: per-step timeout  -  30s for synopsis. Use execHaikuSynopsisJSON
 	// (--output-format json + --json-schema) for persona isolation: structured
 	// output mode prevents CLAUDE.md context from polluting a free-form response.
 	synopsisCtx, synopsisCancel := context.WithTimeout(ctx, 30*time.Second)
@@ -2448,7 +2464,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		"synopsis", synopsis,
 	)
 
-	// Step 7: persist — use rubric score from Step 5 (EPIC-081 M4).
+	// Step 7: persist  -  use rubric score from Step 5 (EPIC-081 M4).
 	if q == nil {
 		return
 	}
@@ -2462,7 +2478,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		return
 	}
 
-	// Step 8: auto-archive voice notes (always — no threshold gating).
+	// Step 8: auto-archive voice notes (always  -  no threshold gating).
 	q.Archive(rowID)
 
 	// Step 9: FCM push via the dual-writer invariant (EPIC-051).

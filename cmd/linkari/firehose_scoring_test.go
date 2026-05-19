@@ -602,6 +602,115 @@ func TestFirehoseScoring_F3BT2_TextAndURLBothPresent(t *testing.T) {
 	}
 }
 
+// =====================================================================
+// EPIC-126 M2: F6 Action ID Registration  -  Contract Tests CT-1 through CT-5 + RG-1
+// Source TDD: PERSONAL_20260519T162046Z_Runabout_Firehose_Action_ID_Registration_TDD.md
+// =====================================================================
+
+// F6-CT-1: firehoseActionForProfile("eng") returns "uinit_eng".
+func TestFirehoseF6CT1_KnownProfileDerivesAction(t *testing.T) {
+	got := firehoseActionForProfile("eng")
+	if got != "uinit_eng" {
+		t.Fatalf("F6-CT-1: firehoseActionForProfile(\"eng\") = %q, want \"uinit_eng\"", got)
+	}
+}
+
+// F6-CT-2: Unknown profile falls back to "uinit_eng".
+func TestFirehoseF6CT2_UnknownProfileFallsBack(t *testing.T) {
+	got := firehoseActionForProfile("unknown")
+	if got != "uinit_eng" {
+		t.Fatalf("F6-CT-2: firehoseActionForProfile(\"unknown\") = %q, want \"uinit_eng\"", got)
+	}
+}
+
+// F6-CT-3: Empty profile falls back to "uinit_eng".
+func TestFirehoseF6CT3_EmptyProfileFallsBack(t *testing.T) {
+	got := firehoseActionForProfile("")
+	if got != "uinit_eng" {
+		t.Fatalf("F6-CT-3: firehoseActionForProfile(\"\") = %q, want \"uinit_eng\"", got)
+	}
+}
+
+// F6-CT-4: Queue row has action="uinit_eng" after handleFirehosePost enqueues it.
+func TestFirehoseF6CT4_QueueRowHasAction(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("default", "llm")
+
+	post := &firehosePost{
+		AtURI: "at://did:plc:test/app.bsky.feed.post/f6ct4",
+		Text:  "llm inference benchmark",
+		Repo:  "did:plc:test",
+		Seq:   6004,
+	}
+	if err := handleFirehosePost(context.Background(), testFSC(q), post); err != nil {
+		t.Fatal(err)
+	}
+
+	var action string
+	q.db.QueryRow("SELECT action FROM queue WHERE url=?", post.AtURI).Scan(&action)
+	if action != "uinit_eng" {
+		t.Fatalf("F6-CT-4: queue row action = %q, want \"uinit_eng\"", action)
+	}
+}
+
+// F6-CT-5: Firehose queue row has non-empty action  -  replay never fails with "no action for \"\"".
+func TestFirehoseF6CT5_ReplayNoEmptyActionError(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("default", "rag")
+
+	post := &firehosePost{
+		AtURI: "at://did:plc:test/app.bsky.feed.post/f6ct5",
+		Text:  "rag pipeline improvements",
+		Repo:  "did:plc:test",
+		Seq:   6005,
+	}
+	if err := handleFirehosePost(context.Background(), testFSC(q), post); err != nil {
+		t.Fatal(err)
+	}
+
+	var action string
+	q.db.QueryRow("SELECT action FROM queue WHERE url=?", post.AtURI).Scan(&action)
+	if action == "" {
+		t.Fatal("F6-CT-5: action field is empty  -  replay would fail with \"no action for \\\"\\\"\"")
+	}
+}
+
+// F6-RG-1: Every firehose queue row has a non-empty action field.
+// Regression guard for EPIC-125 M6 live validation (queue_id=23562, no action for "").
+func TestFirehoseF6RG1_AllRowsHaveAction(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("eng", "neural")
+	_ = q.AddFirehoseSubscription("default", "agents")
+
+	posts := []*firehosePost{
+		{AtURI: "at://did:plc:test/app.bsky.feed.post/rg1a", Text: "neural scaling laws", Repo: "did:plc:test", Seq: 6010},
+		{AtURI: "at://did:plc:test/app.bsky.feed.post/rg1b", Text: "agents in production", Repo: "did:plc:test", Seq: 6011},
+	}
+	for _, p := range posts {
+		if err := handleFirehosePost(context.Background(), testFSC(q), p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rows, err := q.db.Query("SELECT url, action FROM queue WHERE source='firehose'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var url, action string
+		if err := rows.Scan(&url, &action); err != nil {
+			t.Fatal(err)
+		}
+		if action == "" {
+			t.Fatalf("F6-RG-1: firehose row url=%q has empty action  -  replay would fail", url)
+		}
+	}
+}
+
 // --- M5: Integration test ---
 
 // TestFirehoseScoring_Integration: firehose post → enqueue → scoreAsync → scored status.
