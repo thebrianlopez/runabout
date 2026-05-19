@@ -4,12 +4,13 @@ package main
 //
 // Connects to the Bluesky firehose (com.atproto.sync.subscribeRepos) via
 // WebSocket, decodes CBOR commit events, and enqueues matching posts based
-// on configured keyword subscriptions. Uses kind='notify' push rows — never
-// kind='digest' — to avoid consuming the per-profile digest throttle window.
+// on configured keyword subscriptions. Uses kind='notify' push rows  -  never
+// kind='digest'  -  to avoid consuming the per-profile digest throttle window.
 
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -25,7 +26,7 @@ import (
 // errCursorExpired is returned by processFirehoseMessage when the relay sends
 // an op=-1 error frame. runFirehoseWorker resets to live tail (cursor=0) on
 // this signal rather than retrying with the same stale cursor indefinitely.
-var errCursorExpired = errors.New("relay error frame — cursor expired or rejected")
+var errCursorExpired = errors.New("relay error frame  -  cursor expired or rejected")
 
 // firehosePost represents a decoded Bluesky post from the firehose.
 type firehosePost struct {
@@ -42,22 +43,194 @@ type firehoseHeader struct {
 	T  string `cbor:"t"`
 }
 
+// firehoseOp is a single operation within a #commit body.
+// Cid is CBOR tag 42 (DAG-CBOR CID) for create ops; nil for delete ops.
+type firehoseOp struct {
+	Action string          `cbor:"action"`
+	Path   string          `cbor:"path"`
+	Cid    cbor.RawMessage `cbor:"cid"`
+}
+
 // firehoseBody is the second element for #commit events.
 type firehoseBody struct {
-	Seq  int64  `cbor:"seq"`
-	Repo string `cbor:"repo"`
-	Ops  []struct {
-		Action string `cbor:"action"`
-		Path   string `cbor:"path"`
-	} `cbor:"ops"`
+	Seq    int64           `cbor:"seq"`
+	Repo   string          `cbor:"repo"`
+	Ops    []firehoseOp    `cbor:"ops"`
+	Blocks cbor.RawMessage `cbor:"blocks"`
+}
+
+// atProtoPost is the minimal post record struct for CAR block text extraction.
+type atProtoPost struct {
+	Type string `cbor:"$type"`
+	Text string `cbor:"text"`
+}
+
+// parseCIDLen returns the byte length of a CIDv1 prefix at the start of data.
+// CIDv1 format: [varint version][varint codec][varint hashfn][varint digestLen][digestLen bytes]
+func parseCIDLen(data []byte) (int, error) {
+	n := 0
+	for i := 0; i < 3; i++ { // version, codec, hash function code
+		_, size := binary.Uvarint(data[n:])
+		if size <= 0 {
+			return 0, errors.New("bad CID varint")
+		}
+		n += size
+	}
+	digestLen, size := binary.Uvarint(data[n:])
+	if size <= 0 {
+		return 0, errors.New("bad digest length varint")
+	}
+	n += size + int(digestLen)
+	if n > len(data) {
+		return 0, errors.New("CID truncated")
+	}
+	return n, nil
+}
+
+// extractCIDFromTag42 extracts raw CID bytes from a CBOR DAG-CBOR CID value.
+// DAG-CBOR CIDs are encoded as tag(42, bytes(\x00 + raw_cid_bytes)).
+// The \x00 is the identity multibase prefix per the DAG-CBOR spec.
+func extractCIDFromTag42(raw cbor.RawMessage) ([]byte, error) {
+	if len(raw) < 4 {
+		return nil, errors.New("too short for tag42")
+	}
+	if raw[0] != 0xd8 || raw[1] != 0x2a {
+		return nil, errors.New("not tag 42")
+	}
+	var bstrLen, headerSize int
+	b := raw[2]
+	switch {
+	case b >= 0x40 && b <= 0x57: // byte string, length 0-23 in lower 5 bits
+		bstrLen = int(b & 0x1f)
+		headerSize = 1
+	case b == 0x58: // byte string, 1-byte length follows
+		bstrLen = int(raw[3])
+		headerSize = 2
+	default:
+		return nil, fmt.Errorf("unsupported byte string header 0x%02x", b)
+	}
+	start := 2 + headerSize
+	if len(raw) < start+bstrLen {
+		return nil, errors.New("truncated CID bytes")
+	}
+	content := raw[start : start+bstrLen]
+	if len(content) == 0 || content[0] != 0x00 {
+		return nil, errors.New("missing identity prefix")
+	}
+	return content[1:], nil
+}
+
+// carExtractPostText extracts app.bsky.feed.post text from ATProto commit CAR v1 blocks.
+// Returns a map from op path to post text, nil on any CAR parse error.
+// Handles absent/empty blocks gracefully (returns nil, no panic).
+func carExtractPostText(blocks []byte, ops []firehoseOp) map[string]string {
+	if len(blocks) == 0 {
+		return nil
+	}
+	// Read CAR v1 header: [varint header_len][header CBOR]
+	headerLen, hSize := binary.Uvarint(blocks)
+	if hSize <= 0 {
+		slog.Warn("firehose car decode error",
+			"event_type", "firehose_car_decode_error",
+			"error_class", "firehose_car_decode_error",
+			"error", "bad header varint",
+		)
+		return nil
+	}
+	n := hSize + int(headerLen)
+	if n > len(blocks) {
+		slog.Warn("firehose car decode error",
+			"event_type", "firehose_car_decode_error",
+			"error_class", "firehose_car_decode_error",
+			"error", "header exceeds block data",
+		)
+		return nil
+	}
+	// Build CID bytes -> record CBOR map from sequential block entries.
+	blocksByCID := make(map[string][]byte)
+	for n < len(blocks) {
+		blockLen, bSize := binary.Uvarint(blocks[n:])
+		if bSize <= 0 {
+			slog.Warn("firehose car decode error",
+				"event_type", "firehose_car_decode_error",
+				"error_class", "firehose_car_decode_error",
+				"error", "bad block length varint",
+			)
+			return nil
+		}
+		n += bSize
+		end := n + int(blockLen)
+		if end > len(blocks) {
+			slog.Warn("firehose car decode error",
+				"event_type", "firehose_car_decode_error",
+				"error_class", "firehose_car_decode_error",
+				"error", "block truncated",
+			)
+			return nil
+		}
+		blockData := blocks[n:end]
+		n = end
+		cidLen, err := parseCIDLen(blockData)
+		if err != nil || cidLen >= len(blockData) {
+			slog.Warn("firehose car decode error",
+				"event_type", "firehose_car_decode_error",
+				"error_class", "firehose_car_decode_error",
+				"error", err,
+			)
+			return nil
+		}
+		blocksByCID[string(blockData[:cidLen])] = blockData[cidLen:]
+	}
+	// Match op CIDs to blocks and decode post records.
+	result := make(map[string]string)
+	for _, op := range ops {
+		if len(op.Cid) == 0 {
+			continue // delete op: nil CID, no text to extract (BT-3)
+		}
+		cidBytes, err := extractCIDFromTag42(op.Cid)
+		if err != nil {
+			slog.Debug("firehose cid mismatch",
+				"event_type", "firehose_cid_mismatch",
+				"at_uri", op.Path,
+				"ops_count", len(ops),
+				"blocks_count", len(blocksByCID),
+			)
+			continue
+		}
+		recordCBOR, ok := blocksByCID[string(cidBytes)]
+		if !ok {
+			slog.Debug("firehose cid mismatch",
+				"event_type", "firehose_cid_mismatch",
+				"at_uri", op.Path,
+				"ops_count", len(ops),
+				"blocks_count", len(blocksByCID),
+			)
+			continue
+		}
+		var post atProtoPost
+		if err := cbor.Unmarshal(recordCBOR, &post); err != nil {
+			slog.Warn("firehose post decode error",
+				"event_type", "firehose_post_decode_error",
+				"error_class", "firehose_post_decode_error",
+				"error", err,
+				"at_uri", op.Path,
+			)
+			continue
+		}
+		if post.Type != "app.bsky.feed.post" {
+			continue // non-post records skipped (CT-5)
+		}
+		result[op.Path] = post.Text
+	}
+	return result
 }
 
 // processFirehoseMessage decodes a raw WebSocket message and dispatches post
-// records. Returns nil (skip) on malformed CBOR — never propagates decode errors
+// records. Returns nil (skip) on malformed CBOR  -  never propagates decode errors
 // so the worker stays alive. CT-4 contract.
 //
 // ATProto framing: each WebSocket frame contains two concatenated CBOR values
-// (header map, body map) — NOT a CBOR array. Validated against go-indigo
+// (header map, body map)  -  NOT a CBOR array. Validated against go-indigo
 // events/consumer.go:HandleRepoStream.
 func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg []byte) error {
 	q := fsc.Queue
@@ -73,7 +246,7 @@ func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg 
 	}
 	if header.Op != 1 {
 		// Relay error frame (op=-1). Decode body for observability, then signal
-		// the worker to reset to live tail — retrying the same cursor is futile.
+		// the worker to reset to live tail  -  retrying the same cursor is futile.
 		var relayErr struct {
 			Error   string `cbor:"error"`
 			Message string `cbor:"message"`
@@ -106,15 +279,45 @@ func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg 
 	// Persist seq for cursor resume (best-effort).
 	_ = q.PersistFirehoseSeq(body.Seq, nil)
 
+	// Extract post text from CAR v1 blocks. Empty blocks are expected for
+	// tooBig commits; nil rawBlocks produces a nil textByPath map (no text).
+	var rawBlocks []byte
+	if len(body.Blocks) > 0 {
+		if err := cbor.Unmarshal(body.Blocks, &rawBlocks); err != nil {
+			slog.Warn("firehose car decode error",
+				"event_type", "firehose_car_decode_error",
+				"error_class", "firehose_car_decode_error",
+				"error", err,
+			)
+		}
+	} else {
+		slog.Debug("firehose blocks absent",
+			"event_type", "firehose_blocks_absent",
+			"seq", body.Seq,
+		)
+	}
+	textByPath := carExtractPostText(rawBlocks, body.Ops)
+
 	for _, op := range body.Ops {
 		if op.Action != "create" || !strings.Contains(op.Path, "app.bsky.feed.post") {
 			continue
 		}
-		// MVP: use repo+path as AT URI. Full text requires CAR block parsing.
 		atURI := "at://" + body.Repo + "/" + op.Path
+		var text string
+		if textByPath != nil {
+			text = textByPath[op.Path]
+		}
+		if text != "" {
+			slog.Debug("firehose car text extracted",
+				"event_type", "firehose_car_text_extracted",
+				"at_uri", atURI,
+				"text_len", len(text),
+				"ops_matched", len(textByPath),
+			)
+		}
 		post := &firehosePost{
 			AtURI: atURI,
-			Text:  "", // CAR block text extraction deferred to full impl
+			Text:  text,
 			Repo:  body.Repo,
 			Seq:   body.Seq,
 		}
@@ -143,7 +346,7 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 
 	// Collect all subscriptions into a slice before doing any writes.
 	// With MaxOpenConns=1, holding an open rows cursor while calling write
-	// methods would deadlock — both need the same single connection.
+	// methods would deadlock  -  both need the same single connection.
 	rows, err := q.db.Query("SELECT profile, keyword FROM firehose_subscriptions")
 	if err != nil {
 		return err
@@ -240,7 +443,7 @@ func (s *BlueskyFirehoseSource) Name() string { return "bsky_firehose" }
 func (s *BlueskyFirehoseSource) AuthDeps() []string { return []string{"bluesky"} }
 
 // Start runs the WebSocket loop with exponential backoff.
-// Called only when AuthDeps() are satisfied — client is guaranteed non-nil.
+// Called only when AuthDeps() are satisfied  -  client is guaranteed non-nil.
 func (s *BlueskyFirehoseSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
 	// Migrate any subscriptions still using the legacy 'default' profile (F2).
 	migrateFirehoseProfiles(q)
@@ -342,7 +545,7 @@ func runFirehoseWorker(ctx context.Context, fsc *firehoseScoreContext, logger *s
 
 		err := execConnectAndRead(ctx, fsc, connectURL)
 		if ctx.Err() != nil {
-			return // context cancelled — normal shutdown
+			return // context cancelled  -  normal shutdown
 		}
 
 		if err != nil {
