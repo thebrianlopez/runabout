@@ -122,10 +122,10 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	// Serialize all SQLite access through a single connection. SQLite allows
 	// only one writer at a time; multiple connections under concurrent load
 	// produce SQLITE_BUSY (observed: 75% push loss rate during 8-job whisper
-	// burst — release checklist §6, 2026-05-09).
+	// burst  -  release checklist §6, 2026-05-09).
 	db.SetMaxOpenConns(1)
 
-	// Integrity check before any schema work — catches SQLITE_CORRUPT (11) that
+	// Integrity check before any schema work  -  catches SQLITE_CORRUPT (11) that
 	// would otherwise surface as non-fatal errors during later startup steps
 	// (e.g. seed invite codes) and leave all DB-backed endpoints returning 500.
 	// Returns an error so the caller (serve command) treats this as fatal and
@@ -137,7 +137,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	}
 	if integrityResult != "ok" {
 		db.Close()
-		return nil, fmt.Errorf("queue.db is corrupt (%s) — recover with: sqlite3 ~/.config/linkari/queue.db \".recover\" | sqlite3 ~/.config/linkari/queue_recovered.db && mv queue.db queue.db.bak && mv queue_recovered.db queue.db", integrityResult)
+		return nil, fmt.Errorf("queue.db is corrupt (%s)  -  recover with: sqlite3 ~/.config/linkari/queue.db \".recover\" | sqlite3 ~/.config/linkari/queue_recovered.db && mv queue.db queue.db.bak && mv queue_recovered.db queue.db", integrityResult)
 	}
 
 	// WAL mode for concurrent reads during replay.
@@ -150,7 +150,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	// than the WAL default (NORMAL) but eliminates the corruption window on
 	// unclean shutdown (lid-close, OOM kill, force-quit). WAL+NORMAL is safe
 	// for data durability but can leave queue.db-wal in a state SQLite cannot
-	// recover — the 2026-04-13 SQLITE_CORRUPT (11) incident occurred with WAL
+	// recover  -  the 2026-04-13 SQLITE_CORRUPT (11) incident occurred with WAL
 	// on and synchronous at its default.
 	if _, err := db.Exec("PRAGMA synchronous=FULL"); err != nil {
 		db.Close()
@@ -173,7 +173,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		return nil, fmt.Errorf("create queue table: %w", err)
 	}
 
-	// Idempotent schema migration — add scoring/archive columns.
+	// Idempotent schema migration  -  add scoring/archive columns.
 	migrations := []string{
 		"ALTER TABLE queue ADD COLUMN score INTEGER DEFAULT NULL",
 		"ALTER TABLE queue ADD COLUMN tags TEXT DEFAULT ''",
@@ -209,7 +209,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE queue ADD COLUMN calling_package TEXT DEFAULT ''",
 		"ALTER TABLE queue ADD COLUMN relative_path TEXT DEFAULT ''",
 		"ALTER TABLE queue ADD COLUMN file_name TEXT DEFAULT ''",
-		// EPIC-077 M1: classification source — which cascade stage won pre-enqueue.
+		// EPIC-077 M1: classification source  -  which cascade stage won pre-enqueue.
 		"ALTER TABLE queue ADD COLUMN classify_source TEXT NOT NULL DEFAULT ''",
 		// EPIC-078 M4: screenshot flag for accuracy audits.
 		"ALTER TABLE queue ADD COLUMN is_screenshot INTEGER NOT NULL DEFAULT 0",
@@ -316,7 +316,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		return nil, fmt.Errorf("create push_outbox kind/profile index: %w", err)
 	}
 
-	// EPIC-001: auth tables — users, invite_codes, sessions.
+	// EPIC-001: auth tables  -  users, invite_codes, sessions.
 	const authSchema = `
 		CREATE TABLE IF NOT EXISTS users (
 			id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -361,7 +361,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		queue_id     INTEGER
 	)`)
 
-	// Liked Videos dedup table — mirrors youtube_watchlater_videos for LL playlist.
+	// Liked Videos dedup table  -  mirrors youtube_watchlater_videos for LL playlist.
 	db.Exec(`CREATE TABLE IF NOT EXISTS youtube_liked_videos (
 		id           INTEGER PRIMARY KEY AUTOINCREMENT,
 		video_id     TEXT NOT NULL UNIQUE,
@@ -380,13 +380,13 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		queue_id     INTEGER
 	)`)
 
-	// EPIC-091 M2: unified seen_content dedup table — replaces per-source tables.
+	// EPIC-091 M2: unified seen_content dedup table  -  replaces per-source tables.
 	// source values are bound to ContentSource.Name() return values:
 	//   "bsky_firehose"  → BlueskyFirehoseSource
 	//   "yt_watch_later" → YouTubeWatchLaterSource
 	//   "yt_liked"       → YouTubeLikedSource
 	//   "yt_monitored"   → YouTubeSubsSource
-	// These values are immutable — changing them discards all prior dedup history.
+	// These values are immutable  -  changing them discards all prior dedup history.
 	db.Exec(`CREATE TABLE IF NOT EXISTS seen_content (
 		source   TEXT    NOT NULL,
 		item_id  TEXT    NOT NULL,
@@ -451,7 +451,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	var currentFTS5Version int
 	db.QueryRow("SELECT COALESCE(MAX(version),0) FROM (SELECT 0 AS version UNION ALL SELECT version FROM fts5_version)").Scan(&currentFTS5Version)
 	if currentFTS5Version < fts5Version {
-		// Drop old FTS5 objects (idempotent — ignore errors if they don't exist).
+		// Drop old FTS5 objects (idempotent  -  ignore errors if they don't exist).
 		db.Exec("DROP TRIGGER IF EXISTS queue_fts_insert")
 		db.Exec("DROP TRIGGER IF EXISTS queue_fts_update")
 		db.Exec("DROP TRIGGER IF EXISTS queue_fts_delete")
@@ -563,7 +563,7 @@ func (q *Queue) EnqueuePrefiltered(req *ShareRequest, reason string) (int64, err
 
 // EnqueueScored inserts a share request as pre-scored (status=scored, score=0).
 // Used by auto_score actions (EPIC-057 ginit_*) so the RelayedWatchdog never
-// sweeps these rows — they skip the pending→relayed→scored progression.
+// sweeps these rows  -  they skip the pending→relayed→scored progression.
 // req.ClassifySource (EPIC-077 M1) is persisted to the classify_source column.
 func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -769,7 +769,7 @@ func (q *Queue) MarkRelayedTimedOut(ids []int64) error {
 // scored the row, rowsAffected==0 and this call is a no-op.
 //
 // Returns (true, nil) when the row was rescued; (false, nil) when the row was
-// already scored or not found (lost the race — safe to ignore).
+// already scored or not found (lost the race  -  safe to ignore).
 // EPIC-055 M1.
 func (q *Queue) IngestScoreIfRelayed(id int64, score int, tags, verdict, slug, promptHashVal, promptVersionVal string, rubricScores ...map[string]int) (bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -794,7 +794,7 @@ func (q *Queue) IngestScoreIfRelayed(id int64, score int, tags, verdict, slug, p
 // SweepRelayedTimeouts finds `relayed` rows whose queued_at is older than
 // maxAge relative to `now`, marks each one failed with error_reason
 // "scoring_timeout", and returns the swept rows (for event emission by the
-// caller). The WHERE status='relayed' filter guarantees idempotency — a row
+// caller). The WHERE status='relayed' filter guarantees idempotency  -  a row
 // that was already marked failed on a previous tick is never re-processed.
 //
 // Thin wrapper around SelectStuckRelayed + MarkRelayedTimedOut, preserved for
@@ -1042,7 +1042,7 @@ func (q *Queue) ProfileStats(profile string) ([]ProfileStat, error) {
 		stats[i].AvgScore7d, _ = q.rollingAvgScore(stats[i].Profile, 7)
 		stats[i].AvgScore30d, _ = q.rollingAvgScore(stats[i].Profile, 30)
 
-		// EPIC-082 M3: feedback calibration score — signed bias.
+		// EPIC-082 M3: feedback calibration score  -  signed bias.
 		if stats[i].FeedbackCount > 0 {
 			fcs := float64(stats[i].TooHighCount-stats[i].TooLowCount) / float64(stats[i].FeedbackCount)
 			stats[i].FeedbackCalibrationScore = &fcs
@@ -1223,7 +1223,7 @@ type ArchiveFilter struct {
 
 // ListArchivedCursorTyped extends ListArchivedCursor with type and score/date filters.
 // itemType "jira" matches ginit_* actions; "url" matches non-ginit actions;
-// empty string disables the filter. No schema migration required — type is
+// empty string disables the filter. No schema migration required  -  type is
 // synthesized from the action column prefix at query time (EPIC-057).
 // filter may be nil to skip score/date filtering (EPIC-070 M4).
 func (q *Queue) ListArchivedCursorTyped(profile, status, itemType string, beforeID int64, limit int, filter *ArchiveFilter) ([]QueueItem, error) {
@@ -1327,7 +1327,7 @@ func (q *Queue) Close() error {
 
 // Snapshot writes a clean, defragmented copy of the database to destPath using
 // VACUUM INTO. The destination file is removed first because VACUUM INTO refuses
-// to overwrite an existing file. Intended for periodic point-in-time backups —
+// to overwrite an existing file. Intended for periodic point-in-time backups  - 
 // if queue.db becomes corrupt, the last snapshot is the recovery baseline before
 // attempting sqlite3 .recover.
 func (q *Queue) Snapshot(destPath string) error {
@@ -1406,7 +1406,7 @@ func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug, 
 		return item, false, err
 	}
 
-	// INSERT path — CLI-originated score with no prior relayed row.
+	// INSERT path  -  CLI-originated score with no prior relayed row.
 	res, err := q.db.Exec(
 		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, scored_at, score, tags, verdict, slug, rubric_scores, prompt_hash, prompt_version)
 		 VALUES (?, '', 'url', '', ?, 'scored', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1497,7 +1497,7 @@ func (q *Queue) EnqueuePush(kind string, score int, slug, verdict, url string) (
 
 // EnqueuePushWithProfile is the profile-aware primitive used by
 // EnqueueDigestIfDue. Direct callers are discouraged outside the unified
-// helper — EPIC-051 M3 will consolidate call sites behind EnqueueDigestIfDue.
+// helper  -  EPIC-051 M3 will consolidate call sites behind EnqueueDigestIfDue.
 func (q *Queue) EnqueuePushWithProfile(kind, profile string, score int, slug, verdict, url, gapSummary string) (int64, error) {
 	now := time.Now().Unix()
 	res, err := q.db.Exec(
@@ -1526,16 +1526,16 @@ type EnqueueDigestResult struct {
 // digest row to push_outbox. It applies the NotifyMinScore floor, consults
 // the per-profile throttle from the live PushConfig, and atomically inserts
 // a new row iff the window has elapsed. Safe for concurrent use across
-// multiple processes — the throttle check + insert happen inside a single
+// multiple processes  -  the throttle check + insert happen inside a single
 // SQLite IMMEDIATE transaction so two racing linkari processes can't both
 // write a digest row inside the same window.
 //
 // EPIC-051 M2. See M1 decision in the epic Notes for the NotifyMinScore
-// rationale (Position B — honor as a uniform floor).
+// rationale (Position B  -  honor as a uniform floor).
 func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score int, slug, verdict, url string, gapSummary ...string) (EnqueueDigestResult, error) {
 	cfg := q.PushConfig()
 
-	// EPIC-001 M2: eval_failed verdict must never trigger an FCM push — the row
+	// EPIC-001 M2: eval_failed verdict must never trigger an FCM push  -  the row
 	// was not scored, so there is nothing meaningful to notify the user about.
 	if verdict == "eval_failed" {
 		return EnqueueDigestResult{Reason: "eval_failed_skip"}, nil
@@ -1616,7 +1616,7 @@ func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score in
 }
 
 // EnqueuePrefilterPush inserts a push_outbox row for a prefilter skip/failure
-// notification. Bypasses min-score floor and throttle — prefilter events are
+// notification. Bypasses min-score floor and throttle  -  prefilter events are
 // low-volume and the user should always be notified when their share was not
 // scored. EPIC-084 M2.
 func (q *Queue) EnqueuePrefilterPush(profile, slug, verdict, url string) error {
@@ -1631,7 +1631,7 @@ func (q *Queue) EnqueuePrefilterPush(profile, slug, verdict, url string) error {
 
 // EnqueueTranscriptPush inserts a push_outbox row for a YouTube transcript-only
 // notification. Uses content_type='youtube_transcript' so sendOutboxFCM renders
-// a transcript-oriented title/body. Bypasses min-score floor and throttle —
+// a transcript-oriented title/body. Bypasses min-score floor and throttle  - 
 // transcript delivery should always notify. EPIC-090 M2.
 func (q *Queue) EnqueueTranscriptPush(profile, slug, verdict, url string) error {
 	now := time.Now().Unix()
@@ -1965,7 +1965,7 @@ func (q *Queue) SetBlueskyPublishOptIn(userID int64, optIn bool) error {
 }
 
 // GetBlueskyPublishOptIn returns the bluesky_publish_opt_in flag for the given user.
-// Returns false on DB error (default-safe — opt-out is the safe default).
+// Returns false on DB error (default-safe  -  opt-out is the safe default).
 // EPIC-015 M2.
 func (q *Queue) GetBlueskyPublishOptIn(userID int64) (bool, error) {
 	var v int
@@ -2110,7 +2110,7 @@ func (q *Queue) ListFirehoseSubscriptions(profile string) ([]string, error) {
 }
 
 // PersistFirehoseSeq records the latest firehose sequence number.
-// eventCBOR may be nil — the seq is the only required value for cursor resume.
+// eventCBOR may be nil  -  the seq is the only required value for cursor resume.
 func (q *Queue) PersistFirehoseSeq(seq int64, eventCBOR []byte) error {
 	_, err := q.db.Exec(
 		"INSERT OR REPLACE INTO firehose_events (seq, event_cbor) VALUES (?,?)",
@@ -2131,12 +2131,13 @@ func (q *Queue) LoadLastFirehoseSeq() (int64, error) {
 // Used by the firehose worker to mark rows as source='firehose'.
 func (q *Queue) EnqueueWithSource(req *ShareRequest, source string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
+	traceID := generateTraceID()
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size, slug, source)
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size, slug, source, trace_id)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.URL, req.Text, req.Type, req.Action, req.Profile, now, req.Title,
 		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename, req.ClassifySource,
-		boolToInt(req.IsScreenshot), req.FileSize, urlToSlug(req.URL), source,
+		boolToInt(req.IsScreenshot), req.FileSize, urlToSlug(req.URL), source, traceID,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue with source: %w", err)
@@ -2187,7 +2188,7 @@ func (q *Queue) CountScoredMonitoredVideosToday(profile string) (worthWatching i
 
 // EnqueueSubscriptionDigest writes a push_outbox row with kind='subscription_digest'.
 // At-most-once-per-day: returns nil (not an error) when a row already exists today.
-// This method is independent of EnqueueDigestIfDue — it uses its own kind value
+// This method is independent of EnqueueDigestIfDue  -  it uses its own kind value
 // and its own throttle query so the two paths never interfere with each other.
 func (q *Queue) EnqueueSubscriptionDigest(profile, body string, worthWatching, skipped int) error {
 	now := time.Now().Unix()
