@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
 // testFSC wraps a Queue in a minimal firehoseScoreContext for tests.
@@ -643,5 +645,167 @@ func TestFirehoseScoring_Integration(t *testing.T) {
 	// Status should be "scored" or "failed" (never "relayed" or stuck "pending").
 	if status != "scored" && status != "failed" {
 		t.Fatalf("integration: unexpected queue row status %q  -  want scored or failed", status)
+	}
+}
+
+// =====================================================================
+// EPIC-125: CAR Block Text Extraction  -  Behavioral Tests and Regression Guards
+// Source TDD: PERSONAL_20260519T102524Z_Runabout_Firehose_CAR_Block_Text_Extraction_TDD.md
+// =====================================================================
+
+// buildFirehoseFrame constructs a two-CBOR-value ATProto commit frame (header + body).
+func buildFirehoseFrame(t *testing.T, seq int64, repo, postPath string, postText string) []byte {
+	t.Helper()
+	postRecord := atProtoPost{Type: "app.bsky.feed.post", Text: postText}
+	recordCBOR, err := cbor.Marshal(postRecord)
+	if err != nil {
+		t.Fatalf("marshal post record: %v", err)
+	}
+	carBytes := buildTestCARV1(fakeCIDBytes, recordCBOR)
+	blocksCBOR, err := cbor.Marshal(carBytes)
+	if err != nil {
+		t.Fatalf("marshal CAR bytes: %v", err)
+	}
+	header := firehoseHeader{Op: 1, T: "#commit"}
+	body := firehoseBody{
+		Seq:  seq,
+		Repo: repo,
+		Ops: []firehoseOp{{
+			Action: "create",
+			Path:   postPath,
+			Cid:    buildTag42CID(fakeCIDBytes),
+		}},
+		Blocks: cbor.RawMessage(blocksCBOR),
+	}
+	hBytes, err := cbor.Marshal(header)
+	if err != nil {
+		t.Fatalf("marshal header: %v", err)
+	}
+	bBytes, err := cbor.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	return append(hBytes, bBytes...)
+}
+
+// BT-1: processFirehoseMessage populates firehosePost.Text from CAR blocks.
+func TestFirehoseCARBT1_ProcessMessagePopulatesText(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("default", "evaluation")
+
+	postText := "LLM evaluation paper"
+	atURI := "at://did:plc:test/app.bsky.feed.post/bt1"
+	frame := buildFirehoseFrame(t, 1, "did:plc:test", "app.bsky.feed.post/bt1", postText)
+
+	if err := processFirehoseMessage(context.Background(), testFSC(q), frame); err != nil {
+		t.Fatalf("BT-1: processFirehoseMessage error: %v", err)
+	}
+
+	var text string
+	q.db.QueryRow("SELECT text FROM queue WHERE url=?", atURI).Scan(&text)
+	if text == "" {
+		t.Fatal("BT-1: firehosePost.Text is empty  -  CAR text extraction not wired into processFirehoseMessage")
+	}
+	if text != postText {
+		t.Fatalf("BT-1: text = %q, want %q", text, postText)
+	}
+}
+
+// BT-2: End-to-end: firehose post text extracted from CAR blocks reaches the scoreAsync prompt.
+func TestFirehoseCARBT2_TextReachesScoreAsync(t *testing.T) {
+	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("default", "transformer")
+
+	done := make(chan struct{})
+	capturing := &contentCapturingEval{inner: &stubEvaluator{score: 70, verdict: "Maybe"}}
+	eval := &onceDoneEval{inner: capturing, done: done}
+	fsc := testFSCWithEval(q, eval)
+
+	postText := "transformer architecture for LLM evaluation"
+	frame := buildFirehoseFrame(t, 2, "did:plc:test", "app.bsky.feed.post/bt2", postText)
+
+	if err := processFirehoseMessage(context.Background(), fsc, frame); err != nil {
+		t.Fatalf("BT-2: processFirehoseMessage error: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("BT-2: Evaluate never called within timeout")
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	if !strings.Contains(capturing.content, postText) {
+		t.Fatalf("BT-2: post text not in scoring content\ngot:  %q\nwant: contains %q", capturing.content, postText)
+	}
+}
+
+// BT-3: Delete ops with nil CID are handled without panic and produce no map entry.
+func TestFirehoseCARBT3_DeleteOpsNilCID(t *testing.T) {
+	postRecord := atProtoPost{Type: "app.bsky.feed.post", Text: "test"}
+	recordCBOR, _ := cbor.Marshal(postRecord)
+	carBytes := buildTestCARV1(fakeCIDBytes, recordCBOR)
+
+	ops := []firehoseOp{
+		{Action: "delete", Path: "app.bsky.feed.post/del1", Cid: nil},
+		{Action: "delete", Path: "app.bsky.feed.post/del2", Cid: cbor.RawMessage{0xf6}}, // CBOR null
+	}
+
+	result := carExtractPostText(carBytes, ops)
+	if _, ok := result["app.bsky.feed.post/del1"]; ok {
+		t.Fatal("BT-3: delete op with nil CID produced a map entry  -  should be skipped")
+	}
+	if _, ok := result["app.bsky.feed.post/del2"]; ok {
+		t.Fatal("BT-3: delete op with CBOR null CID produced a map entry  -  should be skipped")
+	}
+}
+
+// RG-1: Firehose items with non-empty text in CAR blocks are never scored with empty content.
+func TestFirehoseCARRG1_NonEmptyTextNeverScoredEmpty(t *testing.T) {
+	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("default", "neural")
+
+	done := make(chan struct{})
+	capturing := &contentCapturingEval{inner: &stubEvaluator{score: 75, verdict: "Yes"}}
+	eval := &onceDoneEval{inner: capturing, done: done}
+	fsc := testFSCWithEval(q, eval)
+
+	postText := "neural network scaling laws for large models"
+	frame := buildFirehoseFrame(t, 3, "did:plc:test", "app.bsky.feed.post/rg1", postText)
+
+	if err := processFirehoseMessage(context.Background(), fsc, frame); err != nil {
+		t.Fatalf("RG-1: processFirehoseMessage error: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RG-1: Evaluate never called within timeout")
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	if capturing.content == "" {
+		t.Fatal("RG-1: scoring content is empty  -  CAR text not used despite being present in blocks")
+	}
+}
+
+// RG-2: at:// URIs never reach Jina (AT-URI short-circuit in DomainRouter).
+func TestFirehoseCARRG2_ATURINotSentToJina(t *testing.T) {
+	jinaCalled := false
+	jinaSpy := func(_ context.Context, _ string) (string, error) {
+		jinaCalled = true
+		return "", nil
+	}
+	router := NewDomainRouter(nil, jinaSpy)
+
+	_, _, _ = router.FetchWithFallback(context.Background(), "at://did:plc:abc/app.bsky.feed.post/xyz")
+
+	if jinaCalled {
+		t.Fatal("RG-2: at:// URI reached Jina  -  AT-URI short-circuit missing in FetchWithFallback")
 	}
 }

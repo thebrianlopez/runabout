@@ -46,7 +46,7 @@ type DomainRouter struct {
 }
 
 // NewDomainRouter constructs a DomainRouter with the provided clients.
-// Panics if jinaFetch is nil (per BT-3 — explicit fail-fast over silent nil deref).
+// Panics if jinaFetch is nil (per BT-3  -  explicit fail-fast over silent nil deref).
 func NewDomainRouter(clients map[string]DomainClient, jinaFetch func(ctx context.Context, rawURL string) (string, error)) *DomainRouter {
 	if jinaFetch == nil {
 		panic("domain_router: jinaFetch must not be nil")
@@ -78,11 +78,23 @@ func (r *DomainRouter) RegisterClient(hostname string, client DomainClient) {
 func (r *DomainRouter) FetchWithFallback(ctx context.Context, rawURL string) (string, ContentType, error) {
 	start := time.Now()
 
+	// Short-circuit non-HTTP(S) URIs (e.g. at://) before any fetch attempt.
+	// Use a string-prefix check because url.Parse errors on at://did:plc:... hosts
+	// (colons make the host appear to be an invalid host:port), so we cannot rely
+	// on a successful parse to extract the scheme.
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") && strings.Contains(rawURL, "://") {
+		r.emit("domain_router_at_uri_skipped", map[string]interface{}{
+			"event_type": "domain_router_at_uri_skipped",
+			"url":        rawURL,
+		})
+		return "", ContentTypePlain, errUnsupportedScheme
+	}
+
 	// Emit fetch_start before any dispatch so callers can correlate with fetch_end via event stream.
 	{
 		host, _ := MatchHost(rawURL)
 		_, clientRegistered := r.clients[host]
-		// YouTube bypass skips the client map — client_registered is always false for YouTube URLs.
+		// YouTube bypass skips the client map  -  client_registered is always false for YouTube URLs.
 		if IsYouTube(rawURL) {
 			clientRegistered = false
 		}
@@ -110,7 +122,7 @@ func (r *DomainRouter) FetchWithFallback(ctx context.Context, rawURL string) (st
 
 	host, err := MatchHost(rawURL)
 	if err != nil {
-		// Malformed URL — fall through to Jina.
+		// Malformed URL  -  fall through to Jina.
 		content, jinaErr := r.jinaFetch(ctx, rawURL)
 		latency := time.Since(start).Milliseconds()
 		r.emit("domain_router_fetch_end", map[string]interface{}{
@@ -126,7 +138,7 @@ func (r *DomainRouter) FetchWithFallback(ctx context.Context, rawURL string) (st
 
 	client, ok := r.clients[host]
 	if !ok {
-		// No registered client — call Jina directly.
+		// No registered client  -  call Jina directly.
 		content, jinaErr := r.jinaFetch(ctx, rawURL)
 		latency := time.Since(start).Milliseconds()
 		r.emit("domain_router_fetch_end", map[string]interface{}{
@@ -159,7 +171,7 @@ func (r *DomainRouter) FetchWithFallback(ctx context.Context, rawURL string) (st
 		return content, ct, nil
 	}
 
-	// Client failed — emit auth error event and fall back to Jina.
+	// Client failed  -  emit auth error event and fall back to Jina.
 	r.emit("domain_router_auth_error", map[string]interface{}{
 		"url":         redactURL(rawURL),
 		"domain":      host,
@@ -198,7 +210,7 @@ func (r *DomainRouter) EmitVia(logger *EventLogger) {
 	}
 }
 
-// redactURL returns scheme://host only — strips path, query, and fragment.
+// redactURL returns scheme://host only  -  strips path, query, and fragment.
 func redactURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
