@@ -1353,9 +1353,13 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		}
 	}
 
-	// URL-only: action route dispatch.
+	// URL-only: action route dispatch (EPIC-097 M4: use RoutingConfig thresholds).
 	if isURLShare && itemScore != nil {
-		dispatchActionRoute(context.Background(), sc, itemProfile, rawURL, q, itemID, 0)
+		routingCfg := defaultRoutingConfig()
+		if loaded := loadArchiveThresholdConfig(); loaded != nil && loaded.Routing.DefaultThreshold > 0 {
+			routingCfg = loaded.Routing
+		}
+		dispatchActionRoute(context.Background(), sc, itemProfile, rawURL, q, itemID, routingCfg, nil)
 	}
 
 	// FCM push via dual-writer invariant (EPIC-051).

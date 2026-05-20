@@ -1,6 +1,6 @@
 package main
 
-// EPIC-072 M9: Action routing — server-side computation of action_route
+// EPIC-072 M9: Action routing  -  server-side computation of action_route
 // from score + profile + verdict. Dispatches to M10 (Jira) and M11 (research digest).
 
 import (
@@ -44,8 +44,10 @@ func computeActionRoute(score int, profile string, threshold int) string {
 
 // dispatchActionRoute computes and persists the action route, then dispatches
 // to the appropriate handler (M10: Jira, M11: research digest).
-func dispatchActionRoute(ctx context.Context, sc *Scorecard, profile, url string, q *Queue, itemID int64, threshold int) {
-	route := computeActionRoute(sc.Score, profile, threshold)
+// cfg: routing thresholds from config (use defaultRoutingConfig() if absent).
+// extractionConfidence: nil for URL shares  -  confidence gate is skipped.
+func dispatchActionRoute(ctx context.Context, sc *Scorecard, profile, url string, q *Queue, itemID int64, cfg RoutingConfig, extractionConfidence *float64) {
+	route := computeActionRouteWithConfig(sc.Score, profile, cfg, extractionConfidence)
 	if route == "" {
 		return
 	}
@@ -65,10 +67,10 @@ func dispatchActionRoute(ctx context.Context, sc *Scorecard, profile, url string
 
 	switch route {
 	case "draft_jira_ticket":
-		// M10 handler — will be implemented in jira_client.go.
+		// M10 handler  -  will be implemented in jira_client.go.
 		slog.DebugContext(ctx, "action_route: draft_jira_ticket pending M10", "url", url)
 	case "append_research_digest":
-		// M11 handler — will be implemented separately.
+		// M11 handler  -  will be implemented separately.
 		slog.DebugContext(ctx, "action_route: append_research_digest pending M11", "url", url)
 	}
 }

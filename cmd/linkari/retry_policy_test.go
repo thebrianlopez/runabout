@@ -159,6 +159,83 @@ func TestRetryPolicyCT5_DeferredRowSkipped(t *testing.T) {
 	}
 }
 
+// BT-1: Retry backoff timing is within ±2s of the documented schedule
+func TestRetryPolicyBT1_BackoffTimingAccuracy(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+
+	cases := []struct {
+		stage   string
+		wantMin int64 // seconds
+		wantMax int64
+	}{
+		{"extraction", 28, 32}, // 30s ± 2
+		{"scoring", 58, 62},    // 60s ± 2
+	}
+
+	for _, tc := range cases {
+		id, err := q.Enqueue(&ShareRequest{URL: "https://bt1-" + tc.stage + ".example.com", Type: "link", Profile: "default"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := time.Now().Unix()
+		if err := retryOrFail(context.Background(), q.db, id, tc.stage, fmt.Errorf("transient")); err != nil {
+			t.Fatal(err)
+		}
+		after := time.Now().Unix()
+
+		var retryAfter int64
+		q.db.QueryRow("SELECT retry_after FROM queue WHERE id=?", id).Scan(&retryAfter)
+
+		wantMin := before + tc.wantMin
+		wantMax := after + tc.wantMax
+		if retryAfter < wantMin || retryAfter > wantMax {
+			t.Errorf("BT-1 %s: retry_after=%d want in [%d, %d]", tc.stage, retryAfter, wantMin, wantMax)
+		}
+	}
+}
+
+// RG-1: Any subprocess failure must never silently delete the queue row.
+func TestRetryPolicyRG1_NoSilentRowLoss(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+
+	for _, tc := range []struct {
+		stage      string
+		seedCount  int // retry_count before the call
+		wantStatus string
+	}{
+		{"extraction", 0, "pending"},  // first extraction failure → retry
+		{"extraction", 2, "failed"},   // third extraction failure → terminal
+		{"scoring", 0, "pending"},     // first scoring failure → retry
+		{"scoring", 1, "failed"},      // second scoring failure → terminal
+	} {
+		id, err := q.Enqueue(&ShareRequest{URL: "https://rg1-" + tc.stage + ".example.com", Type: "link", Profile: "default"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.seedCount > 0 {
+			q.db.Exec("UPDATE queue SET retry_count=? WHERE id=?", tc.seedCount, id)
+		}
+
+		if err := retryOrFail(context.Background(), q.db, id, tc.stage, fmt.Errorf("subprocess failed")); err != nil {
+			t.Fatalf("RG-1 %s seed=%d: retryOrFail: %v", tc.stage, tc.seedCount, err)
+		}
+
+		var count int
+		q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE id=?", id).Scan(&count)
+		if count == 0 {
+			t.Errorf("RG-1 %s seed=%d: row deleted  -  silent row loss detected", tc.stage, tc.seedCount)
+		}
+
+		var status string
+		q.db.QueryRow("SELECT status FROM queue WHERE id=?", id).Scan(&status)
+		if status != tc.wantStatus {
+			t.Errorf("RG-1 %s seed=%d: status=%q want %q", tc.stage, tc.seedCount, status, tc.wantStatus)
+		}
+	}
+}
+
 // CT-6: Terminal failure preserves error cause (truncated to 500 chars) in error_reason
 func TestRetryPolicyCT6_ErrorReasonTruncated(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
@@ -185,7 +262,7 @@ func TestRetryPolicyCT6_ErrorReasonTruncated(t *testing.T) {
 		t.Errorf("CT-6: error_reason len=%d, want ≤550 (500-char cause + class prefix)", len(errorReason))
 	}
 	if strings.Contains(errorReason, longCause) {
-		t.Error("CT-6: error_reason contains full 600-char cause — truncation did not happen")
+		t.Error("CT-6: error_reason contains full 600-char cause  -  truncation did not happen")
 	}
 	// Must still contain the error class
 	if !strings.Contains(errorReason, "extraction_retry_exhausted") {

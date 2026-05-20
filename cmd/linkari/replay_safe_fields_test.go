@@ -70,7 +70,7 @@ func TestReplaySafeCT3_TraceIDStoredOnRow(t *testing.T) {
 	}
 }
 
-// CT-4: trace_id immutable across retries — retryOrFail must not overwrite trace_id
+// CT-4: trace_id immutable across retries  -  retryOrFail must not overwrite trace_id
 func TestReplaySafeCT4_TraceIDImmutableAcrossRetries(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -87,7 +87,7 @@ func TestReplaySafeCT4_TraceIDImmutableAcrossRetries(t *testing.T) {
 		t.Skipf("CT-4: trace_id column not yet added (M8 dependency): %v", seedErr)
 	}
 
-	// Simulate a scoring failure (first attempt — will retry, not terminal)
+	// Simulate a scoring failure (first attempt  -  will retry, not terminal)
 	if rErr := retryOrFail(t.Context(), q.db, id, "scoring", fmt.Errorf("eval failed")); rErr != nil {
 		t.Fatal(rErr)
 	}
@@ -163,10 +163,38 @@ func TestReplaySafeCT6_TraceIDInQueueItem(t *testing.T) {
 	}
 }
 
+// BT-1: Binary content (simulated PDF blob) produces a valid 64-char hex hash
+func TestReplaySafeBT1_BinaryContentHash(t *testing.T) {
+	blob := make([]byte, 1024)
+	for i := range blob {
+		blob[i] = byte(i % 256)
+	}
+	got := ContentHash(blob)
+	if len(got) != 64 {
+		t.Errorf("BT-1: ContentHash(binary blob) len=%d, want 64", len(got))
+	}
+	for _, c := range got {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			t.Errorf("BT-1: ContentHash result %q contains non-hex char %q", got, c)
+			break
+		}
+	}
+}
+
+// BT-2: Zero-length content produces the SHA-256 of empty input (consistent, not an error)
+func TestReplaySafeBT2_EmptyContentHash(t *testing.T) {
+	got := ContentHash([]byte{})
+	// SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+	const wantEmpty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	if got != wantEmpty {
+		t.Errorf("BT-2: ContentHash(empty) = %q, want %q", got, wantEmpty)
+	}
+}
+
 // CT-7: Different content produces different hashes
 func TestReplaySafeCT7_DifferentContentDifferentHash(t *testing.T) {
-	h1 := ContentHash([]byte("content A — first document"))
-	h2 := ContentHash([]byte("content B — different document"))
+	h1 := ContentHash([]byte("content A  -  first document"))
+	h2 := ContentHash([]byte("content B  -  different document"))
 
 	if h1 == h2 {
 		t.Errorf("CT-7: ContentHash produced identical hashes for different inputs: %q", h1)

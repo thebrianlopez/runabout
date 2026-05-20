@@ -45,7 +45,7 @@ func ValidateRoutingConfig(cfg RoutingConfig) error {
 }
 
 // computeActionRouteWithConfig determines the action route using the full RoutingConfig.
-// extractionConfidence may be nil (URL shares without extraction — gate skipped).
+// extractionConfidence may be nil (URL shares without extraction  -  gate skipped).
 // Gate 1: block if extractionConfidence != nil && < ExtractionConfidenceGate
 // Gate 2: block if score < per-route threshold
 func computeActionRouteWithConfig(score int, profile string, cfg RoutingConfig, extractionConfidence *float64) string {
@@ -66,6 +66,11 @@ func computeActionRouteWithConfig(score int, profile string, cfg RoutingConfig, 
 	}
 	threshold := cfg.routeThreshold(route)
 	if score < threshold {
+		slog.Info("routing_blocked_below_threshold",
+			"score", score,
+			"threshold", threshold,
+			"route", route,
+		)
 		return ""
 	}
 	return route
