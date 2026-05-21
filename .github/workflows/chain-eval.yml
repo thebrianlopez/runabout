@@ -1,0 +1,75 @@
+name: chain-eval
+
+on:
+  push:
+    paths:
+      - 'cmd/chain-eval/**'
+      - 'docs/core/prompts/command_chain.md'
+  workflow_dispatch:
+    inputs:
+      fixture:
+        description: 'Single fixture to run (leave empty for all)'
+        required: false
+        default: ''
+      min_score:
+        description: 'Minimum passing score (default: 0.85)'
+        required: false
+        default: '0.85'
+
+jobs:
+  build-and-dry-run:
+    name: Build and validate fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build chain-eval
+        run: go build -o bin/chain-eval ./cmd/chain-eval
+
+      - name: Dry run (validate fixtures, no API keys required)
+        env:
+          CHAIN_FIXTURES_DIR: cmd/chain-eval/fixtures
+        run: ./bin/chain-eval --all --dry-run
+
+  eval:
+    name: Run chain eval
+    runs-on: ubuntu-latest
+    needs: build-and-dry-run
+    if: secrets.ANTHROPIC_API_KEY != '' && secrets.BRAINTRUST_API_KEY != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build chain-eval
+        run: go build -o bin/chain-eval ./cmd/chain-eval
+
+      - name: Run chain eval (all fixtures)
+        if: github.event.inputs.fixture == ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BRAINTRUST_API_KEY: ${{ secrets.BRAINTRUST_API_KEY }}
+          CHAIN_PROMPTS_DIR: docs/core/prompts
+          CHAIN_FIXTURES_DIR: cmd/chain-eval/fixtures
+        run: |
+          MIN_SCORE="${{ github.event.inputs.min_score || '0.85' }}"
+          ./bin/chain-eval --all --min-score "$MIN_SCORE" --project chain
+
+      - name: Run chain eval (single fixture)
+        if: github.event.inputs.fixture != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BRAINTRUST_API_KEY: ${{ secrets.BRAINTRUST_API_KEY }}
+          CHAIN_PROMPTS_DIR: docs/core/prompts
+          CHAIN_FIXTURES_DIR: cmd/chain-eval/fixtures
+        run: |
+          MIN_SCORE="${{ github.event.inputs.min_score || '0.85' }}"
+          ./bin/chain-eval --fixture "${{ github.event.inputs.fixture }}" --min-score "$MIN_SCORE" --project chain

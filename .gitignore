@@ -42,6 +42,7 @@ cmd/castex/castex
 # Root-level compiled binaries (built by make, not installed to ~/go/bin)
 /mdq
 /sharehook
+/chain-eval
 
 # Internal agent coordination  -  never commit
 .claude-dispatch/
