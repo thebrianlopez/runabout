@@ -599,7 +599,7 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,''), COALESCE(artifact_path,''), COALESCE(content_warning,''), extraction_confidence, COALESCE(retry_count,0), COALESCE(retry_after,0), COALESCE(error_reason,''), COALESCE(content_hash,''), COALESCE(trace_id,'')"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,''), COALESCE(artifact_path,''), COALESCE(content_warning,''), extraction_confidence, COALESCE(retry_count,0), COALESCE(retry_after,0), COALESCE(error_reason,''), COALESCE(content_hash,''), COALESCE(trace_id,''), COALESCE(user_tags,'')"
 
 // Pending returns all items with status=pending whose retry_after has elapsed,
 // ordered by id ASC (FIFO). Rows with retry_after=0 are always included (default).
@@ -1230,6 +1230,7 @@ type ArchiveFilter struct {
 	Since     string // RFC3339
 	Until     string // RFC3339
 	ClusterID *int64 // EPIC-072 M7
+	UserTag   string // EPIC-153: filter to rows containing this tag in user_tags JSON array
 }
 
 // ListArchivedCursorTyped extends ListArchivedCursor with type and score/date filters.
@@ -1283,6 +1284,14 @@ func (q *Queue) ListArchivedCursorTyped(profile, status, itemType string, before
 		if filter.ClusterID != nil {
 			sqlStr += " AND cluster_id = ?"
 			args = append(args, *filter.ClusterID)
+		}
+		if filter.UserTag != "" {
+			// EPIC-153: filter to rows whose user_tags JSON array contains the value.
+			// Use NULLIF to convert empty-string (default) to NULL before passing to
+			// json_each; json_each(NULL) returns zero rows safely. This avoids a
+			// SQLite error from json_each('') which receives a non-JSON empty string.
+			sqlStr += " AND EXISTS (SELECT 1 FROM json_each(NULLIF(queue.user_tags,'')) WHERE value = ?)"
+			args = append(args, filter.UserTag)
 		}
 	}
 	sqlStr += " ORDER BY id DESC LIMIT ?"
@@ -2071,7 +2080,7 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 		var it QueueItem
 		var score int
 		var isScreenshotInt, isShortsInt int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source, &it.ArtifactPath, &it.ContentWarning, &it.ExtractionConfidence, &it.RetryCount, &it.RetryAfter, &it.ErrorReason, &it.ContentHash, &it.TraceID); err != nil {
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source, &it.ArtifactPath, &it.ContentWarning, &it.ExtractionConfidence, &it.RetryCount, &it.RetryAfter, &it.ErrorReason, &it.ContentHash, &it.TraceID, &it.UserTags); err != nil {
 			return nil, err
 		}
 		if score != 0 {

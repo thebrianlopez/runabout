@@ -1499,6 +1499,11 @@ func parseListParams(r *http.Request) (profile, status, itemType string, beforeI
 		f.ClusterID = &n
 		hasFilter = true
 	}
+	// EPIC-153: user_tag filters to rows whose user_tags JSON array contains the value.
+	if s := r.URL.Query().Get("user_tag"); s != "" {
+		f.UserTag = s
+		hasFilter = true
+	}
 	if hasFilter {
 		filter = &f
 	}
