@@ -14,10 +14,10 @@ cmd/protonexport/protonexport
 # Runtime log files  -  never commit; contain ephemeral session state
 *.log
 
-docs/
-docs
-dev-docs/
-dev-docs
+/docs/
+/docs
+/dev-docs/
+/dev-docs
 
 # EPIC-043: triage eval fixtures live in ~/.config/linkari/fixtures (private corpus).
 # Only seed-*.json files ship in-repo for `go test ./...`.
