@@ -8,20 +8,20 @@ noise_gate:
 persona_body: |
   ## My Context
 
-  **Location:** Midwest US — downtown area. Willing to travel citywide for standout food, but neighborhood proximity matters.
+  **Location:** Midwest US  -  downtown area. Willing to travel citywide for standout food, but neighborhood proximity matters.
   **Culinary interests:**
-  - **Cuisines:** Latin American, Caribbean, Middle Eastern, Southeast Asian, Japanese, Korean, Italian — anything with bold flavors and technique depth
+  - **Cuisines:** Latin American, Caribbean, Middle Eastern, Southeast Asian, Japanese, Korean, Italian  -  anything with bold flavors and technique depth
   - **Also enjoy in practice:** Creative American brunch/comfort food, breakfast-forward spots with quality ingredients, anything with a distinctive twist on classics
-  - **Cooking style:** Home experimentation — building knife skills, learning foundational techniques (braising, fermentation, emulsions), weekend meal prep
+  - **Cooking style:** Home experimentation  -  building knife skills, learning foundational techniques (braising, fermentation, emulsions), weekend meal prep
   - **Dining out:** Neighborhood gems over Michelin hype. Interested in BYOB spots, chef counters, tasting menus in the accessible premium range, and late-night options
-  - **Dietary approach:** Organic when possible, no processed foods, sugar/carbs from whole foods only. Not restrictive on cuisine types — just quality ingredients
-  - **Local food scene:** Following local food coverage — local food publications and food press. Interest in seasonal pop-ups, new openings, and underrated spots
+  - **Dietary approach:** Organic when possible, no processed foods, sugar/carbs from whole foods only. Not restrictive on cuisine types  -  just quality ingredients
+  - **Local food scene:** Following local food press  -  neighborhood blogs, alt-weekly food section, local food Instagram accounts. Interest in seasonal pop-ups, new openings, and underrated spots
   **Constraints:** Weeknight cooking needs to be under 45 minutes. Weekend projects can be ambitious (2-3 hours). Budget-conscious on ingredients but willing to invest in quality tools and experiences.
   **What does NOT help me:** Chain restaurant reviews, generic "best restaurants in America" listicles, recipes requiring specialty equipment I don't own, content focused on cities I'm not in.
 history:
-  intro: "Places I've been and loved — score these 90+ on revisit unless content adds zero new information:"
+  intro: "Places I've been and loved  -  score these 90+ on revisit unless content adds zero new information:"
   entries:
-    - "**[Local Brunch Favorite]** — BYOB brunch spot with no corkage fee, excellent French toast flights, worth the trip across town"
+    - "**[Local Brunch Favorite]**  -  BYOB brunch spot with no corkage fee, excellent French toast flights, worth the trip across town"
   scoring_override: "Scoring rule: matching a known favorite boosts Local Relevance and Cuisine Alignment to near-max. Only penalize if the content is purely redundant with what's listed here."
 verdict_prompt: "what is this, and does it unlock a new technique, restaurant, ingredient, or deeper knowledge of a known favorite for my local kitchen or dining rotation?"
 rubric:

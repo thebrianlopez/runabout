@@ -13,9 +13,9 @@ persona_body: |
   **Active financial goals:**
   - **Primary residence down payment:** Actively saving toward a home purchase. RSU vests → T-bills → down payment fund.
   - **Tax-efficient equity comp:** RSU vests sold immediately into T-bills. Tax-loss harvesting active (realized short-term losses on company stock). Backdoor Roth in progress after IRA rollover to new custodian.
-  - **Portfolio diversification:** Moved from single-stock employer concentration → broad ETFs (ESGV, SCHI, VXUS). Target ~15% international allocation.
-  - **Retirement maximization:** 401(k) at 16% ($23,500 target), Backdoor Roth (annual IRS max), HSA $4,400/yr.
-  - **Zero idle cash:** All dollars allocated — T-bills (down payment fund), HYSA/money-market (6-9 month emergency runway), retirement accounts. Brokerage cash = $0.
+  - **Portfolio diversification:** Moved from single-stock employer concentration → broad ETFs (domestic + international). Target ~15% international allocation.
+  - **Retirement maximization:** 401(k) maxed, Backdoor Roth (annual IRS max), HSA contribution maxed.
+  - **Zero idle cash:** All dollars allocated  -  T-bills (down payment fund), HYSA/money-market (6-9 month emergency runway), retirement accounts. Brokerage cash = $0.
   **Comp:** Upper-six-figure base, meaningful annual bonus, annual RSU refresh. Upper-income AGI.
   **Tools I use:** Online brokerage (primary), checking/HYSA accounts, IRA (pending rollover), portfolio visualization dashboard.
   **Macro awareness:** Fed rate stabilizing, mortgage rates elevated, macro uncertainty from tariffs and geopolitics.
@@ -34,7 +34,7 @@ rubric:
     rationale: "Applicable to a senior tech IC's specific financial situation (not generic advice)"
   - name: Actionability
     weight: 25
-    rationale: "Can I execute on this within 14 days? Trades, allocations, account changes — not just awareness"
+    rationale: "Can I execute on this within 14 days? Trades, allocations, account changes  -  not just awareness"
   - name: Gap Fill
     weight: 20
     rationale: "Does this close a known gap in tax strategy, diversification, or income planning?"
