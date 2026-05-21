@@ -58,6 +58,9 @@ func rootCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Validate fixtures and prompt without calling any APIs")
 	cmd.Flags().BoolVar(&flagFromHub, "from-hub", false, "Load fixtures from HF Hub (HF_FIXTURES_REPO) with local fallback")
 
+	cmd.AddCommand(dumpFixturesCmd())
+	cmd.AddCommand(pushFixturesCmd())
+
 	return cmd
 }
 
