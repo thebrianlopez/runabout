@@ -113,6 +113,11 @@ func pushFixturesCmd() *cobra.Command {
 			}
 
 			if err := hubPushFile(ctx, repo, apiKey, "fixtures.jsonl", sb.String()); err != nil {
+				if err.Error() == "hub push: API 404" {
+					return fmt.Errorf("hub push: API 404  -  repo has no commits yet.\n"+
+						"Initialize it first: https://huggingface.co/datasets/%s\n"+
+						"Click 'Initialize this repository with a dataset card', then retry.", repo)
+				}
 				return fmt.Errorf("hub push: %w", err)
 			}
 
