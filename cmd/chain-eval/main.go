@@ -8,12 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/braintrustdata/braintrust-sdk-go"
-	"github.com/braintrustdata/braintrust-sdk-go/eval"
 	"github.com/spf13/cobra"
-	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 func main() {
@@ -27,7 +25,6 @@ func rootCmd() *cobra.Command {
 		flagAll      bool
 		flagFixture  string
 		flagMinScore float64
-		flagProject  string
 		flagSecrets  []string
 		flagDryRun   bool
 	)
@@ -37,12 +34,11 @@ func rootCmd() *cobra.Command {
 		Short: "Evaluate chain prompt quality against fixture scenarios",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := runConfig{
-				all:     flagAll,
-				fixture: flagFixture,
+				all:      flagAll,
+				fixture:  flagFixture,
 				minScore: flagMinScore,
-				project: flagProject,
-				secrets: flagSecrets,
-				dryRun:  flagDryRun,
+				secrets:  flagSecrets,
+				dryRun:   flagDryRun,
 			}
 			os.Exit(run(cmd.Context(), cfg))
 			return nil
@@ -52,9 +48,8 @@ func rootCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&flagAll, "all", false, "Run all fixtures")
 	cmd.Flags().StringVar(&flagFixture, "fixture", "", "Run a single named fixture")
 	cmd.Flags().Float64Var(&flagMinScore, "min-score", 0.85, "Minimum passing score per dimension")
-	cmd.Flags().StringVar(&flagProject, "project", "chain", "Braintrust project name")
-	cmd.Flags().StringArrayVar(&flagSecrets, "secret", nil, "AWS Secrets Manager secret name or ARN (repeatable); each secret must be a JSON object whose keys are set as environment variables")
-	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Validate fixtures and prompt without calling Anthropic or Braintrust APIs")
+	cmd.Flags().StringArrayVar(&flagSecrets, "secret", nil, "AWS Secrets Manager secret ARN (repeatable); each secret must be a JSON object whose keys are set as env vars")
+	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Validate fixtures and prompt without calling any APIs")
 
 	return cmd
 }
@@ -63,13 +58,11 @@ type runConfig struct {
 	all      bool
 	fixture  string
 	minScore float64
-	project  string
 	secrets  []string
 	dryRun   bool
 }
 
 func run(ctx context.Context, cfg runConfig) int {
-	// Populate env from AWS Secrets Manager before any validation (exit 2 = config error).
 	if err := loadSecrets(ctx, cfg.secrets); err != nil {
 		fmt.Fprintf(os.Stderr, "chain-eval: secrets_fetch_failed: %v\n", err)
 		return 2
@@ -79,14 +72,12 @@ func run(ctx context.Context, cfg runConfig) int {
 		return dryRun(cfg)
 	}
 
-	// Validate required environment variables (exit 2 = config error).
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		fmt.Fprintln(os.Stderr, "chain-eval: ANTHROPIC_API_KEY required")
 		return 2
 	}
-	if os.Getenv("BRAINTRUST_API_KEY") == "" {
-		fmt.Fprintln(os.Stderr, "chain-eval: BRAINTRUST_API_KEY required")
-		return 2
+	if os.Getenv("HUGGINGFACE_API_KEY") == "" {
+		fmt.Fprintln(os.Stderr, "chain-eval: WARN: HUGGINGFACE_API_KEY not set - judge disabled, deterministic scoring only")
 	}
 
 	promptsDir := os.Getenv("CHAIN_PROMPTS_DIR")
@@ -112,65 +103,87 @@ func run(ctx context.Context, cfg runConfig) int {
 		return 2
 	}
 
-	// Score accumulator collects per-dimension scores for threshold checking.
+	runID := fmt.Sprintf("%s-%s", promptSHA(prompt), time.Now().UTC().Format("20060102T150405Z"))
 	coll := &scoreCollector{byDim: make(map[string][]float64)}
+	client := anthropic.NewClient()
 
-	tp := trace.NewTracerProvider()
-	defer tp.Shutdown(context.Background()) //nolint:errcheck
+	// Run fixtures in parallel (max 3 concurrent), collect ResultRows for hub push.
+	rows := make([]ResultRow, len(cases))
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	for i, c := range cases {
+		wg.Add(1)
+		go func(idx int, cas EvalCase) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-	bt, err := braintrust.New(tp,
-		braintrust.WithProject(cfg.project),
-		braintrust.WithBlockingLogin(true),
-	)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "chain-eval: eval SDK error: %v\n", err)
-		return 2
+			output, taskErr := runTask(ctx, &client, prompt, fixturesDir, cas.Input)
+			if taskErr != nil {
+				coll.record("next_action", 0)
+				coll.record("validate_recall", 0)
+				coll.record("icon_accuracy", 0)
+				rows[idx] = ResultRow{
+					RunID: runID, Fixture: cas.Input.Fixture, Command: cas.Input.Command,
+					ScoredAt: time.Now().UTC().Format(time.RFC3339),
+				}
+				return
+			}
+
+			tr := TaskResult{Input: cas.Input, Output: output}
+			na, naJ := scoreNextAction(ctx, tr)
+			vr, vrJ := scoreValidateRecall(ctx, tr)
+			ia, _ := scoreIconAccuracy(ctx, tr)
+
+			coll.record("next_action", na)
+			coll.record("validate_recall", vr)
+			coll.record("icon_accuracy", ia)
+
+			rows[idx] = ResultRow{
+				RunID:          runID,
+				Fixture:        cas.Input.Fixture,
+				Command:        cas.Input.Command,
+				NextAction:     na,
+				ValidateRecall: vr,
+				IconAccuracy:   ia,
+				JudgeInvoked:   naJ || vrJ,
+				ScoredAt:       time.Now().UTC().Format(time.RFC3339),
+			}
+		}(i, c)
 	}
+	wg.Wait()
 
-	anthropicClient := anthropic.NewClient()
-	evaluator := braintrust.NewEvaluator[ChainInput, string](bt)
-
-	result, err := evaluator.Run(ctx, eval.Opts[ChainInput, string]{
-		Experiment:  "chain-eval",
-		ProjectName: cfg.project,
-		Dataset:     eval.NewDataset(cases),
-		Task: eval.T(func(ctx context.Context, input ChainInput) (string, error) {
-			return runTask(ctx, &anthropicClient, prompt, fixturesDir, input)
-		}),
-		Scorers:     collectingScorers(coll),
-		Parallelism: 3,
-		Metadata: map[string]any{
-			"prompt_sha":    promptSHA(prompt),
-			"chain_version": "cmd/chain-eval",
-		},
-	})
-
-	// API/task errors → exit 1 (score failure, not config error).
-	apiErr := false
-	if result != nil && result.Error() != nil {
-		fmt.Fprintf(os.Stderr, "chain-eval: fixture errors: %v\n", result.Error())
-		apiErr = true
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "chain-eval: eval SDK error: %v\n", err)
-		return 2
+	// Set PassThreshold after all scores collected.
+	pass := allPass(coll, cfg.minScore)
+	for i := range rows {
+		rows[i].PassThreshold = pass
 	}
 
 	printScoreTable(coll, cfg.minScore)
 
-	if link, _ := result.Permalink(); link != "" {
-		fmt.Fprintln(os.Stderr, "Braintrust:", link)
+	// Push results to HF Hub (non-fatal).
+	for _, row := range rows {
+		if err := hubPush(ctx, row); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ hub push failed: %v\n", err)
+		}
 	}
 
-	if apiErr || !allPass(coll, cfg.minScore) {
+	if repo := os.Getenv("HF_DATASET_REPO"); repo != "" {
+		fmt.Fprintf(os.Stderr, "HF Hub: https://huggingface.co/datasets/%s\n", repo)
+	}
+
+	if !pass {
 		return 1
 	}
 	return 0
 }
 
-// runTask loads the fixture docs, calls Claude with the system prompt, and returns the raw response.
-// API errors are returned as errors (non-fatal per case - the eval SDK continues other cases).
-func runTask(ctx context.Context, client *anthropic.Client, prompt, fixturesDir string, input ChainInput) (string, error) { //nolint:gocritic
+// EvalCase holds one fixture to evaluate.
+type EvalCase struct {
+	Input ChainInput
+}
+
+func runTask(ctx context.Context, client *anthropic.Client, prompt, fixturesDir string, input ChainInput) (string, error) {
 	fixtureDir := filepath.Join(fixturesDir, input.Fixture)
 	fixtureContent, err := loadFixture(fixtureDir)
 	if err != nil {
@@ -179,29 +192,22 @@ func runTask(ctx context.Context, client *anthropic.Client, prompt, fixturesDir 
 	}
 
 	userMsg := fmt.Sprintf("Command: %s\n\nDocs state:\n\n%s", input.Command, fixtureContent)
-
 	msg, err := client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeHaiku4_5,
 		MaxTokens: 1024,
-		System: []anthropic.TextBlockParam{
-			{Text: prompt},
-		},
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(userMsg)),
-		},
+		System:    []anthropic.TextBlockParam{{Text: prompt}},
+		Messages:  []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(userMsg))},
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "chain-eval: fixture '%s': API error: %v - scored 0\n", input.Fixture, err)
 		return "", err
 	}
-
 	if len(msg.Content) == 0 {
 		return "", fmt.Errorf("fixture '%s': empty response", input.Fixture)
 	}
 	return msg.Content[0].Text, nil
 }
 
-// loadFixture reads all markdown files in a fixture directory and concatenates them.
 func loadFixture(dir string) (string, error) {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return "", fmt.Errorf("directory not found: %s", dir)
@@ -219,131 +225,42 @@ func loadFixture(dir string) (string, error) {
 		fmt.Fprintf(&sb, "## File: %s\n\n%s\n\n", rel, string(content))
 		return nil
 	})
-	if err != nil {
-		return "", err
-	}
-	return sb.String(), nil
+	return sb.String(), err
 }
 
-// buildDataset constructs the eval cases. If fixture is non-empty, runs only that fixture.
-func buildDataset(fixturesDir, fixture string) []eval.Case[ChainInput, string] {
+func buildDataset(fixturesDir, fixture string) []EvalCase {
 	all := allFixtures()
-	if fixture != "" {
-		for _, c := range all {
-			if c.Input.Fixture == fixture {
-				return []eval.Case[ChainInput, string]{c}
-			}
+	if fixture == "" {
+		return all
+	}
+	for _, c := range all {
+		if c.Input.Fixture == fixture {
+			return []EvalCase{c}
 		}
-		fmt.Fprintf(os.Stderr, "chain-eval: fixture '%s' not found\n", fixture)
-		return nil
 	}
-	return all
+	fmt.Fprintf(os.Stderr, "chain-eval: fixture '%s' not found\n", fixture)
+	return nil
 }
 
-// allFixtures defines the 7 eval cases with their commands and expected values.
-func allFixtures() []eval.Case[ChainInput, string] {
-	return []eval.Case[ChainInput, string]{
-		{
-			Input: ChainInput{
-				Command: "/chain next",
-				Fixture: "tdd_approved_no_epic",
-				Expected: ChainExpected{
-					PriorityStep: 6,
-					IconMap: map[string]string{
-						"PRD": "✅",
-						"FDD": "✅",
-						"TDD": "✅",
-					},
-				},
-			},
-		},
-		{
-			Input: ChainInput{
-				Command: "/chain next",
-				Fixture: "pomo_pending",
-				Expected: ChainExpected{
-					PriorityStep: 1,
-					IconMap: map[string]string{
-						"PRD":  "✅",
-						"FDD":  "✅",
-						"TDD":  "✅",
-						"Epic": "🔴",
-					},
-				},
-			},
-		},
-		{
-			Input: ChainInput{
-				Command: "/chain validate",
-				Fixture: "release_gate_violation",
-				Expected: ChainExpected{
-					Violations: []string{"release gate", "missing"},
-					IconMap: map[string]string{
-						"PRD": "✅",
-						"FDD": "✅",
-					},
-				},
-			},
-		},
-		{
-			Input: ChainInput{
-				Command: "/chain next",
-				Fixture: "design_check_blocked",
-				Expected: ChainExpected{
-					PriorityStep: 4,
-					IconMap: map[string]string{
-						"PRD": "✅",
-						"FDD": "🔴",
-					},
-				},
-			},
-		},
-		{
-			Input: ChainInput{
-				Command: "/chain next",
-				Fixture: "design_check_clear",
-				Expected: ChainExpected{
-					PriorityStep: 5,
-					IconMap: map[string]string{
-						"PRD": "✅",
-						"FDD": "✅",
-					},
-				},
-			},
-		},
-		{
-			Input: ChainInput{
-				Command: "/chain next",
-				Fixture: "batch_dispatch_ready",
-				Expected: ChainExpected{
-					PriorityStep: 7,
-					IconMap: map[string]string{
-						"PRD":  "✅",
-						"FDD":  "✅",
-						"TDD":  "✅",
-						"Epic": "🟡",
-					},
-				},
-			},
-		},
-		{
-			Input: ChainInput{
-				Command: "/chain status",
-				Fixture: "all_approved",
-				Expected: ChainExpected{
-					IconMap: map[string]string{
-						"PRD":  "✅",
-						"FDD":  "✅",
-						"TDD":  "✅",
-						"Epic": "✅",
-					},
-				},
-			},
-		},
+func allFixtures() []EvalCase {
+	return []EvalCase{
+		{Input: ChainInput{Command: "/chain next", Fixture: "tdd_approved_no_epic",
+			Expected: ChainExpected{PriorityStep: 6, IconMap: map[string]string{"PRD": "✅", "FDD": "✅", "TDD": "✅"}}}},
+		{Input: ChainInput{Command: "/chain next", Fixture: "pomo_pending",
+			Expected: ChainExpected{PriorityStep: 1, IconMap: map[string]string{"PRD": "✅", "FDD": "✅", "TDD": "✅", "Epic": "🔴"}}}},
+		{Input: ChainInput{Command: "/chain validate", Fixture: "release_gate_violation",
+			Expected: ChainExpected{Violations: []string{"release gate", "missing"}, IconMap: map[string]string{"PRD": "✅", "FDD": "✅"}}}},
+		{Input: ChainInput{Command: "/chain next", Fixture: "design_check_blocked",
+			Expected: ChainExpected{PriorityStep: 4, IconMap: map[string]string{"PRD": "✅", "FDD": "🔴"}}}},
+		{Input: ChainInput{Command: "/chain next", Fixture: "design_check_clear",
+			Expected: ChainExpected{PriorityStep: 5, IconMap: map[string]string{"PRD": "✅", "FDD": "✅"}}}},
+		{Input: ChainInput{Command: "/chain next", Fixture: "batch_dispatch_ready",
+			Expected: ChainExpected{PriorityStep: 7, IconMap: map[string]string{"PRD": "✅", "FDD": "✅", "TDD": "✅", "Epic": "🟡"}}}},
+		{Input: ChainInput{Command: "/chain status", Fixture: "all_approved",
+			Expected: ChainExpected{IconMap: map[string]string{"PRD": "✅", "FDD": "✅", "TDD": "✅", "Epic": "✅"}}}},
 	}
 }
 
-// scoreCollector accumulates per-dimension scores across parallel fixture runs.
 type scoreCollector struct {
 	mu    sync.Mutex
 	byDim map[string][]float64
@@ -369,39 +286,18 @@ func (c *scoreCollector) avg(dim string) (float64, bool) {
 	return sum / float64(len(vals)), true
 }
 
-// collectingScorers wraps the three scorer functions so they also record to the collector.
-func collectingScorers(coll *scoreCollector) []eval.Scorer[ChainInput, string] {
-	wrap := func(dim string, fn func(context.Context, eval.TaskResult[ChainInput, string]) (eval.Scores, error)) eval.ScoreFunc[ChainInput, string] {
-		return func(ctx context.Context, r eval.TaskResult[ChainInput, string]) (eval.Scores, error) {
-			scores, err := fn(ctx, r)
-			if err == nil && len(scores) > 0 {
-				coll.record(dim, scores[0].Score)
-			}
-			return scores, err
-		}
-	}
-	return []eval.Scorer[ChainInput, string]{
-		eval.NewScorer("next_action", wrap("next_action", scoreNextAction)),
-		eval.NewScorer("validate_recall", wrap("validate_recall", scoreValidateRecall)),
-		eval.NewScorer("icon_accuracy", wrap("icon_accuracy", scoreIconAccuracy)),
-	}
-}
-
-// dryRun validates fixtures and prompt existence without calling any external APIs.
-// Exits 0 on success, 1 if any fixture directory is missing or unreadable.
 func dryRun(cfg runConfig) int {
 	fixturesDir := os.Getenv("CHAIN_FIXTURES_DIR")
 	if fixturesDir == "" {
 		fixturesDir = "cmd/chain-eval/fixtures"
 	}
-
 	promptsDir := os.Getenv("CHAIN_PROMPTS_DIR")
 	if promptsDir == "" {
 		promptsDir = "docs/core/prompts"
 	}
 	promptPath := filepath.Join(promptsDir, "command_chain.md")
 	if _, err := os.Stat(promptPath); err != nil {
-		fmt.Fprintf(os.Stderr, "chain-eval: WARN: prompt file not found: %s (required for real runs)\n", promptPath)
+		fmt.Fprintf(os.Stderr, "chain-eval: WARN: prompt file not found: %s\n", promptPath)
 	} else {
 		fmt.Printf("chain-eval: prompt OK: %s\n", promptPath)
 	}
@@ -411,7 +307,6 @@ func dryRun(cfg runConfig) int {
 		fmt.Fprintln(os.Stderr, "chain-eval: no fixtures to run")
 		return 1
 	}
-
 	failed := 0
 	for _, c := range cases {
 		dir := filepath.Join(fixturesDir, c.Input.Fixture)
@@ -423,7 +318,6 @@ func dryRun(cfg runConfig) int {
 		}
 		fmt.Printf("chain-eval: OK   fixture '%s' (%d chars)\n", c.Input.Fixture, len(content))
 	}
-
 	fmt.Printf("\n%d/%d fixtures ready", len(cases)-failed, len(cases))
 	if failed > 0 {
 		fmt.Printf(" (%d missing)\n", failed)
