@@ -1,0 +1,12 @@
+{
+  "command": "/chain next",
+  "source": "flowbench_adapted",
+  "difficulty": "standard",
+  "expected": {
+    "priority_step": 8,
+    "violations": [
+      "blocked",
+      "gate"
+    ]
+  }
+}

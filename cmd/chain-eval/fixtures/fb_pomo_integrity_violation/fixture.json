@@ -1,0 +1,12 @@
+{
+  "command": "/chain validate",
+  "source": "flowbench_adapted",
+  "difficulty": "hard",
+  "expected": {
+    "violations": [
+      "integrity violation",
+      "resolved",
+      "pending"
+    ]
+  }
+}

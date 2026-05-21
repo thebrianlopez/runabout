@@ -27,6 +27,9 @@ var judgeRubrics = map[Dimension]string{
 	DimIconAccuracy: `Do the status icons in the response correctly reflect the artifact states shown in the documents? Score 5 if every artifact icon matches its expected state. Score 3 if more than 75% are correct. Score 1 if fewer than 50% are correct or no icons are present.`,
 }
 
+// judgeBaseURL is the HF Inference API base. Overridable in tests via httptest.
+var judgeBaseURL = "https://api-inference.huggingface.co"
+
 // judgeScore calls the Prometheus judge via HF Inference API and returns a normalized
 // score 0.0-1.0 (Prometheus 1-5 → (score-1)/4). On error: returns 0.0, non-fatal.
 func judgeScore(ctx context.Context, output string, dim Dimension) (float64, error) {
@@ -51,7 +54,7 @@ func judgeScore(ctx context.Context, output string, dim Dimension) (float64, err
 		},
 	})
 
-	url := fmt.Sprintf("https://api-inference.huggingface.co/models/%s", model)
+	url := fmt.Sprintf("%s/models/%s", judgeBaseURL, model)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0.0, fmt.Errorf("judge request: %w", err)

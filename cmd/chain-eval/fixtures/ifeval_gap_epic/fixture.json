@@ -1,0 +1,11 @@
+{
+  "command": "/chain status",
+  "source": "ifeval_adapted",
+  "difficulty": "standard",
+  "expected": {
+    "icon_map": {
+      "TDD": "\u2705",
+      "Epic": "\u26a0"
+    }
+  }
+}

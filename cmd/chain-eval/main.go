@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +31,7 @@ func rootCmd() *cobra.Command {
 		flagMinScore float64
 		flagSecrets  []string
 		flagDryRun   bool
+		flagFromHub  bool
 	)
 
 	cmd := &cobra.Command{
@@ -39,6 +44,7 @@ func rootCmd() *cobra.Command {
 				minScore: flagMinScore,
 				secrets:  flagSecrets,
 				dryRun:   flagDryRun,
+				fromHub:  flagFromHub,
 			}
 			os.Exit(run(cmd.Context(), cfg))
 			return nil
@@ -50,6 +56,7 @@ func rootCmd() *cobra.Command {
 	cmd.Flags().Float64Var(&flagMinScore, "min-score", 0.85, "Minimum passing score per dimension")
 	cmd.Flags().StringArrayVar(&flagSecrets, "secret", nil, "AWS Secrets Manager secret ARN (repeatable); each secret must be a JSON object whose keys are set as env vars")
 	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Validate fixtures and prompt without calling any APIs")
+	cmd.Flags().BoolVar(&flagFromHub, "from-hub", false, "Load fixtures from HF Hub (HF_FIXTURES_REPO) with local fallback")
 
 	return cmd
 }
@@ -60,6 +67,7 @@ type runConfig struct {
 	minScore float64
 	secrets  []string
 	dryRun   bool
+	fromHub  bool
 }
 
 func run(ctx context.Context, cfg runConfig) int {
@@ -98,6 +106,11 @@ func run(ctx context.Context, cfg runConfig) int {
 	}
 
 	cases := buildDataset(fixturesDir, cfg.fixture)
+	if cfg.fromHub {
+		if hub := loadHubFixtures(ctx); len(hub) > 0 {
+			cases = mergeFixtures(cases, hub)
+		}
+	}
 	if len(cases) == 0 {
 		fmt.Fprintln(os.Stderr, "chain-eval: no fixtures to run")
 		return 2
@@ -228,8 +241,82 @@ func loadFixture(dir string) (string, error) {
 	return sb.String(), err
 }
 
+// loadHubFixtures downloads fixture metadata from HF Hub (HF_FIXTURES_REPO env var).
+// Returns empty slice on any error  -  caller falls back to local fixtures (non-fatal).
+func loadHubFixtures(ctx context.Context) []EvalCase {
+	repo := os.Getenv("HF_FIXTURES_REPO")
+	if repo == "" {
+		return nil
+	}
+	apiKey := os.Getenv("HUGGINGFACE_API_KEY")
+	url := fmt.Sprintf("%s/datasets/%s/resolve/main/fixtures.jsonl", hubBaseURL, repo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ hub fixtures unavailable, falling back to local CHAIN_FIXTURES_DIR\n")
+		return nil
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "⚠ hub fixtures unavailable, falling back to local CHAIN_FIXTURES_DIR\n")
+		if resp != nil {
+			resp.Body.Close() //nolint:errcheck
+		}
+		return nil
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	var cases []EvalCase
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var meta FixtureMeta
+		if err := json.Unmarshal(line, &meta); err != nil || meta.Command == "" {
+			continue
+		}
+		// Hub fixtures use fixture name from meta; state loaded from local fallback dir if present.
+		name := meta.Source + "_" + strings.ReplaceAll(meta.Command, "/", "")
+		cases = append(cases, EvalCase{Input: ChainInput{
+			Command:  meta.Command,
+			Fixture:  name,
+			Expected: meta.Expected,
+		}})
+	}
+	return cases
+}
+
+// mergeFixtures merges hub fixtures into local cases, deduplicating by fixture name.
+func mergeFixtures(local, hub []EvalCase) []EvalCase {
+	seen := make(map[string]bool, len(local))
+	for _, c := range local {
+		seen[c.Input.Fixture] = true
+	}
+	merged := append([]EvalCase(nil), local...)
+	for _, c := range hub {
+		if !seen[c.Input.Fixture] {
+			merged = append(merged, c)
+			seen[c.Input.Fixture] = true
+		}
+	}
+	return merged
+}
+
+// FixtureMeta is loaded from fixture.json in each discovered fixture directory.
+type FixtureMeta struct {
+	Command    string        `json:"command"`
+	Source     string        `json:"source"`     // hand_crafted | flowbench_adapted | ifeval_adapted
+	Difficulty string        `json:"difficulty"` // standard | hard
+	Expected   ChainExpected `json:"expected"`
+}
+
 func buildDataset(fixturesDir, fixture string) []EvalCase {
-	all := allFixtures()
+	all := append(hardcodedFixtures(), discoverFixtures(fixturesDir)...)
 	if fixture == "" {
 		return all
 	}
@@ -242,7 +329,41 @@ func buildDataset(fixturesDir, fixture string) []EvalCase {
 	return nil
 }
 
-func allFixtures() []EvalCase {
+// discoverFixtures scans fixturesDir for subdirectories containing fixture.json
+// and returns an EvalCase for each one found.
+func discoverFixtures(fixturesDir string) []EvalCase {
+	entries, err := os.ReadDir(fixturesDir)
+	if err != nil {
+		return nil
+	}
+	var cases []EvalCase
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		metaPath := filepath.Join(fixturesDir, e.Name(), "fixture.json")
+		data, err := os.ReadFile(metaPath)
+		if err != nil {
+			continue // no fixture.json, skip
+		}
+		var meta FixtureMeta
+		if err := json.Unmarshal(data, &meta); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ fixture '%s': bad fixture.json: %v - skipped\n", e.Name(), err)
+			continue
+		}
+		if meta.Command == "" {
+			continue
+		}
+		cases = append(cases, EvalCase{Input: ChainInput{
+			Command:  meta.Command,
+			Fixture:  e.Name(),
+			Expected: meta.Expected,
+		}})
+	}
+	return cases
+}
+
+func hardcodedFixtures() []EvalCase {
 	return []EvalCase{
 		{Input: ChainInput{Command: "/chain next", Fixture: "tdd_approved_no_epic",
 			Expected: ChainExpected{PriorityStep: 6, IconMap: map[string]string{"PRD": "✅", "FDD": "✅", "TDD": "✅"}}}},

@@ -1,0 +1,11 @@
+{
+  "command": "/chain design-check",
+  "source": "flowbench_adapted",
+  "difficulty": "hard",
+  "expected": {
+    "violations": [
+      "not yet approved",
+      "in review"
+    ]
+  }
+}

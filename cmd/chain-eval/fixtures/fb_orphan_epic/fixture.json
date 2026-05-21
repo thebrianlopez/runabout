@@ -1,0 +1,11 @@
+{
+  "command": "/chain status",
+  "source": "flowbench_adapted",
+  "difficulty": "standard",
+  "expected": {
+    "violations": [
+      "orphan",
+      "upstream"
+    ]
+  }
+}

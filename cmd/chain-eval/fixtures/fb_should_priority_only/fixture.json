@@ -1,0 +1,8 @@
+{
+  "command": "/chain next",
+  "source": "flowbench_adapted",
+  "difficulty": "hard",
+  "expected": {
+    "priority_step": 4
+  }
+}

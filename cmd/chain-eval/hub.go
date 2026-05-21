@@ -23,6 +23,9 @@ type ResultRow struct {
 	ScoredAt       string  `json:"scored_at"`
 }
 
+// hubBaseURL is the HF Hub API base. Overridable in tests via httptest.
+var hubBaseURL = "https://huggingface.co"
+
 // hubPush appends a JSONL row to the HF Hub dataset. Non-fatal: errors are logged by
 // the caller; the CI gate exit code is never affected by push failures.
 func hubPush(ctx context.Context, row ResultRow) error {
@@ -52,7 +55,7 @@ func hubPush(ctx context.Context, row ResultRow) error {
 	}
 	body, _ := json.Marshal(payload)
 
-	url := fmt.Sprintf("https://huggingface.co/api/datasets/%s/commit/main", repo)
+	url := fmt.Sprintf("%s/api/datasets/%s/commit/main", hubBaseURL, repo)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("hub request: %w", err)
