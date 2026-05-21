@@ -833,6 +833,13 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		)
 	}
 
+	// EPIC-127 F5: inject user-applied tags as explicit user-intent signal.
+	// Appended after all preambles so tag context follows the profile rubric intro.
+	// formatUserTags returns "" for nil/empty - no prompt change (backward compatible).
+	if tagSection := formatUserTags(req.UserTags); tagSection != "" {
+		sysPrompt += tagSection
+	}
+
 	// EPIC-079 M3: use vision evaluator for image shares with a readable file.
 	// EPIC-080 M7: when image file is absent, log degradation  -  the image is
 	// not recoverable from the queue row after the HTTP handler completes.
