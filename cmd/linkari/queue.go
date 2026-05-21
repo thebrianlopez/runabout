@@ -73,6 +73,7 @@ type QueueItem struct {
 	ErrorReason string `json:"error_reason,omitempty"` // EPIC-111 F2: terminal failure reason; populated for status=failed
 	ContentHash string `json:"content_hash,omitempty"` // EPIC-111 F3: SHA-256 hex of raw fetched bytes (set at intake)
 	TraceID     string `json:"trace_id,omitempty"`     // EPIC-111 F3: UUID v4 persisted at intake; immutable across retries
+	UserTags    string `json:"user_tags,omitempty"`    // EPIC-149 F2: user-supplied tags (JSON array)
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -237,10 +238,20 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		// EPIC-111 F3 M8: replay-safe fields for content drift detection and event correlation.
 		"ALTER TABLE queue ADD COLUMN content_hash TEXT DEFAULT ''",
 		"ALTER TABLE queue ADD COLUMN trace_id TEXT DEFAULT ''",
+		// EPIC-149: user-applied tags from share-time (JSON array).
+		"ALTER TABLE queue ADD COLUMN user_tags TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
 	}
+
+	// EPIC-149: tag inventory table for ranked suggestions.
+	db.Exec(`CREATE TABLE IF NOT EXISTS tags (
+		name         TEXT PRIMARY KEY,
+		use_count    INTEGER NOT NULL DEFAULT 0,
+		last_used_at TEXT NOT NULL DEFAULT '',
+		created_at   TEXT NOT NULL DEFAULT ''
+	)`)
 
 	// EPIC-072 M6: clusters table.
 	db.Exec(`CREATE TABLE IF NOT EXISTS clusters (
@@ -1395,9 +1406,13 @@ func (q *Queue) ScoreByURL(url string, score int, verdict, tags, profile, slug, 
 
 	if len(relayed) > 0 {
 		id := relayed[0].ID
+		// Include profile in the UPDATE so that auto-classified profiles (set in
+		// scoreAsync after enqueue) are persisted on the queue row. The enqueued
+		// row may carry an empty profile when the caller did not know the profile
+		// at share time; the scoring path resolves it and passes it here.
 		_, err = q.db.Exec(
-			"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=?, prompt_hash=?, prompt_version=? WHERE id=?",
-			score, tags, verdict, slug, now, rubricJSON, promptHashVal, promptVersionVal, id,
+			"UPDATE queue SET status='scored', score=?, tags=?, verdict=?, slug=?, scored_at=?, rubric_scores=?, prompt_hash=?, prompt_version=?, profile=? WHERE id=?",
+			score, tags, verdict, slug, now, rubricJSON, promptHashVal, promptVersionVal, profile, id,
 		)
 		if err != nil {
 			return nil, false, fmt.Errorf("ScoreByURL update: %w", err)

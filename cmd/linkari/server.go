@@ -87,7 +87,10 @@ type ShareRequest struct {
 	RelativePath   string `json:"relative_path,omitempty"`
 	Filename       string `json:"filename,omitempty"`
 
-	// Internal fields — not serialized from JSON.
+	// EPIC-149: user-applied tags from share-time UI.
+	UserTags []string `json:"user_tags,omitempty"`
+
+	// Internal fields  -  not serialized from JSON.
 	AudioPath        string `json:"-"` // EPIC-067: temp file path for uploaded audio
 	QueueRowID       int64  `json:"-"` // EPIC-067: queue row ID for audio scoring (no URL to match on)
 	OriginalFilename string `json:"-"` // EPIC-071: original filename from multipart upload
@@ -102,7 +105,7 @@ type ShareRequest struct {
 //
 // EPIC-077 M1: ClassifySource reflects the pre-enqueue synchronous cascade
 // stage that determined the profile (e.g. "intent_metadata", "url_domain",
-// "caller"). Always populated — the fast cascade runs synchronously before
+// "caller"). Always populated  -  the fast cascade runs synchronously before
 // Enqueue. The async Haiku content classification in scoreURLAsync may
 // override the profile after this response is sent; the final classify_source
 // is surfaced via /queue/{id} (EPIC-077 M6).
@@ -116,6 +119,7 @@ type ShareResponse struct {
 	Duplicate       bool   `json:"duplicate,omitempty"`        // EPIC-078 M5: true when a recent identical file share was found
 	Prefiltered     bool   `json:"prefiltered,omitempty"`      // EPIC-001 M4: true when share was rejected before scoring
 	PrefilterReason string `json:"prefilter_reason,omitempty"` // EPIC-001 M4: machine-readable reason for pre-filter skip
+	TagsPersisted   *bool  `json:"tags_persisted,omitempty"`   // EPIC-149: nil when no user_tags sent; true/false on persist outcome
 }
 
 // RingLog is a thread-safe ring buffer that captures log lines and
@@ -228,7 +232,7 @@ type Server struct {
 
 	// EPIC-013 M3: Bluesky AT Protocol session. nil until POST /auth/bluesky succeeds.
 	bskyClient *BlueskyClient
-	// EPIC-051 M3: lastDigestPush deleted — throttle state lives in SQL via
+	// EPIC-051 M3: lastDigestPush deleted  -  throttle state lives in SQL via
 	// Queue.EnqueueDigestIfDue. Do not re-add in-memory throttle state here.
 
 	// EPIC-001 M3: IP blocklist and CORS origins.
@@ -463,7 +467,7 @@ func (s *Server) Mux() http.Handler {
 }
 
 // FunnelMux returns a restricted mux for the public Funnel listener.
-// Only explicitly allowlisted routes are registered — everything else
+// Only explicitly allowlisted routes are registered  -  everything else
 // returns 404 to scanners. Local-only endpoints (/healthz, /logs,
 // /logs/stream, /notify) are excluded.
 // Middleware chain: traceMiddleware → funnelCORS → blocklist → funnelAuthGuard → shieldMiddleware → mux
@@ -480,7 +484,7 @@ func (s *Server) FunnelMux() http.Handler {
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the status code for
-// request logging. Flush/Hijack/Push are intentionally not implemented —
+// request logging. Flush/Hijack/Push are intentionally not implemented  - 
 // /logs/stream (the only SSE endpoint) writes its headers explicitly and
 // does not require a hijackable wrapper; the default 200 default is fine.
 type statusRecorder struct {
@@ -575,7 +579,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 // registerFunnelRoutes adds the public-facing route allowlist for the Funnel
 // listener. Only endpoints that external clients legitimately need are
-// registered — everything else (e.g. /notify, /admin/invite, /push/test)
+// registered  -  everything else (e.g. /notify, /admin/invite, /push/test)
 // is excluded so scanners get 404.
 func (s *Server) registerFunnelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/share", s.handleShare)
@@ -603,7 +607,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auth — operator token or session token (EPIC-001).
+	// Auth  -  operator token or session token (EPIC-001).
 	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -637,7 +641,7 @@ func (s *Server) handleActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auth — operator token or session token (EPIC-001).
+	// Auth  -  operator token or session token (EPIC-001).
 	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -703,7 +707,7 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleHealthMinimal is the Funnel-safe health probe — returns only
+// handleHealthMinimal is the Funnel-safe health probe  -  returns only
 // {"status":"ok"} with no internal state. Registered on FunnelMux as /health.
 func (s *Server) handleHealthMinimal(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -844,7 +848,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate limit by real client IP — extracted from FunnelConn.Src on Funnel
+	// Rate limit by real client IP  -  extracted from FunnelConn.Src on Funnel
 	// connections, or RemoteAddr on local. Never trust X-Forwarded-For (GAP-5).
 	ip := realIPFromContext(r.Context(), r.RemoteAddr)
 	if !s.limiter.allow(ip) {
@@ -853,14 +857,14 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse — branch on Content-Type: multipart/form-data (EPIC-067 audio)
+	// Parse  -  branch on Content-Type: multipart/form-data (EPIC-067 audio)
 	// vs application/json (existing path).
 	var req ShareRequest
 	ct := r.Header.Get("Content-Type")
 	mediaType, _, _ := mime.ParseMediaType(ct)
 
 	if mediaType == "multipart/form-data" {
-		// EPIC-067: streaming multipart — 200MB limit applied on r.Body so
+		// EPIC-067: streaming multipart  -  200MB limit applied on r.Body so
 		// the audio part streams directly to disk via io.Copy (~36KB RAM per
 		// request instead of buffering the whole file in memory).
 		r.Body = http.MaxBytesReader(w, r.Body, maxAudioSize)
@@ -921,7 +925,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 					req.FileSize = n
 				}
 			case "date_added":
-				// EPIC-079 M5: DateAdded removed from ShareRequest — drain but ignore.
+				// EPIC-079 M5: DateAdded removed from ShareRequest  -  drain but ignore.
 				io.Copy(io.Discard, part)
 			case "exif_data":
 				// EPIC-107 M1: explicit discard makes intent clear vs. silent default: fallthrough.
@@ -937,6 +941,10 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			case "type":
 				b, _ := io.ReadAll(io.LimitReader(part, 64))
 				req.Type = string(b)
+			case "user_tags":
+				// EPIC-149: JSON-encoded array e.g. ["work","reading"]
+				b, _ := io.ReadAll(io.LimitReader(part, 4096))
+				_ = json.Unmarshal(b, &req.UserTags)
 			case "audio", "file":
 				req.OriginalFilename = part.FileName() // EPIC-071: preserve original filename
 				ext := filepath.Ext(part.FileName())
@@ -997,7 +1005,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 
 		// EPIC-078 M2: run screenshot detection synchronously after all
 		// multipart fields are populated. detectScreenshot was previously
-		// only called from the async scoring goroutine — non-MediaStore URIs
+		// only called from the async scoring goroutine  -  non-MediaStore URIs
 		// (e.g. Samsung Gallery) never set is_screenshot=true on the queue row.
 		detectScreenshot(&req)
 
@@ -1051,6 +1059,16 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// EPIC-149: normalize then validate user_tags before enqueue.
+	for i, tag := range req.UserTags {
+		req.UserTags[i] = normalizeTag(tag)
+	}
+	if err := validateUserTags(req.UserTags); err != nil {
+		slog.DebugContext(ctx, "share rejected: user_tags validation error", "error", err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// F1: domain-aware action routing fires before scoped-auth and before
 	// resolveShareAction. Ordering invariant:
 	//   1. resolveDomainRoute (URL pattern → override_action; all actions)
@@ -1071,7 +1089,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 
 	// EPIC-052: resolve (action, profile) provenance BEFORE any DB write so
 	// the share_action_resolved event lands even if the Enqueue below fails.
-	// The caller-wins invariant is enforced inside resolveShareAction — when
+	// The caller-wins invariant is enforced inside resolveShareAction  -  when
 	// s.shareHeuristicOverride is false (the default), received_action wins
 	// unconditionally. The resolved values are written back onto req so the
 	// queue row and downstream Route see the same resolution the event
@@ -1080,7 +1098,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	req.Action = resolution.ResolvedAction
 	req.Profile = resolution.ResolvedProfile
 
-	// EPIC-057: scoped-auth — verify the bearer token is authorized for
+	// EPIC-057: scoped-auth  -  verify the bearer token is authorized for
 	// the resolved action. Mobile tokens cannot invoke ginit_*; Jira tokens
 	// can only invoke ginit_*.
 	tokenKind, scopeOK := s.checkScopedAuth(bearer, req.Action)
@@ -1171,7 +1189,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// EPIC-085 M1: synchronous login-wall pre-filter. Moved from scoreAsync to
-	// handleShare so login-walled URLs are rejected before enqueue — no orphaned
+	// handleShare so login-walled URLs are rejected before enqueue  -  no orphaned
 	// queue rows, honest HTTP response to the client.
 	if req.Type == "url" && isLoginWallDomain(req.URL) {
 		slog.InfoContext(ctx, "share: login-wall domain pre-filtered",
@@ -1192,7 +1210,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, ShareResponse{
 			Status:          "ok",
-			Message:         "Login-walled site — not scored",
+			Message:         "Login-walled site  -  not scored",
 			Timestamp:       time.Now().UTC().Format(time.RFC3339),
 			ID:              pfID,
 			Prefiltered:     true,
@@ -1202,9 +1220,9 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// EPIC-087 M1: synchronous unsupported-pipeline pre-filter. Mirrors the
-	// login-wall pattern added in EPIC-085 M1 — reject before enqueue so no
+	// login-wall pattern added in EPIC-085 M1  -  reject before enqueue so no
 	// orphaned queue rows are created and the client gets an honest response.
-	// EPIC-009 M2: YouTube URLs bypass this gate — they match youTubeRE and
+	// EPIC-009 M2: YouTube URLs bypass this gate  -  they match youTubeRE and
 	// are routed to scoreYouTubeAsync by handleTemplate instead of being rejected.
 	// EPIC-001 M4: YouTube /post/ URLs are community posts (text/image, not video).
 	// They bypass the yt-dlp pipeline AND the unsupported-pipeline pre-filter so
@@ -1229,7 +1247,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, ShareResponse{
 			Status:          "ok",
-			Message:         "Video platform — not yet supported",
+			Message:         "Video platform  -  not yet supported",
 			Timestamp:       time.Now().UTC().Format(time.RFC3339),
 			ID:              pfID,
 			Prefiltered:     true,
@@ -1238,7 +1256,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enqueue for persistence (before routing — survives tmux failures).
+	// Enqueue for persistence (before routing  -  survives tmux failures).
 	// EPIC-057: actions with AutoScore=true are enqueued as pre-scored so the
 	// RelayedWatchdog never sweeps them.
 	var queueID int64
@@ -1266,17 +1284,42 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	// EPIC-067: thread queue row ID for audio scoring (no URL to match on).
 	req.QueueRowID = queueID
 
+	// EPIC-149: persist user_tags after enqueue; failure is non-fatal.
+	var tagsPersisted *bool
+	if len(req.UserTags) > 0 && s.queue != nil && queueID > 0 {
+		if err := validateUserTags(req.UserTags); err != nil {
+			slog.WarnContext(ctx, "share: user_tags validation failed",
+				"event_type", "user_tags_validation_failed",
+				"id", queueID, "error", err)
+			f := false
+			tagsPersisted = &f
+		} else if err := s.queue.persistUserTags(queueID, req.UserTags); err != nil {
+			slog.WarnContext(ctx, "share: user_tags persist failed",
+				"event_type", "user_tags_persist_failed",
+				"id", queueID, "error", err)
+			f := false
+			tagsPersisted = &f
+		} else {
+			slog.InfoContext(ctx, "share: user_tags persisted",
+				"event_type", "user_tags_persisted",
+				"id", queueID, "count", len(req.UserTags))
+			t := true
+			tagsPersisted = &t
+		}
+	}
+
 	// F2: KindCapture actions dispatch to captureAsync instead of router.Route.
 	// No LLM call is made for any KindCapture action (structural invariant).
 	if ac := s.router.LookupAction(req.Action); ac != nil && ac.Kind == KindCapture {
 		s.wg.Add(1)
 		go s.captureAsync(context.Background(), queueID, ac)
 		writeJSON(w, http.StatusOK, ShareResponse{
-			Status:    "ok",
-			Message:   "capture queued",
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-			ID:        queueID,
-			Slug:      urlToSlug(req.URL),
+			Status:        "ok",
+			Message:       "capture queued",
+			Timestamp:     time.Now().UTC().Format(time.RFC3339),
+			ID:            queueID,
+			Slug:          urlToSlug(req.URL),
+			TagsPersisted: tagsPersisted,
 		})
 		return
 	}
@@ -1285,7 +1328,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	result, err := s.router.Route(&req)
 	if err != nil {
 		s.emitShareEvent(&req, "failure", shareStart, "")
-		// If queue is active, return 200 "queued" instead of 500 —
+		// If queue is active, return 200 "queued" instead of 500  - 
 		// the replay goroutine will retry when tmux is available.
 		if s.queue != nil {
 			slog.InfoContext(ctx, "share queued: routing failed",
@@ -1301,6 +1344,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 				ID:             queueID,
 				Slug:           urlToSlug(req.URL),
 				ClassifySource: req.ClassifySource,
+				TagsPersisted:  tagsPersisted,
 			})
 			return
 		}
@@ -1313,7 +1357,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// EPIC-067: scoreAudioAsync now owns the temp file — disarm cleanup.
+	// EPIC-067: scoreAudioAsync now owns the temp file  -  disarm cleanup.
 	audioCleanup = ""
 
 	// Mark as relayed immediately since routing succeeded.
@@ -1340,6 +1384,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		ID:             queueID,
 		Slug:           urlToSlug(req.URL),
 		ClassifySource: req.ClassifySource,
+		TagsPersisted:  tagsPersisted,
 	})
 }
 
@@ -1986,7 +2031,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auth — same bearer token as other endpoints.
+	// Auth  -  same bearer token as other endpoints.
 	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -2052,7 +2097,7 @@ type testPushResponse struct {
 
 // handleTestPush synchronously fires a single FCM notification to the
 // currently-registered device, bypassing push_outbox, throttle, and
-// min-score gating. EPIC-056 M3. Diagnostic-only — must NEVER touch
+// min-score gating. EPIC-056 M3. Diagnostic-only  -  must NEVER touch
 // push_outbox or share the throttle state.
 func (s *Server) handleTestPush(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -2196,7 +2241,7 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 
 	// EPIC-059: removed redundant archive-threshold early return that predated
 	// EPIC-051's unification. EnqueueDigestIfDue already enforces notify_min_score
-	// and per-profile throttle — the old gate here silently dropped pushes for
+	// and per-profile throttle  -  the old gate here silently dropped pushes for
 	// profiles like "life" (threshold=-1).
 
 	if s.queue == nil {
@@ -2218,15 +2263,15 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 
 
 // firstSentence extracts the first sentence from text, truncating to maxLen.
-// It splits on ". ", "— ", or newline boundaries to find a natural break.
+// It splits on ". ", " -  ", or newline boundaries to find a natural break.
 func firstSentence(text string, maxLen int) string {
 	// Try natural sentence boundaries.
-	for _, sep := range []string{". ", " — ", "\n"} {
+	for _, sep := range []string{". ", "  -  ", "\n"} {
 		if idx := strings.Index(text, sep); idx > 0 && idx <= maxLen {
 			return text[:idx+1]
 		}
 	}
-	// No boundary found within limit — hard truncate.
+	// No boundary found within limit  -  hard truncate.
 	if len(text) > maxLen {
 		// Try to break at last space.
 		if sp := strings.LastIndex(text[:maxLen], " "); sp > maxLen/2 {
@@ -2258,7 +2303,7 @@ func validateRequest(req *ShareRequest) error {
 		}
 	case "":
 		// EPIC-003 M3: Android/Chrome clients may omit the type field. Allow when
-		// a URL is present — handler.go routes to the correct pipeline (YouTube or
+		// a URL is present  -  handler.go routes to the correct pipeline (YouTube or
 		// generic scoreAsync). Validate the URL field identically to type="url".
 		if req.URL == "" {
 			return fmt.Errorf("url field required when type is omitted")
@@ -2454,13 +2499,13 @@ func (s *Server) handleSyncLikedVideos(w http.ResponseWriter, r *http.Request) {
 // -- F2: captureAsync pipeline --
 
 // captureAsync is the dispatch path for KindCapture actions.
-// Runs in a detached goroutine — caller passes context.Background(), not r.Context().
+// Runs in a detached goroutine  -  caller passes context.Background(), not r.Context().
 // All terminal outcomes (success or failure) are written to the queue row.
 func (s *Server) captureAsync(ctx context.Context, id int64, cfg *ActionConfig) {
 	defer s.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("captureAsync panic", "id", id, "panic", r)
+			slog.ErrorContext(ctx, "captureAsync panic", "id", id, "panic", r)
 			if s.queue != nil {
 				_ = s.queue.MarkFailedWithReason(id, "capture_panic")
 			}
@@ -2480,8 +2525,13 @@ func (s *Server) captureAsync(ctx context.Context, id int64, cfg *ActionConfig) 
 
 	row, err := s.queue.GetByID(id)
 	if err != nil {
-		slog.Error("captureAsync: GetByID failed", "id", id, "error", err)
+		slog.ErrorContext(ctx, "captureAsync: GetByID failed", "id", id, "error", err)
 		return
+	}
+
+	ctx = linklog.WithTraceID(ctx, row.TraceID)
+	if row.TraceID == "" {
+		slog.WarnContext(ctx, "captureAsync: trace_id absent", "error_class", "trace_id_absent_in_capture", "id", id)
 	}
 
 	if pkgDomainRouter == nil {
@@ -2491,13 +2541,13 @@ func (s *Server) captureAsync(ctx context.Context, id int64, cfg *ActionConfig) 
 
 	content, ct, err := pkgDomainRouter.FetchWithFallback(ctx, row.URL)
 	if err != nil {
-		slog.Error("captureAsync: fetch failed", "id", id, "url", row.URL, "error", err)
+		slog.ErrorContext(ctx, "captureAsync: fetch failed", "id", id, "url", row.URL, "error", err)
 		_ = s.queue.MarkFailedWithReason(id, "capture_fetch_error")
 		return
 	}
 
 	if ct == ContentTypePlain {
-		// Structured content unavailable — fall back to scoreAsync scoring path.
+		// Structured content unavailable  -  fall back to scoreAsync scoring path.
 		if s.events != nil {
 			_ = s.events.Emit("capture_content_type_mismatch", map[string]interface{}{
 				"id":           id,
@@ -2545,7 +2595,7 @@ func (s *Server) captureAsync(ctx context.Context, id int64, cfg *ActionConfig) 
 	}
 
 	if err := s.queue.SetCaptured(id, artifactPath); err != nil {
-		slog.Error("captureAsync: SetCaptured failed", "id", id, "error", err)
+		slog.ErrorContext(ctx, "captureAsync: SetCaptured failed", "id", id, "error", err)
 		_ = s.queue.MarkFailedWithReason(id, "set_captured_db_error")
 		return
 	}
