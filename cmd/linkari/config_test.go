@@ -508,6 +508,16 @@ func TestMergeWithBuiltin_ParityWithEPIC050(t *testing.T) {
 // EPIC-051 M6: ReloadArchiveThresholdConfig integration test.
 
 func TestReloadArchiveThresholdConfig(t *testing.T) {
+	// Save and restore global config so this test doesn't corrupt ordering-dependent tests.
+	archiveThresholdMu.RLock()
+	saved := archiveThresholdCfg
+	archiveThresholdMu.RUnlock()
+	t.Cleanup(func() {
+		archiveThresholdMu.Lock()
+		archiveThresholdCfg = saved
+		archiveThresholdMu.Unlock()
+	})
+
 	// Reset cached state so this test is independent of ordering.
 	archiveThresholdMu.Lock()
 	archiveThresholdCfg = nil
