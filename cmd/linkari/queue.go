@@ -73,7 +73,9 @@ type QueueItem struct {
 	ErrorReason string `json:"error_reason,omitempty"` // EPIC-111 F2: terminal failure reason; populated for status=failed
 	ContentHash string `json:"content_hash,omitempty"` // EPIC-111 F3: SHA-256 hex of raw fetched bytes (set at intake)
 	TraceID     string `json:"trace_id,omitempty"`     // EPIC-111 F3: UUID v4 persisted at intake; immutable across retries
-	UserTags    string `json:"user_tags,omitempty"`    // EPIC-149 F2: user-supplied tags (JSON array)
+	UserTags     string `json:"user_tags,omitempty"`     // EPIC-149 F2: user-supplied tags (JSON array)
+	Intent       string `json:"intent,omitempty"`        // EPIC-154 F1: score|capture|transcribe
+	InferredTags string `json:"inferred_tags,omitempty"` // EPIC-154 F1: system-inferred tags (JSON array); never merged with UserTags
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -240,6 +242,9 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE queue ADD COLUMN trace_id TEXT DEFAULT ''",
 		// EPIC-149: user-applied tags from share-time (JSON array).
 		"ALTER TABLE queue ADD COLUMN user_tags TEXT DEFAULT ''",
+		// EPIC-154 F1: intent (score|capture|transcribe) and system-inferred tags.
+		"ALTER TABLE queue ADD COLUMN intent TEXT DEFAULT NULL",
+		"ALTER TABLE queue ADD COLUMN inferred_tags TEXT DEFAULT NULL",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -525,12 +530,12 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 	contentData := []byte(req.URL + req.Text)
 	contentHashVal := ContentHash(contentData)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size, slug, trace_id, content_hash)
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size, slug, trace_id, content_hash, intent, inferred_tags)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.URL, req.Text, req.Type, req.Action, req.Profile, now, req.Title,
 		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename, req.ClassifySource,
 		boolToInt(req.IsScreenshot), req.FileSize, urlToSlug(req.URL),
-		traceID, contentHashVal,
+		traceID, contentHashVal, req.Intent, req.InferredTagsJSON,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue: %w", err)

@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	textTemplate "text/template"
 	"time"
 
@@ -27,6 +28,44 @@ import (
 
 	"github.com/thebrianlopez/runabout/cmd/linkari/internal/linklog"
 )
+
+// actionCompatUsedTotal counts calls to the deprecated GET /actions endpoint.
+// EPIC-157 F4 M3.
+var actionCompatUsedTotal atomic.Int64
+
+// IntentItem represents a single visible intent in the GET /intents response.
+// EPIC-157 F4.
+type IntentItem struct {
+	ID           string   `json:"id"`
+	Label        string   `json:"label"`
+	Icon         string   `json:"icon"`
+	MimeTypes    []string `json:"mime_types"`
+	RequiresTags []string `json:"requires_tags,omitempty"`
+}
+
+// IntentsResponse is the JSON envelope for GET /intents.
+type IntentsResponse struct {
+	Intents []IntentItem `json:"intents"`
+}
+
+// staticIntents returns the 2 visible intent items (score, capture).
+// transcribe is not included - it is auto-selected server-side for audio MIME types.
+func staticIntents() []IntentItem {
+	return []IntentItem{
+		{
+			ID:        "score",
+			Label:     "Score",
+			Icon:      "star",
+			MimeTypes: []string{"text/plain", "text/html", "application/pdf", "*/*"},
+		},
+		{
+			ID:        "capture",
+			Label:     "Capture",
+			Icon:      "bookmark",
+			MimeTypes: []string{"text/plain", "text/html", "*/*"},
+		},
+	}
+}
 
 // maxPayloadSize limits request body to 64KB.
 const maxPayloadSize = 64 * 1024
@@ -90,6 +129,10 @@ type ShareRequest struct {
 	// EPIC-149: user-applied tags from share-time UI.
 	UserTags []string `json:"user_tags,omitempty"`
 
+	// EPIC-154 F1: intent field from client (score|capture|transcribe).
+	// When set, intent wins over action for routing; profile is dual-written for soak compat.
+	Intent string `json:"intent,omitempty"`
+
 	// Internal fields  -  not serialized from JSON.
 	AudioPath        string `json:"-"` // EPIC-067: temp file path for uploaded audio
 	QueueRowID       int64  `json:"-"` // EPIC-067: queue row ID for audio scoring (no URL to match on)
@@ -97,6 +140,7 @@ type ShareRequest struct {
 	ClassifySource       string `json:"-"` // EPIC-077 M1: cascade stage that won pre-enqueue classification
 	ForceContentClassify bool   `json:"-"` // EPIC-085 M2: per-action flag to always run content-LLM reclassification
 	ShortsRubricTemplate string `json:"-"` // EPIC-012 M8: Shorts-specific rubric override from ActionConfig
+	InferredTagsJSON     string `json:"-"` // EPIC-154 F1: system-inferred tags JSON; computed from profile lookup pre-enqueue
 }
 
 // ShareResponse is the structured JSON response.
@@ -551,6 +595,7 @@ func traceMiddleware(next http.Handler) http.Handler {
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/share", s.handleShare)
 	mux.HandleFunc("/actions", s.handleActions)
+	mux.HandleFunc("GET /intents", s.handleIntents) // EPIC-157 F4
 	mux.HandleFunc("/register", s.handleRegister)
 	mux.HandleFunc("/notify", s.handleNotify)
 	mux.HandleFunc("POST /push/test", s.handleTestPush)
@@ -686,11 +731,35 @@ func (s *Server) handleActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// EPIC-157 F4 M3: deprecated alias counter.
+	actionCompatUsedTotal.Add(1)
+	slog.InfoContext(ctx, "action_compat_used", "event_type", "action_compat_used")
+
 	actions := s.router.Actions()
 	slog.DebugContext(ctx, "returning actions", "count", len(actions))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(actions)
+}
+
+// handleIntents returns the 2 visible intent items (score, capture).
+// transcribe is intentionally absent - it is auto-selected for audio MIME types client-side.
+// EPIC-157 F4 M2.
+func (s *Server) handleIntents(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authenticateRequest(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	resp := IntentsResponse{Intents: staticIntents()}
+	slog.InfoContext(ctx, "intents_served", "count", len(resp.Intents))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
@@ -984,6 +1053,10 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 				// EPIC-149: JSON-encoded array e.g. ["work","reading"]
 				b, _ := io.ReadAll(io.LimitReader(part, 4096))
 				_ = json.Unmarshal(b, &req.UserTags)
+			case "intent":
+				// EPIC-154 F1: intent field from Android share sheet.
+				b, _ := io.ReadAll(io.LimitReader(part, 64))
+				req.Intent = strings.TrimSpace(string(b))
 			case "audio", "file":
 				req.OriginalFilename = part.FileName() // EPIC-071: preserve original filename
 				ext := filepath.Ext(part.FileName())
@@ -1108,6 +1181,19 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// EPIC-154 F1: validate intent field.
+	// intent wins over action (F4 CT-7): when intent is set, it takes priority.
+	if req.Intent != "" {
+		if !validIntents[req.Intent] {
+			slog.WarnContext(ctx, "intent_unknown",
+				"event_type", "intent_unknown",
+				"received_value", req.Intent,
+			)
+			writeError(w, http.StatusBadRequest, "intent must be score|capture|transcribe")
+			return
+		}
+	}
+
 	// F1: domain-aware action routing fires before scoped-auth and before
 	// resolveShareAction. Ordering invariant:
 	//   1. resolveDomainRoute (URL pattern → override_action; all actions)
@@ -1198,6 +1284,29 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			"phase":           "pre_enqueue",
 			"content_type":    req.Type,
 		})
+	}
+
+	// EPIC-154 F1: compute intent and inferred_tags before enqueue.
+	// intent wins over action (F4 CT-7); when not set, derive from profile.
+	if req.Intent == "" {
+		if intent, _, ok := profileToIntentLookup(req.Profile); ok {
+			req.Intent = intent
+		} else {
+			req.Intent = "score"
+		}
+	} else {
+		// intent was set by client: dual-write profile for soak compat.
+		if req.Profile == "" {
+			req.Profile = deriveProfileFromIntent(req.Intent, req.UserTags)
+		}
+	}
+	// Compute inferred_tags from profile (separate from user_tags invariant).
+	if _, inferredTags, ok := profileToIntentLookup(req.Profile); ok {
+		if tagBytes, err := json.Marshal(inferredTags); err == nil {
+			req.InferredTagsJSON = string(tagBytes)
+		}
+	} else {
+		req.InferredTagsJSON = "[]"
 	}
 
 	// EPIC-078 M5: pre-enqueue dedup for file shares. When the same filename
