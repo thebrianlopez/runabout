@@ -575,6 +575,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /sync/youtube-likedvideos", s.handleSyncLikedVideos)
 	// EPIC-096 F7: source health metrics.
 	mux.HandleFunc("GET /sources", s.handleSources)
+	// EPIC-150: tag inventory.
+	mux.HandleFunc("GET /tags", s.handleGetTags)
 }
 
 // registerFunnelRoutes adds the public-facing route allowlist for the Funnel
@@ -599,6 +601,8 @@ func (s *Server) registerFunnelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/invite", s.handleAuthInvite)
 	mux.HandleFunc("GET /health", s.handleHealthMinimal)
 	mux.HandleFunc("POST /telemetry", s.handleTelemetry)
+	// EPIC-150: tag inventory.
+	mux.HandleFunc("GET /tags", s.handleGetTags)
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
@@ -620,6 +624,41 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSources returns a JSON array of source health snapshots (EPIC-096 F7).
+// handleGetTags returns the tag inventory sorted by combined recency/frequency
+// score (EPIC-150). Accepts an optional `limit` query param (default 50, max 100).
+func (s *Server) handleGetTags(w http.ResponseWriter, r *http.Request) {
+	if !s.authenticateRequest(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	limit := 50
+	if lp := r.URL.Query().Get("limit"); lp != "" {
+		if n, err := strconv.Atoi(lp); err == nil {
+			limit = n
+		}
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	if s.queue == nil {
+		writeJSON(w, http.StatusOK, TagsResponse{Tags: []TagItem{}})
+		return
+	}
+
+	tags, err := s.queue.GetTags(limit)
+	if err != nil {
+		slog.Warn("GET /tags query failed", "event_type", "tags_query_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, TagsResponse{Tags: tags})
+}
+
 func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
