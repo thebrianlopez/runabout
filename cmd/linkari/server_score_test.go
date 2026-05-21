@@ -3,15 +3,15 @@ package main
 // EPIC-060 M4: end-to-end regression tests for the server-side scoring path.
 //
 // Coverage goals:
-//   1. scoreURLAsync happy path — queue row scored, archive fired, FCM enqueued.
-//   2. Unsupported pipeline URLs (YouTube, Spotify, etc.) are skipped — no eval call.
-//   3. Jina fetch error — no queue write, no eval call.
-//   4. Empty content after fetch — no queue write, no eval call.
-//   5. Eval failure — no queue write.
-//   6. Route() returns "Scoring — verdict via FCM" for uinit_* (ServerScore=true).
+//   1. scoreURLAsync happy path  -  queue row scored, archive fired, FCM enqueued.
+//   2. Unsupported pipeline URLs (YouTube, Spotify, etc.) are skipped  -  no eval call.
+//   3. Jina fetch error  -  no queue write, no eval call.
+//   4. Empty content after fetch  -  no queue write, no eval call.
+//   5. Eval failure  -  no queue write.
+//   6. Route() returns "Scoring  -  verdict via FCM" for uinit_* (ServerScore=true).
 //   7. Route() does NOT call scoreURLAsync for ginit_* (AutoScore, not ServerScore).
-//   8. Nil queue — scoreURLAsync runs eval but skips persistence silently.
-//   9. fetchJinaContent timeout — context deadline cancels the request.
+//   8. Nil queue  -  scoreURLAsync runs eval but skips persistence silently.
+//   9. fetchJinaContent timeout  -  context deadline cancels the request.
 
 import (
 	"context"
@@ -94,7 +94,7 @@ func runScoreAsyncSync(t *testing.T, rawURL, profile string, q *Queue, eval Eval
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Log("runScoreAsyncSync: timed out waiting for scoreURLAsync (eval never called — expected for skip/early-exit paths)")
+		t.Log("runScoreAsyncSync: timed out waiting for scoreURLAsync (eval never called  -  expected for skip/early-exit paths)")
 	}
 	// Give the goroutine a moment to finish post-eval work (ScoreByURL, Archive, etc.).
 	time.Sleep(50 * time.Millisecond)
@@ -179,7 +179,7 @@ func TestScoreURLAsync_HappyPath(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("expected scored/archived row in queue — statuses: %v",
+		t.Errorf("expected scored/archived row in queue  -  statuses: %v",
 			func() []string {
 				var ss []string
 				for _, it := range items {
@@ -193,10 +193,10 @@ func TestScoreURLAsync_HappyPath(t *testing.T) {
 	}
 }
 
-// 2. Unsupported pipeline (YouTube) — eval is never called.
+// 2. Unsupported pipeline (YouTube)  -  eval is never called.
 func TestScoreURLAsync_UnsupportedPipelineSkipped(t *testing.T) {
 	eval := &stubEvaluator{score: 90, verdict: "great"}
-	// No Jina server — if it tried to fetch, the test would fail with connection refused.
+	// No Jina server  -  if it tried to fetch, the test would fail with connection refused.
 	runScoreAsyncSkip(t, "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "eng", nil, eval)
 	if atomic.LoadInt32(&eval.calls) != 0 {
 		t.Errorf("eval called %d times, want 0 for unsupported pipeline", atomic.LoadInt32(&eval.calls))
@@ -248,7 +248,7 @@ func TestScoreURLAsync_NewUnsupportedPlatformsSkipped(t *testing.T) {
 	}
 }
 
-// 3. Jina fetch error (non-2xx) — eval is never called, no queue write.
+// 3. Jina fetch error (non-2xx)  -  eval is never called, no queue write.
 func TestScoreURLAsync_FetchErrorSkipsEval(t *testing.T) {
 	srv := jinaBodyServer(t, http.StatusInternalServerError, "error")
 	installJinaServer(t, srv)
@@ -260,7 +260,7 @@ func TestScoreURLAsync_FetchErrorSkipsEval(t *testing.T) {
 	}
 }
 
-// 4. Empty content after fetch — eval skipped, no queue write.
+// 4. Empty content after fetch  -  eval skipped, no queue write.
 func TestScoreURLAsync_EmptyContentSkipsEval(t *testing.T) {
 	srv := jinaBodyServer(t, http.StatusOK, "   \n\t  ")
 	installJinaServer(t, srv)
@@ -272,7 +272,7 @@ func TestScoreURLAsync_EmptyContentSkipsEval(t *testing.T) {
 	}
 }
 
-// 5. Eval failure — no queue write.
+// 5. Eval failure  -  no queue write.
 func TestScoreURLAsync_EvalErrorSkipsQueue(t *testing.T) {
 	srv := jinaBodyServer(t, http.StatusOK, "Some real content here worth scoring.")
 	installJinaServer(t, srv)
@@ -284,7 +284,7 @@ func TestScoreURLAsync_EvalErrorSkipsQueue(t *testing.T) {
 	if atomic.LoadInt32(&eval.calls) != 1 {
 		t.Errorf("eval.calls = %d, want 1 (eval was attempted)", atomic.LoadInt32(&eval.calls))
 	}
-	// Queue should be empty — no row written on eval failure.
+	// Queue should be empty  -  no row written on eval failure.
 	items, err := q.List("", 20)
 	if err != nil {
 		t.Fatalf("list: %v", err)
@@ -294,7 +294,7 @@ func TestScoreURLAsync_EvalErrorSkipsQueue(t *testing.T) {
 	}
 }
 
-// 6. Nil queue — pipeline runs to completion without panicking.
+// 6. Nil queue  -  pipeline runs to completion without panicking.
 func TestScoreURLAsync_NilQueueNoPanic(t *testing.T) {
 	srv := jinaBodyServer(t, http.StatusOK, "Interesting content about distributed systems.")
 	installJinaServer(t, srv)
@@ -304,7 +304,7 @@ func TestScoreURLAsync_NilQueueNoPanic(t *testing.T) {
 	if atomic.LoadInt32(&eval.calls) != 1 {
 		t.Errorf("eval.calls = %d, want 1", atomic.LoadInt32(&eval.calls))
 	}
-	// No panic — test completes normally.
+	// No panic  -  test completes normally.
 }
 
 // 7. Route() returns server-score sentinel for uinit_auto.
@@ -322,7 +322,7 @@ func TestRoute_UinitAutoReturnsServerScoreSentinel(t *testing.T) {
 		t.Fatalf("Route: %v", err)
 	}
 	if !strings.Contains(msg, "Scoring") || !strings.Contains(msg, "FCM") {
-		t.Errorf("Route message = %q, want 'Scoring — verdict via FCM'", msg)
+		t.Errorf("Route message = %q, want 'Scoring  -  verdict via FCM'", msg)
 	}
 }
 
@@ -361,7 +361,7 @@ func TestBuiltinConfig_UinitAutoIsServerScore(t *testing.T) {
 //     an error (not a block forever). Uses a very short deadline so the test
 //     runs quickly.
 func TestFetchJinaContent_TimeoutReturnsError(t *testing.T) {
-	// Hang server — never writes a response.
+	// Hang server  -  never writes a response.
 	hung := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 	}))
@@ -439,7 +439,7 @@ func TestClassifyURLProfile(t *testing.T) {
 		{"https://www.zara.com/us/dress", "fashion", true},
 		{"https://www.tourismboard.bz/retire", "travel", true},  // new entry
 		{"https://retirement.gov/benefits", "life", true},        // new entry
-		{"https://www.example.com/unknown", "eng", false},        // fallback — not matched
+		{"https://www.example.com/unknown", "eng", false},        // fallback  -  not matched
 		{"https://www.reddit.com/r/golang", "eng", false},        // fallback
 	}
 	for _, c := range cases {
@@ -454,7 +454,7 @@ func TestClassifyURLProfile(t *testing.T) {
 }
 
 // EPIC-061 M3: classificationPreamble format.
-// EPIC-015 M2: updated to pass ContentTypePlain (zero regression — output unchanged).
+// EPIC-015 M2: updated to pass ContentTypePlain (zero regression  -  output unchanged).
 func TestClassificationPreamble(t *testing.T) {
 	p := classificationPreamble("eng", "https://github.com/golang/go", "url_domain", ContentTypePlain)
 	if !strings.Contains(p, "eng") || !strings.Contains(p, "github.com") || !strings.Contains(p, "url_domain") {
@@ -509,7 +509,7 @@ func TestScoreURLAsync_AutoClassifiesEmptyProfile(t *testing.T) {
 
 // Content classification: when domain falls through, Haiku classifies content.
 func TestScoreURLAsync_ContentClassifiesFallbackProfile(t *testing.T) {
-	srv := jinaBodyServer(t, 200, "Belize tourism board retirement program — live abroad in paradise.")
+	srv := jinaBodyServer(t, 200, "Belize tourism board retirement program  -  live abroad in paradise.")
 	installJinaServer(t, srv)
 	isolateEventsDir(t)
 
@@ -607,7 +607,7 @@ func TestSanitizeTranscriptFilename(t *testing.T) {
 }
 
 // TestDetectScreenshot_FilenameFallback verifies the filename-pattern fallback
-// introduced in EPIC-078 M3 — when RelativePath is empty, detectScreenshot
+// introduced in EPIC-078 M3  -  when RelativePath is empty, detectScreenshot
 // matches req.Filename against screenshotFilenameRE.
 func TestDetectScreenshot_FilenameFallback(t *testing.T) {
 	tests := []struct {
@@ -632,7 +632,7 @@ func TestDetectScreenshot_FilenameFallback(t *testing.T) {
 			relativePath: "DCIM/Camera/",
 			wantDetected: false,
 		},
-		// Filename fallback (EPIC-078 M3) — RelativePath is empty.
+		// Filename fallback (EPIC-078 M3)  -  RelativePath is empty.
 		{
 			name:         "Samsung Gallery: Screenshot_ filename sets is_screenshot",
 			filename:     "Screenshot_20260411_123703_WhatsApp.jpg",
@@ -706,6 +706,7 @@ func runScoreFileAsyncSync(t *testing.T, req *ShareRequest, q *Queue, eval Evalu
 // TestScoreAsync_ImageFileMetadataOnly verifies an image share with no temp
 // file is scored using metadata alone via the standard evaluator.
 func TestScoreAsync_ImageFileMetadataOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce/loadArchiveThresholdConfig from loading real config.toml
 	isolateEventsDir(t)
 
 	prev := execContentClassify
@@ -1118,7 +1119,7 @@ func TestSaveTranscriptFile(t *testing.T) {
 			wantFileSuffix: "_YT_502_My_Test_Video.md",
 		},
 		{
-			name:         "YouTube subtitle — subtitle_type manual",
+			name:         "YouTube subtitle  -  subtitle_type manual",
 			rowID:        100,
 			profile:      "default",
 			origFilename: "",
@@ -1136,7 +1137,7 @@ func TestSaveTranscriptFile(t *testing.T) {
 			wantFileSuffix: "_YT_100_Another_Video.md",
 		},
 		{
-			name:         "YouTube no subtitle_type — field omitted",
+			name:         "YouTube no subtitle_type  -  field omitted",
 			rowID:        200,
 			profile:      "default",
 			transcript:   "Body.",
@@ -1151,7 +1152,7 @@ func TestSaveTranscriptFile(t *testing.T) {
 			wantFileSuffix: "_YT_200_Untitled_Clip.md",
 		},
 		{
-			name:         "Voice note — original_filename present, no video fields",
+			name:         "Voice note  -  original_filename present, no video fields",
 			rowID:        300,
 			profile:      "personal",
 			origFilename: "Voice 260425.m4a",
@@ -1171,7 +1172,7 @@ func TestSaveTranscriptFile(t *testing.T) {
 			wantFileSuffix: "_m4a_300_Voice_260425.md",
 		},
 		{
-			name:         "PDF source — pdf_ prefix",
+			name:         "PDF source  -  pdf_ prefix",
 			rowID:        401,
 			profile:      "eng",
 			origFilename: "report.pdf",
@@ -1185,7 +1186,7 @@ func TestSaveTranscriptFile(t *testing.T) {
 			wantFileSuffix: "_pdf_401_report.md",
 		},
 		{
-			name:         "Image source — img_ prefix",
+			name:         "Image source  -  img_ prefix",
 			rowID:        402,
 			profile:      "eng",
 			origFilename: "photo.jpg",
@@ -1198,7 +1199,7 @@ func TestSaveTranscriptFile(t *testing.T) {
 			wantFileSuffix: "_img_402_photo.md",
 		},
 		{
-			name:         "URL source — url_ prefix with slug",
+			name:         "URL source  -  url_ prefix with slug",
 			rowID:        403,
 			profile:      "eng",
 			origFilename: "example-article",
@@ -1212,7 +1213,7 @@ func TestSaveTranscriptFile(t *testing.T) {
 			wantFileSuffix: "_url_403_example_article.md",
 		},
 		{
-			name:         "m4a source — m4a_ prefix",
+			name:         "m4a source  -  m4a_ prefix",
 			rowID:        404,
 			profile:      "eng",
 			origFilename: "recording.m4a",

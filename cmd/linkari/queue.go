@@ -245,6 +245,8 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		// EPIC-154 F1: intent (score|capture|transcribe) and system-inferred tags.
 		"ALTER TABLE queue ADD COLUMN intent TEXT DEFAULT NULL",
 		"ALTER TABLE queue ADD COLUMN inferred_tags TEXT DEFAULT NULL",
+		// EPIC-159 F6: indexes for intent/tag stats queries.
+		"CREATE INDEX IF NOT EXISTS idx_queue_intent_status ON queue(intent, status)",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.

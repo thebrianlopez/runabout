@@ -137,6 +137,40 @@ func backfillIntentFromProfile(db *sql.DB) (rowsUpdated int, err error) {
 	return rowsUpdated, nil
 }
 
+// actionIntentMap maps known action IDs to (intent, tagSig) for backward compat.
+// Used when action is present but intent is absent in POST /share.
+var actionIntentMap = map[string]struct {
+	Intent string
+	TagSig string
+}{
+	"uinit_eng":     {"score", "domain:eng"},
+	"uinit_life":    {"score", "domain:personal"},
+	"uinit_travel":  {"score", "domain:travel"},
+	"uinit_fashion": {"score", "domain:fashion"},
+	"uinit_music":   {"score", "domain:music"},
+	"uinit_finance": {"score", "domain:finance"},
+	"uinit_dining":  {"score", "domain:dining"},
+	"ginit_eng":     {"capture", "jira"},
+	"ginit_auto":    {"capture", "jira"},
+	"vnote_auto":    {"transcribe", ""},
+}
+
+// deriveIntentFromAction maps a legacy action ID to (intent, tagSig).
+// Exact match first; then ginit_* → capture/jira and vnote_* → transcribe prefix fallback.
+// Always returns a safe default ("score", "", false) for unknown actions.
+func deriveIntentFromAction(action string) (intent, tagSig string, ok bool) {
+	if m, found := actionIntentMap[action]; found {
+		return m.Intent, m.TagSig, true
+	}
+	if strings.HasPrefix(action, "ginit") {
+		return "capture", "jira", true
+	}
+	if strings.HasPrefix(action, "vnote") {
+		return "transcribe", "", true
+	}
+	return "score", "", false
+}
+
 // deriveProfileFromIntent maps intent + user tags back to a legacy profile string.
 // Used by enqueueItem to keep the profile column populated during the soak window.
 func deriveProfileFromIntent(intent string, userTags []string) string {

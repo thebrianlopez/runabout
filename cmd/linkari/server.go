@@ -293,6 +293,8 @@ type Server struct {
 	wg               sync.WaitGroup                // tracks in-flight captureAsync goroutines
 	captureRenderers map[string]CaptureRenderer    // actionID → renderer; guarded by captureRenderersMu
 	captureRenderersMu sync.RWMutex
+	// EPIC-158 F5: (intent, tag_sig) → workflow registry; replaces action-ID keyed map.
+	intentCaptureRegistry map[IntentTagKey]CaptureWorkflow // guarded by captureRenderersMu
 
 	// F5: tmux dispatcher for post-capture commands. Defaults to router.tmux;
 	// may be replaced in tests to record NewWindow calls without invoking real tmux.
@@ -622,6 +624,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /sources", s.handleSources)
 	// EPIC-150: tag inventory.
 	mux.HandleFunc("GET /tags", s.handleGetTags)
+	// EPIC-159 F6: intent and tag stats.
+	mux.HandleFunc("GET /stats/intents", s.handleIntentStats)
+	mux.HandleFunc("GET /stats/tags", s.handleTagStats)
 }
 
 // registerFunnelRoutes adds the public-facing route allowlist for the Funnel
@@ -1192,6 +1197,19 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "intent must be score|capture|transcribe")
 			return
 		}
+	}
+
+	// EPIC-161 F8: backward compat - when intent is absent but action is present,
+	// derive intent from action via deriveIntentFromAction and emit compat counter.
+	if req.Intent == "" && req.Action != "" {
+		derived, _, _ := deriveIntentFromAction(req.Action)
+		req.Intent = derived
+		actionCompatUsedTotal.Add(1)
+		slog.InfoContext(ctx, "action_compat_used",
+			"event_type", "action_compat_used",
+			"action", req.Action,
+			"derived_intent", derived,
+		)
 	}
 
 	// F1: domain-aware action routing fires before scoped-auth and before
@@ -2511,6 +2529,10 @@ func (s *Server) emitShareEvent(req *ShareRequest, status string, start time.Tim
 		"type":            req.Type,
 		"row_id":          req.QueueRowID,
 		"classify_source": req.ClassifySource,
+		// EPIC-159 F6: intent and tag dimensions.
+		"intent":        req.Intent,
+		"user_tags":     req.UserTags,
+		"inferred_tags": req.InferredTagsJSON,
 	}
 	if err := s.events.Emit("linkari_share", meta); err != nil {
 		slog.Warn("event emit linkari_share failed", "error", err)

@@ -14,7 +14,7 @@ import (
 // archiveThresholdCache lazily loads the actions config on first use and
 // supports hot-reload via SIGHUP (EPIC-051 M6). The sync.Once pattern that
 // preceded this holder required a full server restart to pick up a
-// threshold change — the 15-minute diagnostic detour documented in the
+// threshold change  -  the 15-minute diagnostic detour documented in the
 // EPIC-050 PoMo timeline. Now a `kill -HUP $(cat linkari.pid)` is enough.
 var (
 	archiveThresholdMu  sync.RWMutex
@@ -45,7 +45,7 @@ func loadArchiveThresholdConfig() *Config {
 }
 
 // ReloadArchiveThresholdConfig re-parses config.toml and atomically swaps
-// the cached config. Safe to call from a signal handler — the write is
+// the cached config. Safe to call from a signal handler  -  the write is
 // guarded by the same mutex readers use.  EPIC-051 M6.
 func ReloadArchiveThresholdConfig() error {
 	loaded, err := LoadConfig(context.Background(), "")
@@ -282,6 +282,10 @@ type ShareResolution struct {
 	ResolvedAction  string
 	ResolvedProfile string
 	Reason          string
+	// EPIC-156 F3: intent-based resolution fields (added alongside soak compat).
+	ResolvedIntent string   // "score" | "capture" | "transcribe"; empty until F3 is fully wired
+	InferredTags   []string // system-inferred tags from cascade; nil until F3 is fully wired
+	ClassifySource string   // "caller" | "domain_heuristic" | "content" | "default"
 }
 
 // jiraURLRE matches Jira-hosted issue URLs (atlassian.net/browse/KEY-123 or
@@ -317,7 +321,7 @@ var domainProfileMap = []struct {
 	{"travel", "travel"},
 	// life
 	{"retirement", "life"},
-	// music — spotify.com and soundcloud.com are also matched by unsupportedPipelineRE
+	// music  -  spotify.com and soundcloud.com are also matched by unsupportedPipelineRE
 	// and pre-filtered before scoring. Their entries here ensure profile="music" is
 	// assigned on the inbound request path (used for logging/events), even though
 	// scoring is skipped. EPIC-088 M4: retained as profile-classification escape hatch.
@@ -344,11 +348,11 @@ var domainProfileMap = []struct {
 	{"asos.com", "fashion"},
 	{"net-a-porter.com", "fashion"},
 	{"vogue.com", "fashion"},
-	// finance (investor relations subdomains — EPIC-087 M3)
+	// finance (investor relations subdomains  -  EPIC-087 M3)
 	{"ir.", "finance"},
 	{"investor.", "finance"},
 	{"investors.", "finance"},
-	// life — privacy/legal content (EPIC-087 M3)
+	// life  -  privacy/legal content (EPIC-087 M3)
 	{"globalprivacycontrol", "life"},
 	{"privacyrights", "life"},
 	{"privacypolicy", "life"},
@@ -359,7 +363,7 @@ var domainProfileMap = []struct {
 // classifyURLProfile returns the heuristic profile for a URL based on domain
 // matching. The second return value indicates whether a positive domain match
 // was found. When matched is false the "eng" fallback is returned but should
-// not be treated as authoritative — callers may use content-based classification
+// not be treated as authoritative  -  callers may use content-based classification
 // to refine the profile.
 func classifyURLProfile(rawURL string) (string, bool) {
 	lower := strings.ToLower(rawURL)
@@ -368,7 +372,7 @@ func classifyURLProfile(rawURL string) (string, bool) {
 			return dm.profile, true
 		}
 	}
-	return "eng", false // fallback — not a positive match
+	return "eng", false // fallback  -  not a positive match
 }
 
 // resolveShareAction is the single chokepoint every queue-writing path goes
@@ -420,10 +424,43 @@ func resolveShareAction(req *ShareRequest, cfgIndex map[string]*ActionConfig, he
 		return res
 	}
 
-	// Unknown / missing action — return as-is and let Route fail fast.
+	// Unknown / missing action  -  return as-is and let Route fail fast.
 	res.ResolvedAction = actionID
 	res.ResolvedProfile = profile
+
+	// EPIC-156 F3: populate intent fields from caller-supplied values.
+	// Full 6-stage cascade is Phase 2; during soak the intent is already set by handleShare
+	// via F1/F8 derivation before ResolveShare is called.
+	res.ResolvedIntent = req.Intent
+	res.ClassifySource = req.ClassifySource
+
 	return res
+}
+
+// checkAuthScopeIntent checks whether the intent+tag combination is permitted for the bearer token.
+// Replaces action-ID-prefix scope check in Phase 2. During soak, runs alongside checkScopedAuth.
+// EPIC-156 F3.
+func checkAuthScopeIntent(intent string, userTags []string, isMobileToken, isJiraToken bool) error {
+	if intent != "capture" {
+		return nil // score and transcribe require only standard bearer token
+	}
+	for _, tag := range userTags {
+		switch tag {
+		case "jira":
+			if !isJiraToken {
+				return fmt.Errorf("scope_violation_capture_jira: capture+jira requires jira_token")
+			}
+		case "confluence":
+			if !isMobileToken && !isJiraToken {
+				return fmt.Errorf("scope_violation_capture_confluence: capture+confluence requires confluence_token")
+			}
+		case "github":
+			if !isMobileToken && !isJiraToken {
+				return fmt.Errorf("scope_violation_capture_github: capture+github requires github_token")
+			}
+		}
+	}
+	return nil
 }
 
 // Route dispatches a request using config-driven actions.
@@ -503,27 +540,27 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 			ytPath = ytdlpBinaryPath
 		}
 		go transcribeYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel, r.serverConfig)
-		return "Fetching YouTube transcript — ready via FCM", nil
+		return "Fetching YouTube transcript  -  ready via FCM", nil
 	}
 
 	// EPIC-009 M4: YouTube URL shares route to scoreYouTubeAsync for yt-dlp
 	// transcription and Claude scoring. Must come before the audio branch.
-	// EPIC-003 M3: also route when req.Type="" — Android/Chrome clients may omit type.
+	// EPIC-003 M3: also route when req.Type=""  -  Android/Chrome clients may omit type.
 	if ac.ServerScore && (req.Type == "url" || req.Type == "") && isYouTubeURL(req.URL) {
 		ytPath := r.ytdlpPath
 		if ytPath == "" {
 			ytPath = ytdlpBinaryPath
 		}
 		go scoreYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel, r.serverConfig)
-		return "Transcribing YouTube — verdict via FCM", nil
+		return "Transcribing YouTube  -  verdict via FCM", nil
 	}
 
 	// EPIC-077 M5: audio shares route to processVoiceNoteAsync (renamed from
-	// scoreAudioAsync). Architecturally incompatible with scoreAsync —
+	// scoreAudioAsync). Architecturally incompatible with scoreAsync  - 
 	// hardcoded score=100, execHaiku directly, 1800s timeout, transcript management.
 	if ac.ServerScore && req.Type == "audio" {
 		go processVoiceNoteAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel, req.ExtraText, req, r.events, HaikuJSONEvaluator{})
-		return "Transcribing — synopsis via FCM", nil
+		return "Transcribing  -  synopsis via FCM", nil
 	}
 
 	// image, document, and URL shares all route to scoreAsync.
@@ -535,9 +572,9 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		go scoreAsync(req, r.queue, HaikuJSONEvaluator{}, r.events, r.bskyClient)
 		switch req.Type {
 		case "image", "document":
-			return "Scoring file — verdict via FCM", nil
+			return "Scoring file  -  verdict via FCM", nil
 		default:
-			return "Scoring — verdict via FCM", nil
+			return "Scoring  -  verdict via FCM", nil
 		}
 	}
 
@@ -589,7 +626,7 @@ func (r *Router) handleInlineTriage(ac *ActionConfig, command string) (string, e
 	}
 	// Fire and forget: reap the child in the background to avoid zombies.
 	go func() { _ = cmd.Wait() }()
-	return "Scoring headless — verdict via FCM", nil
+	return "Scoring headless  -  verdict via FCM", nil
 }
 
 func (r *Router) handleRegex(ac *ActionConfig, req *ShareRequest) (string, error) {
