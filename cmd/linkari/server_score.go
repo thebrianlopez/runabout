@@ -126,7 +126,7 @@ var galleryPackages = map[string]bool{
 var scoreSemaphore = make(chan struct{}, 10)
 
 // jinaHTTPClient is the HTTP client for Jina Reader requests. Uses a 35s
-// timeout to give Jina a margin above the 30s fetch context timeout  - 
+// timeout to give Jina a margin above the 30s fetch context timeout  -
 // the context cancels first; this is a backstop for runaway connections.
 var jinaHTTPClient = &http.Client{Timeout: 35 * time.Second}
 
@@ -428,14 +428,14 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	defer func() {
 		if events != nil {
 			events.Emit("score_prefilter_summary", map[string]any{
-				"row_id":                  req.QueueRowID,
-				"prefilter_stage":         prefilterStage,
-				"eval_skipped":            evalSkipped,
-				"latency_ms":              time.Since(scoreStart).Milliseconds(),
-				"cost_usd":                costUSD,
-				"type":                    req.Type,
-				"content_type":            contentType.String(), // EPIC-015 M3
-				"domain_client_latency_ms": domainFetchMs,       // EPIC-016
+				"row_id":                   req.QueueRowID,
+				"prefilter_stage":          prefilterStage,
+				"eval_skipped":             evalSkipped,
+				"latency_ms":               time.Since(scoreStart).Milliseconds(),
+				"cost_usd":                 costUSD,
+				"type":                     req.Type,
+				"content_type":             contentType.String(), // EPIC-015 M3
+				"domain_client_latency_ms": domainFetchMs,        // EPIC-016
 			})
 		}
 	}()
@@ -1207,8 +1207,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				"row_id":                 req.QueueRowID,
 				"input_tokens":           sc.Usage.InputTokens,
 				"image_tokens_estimated": sc.Usage.ImageTokensEstimated,
-				"cost_usd":              sc.CostUSD,
-				"type":                  req.Type,
+				"cost_usd":               sc.CostUSD,
+				"type":                   req.Type,
 			})
 		}
 		// EPIC-088 M2: deferred token usage log  -  emitted after back-calculation so
@@ -1373,9 +1373,13 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// EPIC-077 M6: classify_source threaded through to FCM payload for provenance.
 	if itemScore != nil {
 		resolvePushConfigOnce(q)
-		_, _ = q.EnqueueDigestIfDue(context.Background(),
-			itemProfile, *itemScore, itemSlug, itemVerdict, itemURL,
-			sc.GapSummary(3), "", classifySource, contentWarning)
+		if req.SubmittedByDeviceID != "" {
+			_, _ = q.EnqueueDevicePush(itemProfile, *itemScore, itemSlug, itemVerdict, itemURL, req.SubmittedByUserID, req.SubmittedByDeviceID)
+		} else {
+			_, _ = q.EnqueueDigestIfDue(context.Background(),
+				itemProfile, *itemScore, itemSlug, itemVerdict, itemURL,
+				sc.GapSummary(3), "", classifySource, contentWarning)
+		}
 		// EPIC-015 M4: Bluesky verdict reply  -  fire-and-forget; never blocks FCM.
 		_ = publishVerdictReply(context.Background(), bskyClient, itemURL, *itemScore, itemVerdict, q, 1)
 	}
@@ -1388,8 +1392,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		"score", sc.Score,
 		"status", itemStatus,
 		"classify_source", classifySource,
-		"cost_usd", sc.CostUSD,                                 // GAP-07: linkari.llm.cost_usd source
-		"image_tokens_estimated", tokenImageCount(sc.Usage),    // GAP-07: future Datadog forwarding
+		"cost_usd", sc.CostUSD, // GAP-07: linkari.llm.cost_usd source
+		"image_tokens_estimated", tokenImageCount(sc.Usage), // GAP-07: future Datadog forwarding
 	)
 }
 
@@ -1446,7 +1450,7 @@ var maxScoringCostUSD float64 = 0.05
 // rates used to back-calculate image tokens from cost delta. EPIC-085 M3.
 const (
 	haikuInputPricePerToken  = 1.0 / 1_000_000 // $1.00 per MTok
-	haikuOutputPricePerToken = 5.0 / 1_000_000  // $5.00 per MTok
+	haikuOutputPricePerToken = 5.0 / 1_000_000 // $5.00 per MTok
 )
 
 // pricingForModel returns the (inputPerToken, outputPerToken) pricing rates for
@@ -1592,32 +1596,32 @@ var validProfilesSorted = func() []string {
 // "travel") genuinely suppress reclassification  -  the package signal is
 // definitive for those profiles.
 var packageProfileMap = map[string]string{
-	"com.spotify.music":                "music",
-	"com.google.android.youtube":       "eng",
+	"com.spotify.music":                     "music",
+	"com.google.android.youtube":            "eng",
 	"com.google.android.apps.youtube.music": "music",
-	"com.soundcloud.android":           "music",
-	"com.airbnb.android":               "travel",
-	"com.booking":                      "travel",
-	"com.tripadvisor.tripadvisor":      "travel",
-	"com.google.android.apps.maps":     "travel",
-	"com.robinhood.android":            "finance",
-	"com.venmo":                        "finance",
-	"com.squareup.cash":                "finance",
-	"com.mint":                         "finance",
-	"com.coinbase.android":             "finance",
+	"com.soundcloud.android":                "music",
+	"com.airbnb.android":                    "travel",
+	"com.booking":                           "travel",
+	"com.tripadvisor.tripadvisor":           "travel",
+	"com.google.android.apps.maps":          "travel",
+	"com.robinhood.android":                 "finance",
+	"com.venmo":                             "finance",
+	"com.squareup.cash":                     "finance",
+	"com.mint":                              "finance",
+	"com.coinbase.android":                  "finance",
 	// NOTE: com.instagram.android and com.reddit.frontpage intentionally omitted
 	// (EPIC-075 M4): these are multi-topic apps whose shares do not reliably
 	// indicate a single profile. They fall through to URL/content classification.
-	"com.twitter.android":              "life",
-	"com.github.android":               "eng",
-	"org.mozilla.firefox":              "eng",
-	"com.chrome.beta":                  "eng",
+	"com.twitter.android":               "life",
+	"com.github.android":                "eng",
+	"org.mozilla.firefox":               "eng",
+	"com.chrome.beta":                   "eng",
 	"com.amazon.mShop.android.shopping": "life",
-	"com.ubercab.eats":                 "dining",
-	"com.doordash.driverapp":           "dining",
-	"com.grubhub.android":              "dining",
-	"com.yelp.android":                 "dining",
-	"com.opentable":                    "dining",
+	"com.ubercab.eats":                  "dining",
+	"com.doordash.driverapp":            "dining",
+	"com.grubhub.android":               "dining",
+	"com.yelp.android":                  "dining",
+	"com.opentable":                     "dining",
 }
 
 // CategoryFinance is the app_category value used in the PDF profile routing
@@ -1646,7 +1650,7 @@ var appCategoryProfileMap = map[int]string{
 // Only types with strong profile signal are included  -  generic types like
 // "application/pdf" or "image/jpeg" are omitted to avoid false positives.
 var mimeProfileMap = map[string]string{
-	"application/vnd.ms-excel":                                         "finance",
+	"application/vnd.ms-excel": "finance",
 	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "finance",
 	"text/x-vcard": "life",
 	"text/vcard":   "life",
@@ -1756,8 +1760,8 @@ var filenameSplitRE = regexp.MustCompile(`[-_. ]+`)
 // prefixes to profiles or screenshot flags. Checked in order of specificity.
 // isScreenshot=true entries set req.IsScreenshot without returning a profile.
 var relativePathPrefixes = []struct {
-	prefix      string
-	profile     string
+	prefix       string
+	profile      string
 	isScreenshot bool
 }{
 	// Stock Android / most OEMs
@@ -1856,7 +1860,7 @@ func classifyByRelativePath(relPath string) (profile string, isScreenshot bool) 
 var screenshotFilenameRE = regexp.MustCompile(`(?i)^Screenshot[_\s\-]`)
 
 // detectScreenshot sets req.IsScreenshot=true when the RelativePath indicates
-// a screenshot origin. Runs unconditionally before profile classification  - 
+// a screenshot origin. Runs unconditionally before profile classification  -
 // screenshot detection is an orthogonal concern that must not be skipped even
 // when a profile is already set. EPIC-077 M4.
 //
@@ -2497,8 +2501,12 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	// EPIC-081 M4: uses rubric score instead of hardcoded 100.
 	// EPIC-077 M6: classify_source included in push payload for provenance.
 	resolvePushConfigOnce(q)
-	_, _ = q.EnqueueDigestIfDue(context.Background(),
-		profile, audioScore, slug, synopsis, "", "", "voice_note", audioClassifySource)
+	if req.SubmittedByDeviceID != "" {
+		_, _ = q.EnqueueDevicePush(profile, audioScore, slug, synopsis, "", req.SubmittedByUserID, req.SubmittedByDeviceID)
+	} else {
+		_, _ = q.EnqueueDigestIfDue(context.Background(),
+			profile, audioScore, slug, synopsis, "", "", "voice_note", audioClassifySource)
+	}
 
 	slog.Info("score_audio: complete",
 		"event_type", "score_audio_complete",

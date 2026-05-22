@@ -115,13 +115,8 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 		"depth": len(items),
 	})
 
-	// Snapshot device token and token source once per drain tick.
-	deviceToken, err := s.queue.GetDeviceToken()
-	if err != nil {
-		slog.WarnContext(ctx, "get device token failed", "error", err)
-		return 0
-	}
-
+	// Token source is shared; device tokens are resolved per row at send time so
+	// EPIC-167 targeted pushes see token rotation and never fan out on missing devices.
 	for _, p := range items {
 		age := time.Since(time.Unix(p.CreatedAt, 0))
 		if age > pushMaxAge {
@@ -131,7 +126,22 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 			})
 			continue
 		}
+		deviceToken := ""
+		var err error
+		if p.TargetDeviceID != "" {
+			deviceToken, err = s.queue.LookupDeviceToken(ctx, p.TargetUserID, p.TargetDeviceID)
+		} else {
+			deviceToken, err = s.queue.GetDeviceToken()
+		}
+		if err != nil {
+			slog.WarnContext(ctx, "get device token failed", "error", err, "push_id", p.ID)
+			continue
+		}
 		if deviceToken == "" || s.fcmTokenSource == nil {
+			if p.TargetDeviceID != "" {
+				_ = s.queue.MarkPushDead(p.ID, "device_token_missing")
+				continue
+			}
 			_ = s.queue.ParkPush(p.ID, int64(pushParkBackoff.Seconds()))
 			emitPushEvent("push_outbox_parked_missing_token", map[string]interface{}{
 				"id": p.ID, "age_seconds": int64(age.Seconds()),

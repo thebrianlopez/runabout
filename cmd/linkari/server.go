@@ -9,8 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"mime"
-	"net"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -111,6 +111,7 @@ type ShareRequest struct {
 	Enter    bool   `json:"enter"`
 	Profile  string `json:"profile,omitempty"`
 	FCMToken string `json:"fcm_token,omitempty"`
+	DeviceID string `json:"device_id,omitempty"` // EPIC-167 F3: Android origin device id
 
 	// EPIC-038 M3: Intent metadata fields from Android share intent.
 	MimeType       string `json:"mime_type,omitempty"`
@@ -122,9 +123,9 @@ type ShareRequest struct {
 	// FileSize is the file size in bytes from MediaStore. Used by the LiteParse
 	// path for document shares; also available for future early-rejection of
 	// oversized non-audio shares.
-	FileSize int64 `json:"file_size,omitempty"`
-	RelativePath   string `json:"relative_path,omitempty"`
-	Filename       string `json:"filename,omitempty"`
+	FileSize     int64  `json:"file_size,omitempty"`
+	RelativePath string `json:"relative_path,omitempty"`
+	Filename     string `json:"filename,omitempty"`
 
 	// EPIC-149: user-applied tags from share-time UI.
 	UserTags []string `json:"user_tags,omitempty"`
@@ -134,13 +135,15 @@ type ShareRequest struct {
 	Intent string `json:"intent,omitempty"`
 
 	// Internal fields  -  not serialized from JSON.
-	AudioPath        string `json:"-"` // EPIC-067: temp file path for uploaded audio
-	QueueRowID       int64  `json:"-"` // EPIC-067: queue row ID for audio scoring (no URL to match on)
-	OriginalFilename string `json:"-"` // EPIC-071: original filename from multipart upload
+	AudioPath            string `json:"-"` // EPIC-067: temp file path for uploaded audio
+	QueueRowID           int64  `json:"-"` // EPIC-067: queue row ID for audio scoring (no URL to match on)
+	OriginalFilename     string `json:"-"` // EPIC-071: original filename from multipart upload
 	ClassifySource       string `json:"-"` // EPIC-077 M1: cascade stage that won pre-enqueue classification
 	ForceContentClassify bool   `json:"-"` // EPIC-085 M2: per-action flag to always run content-LLM reclassification
 	ShortsRubricTemplate string `json:"-"` // EPIC-012 M8: Shorts-specific rubric override from ActionConfig
 	InferredTagsJSON     string `json:"-"` // EPIC-154 F1: system-inferred tags JSON; computed from profile lookup pre-enqueue
+	SubmittedByDeviceID  string `json:"-"` // EPIC-167 F3: persisted origin device attribution
+	SubmittedByUserID    int64  `json:"-"` // EPIC-167 F4: authenticated owner for token lookup
 }
 
 // ShareResponse is the structured JSON response.
@@ -232,20 +235,20 @@ func (r *RingLog) Writer() io.Writer {
 
 // Server handles HTTP requests with authentication and rate limiting.
 type Server struct {
-	token     string
-	jiraToken      string // EPIC-057: scoped bearer for ginit_* actions; empty = Jira ingress disabled
+	token           string
+	jiraToken       string // EPIC-057: scoped bearer for ginit_* actions; empty = Jira ingress disabled
 	jiraAPIUsername string // outbound Jira API username (from linkari/jira-webhook secret)
 	jiraAPIPassword string // outbound Jira API password
 	jiraDomain      string // e.g. "xxx.atlassian.net"
 	pagerDutyToken  string // PagerDuty API token
-	router  *Router
-	queue   *Queue
-	limiter *rateLimiter
-	ring    *RingLog
-	events  *EventLogger // nil when event logging is not configured
-	debug   bool
-	startAt time.Time
-	tsnetAddr string // Funnel FQDN; empty when tsnet is not enabled
+	router          *Router
+	queue           *Queue
+	limiter         *rateLimiter
+	ring            *RingLog
+	events          *EventLogger // nil when event logging is not configured
+	debug           bool
+	startAt         time.Time
+	tsnetAddr       string // Funnel FQDN; empty when tsnet is not enabled
 
 	// EPIC-097 F1: server config for source enable/disable flags.
 	serverConfig ServerConfig
@@ -290,8 +293,8 @@ type Server struct {
 	registry *SourceRegistry
 
 	// F2: capture pipeline state.
-	wg               sync.WaitGroup                // tracks in-flight captureAsync goroutines
-	captureRenderers map[string]CaptureRenderer    // actionID → renderer; guarded by captureRenderersMu
+	wg                 sync.WaitGroup             // tracks in-flight captureAsync goroutines
+	captureRenderers   map[string]CaptureRenderer // actionID → renderer; guarded by captureRenderersMu
 	captureRenderersMu sync.RWMutex
 	// EPIC-158 F5: (intent, tag_sig) → workflow registry; replaces action-ID keyed map.
 	intentCaptureRegistry map[IntentTagKey]CaptureWorkflow // guarded by captureRenderersMu
@@ -530,7 +533,7 @@ func (s *Server) FunnelMux() http.Handler {
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the status code for
-// request logging. Flush/Hijack/Push are intentionally not implemented  - 
+// request logging. Flush/Hijack/Push are intentionally not implemented  -
 // /logs/stream (the only SSE endpoint) writes its headers explicitly and
 // does not require a hijackable wrapper; the default 200 default is fine.
 type statusRecorder struct {
@@ -599,6 +602,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/actions", s.handleActions)
 	mux.HandleFunc("GET /intents", s.handleIntents) // EPIC-157 F4
 	mux.HandleFunc("/register", s.handleRegister)
+	mux.HandleFunc("POST /devices/register", s.handleRegisterDevice)
+	mux.HandleFunc("GET /devices", s.handleListDevices)
+	mux.HandleFunc("POST /devices/{device_id}/disable", s.handleDisableDevice)
 	mux.HandleFunc("/notify", s.handleNotify)
 	mux.HandleFunc("POST /push/test", s.handleTestPush)
 	mux.HandleFunc("/queue", s.handleQueue)
@@ -954,7 +960,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isMobileOrJira := bearer == s.token || (s.jiraToken != "" && bearer == s.jiraToken)
-	_, isSession := s.checkSessionAuth(bearer)
+	sessionUserID, isSession := s.checkSessionAuth(bearer)
 	if !isMobileOrJira && !isSession {
 		slog.DebugContext(ctx, "share rejected: auth failed", "has_header", auth != "")
 		writeError(w, http.StatusUnauthorized, "unauthorized")
@@ -1008,6 +1014,9 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			case "fcm_token":
 				b, _ := io.ReadAll(io.LimitReader(part, 4096))
 				req.FCMToken = string(b)
+			case "device_id":
+				b, _ := io.ReadAll(io.LimitReader(part, 256))
+				req.DeviceID = strings.TrimSpace(string(b))
 			case "profile":
 				b, _ := io.ReadAll(io.LimitReader(part, 256))
 				req.Profile = string(b)
@@ -1174,6 +1183,24 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		slog.DebugContext(ctx, "share rejected: validation error", "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// EPIC-167 F3: validate and persist share-origin device attribution when present.
+	if req.DeviceID != "" {
+		if err := validateDeviceID(req.DeviceID); err != nil {
+			slog.WarnContext(ctx, "share_device_attribution", "status", "invalid")
+			req.DeviceID = ""
+		} else if isSession && s.queue != nil {
+			belongs, err := s.queue.DeviceBelongsToUser(ctx, sessionUserID, req.DeviceID)
+			if err != nil || !belongs {
+				slog.WarnContext(ctx, "share_device_attribution", "status", "unregistered", "device_id_suffix", suffix(req.DeviceID, 6))
+				req.DeviceID = ""
+			} else {
+				req.SubmittedByDeviceID = req.DeviceID
+				req.SubmittedByUserID = sessionUserID
+				slog.InfoContext(ctx, "share_device_attribution", "status", "attributed", "device_id_suffix", suffix(req.DeviceID, 6))
+			}
+		}
 	}
 
 	// EPIC-149: normalize then validate user_tags before enqueue.
@@ -1494,7 +1521,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	result, err := s.router.Route(&req)
 	if err != nil {
 		s.emitShareEvent(&req, "failure", shareStart, "")
-		// If queue is active, return 200 "queued" instead of 500  - 
+		// If queue is active, return 200 "queued" instead of 500  -
 		// the replay goroutine will retry when tmux is available.
 		if s.queue != nil {
 			slog.InfoContext(ctx, "share queued: routing failed",
@@ -2432,7 +2459,6 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 // firstSentence extracts the first sentence from text, truncating to maxLen.
 // It splits on ". ", " -  ", or newline boundaries to find a natural break.
 func firstSentence(text string, maxLen int) string {
@@ -2846,8 +2872,6 @@ func (s *Server) runPostCaptureCommand(cfg *ActionConfig, key, artifactPath, raw
 		slog.Warn("capture_command_error: exec failed", "action", cfg.ID, "error", err)
 	}
 }
-
-
 
 // captureScoreFallback routes a ContentTypePlain capture row through the normal scoring path.
 // Called when FetchWithFallback returns ContentTypePlain for a KindCapture action.

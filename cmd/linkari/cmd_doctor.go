@@ -19,14 +19,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/spf13/cobra"
 
-	"github.com/thebrianlopez/runabout/internal/secrets"
 	"github.com/thebrianlopez/runabout/cmd/linkari/internal/xdgpath"
+	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
 // doctorCheck is the result of one pre-flight check.
 type doctorCheck struct {
 	Name    string `json:"name"`
-	Status  string `json:"status"`  // "ok", "warn", "fail"
+	Status  string `json:"status"` // "ok", "warn", "fail"
 	Message string `json:"message"`
 }
 
@@ -93,7 +93,15 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				configPath = defaultConfigPath()
 			}
 			var serverCfg *ServerConfig
+			var fullCfg *Config
+			awsCredsUnavailable := false
 			{
+				if raw, readErr := os.ReadFile(configPath); readErr == nil && strings.Contains(string(raw), "${secretsmanager:") && !hasExplicitAWSCredentials() {
+					awsCredsUnavailable = true
+					// Prevent the AWS SDK default chain from blocking on IMDS during local doctor runs.
+					// The structured aws_credentials check below explains the operator action.
+					_ = os.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+				}
 				cfg, err := LoadConfig(ctx, configPath)
 				if err != nil {
 					if errors.Is(err, os.ErrNotExist) {
@@ -103,9 +111,13 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 						addCheck(failCheck("config_toml", fmt.Sprintf("parse error: %v", err)))
 					}
 				} else {
+					fullCfg = cfg
 					sc := cfg.Server
 					serverCfg = &sc
 					addCheck(okCheck("config_toml", configPath))
+				}
+				if awsCredsUnavailable {
+					addCheck(failCheck("aws_credentials", "config contains secretsmanager refs but no explicit AWS credentials/profile are available — set AWS_PROFILE=brianonpoint before running linkari doctor"))
 				}
 			}
 
@@ -299,7 +311,18 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					addCheck(warnCheck("tessdata_prefix",
 						"tessdata_prefix not set in config and TESSDATA_PREFIX not in env — OCR via lit will be unavailable"))
 				} else {
-					addCheck(okCheck("tessdata_prefix", effective))
+					// EPIC-164: upgrade from presence-only to functional validation.
+					entries, err := os.ReadDir(effective)
+					switch {
+					case err != nil:
+						addCheck(warnCheck("tessdata_prefix",
+							fmt.Sprintf("tessdata_prefix set to %q but path does not exist or is unreadable: %v", effective, err)))
+					case !hasTrainedData(entries):
+						addCheck(warnCheck("tessdata_prefix",
+							fmt.Sprintf("tessdata_prefix set to %q but no .traineddata files found", effective)))
+					default:
+						addCheck(okCheck("tessdata_prefix", effective))
+					}
 				}
 			}
 
@@ -361,12 +384,11 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 
 			// --- Check 11a: routing config validation (EPIC-111 F4 M12) ---
 			{
-				// Load the current config to extract any routing block.
+				// Use the already loaded doctor config so --path remains path-isolated.
 				// If no routing block is present, defaults are used and always valid.
-				cfg := loadArchiveThresholdConfig()
 				var routingCfg RoutingConfig
-				if cfg != nil {
-					routingCfg = cfg.Routing
+				if fullCfg != nil {
+					routingCfg = fullCfg.Routing
 				}
 				if routingCfg.DefaultThreshold == 0 {
 					routingCfg = defaultRoutingConfig()
@@ -410,7 +432,13 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
-				return enc.Encode(output{Checks: checks, ExitCode: exitCode})
+				if err := enc.Encode(output{Checks: checks, ExitCode: exitCode}); err != nil {
+					return err
+				}
+				if anyFail {
+					return fmt.Errorf("doctor: one or more checks failed")
+				}
+				return nil
 			}
 
 			for _, c := range checks {
@@ -445,6 +473,28 @@ func probeWritable(dir string) error {
 	f.Close()
 	os.Remove(f.Name())
 	return nil
+}
+
+func hasExplicitAWSCredentials() bool {
+	return os.Getenv("AWS_PROFILE") != "" ||
+		os.Getenv("AWS_ACCESS_KEY_ID") != "" ||
+		os.Getenv("AWS_SECRET_ACCESS_KEY") != "" ||
+		os.Getenv("AWS_SESSION_TOKEN") != "" ||
+		os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE") != "" ||
+		os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") != "" ||
+		os.Getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") != ""
+}
+
+// hasTrainedData returns true if entries contains at least one .traineddata file.
+// Used by the tessdata_prefix doctor check (EPIC-164) to distinguish a configured
+// but empty or missing tessdata directory from a functional one.
+func hasTrainedData(entries []os.DirEntry) bool {
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".traineddata") {
+			return true
+		}
+	}
+	return false
 }
 
 // strOrEmpty dereferences a *string safely.
