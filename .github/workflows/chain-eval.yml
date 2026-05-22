@@ -16,6 +16,19 @@ on:
         required: false
         default: '0.85'
 
+# Required for OIDC token exchange with AWS
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # docs-core S3 git remote — git-remote-s3 bundle repo
+  DOCS_CORE_S3: s3://REDACTED/repos/docs-core
+  # AWS role assumed via OIDC for both S3 docs clone and Secrets Manager
+  AWS_ROLE_ARN: arn:aws:iam::REDACTED_AWS_ACCT:role/github-actions-runabout
+  AWS_REGION: us-east-1
+
 jobs:
   build-and-dry-run:
     name: Build and validate fixtures
@@ -40,8 +53,6 @@ jobs:
     name: Run chain eval
     runs-on: ubuntu-latest
     needs: build-and-dry-run
-    # Secrets are not evaluable in job-level if conditions; gate via step env instead.
-    # The eval steps will skip gracefully when ANTHROPIC_API_KEY is absent.
     steps:
       - uses: actions/checkout@v4
 
@@ -49,6 +60,21 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install git-remote-s3
+        run: pip install git-remote-s3
+
+      - name: Clone docs-core from S3
+        # git-remote-s3 reads bundle files under refs/heads/main/ and HEAD from S3.
+        # No credentials needed beyond what configure-aws-credentials already set.
+        # Clones into docs-core/ at repo root; CHAIN_PROMPTS_DIR points here.
+        run: git clone "$DOCS_CORE_S3" docs-core
 
       - name: Build chain-eval
         run: go build -o bin/chain-eval ./cmd/chain-eval
@@ -59,7 +85,8 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
           HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
-          CHAIN_PROMPTS_DIR: docs/core/prompts
+          # docs-core repo layout: prompts/command_chain.md (no core/ prefix)
+          CHAIN_PROMPTS_DIR: docs-core/prompts
           CHAIN_FIXTURES_DIR: cmd/chain-eval/fixtures
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then
@@ -75,7 +102,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
           HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
-          CHAIN_PROMPTS_DIR: docs/core/prompts
+          CHAIN_PROMPTS_DIR: docs-core/prompts
           CHAIN_FIXTURES_DIR: cmd/chain-eval/fixtures
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then
