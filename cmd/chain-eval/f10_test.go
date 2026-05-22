@@ -192,6 +192,8 @@ func TestExtractJudgeScore_Variants(t *testing.T) {
 		{"The response correctly identifies step 6. Score: 5", 5, "explanatory with trailing Score:"},
 		{"I would rate this a 3 out of 5.\n3", 3, "last-line bare integer"},
 		{"  5  ", 5, "padded bare integer"},
+		{"Score: 4\n\nThe single highest-priority step is step 4.", 4, "score on first line, explanation after"},
+		{"**Score:** 4\n\nRationale: ...", 4, "bold score on first line"},
 	}
 	for _, tc := range cases {
 		got, err := extractJudgeScore(tc.input)

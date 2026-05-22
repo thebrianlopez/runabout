@@ -48,8 +48,8 @@ func extractJudgeScore(content string) (int, error) {
 		}
 		return 0, fmt.Errorf("integer %d out of 1-5 range", n)
 	}
-	// Labeled / embedded: scan the last line first, then full content.
-	for _, candidate := range []string{lastLine(content), content} {
+	// Labeled / embedded: scan first line, last line, then full content.
+	for _, candidate := range []string{firstLine(content), lastLine(content), content} {
 		if m := reScore.FindStringSubmatch(candidate); m != nil {
 			if n, err := strconv.Atoi(m[1]); err == nil {
 				return n, nil
@@ -63,6 +63,14 @@ func lastLine(s string) string {
 	s = strings.TrimRight(s, "\n\r ")
 	if i := strings.LastIndexAny(s, "\n\r"); i >= 0 {
 		return s[i+1:]
+	}
+	return s
+}
+
+func firstLine(s string) string {
+	s = strings.TrimLeft(s, "\n\r ")
+	if i := strings.IndexAny(s, "\n\r"); i >= 0 {
+		return s[:i]
 	}
 	return s
 }
