@@ -300,6 +300,10 @@ func TestScoreURLAsync_EvalErrorSkipsQueue(t *testing.T) {
 
 // 6. Nil queue  -  pipeline runs to completion without panicking.
 func TestScoreURLAsync_NilQueueNoPanic(t *testing.T) {
+	prevDir := transcriptDir
+	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
+	t.Cleanup(func() { transcriptDir = prevDir })
+
 	srv := jinaBodyServer(t, http.StatusOK, "Interesting content about distributed systems.")
 	installJinaServer(t, srv)
 
@@ -776,6 +780,10 @@ func TestScoreAsync_ImageFileMetadataOnly(t *testing.T) {
 // TestScoreAsync_ImageVision verifies an image share with a readable temp file
 // triggers the vision path and cleans up the temp file.
 func TestScoreAsync_ImageVision(t *testing.T) {
+	prevDir := transcriptDir
+	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
+	t.Cleanup(func() { transcriptDir = prevDir })
+
 	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	isolateEventsDir(t)
 
@@ -1508,6 +1516,10 @@ func TestScoreAsync_Document_LiteParse(t *testing.T) {
 // LiteParse returns empty text falls through to metadata synthesis without
 // crashing, and the queue row is still scored.
 func TestScoreAsync_Document_EmptyText(t *testing.T) {
+	prevDir := transcriptDir
+	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
+	t.Cleanup(func() { transcriptDir = prevDir })
+
 	isolateEventsDir(t)
 
 	tmpFile := filepath.Join(t.TempDir(), "paper.pdf")
