@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,8 +226,18 @@ func TestDoctorTessdata_ConfigSet_EnvAbsent(t *testing.T) {
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	// Create a real tessdata dir with a .traineddata file so the EPIC-164
+	// functional check (ReadDir + hasTrainedData) passes.
+	tessdataDir := filepath.Join(dir, "tessdata")
+	if err := os.MkdirAll(tessdataDir, 0o700); err != nil {
+		t.Fatalf("mkdir tessdata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tessdataDir, "eng.traineddata"), []byte("fake"), 0o600); err != nil {
+		t.Fatalf("write traineddata: %v", err)
+	}
+
 	tomlPath := filepath.Join(cfgDir, "config.toml")
-	content := "[server]\ntoken = \"test-token\"\n\n[server.liteparse]\ntessdata_prefix = \"/data/tessdata\"\n"
+	content := fmt.Sprintf("[server]\ntoken = \"test-token\"\n\n[server.liteparse]\ntessdata_prefix = %q\n", tessdataDir)
 	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config.toml: %v", err)
 	}
@@ -298,7 +309,17 @@ func TestDoctorTessdata_EnvOnly(t *testing.T) {
 	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config.toml: %v", err)
 	}
-	t.Setenv("TESSDATA_PREFIX", "/from/env")
+	// Create a real tessdata dir with a .traineddata file so the EPIC-164
+	// functional check (ReadDir + hasTrainedData) passes.
+	tessdataDir := filepath.Join(dir, "tessdata")
+	if err := os.MkdirAll(tessdataDir, 0o700); err != nil {
+		t.Fatalf("mkdir tessdata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tessdataDir, "eng.traineddata"), []byte("fake"), 0o600); err != nil {
+		t.Fatalf("write traineddata: %v", err)
+	}
+
+	t.Setenv("TESSDATA_PREFIX", tessdataDir)
 
 	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--json"})
 	_ = run()
@@ -318,4 +339,119 @@ func TestDoctorTessdata_EnvOnly(t *testing.T) {
 		}
 	}
 	t.Error("RG-3: tessdata_prefix check not present in output")
+}
+
+// RG-? (CT-6): tessdata_prefix set to a nonexistent path → warnCheck with path detail (EPIC-164).
+func TestDoctorTessdata_PathInvalid(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	nonexistent := filepath.Join(dir, "no", "such", "tessdata")
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	content := fmt.Sprintf("[server]\ntoken = \"test-token\"\n\n[server.liteparse]\ntessdata_prefix = %q\n", nonexistent)
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+	t.Setenv("TESSDATA_PREFIX", "")
+
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--json"})
+	_ = run()
+
+	var result struct {
+		Checks []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("JSON parse: %v\noutput:\n%s", err, out.String())
+	}
+	for _, c := range result.Checks {
+		if c.Name == "tessdata_prefix" {
+			if c.Status != statusWarn {
+				t.Errorf("CT-6: tessdata_prefix status = %q, want %q; detail=%q", c.Status, statusWarn, c.Message)
+			}
+			if !strings.Contains(c.Message, nonexistent) {
+				t.Errorf("CT-6: message %q does not contain path %q", c.Message, nonexistent)
+			}
+			return
+		}
+	}
+	t.Error("CT-6: tessdata_prefix check not present in output")
+}
+
+func TestDoctorSecretsManager_NoAWSCredentials_FailsFast(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	content := "[server]\ntoken = \"${secretsmanager:linkari/bearer-token}\"\n"
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "")
+	t.Setenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "")
+	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "")
+
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
+	err := run()
+	if err == nil {
+		t.Fatal("CT-7: expected doctor to fail when SM refs exist without AWS credentials")
+	}
+	got := out.String()
+	if !strings.Contains(got, "✗ aws_credentials:") {
+		t.Fatalf("CT-7: aws_credentials check not found; output:\n%s", got)
+	}
+	if !strings.Contains(got, "AWS_PROFILE=brianonpoint") {
+		t.Fatalf("CT-7: expected actionable AWS_PROFILE guidance; output:\n%s", got)
+	}
+}
+
+func TestDoctorPathIsolation_RoutingConfigDoesNotLoadDefaultConfig(t *testing.T) {
+	dir := t.TempDir()
+	defaultCfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(defaultCfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir default config dir: %v", err)
+	}
+	defaultPath := filepath.Join(defaultCfgDir, "config.toml")
+	defaultContent := "[server]\ntoken = \"${secretsmanager:linkari/bearer-token}\"\n"
+	if err := os.WriteFile(defaultPath, []byte(defaultContent), 0o600); err != nil {
+		t.Fatalf("write default config.toml: %v", err)
+	}
+
+	isolatedDir := filepath.Join(dir, "isolated")
+	if err := os.MkdirAll(isolatedDir, 0o700); err != nil {
+		t.Fatalf("mkdir isolated: %v", err)
+	}
+	isolatedPath := filepath.Join(isolatedDir, "config.toml")
+	isolatedContent := "[server]\ntoken = \"test-token\"\n"
+	if err := os.WriteFile(isolatedPath, []byte(isolatedContent), 0o600); err != nil {
+		t.Fatalf("write isolated config.toml: %v", err)
+	}
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", isolatedPath, "--json"})
+	_ = run()
+
+	var result struct {
+		Checks []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("JSON parse: %v\noutput:\n%s", err, out.String())
+	}
+	for _, c := range result.Checks {
+		if c.Name == "aws_credentials" {
+			t.Fatalf("CT-9: doctor --path escaped to default SM-backed config; output:\n%s", out.String())
+		}
+		if c.Name == "routing_config" && c.Status != statusOK {
+			t.Fatalf("CT-9: routing_config status=%q detail=%q", c.Status, c.Message)
+		}
+	}
 }

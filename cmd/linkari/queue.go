@@ -21,61 +21,63 @@ const maxQueueSize = 200
 // validStatuses enumerates every legal status value a client may filter on.
 // Used by /queue and /archive query-param validation.
 var validStatuses = map[string]bool{
-	"pending":    true,
-	"relayed":    true,
-	"scored":     true,
-	"archived":   true,
-	"failed":     true,
+	"pending":     true,
+	"relayed":     true,
+	"scored":      true,
+	"archived":    true,
+	"failed":      true,
 	"eval_failed": true, // EPIC-001 M2: evaluator double-failure terminal status
 	"prefiltered": true, // EPIC-001 M4: pre-filter transparency queue rows
-	"captured":   true, // F4: structured-content capture terminal status
-	"all":        true,
+	"captured":    true, // F4: structured-content capture terminal status
+	"all":         true,
 }
 
 // QueueItem represents a persisted share request.
 type QueueItem struct {
-	ID         int64  `json:"id"`
-	URL        string `json:"url"`
-	Text       string `json:"text"`
-	Type       string `json:"type"`
-	Action     string `json:"action"`
-	Profile    string `json:"profile"`
-	Status     string `json:"status"`
-	Score      *int   `json:"score,omitempty"`
-	Tags       string `json:"tags,omitempty"`
-	QueuedAt   string `json:"queued_at"`
-	RelayedAt  string `json:"relayed_at,omitempty"`
-	ScoredAt   string `json:"scored_at,omitempty"`
-	ArchivedAt string `json:"archived_at,omitempty"`
-	Verdict    string `json:"verdict,omitempty"`
-	Slug       string `json:"slug,omitempty"`
-	Progress   string `json:"progress,omitempty"`
-	SkipReason string `json:"skip_reason,omitempty"`
-	Outcome      string `json:"outcome,omitempty"`
-	OutcomeAt    string `json:"outcome_at,omitempty"`
-	Feedback     string `json:"feedback,omitempty"`
-	FeedbackAt   string `json:"feedback_at,omitempty"`
-	Title        string `json:"title,omitempty"`
-	RubricScores string `json:"rubric_scores,omitempty"`
-	TopicTags      string `json:"topic_tags,omitempty"`
-	ClusterID      *int64 `json:"cluster_id,omitempty"`
-	ActionRoute    string `json:"action_route,omitempty"`
-	ClassifySource string `json:"classify_source,omitempty"` // EPIC-077 M1
-	IsScreenshot   bool   `json:"is_screenshot,omitempty"`   // EPIC-078 M4
-	FileSize       int64  `json:"file_size,omitempty"`        // EPIC-078 M5
-	IsShorts       bool   `json:"is_shorts,omitempty"`        // EPIC-012 M3
-	Source         string `json:"source,omitempty"`           // EPIC-016 M2: firehose source tracking
-	ArtifactPath   string `json:"artifact_path,omitempty" db:"artifact_path"` // F2: capture artifact file path
-	ContentWarning      string   `json:"content_warning,omitempty"`           // EPIC-102: "lit_parse_failed" when extraction failed
-	ExtractionConfidence *float64 `json:"extraction_confidence,omitempty"`     // EPIC-104: mean per-page confidence; -1.0 = JSON parse fallback; nil = non-PDF or pre-feature
-	RetryCount  int    `json:"retry_count,omitempty"`  // EPIC-108 M3: audio fallback retry attempts completed
-	RetryAfter  int64  `json:"retry_after,omitempty"`  // EPIC-108 M3: Unix timestamp; 0 = process immediately
-	ErrorReason string `json:"error_reason,omitempty"` // EPIC-111 F2: terminal failure reason; populated for status=failed
-	ContentHash string `json:"content_hash,omitempty"` // EPIC-111 F3: SHA-256 hex of raw fetched bytes (set at intake)
-	TraceID     string `json:"trace_id,omitempty"`     // EPIC-111 F3: UUID v4 persisted at intake; immutable across retries
-	UserTags     string `json:"user_tags,omitempty"`     // EPIC-149 F2: user-supplied tags (JSON array)
-	Intent       string `json:"intent,omitempty"`        // EPIC-154 F1: score|capture|transcribe
-	InferredTags string `json:"inferred_tags,omitempty"` // EPIC-154 F1: system-inferred tags (JSON array); never merged with UserTags
+	ID                   int64    `json:"id"`
+	URL                  string   `json:"url"`
+	Text                 string   `json:"text"`
+	Type                 string   `json:"type"`
+	Action               string   `json:"action"`
+	Profile              string   `json:"profile"`
+	Status               string   `json:"status"`
+	Score                *int     `json:"score,omitempty"`
+	Tags                 string   `json:"tags,omitempty"`
+	QueuedAt             string   `json:"queued_at"`
+	RelayedAt            string   `json:"relayed_at,omitempty"`
+	ScoredAt             string   `json:"scored_at,omitempty"`
+	ArchivedAt           string   `json:"archived_at,omitempty"`
+	Verdict              string   `json:"verdict,omitempty"`
+	Slug                 string   `json:"slug,omitempty"`
+	Progress             string   `json:"progress,omitempty"`
+	SkipReason           string   `json:"skip_reason,omitempty"`
+	Outcome              string   `json:"outcome,omitempty"`
+	OutcomeAt            string   `json:"outcome_at,omitempty"`
+	Feedback             string   `json:"feedback,omitempty"`
+	FeedbackAt           string   `json:"feedback_at,omitempty"`
+	Title                string   `json:"title,omitempty"`
+	RubricScores         string   `json:"rubric_scores,omitempty"`
+	TopicTags            string   `json:"topic_tags,omitempty"`
+	ClusterID            *int64   `json:"cluster_id,omitempty"`
+	ActionRoute          string   `json:"action_route,omitempty"`
+	ClassifySource       string   `json:"classify_source,omitempty"`                  // EPIC-077 M1
+	IsScreenshot         bool     `json:"is_screenshot,omitempty"`                    // EPIC-078 M4
+	FileSize             int64    `json:"file_size,omitempty"`                        // EPIC-078 M5
+	IsShorts             bool     `json:"is_shorts,omitempty"`                        // EPIC-012 M3
+	Source               string   `json:"source,omitempty"`                           // EPIC-016 M2: firehose source tracking
+	ArtifactPath         string   `json:"artifact_path,omitempty" db:"artifact_path"` // F2: capture artifact file path
+	ContentWarning       string   `json:"content_warning,omitempty"`                  // EPIC-102: "lit_parse_failed" when extraction failed
+	ExtractionConfidence *float64 `json:"extraction_confidence,omitempty"`            // EPIC-104: mean per-page confidence; -1.0 = JSON parse fallback; nil = non-PDF or pre-feature
+	RetryCount           int      `json:"retry_count,omitempty"`                      // EPIC-108 M3: audio fallback retry attempts completed
+	RetryAfter           int64    `json:"retry_after,omitempty"`                      // EPIC-108 M3: Unix timestamp; 0 = process immediately
+	ErrorReason          string   `json:"error_reason,omitempty"`                     // EPIC-111 F2: terminal failure reason; populated for status=failed
+	ContentHash          string   `json:"content_hash,omitempty"`                     // EPIC-111 F3: SHA-256 hex of raw fetched bytes (set at intake)
+	TraceID              string   `json:"trace_id,omitempty"`                         // EPIC-111 F3: UUID v4 persisted at intake; immutable across retries
+	UserTags             string   `json:"user_tags,omitempty"`                        // EPIC-149 F2: user-supplied tags (JSON array)
+	Intent               string   `json:"intent,omitempty"`                           // EPIC-154 F1: score|capture|transcribe
+	InferredTags         string   `json:"inferred_tags,omitempty"`                    // EPIC-154 F1: system-inferred tags (JSON array); never merged with UserTags
+	SubmittedByDeviceID  string   `json:"submitted_by_device_id,omitempty"`           // EPIC-167 F3
+	SubmittedByUserID    int64    `json:"-"`                                          // EPIC-167 F4 internal token lookup owner
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -245,6 +247,10 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		// EPIC-154 F1: intent (score|capture|transcribe) and system-inferred tags.
 		"ALTER TABLE queue ADD COLUMN intent TEXT DEFAULT NULL",
 		"ALTER TABLE queue ADD COLUMN inferred_tags TEXT DEFAULT NULL",
+		// EPIC-167 F3: origin device attribution for targeted push routing.
+		"ALTER TABLE queue ADD COLUMN submitted_by_device_id TEXT DEFAULT NULL",
+		"ALTER TABLE queue ADD COLUMN submitted_by_user_id INTEGER DEFAULT NULL",
+		"CREATE INDEX IF NOT EXISTS idx_queue_submitted_by_device ON queue(submitted_by_device_id)",
 		// EPIC-159 F6: indexes for intent/tag stats queries.
 		"CREATE INDEX IF NOT EXISTS idx_queue_intent_status ON queue(intent, status)",
 	}
@@ -318,12 +324,23 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	// as push_outbox grows. Both statements are idempotent.
 	pushMigrations := []string{
 		"ALTER TABLE push_outbox ADD COLUMN profile TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE push_outbox ADD COLUMN gap_summary TEXT NOT NULL DEFAULT ''",       // EPIC-058 M7
-		"ALTER TABLE push_outbox ADD COLUMN content_type TEXT NOT NULL DEFAULT ''",     // EPIC-071 M3
-		"ALTER TABLE push_outbox ADD COLUMN action_route TEXT NOT NULL DEFAULT ''",     // EPIC-072 M9
-		"ALTER TABLE push_outbox ADD COLUMN classify_source TEXT NOT NULL DEFAULT ''",  // EPIC-077 M6
-		"ALTER TABLE push_outbox ADD COLUMN content_warning TEXT NOT NULL DEFAULT ''",  // EPIC-102
-		"ALTER TABLE push_outbox ADD COLUMN error_reason TEXT NOT NULL DEFAULT ''",     // EPIC-111 F2 M6: failure reason for status=failed pushes
+		"ALTER TABLE push_outbox ADD COLUMN gap_summary TEXT NOT NULL DEFAULT ''",     // EPIC-058 M7
+		"ALTER TABLE push_outbox ADD COLUMN content_type TEXT NOT NULL DEFAULT ''",    // EPIC-071 M3
+		"ALTER TABLE push_outbox ADD COLUMN action_route TEXT NOT NULL DEFAULT ''",    // EPIC-072 M9
+		"ALTER TABLE push_outbox ADD COLUMN classify_source TEXT NOT NULL DEFAULT ''", // EPIC-077 M6
+		"ALTER TABLE push_outbox ADD COLUMN content_warning TEXT NOT NULL DEFAULT ''", // EPIC-102
+		"ALTER TABLE push_outbox ADD COLUMN error_reason TEXT NOT NULL DEFAULT ''",    // EPIC-111 F2 M6: failure reason for status=failed pushes
+		"ALTER TABLE push_outbox ADD COLUMN target_device_id TEXT DEFAULT NULL",       // EPIC-167 F4: device-targeted pushes
+		"ALTER TABLE push_outbox ADD COLUMN target_user_id INTEGER DEFAULT NULL",      // EPIC-167 F4: target device owner
+		"ALTER TABLE push_outbox ADD COLUMN push_kind TEXT NOT NULL DEFAULT ''",       // EPIC-167 F4: semantic push kind
+		"ALTER TABLE devices ADD COLUMN device_id TEXT DEFAULT ''",                    // EPIC-167 F1: per-user device identity
+		"ALTER TABLE devices ADD COLUMN device_name TEXT DEFAULT ''",
+		"ALTER TABLE devices ADD COLUMN platform TEXT NOT NULL DEFAULT 'android'",
+		"ALTER TABLE devices ADD COLUMN app_version TEXT DEFAULT ''",
+		"ALTER TABLE devices ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE devices ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE devices ADD COLUMN token_updated_at INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE devices ADD COLUMN last_seen_at INTEGER NOT NULL DEFAULT 0",
 	}
 	for _, m := range pushMigrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -454,6 +471,9 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 
 	// EPIC-001: add user_id column to devices for session association.
 	db.Exec("ALTER TABLE devices ADD COLUMN user_id INTEGER DEFAULT NULL")
+	// EPIC-167 F1: per-device registry uniqueness and active-device listing.
+	db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_user_device ON devices(user_id, device_id)")
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_devices_user_enabled ON devices(user_id, enabled)")
 	// EPIC-013 M2: Bluesky session persistence.
 	db.Exec("ALTER TABLE users ADD COLUMN bluesky_session_json TEXT DEFAULT NULL")
 	// EPIC-015 M2: Bluesky publish opt-in flag.
@@ -532,12 +552,12 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 	contentData := []byte(req.URL + req.Text)
 	contentHashVal := ContentHash(contentData)
 	res, err := q.db.Exec(
-		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size, slug, trace_id, content_hash, intent, inferred_tags)
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size, slug, trace_id, content_hash, intent, inferred_tags, submitted_by_device_id, submitted_by_user_id)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.URL, req.Text, req.Type, req.Action, req.Profile, now, req.Title,
 		req.MimeType, req.CallingPackage, req.RelativePath, req.Filename, req.ClassifySource,
 		boolToInt(req.IsScreenshot), req.FileSize, urlToSlug(req.URL),
-		traceID, contentHashVal, req.Intent, req.InferredTagsJSON,
+		traceID, contentHashVal, req.Intent, req.InferredTagsJSON, req.SubmittedByDeviceID, req.SubmittedByUserID,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue: %w", err)
@@ -606,12 +626,12 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 	return id, nil
 }
 
-const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,''), COALESCE(artifact_path,''), COALESCE(content_warning,''), extraction_confidence, COALESCE(retry_count,0), COALESCE(retry_after,0), COALESCE(error_reason,''), COALESCE(content_hash,''), COALESCE(trace_id,''), COALESCE(user_tags,'')"
+const queueCols = "id, url, text, type, action, profile, status, COALESCE(score,0), COALESCE(tags,''), queued_at, COALESCE(relayed_at,''), COALESCE(scored_at,''), COALESCE(archived_at,''), COALESCE(verdict,''), COALESCE(slug,''), COALESCE(progress,''), COALESCE(outcome,''), COALESCE(outcome_at,''), COALESCE(feedback,''), COALESCE(feedback_at,''), COALESCE(title,''), COALESCE(rubric_scores,''), COALESCE(topic_tags,''), cluster_id, COALESCE(action_route,''), COALESCE(classify_source,''), COALESCE(is_screenshot,0), COALESCE(file_size,0), COALESCE(is_shorts,0), COALESCE(source,''), COALESCE(artifact_path,''), COALESCE(content_warning,''), extraction_confidence, COALESCE(retry_count,0), COALESCE(retry_after,0), COALESCE(error_reason,''), COALESCE(content_hash,''), COALESCE(trace_id,''), COALESCE(user_tags,''), COALESCE(submitted_by_device_id,''), COALESCE(submitted_by_user_id,0)"
 
 // Pending returns all items with status=pending whose retry_after has elapsed,
 // ordered by id ASC (FIFO). Rows with retry_after=0 are always included (default).
 func (q *Queue) Pending() ([]QueueItem, error) {
-	return q.query("SELECT "+queueCols+" FROM queue WHERE status='pending' AND retry_after<=strftime('%s','now') ORDER BY id ASC")
+	return q.query("SELECT " + queueCols + " FROM queue WHERE status='pending' AND retry_after<=strftime('%s','now') ORDER BY id ASC")
 }
 
 // List returns items filtered by status (empty string = all), limited to n rows.
@@ -981,22 +1001,22 @@ func (q *Queue) UpdateFeedback(id int64, feedback string) error {
 
 // ProfileStat holds aggregate scoring/feedback stats for a single profile.
 type ProfileStat struct {
-	Profile                  string             `json:"profile"`
-	Count                    int                `json:"count"`
-	AvgScore                 float64            `json:"avg_score"`
-	AccurateCount            int                `json:"accurate_count"`
-	TooHighCount             int                `json:"too_high_count"`
-	TooLowCount              int                `json:"too_low_count"`
-	FeedbackCount            int                `json:"feedback_count"`
-	RubricAverages           map[string]float64 `json:"rubric_averages,omitempty"`
-	AvgScoreActed            *float64           `json:"avg_score_acted,omitempty"`
-	AvgScoreIgnored          *float64           `json:"avg_score_ignored,omitempty"`
-	DriftScore               *float64           `json:"drift_score,omitempty"`
-	CalibrationRecommendation string            `json:"calibration_recommendation,omitempty"`
-	MisclassifyBySource       map[string]int     `json:"misclassify_by_source,omitempty"`  // EPIC-082 M2
-	ScoreBuckets              map[string]int     `json:"score_buckets,omitempty"`          // EPIC-082 M3
-	AvgScore7d                *float64           `json:"avg_score_7d,omitempty"`           // EPIC-082 M3
-	AvgScore30d               *float64           `json:"avg_score_30d,omitempty"`          // EPIC-082 M3
+	Profile                   string             `json:"profile"`
+	Count                     int                `json:"count"`
+	AvgScore                  float64            `json:"avg_score"`
+	AccurateCount             int                `json:"accurate_count"`
+	TooHighCount              int                `json:"too_high_count"`
+	TooLowCount               int                `json:"too_low_count"`
+	FeedbackCount             int                `json:"feedback_count"`
+	RubricAverages            map[string]float64 `json:"rubric_averages,omitempty"`
+	AvgScoreActed             *float64           `json:"avg_score_acted,omitempty"`
+	AvgScoreIgnored           *float64           `json:"avg_score_ignored,omitempty"`
+	DriftScore                *float64           `json:"drift_score,omitempty"`
+	CalibrationRecommendation string             `json:"calibration_recommendation,omitempty"`
+	MisclassifyBySource       map[string]int     `json:"misclassify_by_source,omitempty"`      // EPIC-082 M2
+	ScoreBuckets              map[string]int     `json:"score_buckets,omitempty"`              // EPIC-082 M3
+	AvgScore7d                *float64           `json:"avg_score_7d,omitempty"`               // EPIC-082 M3
+	AvgScore30d               *float64           `json:"avg_score_30d,omitempty"`              // EPIC-082 M3
 	FeedbackCalibrationScore  *float64           `json:"feedback_calibration_score,omitempty"` // EPIC-082 M3: (TooHigh-TooLow)/FeedbackCount
 }
 
@@ -1354,7 +1374,7 @@ func (q *Queue) Close() error {
 
 // Snapshot writes a clean, defragmented copy of the database to destPath using
 // VACUUM INTO. The destination file is removed first because VACUUM INTO refuses
-// to overwrite an existing file. Intended for periodic point-in-time backups  - 
+// to overwrite an existing file. Intended for periodic point-in-time backups  -
 // if queue.db becomes corrupt, the last snapshot is the recovery baseline before
 // attempting sqlite3 .recover.
 func (q *Queue) Snapshot(destPath string) error {
@@ -1517,6 +1537,9 @@ type PushItem struct {
 	ClassifySource string // EPIC-077 M6: cascade stage that produced the profile
 	ContentWarning string // EPIC-102: "lit_parse_failed" when extraction failed
 	ErrorReason    string // EPIC-111 F2 M6: populated for status=failed pushes
+	TargetDeviceID string // EPIC-167 F4: route to this device only
+	TargetUserID   int64  // EPIC-167 F4: target device owner
+	PushKind       string // EPIC-167 F4: semantic kind (e.g. score_complete)
 }
 
 // EnqueuePush inserts a pending row into push_outbox and returns its id.
@@ -1543,14 +1566,29 @@ func (q *Queue) EnqueuePushWithProfile(kind, profile string, score int, slug, ve
 	return id, nil
 }
 
+// EnqueueDevicePush inserts a score-complete push targeted at the originating device.
+func (q *Queue) EnqueueDevicePush(profile string, score int, slug, verdict, url string, targetUserID int64, targetDeviceID string) (int64, error) {
+	now := time.Now().Unix()
+	res, err := q.db.Exec(
+		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, push_kind, target_user_id, target_device_id, status, attempts, next_attempt, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 'digest', ?, 'score_complete', ?, ?, 'pending', 0, ?, ?, ?)`,
+		score, slug, verdict, url, profile, targetUserID, targetDeviceID, now, now, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("enqueue device push: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	return id, nil
+}
+
 // EnqueueDigestResult holds the outcome of EnqueueDigestIfDue. A successful
 // enqueue populates ID; a suppressed call leaves ID zero and records Reason.
 type EnqueueDigestResult struct {
-	Enqueued              bool
-	Reason                string // "enqueued", "throttled", "below_min_score"
-	ID                    int64  // row id when enqueued; 0 otherwise
-	SecondsUntilAllowed   int64  // populated on throttled
-	ThrottleRemainingMs   int64  // populated on enqueued (throttle window length ms)
+	Enqueued            bool
+	Reason              string // "enqueued", "throttled", "below_min_score"
+	ID                  int64  // row id when enqueued; 0 otherwise
+	SecondsUntilAllowed int64  // populated on throttled
+	ThrottleRemainingMs int64  // populated on enqueued (throttle window length ms)
 }
 
 // EnqueueDigestIfDue is the single sanctioned entry point for writing a
@@ -1662,7 +1700,7 @@ func (q *Queue) EnqueuePrefilterPush(profile, slug, verdict, url string) error {
 
 // EnqueueTranscriptPush inserts a push_outbox row for a YouTube transcript-only
 // notification. Uses content_type='youtube_transcript' so sendOutboxFCM renders
-// a transcript-oriented title/body. Bypasses min-score floor and throttle  - 
+// a transcript-oriented title/body. Bypasses min-score floor and throttle  -
 // transcript delivery should always notify. EPIC-090 M2.
 func (q *Queue) EnqueueTranscriptPush(profile, slug, verdict, url string) error {
 	now := time.Now().Unix()
@@ -1712,7 +1750,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 		limit = 50
 	}
 	rows, err := q.db.Query(
-		`SELECT id, score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at, last_error, gap_summary, content_type, COALESCE(classify_source,''), COALESCE(content_warning,''), COALESCE(error_reason,'')
+		`SELECT id, score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at, last_error, gap_summary, content_type, COALESCE(classify_source,''), COALESCE(content_warning,''), COALESCE(error_reason,''), COALESCE(target_device_id,''), COALESCE(target_user_id,0), COALESCE(push_kind,'')
 		 FROM push_outbox WHERE status='pending' AND next_attempt <= ? ORDER BY id ASC LIMIT ?`,
 		time.Now().Unix(), limit,
 	)
@@ -1723,7 +1761,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 	var items []PushItem
 	for rows.Next() {
 		var p PushItem
-		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Profile, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError, &p.GapSummary, &p.ContentType, &p.ClassifySource, &p.ContentWarning, &p.ErrorReason); err != nil {
+		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Profile, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError, &p.GapSummary, &p.ContentType, &p.ClassifySource, &p.ContentWarning, &p.ErrorReason, &p.TargetDeviceID, &p.TargetUserID, &p.PushKind); err != nil {
 			return nil, err
 		}
 		items = append(items, p)
@@ -2087,7 +2125,7 @@ func (q *Queue) query(sqlStr string, args ...any) ([]QueueItem, error) {
 		var it QueueItem
 		var score int
 		var isScreenshotInt, isShortsInt int
-		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source, &it.ArtifactPath, &it.ContentWarning, &it.ExtractionConfidence, &it.RetryCount, &it.RetryAfter, &it.ErrorReason, &it.ContentHash, &it.TraceID, &it.UserTags); err != nil {
+		if err := rows.Scan(&it.ID, &it.URL, &it.Text, &it.Type, &it.Action, &it.Profile, &it.Status, &score, &it.Tags, &it.QueuedAt, &it.RelayedAt, &it.ScoredAt, &it.ArchivedAt, &it.Verdict, &it.Slug, &it.Progress, &it.Outcome, &it.OutcomeAt, &it.Feedback, &it.FeedbackAt, &it.Title, &it.RubricScores, &it.TopicTags, &it.ClusterID, &it.ActionRoute, &it.ClassifySource, &isScreenshotInt, &it.FileSize, &isShortsInt, &it.Source, &it.ArtifactPath, &it.ContentWarning, &it.ExtractionConfidence, &it.RetryCount, &it.RetryAfter, &it.ErrorReason, &it.ContentHash, &it.TraceID, &it.UserTags, &it.SubmittedByDeviceID, &it.SubmittedByUserID); err != nil {
 			return nil, err
 		}
 		if score != 0 {
