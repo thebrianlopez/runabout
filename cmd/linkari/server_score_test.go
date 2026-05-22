@@ -112,13 +112,17 @@ type onceDoneEval struct {
 
 func (e *onceDoneEval) Name() string { return "once-done" }
 func (e *onceDoneEval) Evaluate(ctx context.Context, content, prompt string) (*Scorecard, error) {
+	var sc *Scorecard
+	var err error
+	if e.inner != nil {
+		sc, err = e.inner.Evaluate(ctx, content, prompt)
+	} else {
+		err = fmt.Errorf("no inner evaluator")
+	}
 	if atomic.CompareAndSwapInt32(&e.once, 0, 1) {
 		close(e.done)
 	}
-	if e.inner != nil {
-		return e.inner.Evaluate(ctx, content, prompt)
-	}
-	return nil, fmt.Errorf("no inner evaluator")
+	return sc, err
 }
 
 // --- helper: wait for scoreURLAsync on early-exit paths ----------------------
@@ -699,8 +703,22 @@ func runScoreFileAsyncSync(t *testing.T, req *ShareRequest, q *Queue, eval Evalu
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Log("runScoreFileAsyncSync: timed out (eval never called)")
+		return
 	}
-	time.Sleep(50 * time.Millisecond)
+	// Poll for the terminal status scoreAsync writes after all processing (eval +
+	// transcript save + queue update). "scored" and "archived" are the only states
+	// scoreAsync writes on the success path; we must not return on intermediate
+	// states like "relayed" that callers may set before invoking scoreAsync.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		items, _ := q.List("", 20)
+		for _, it := range items {
+			if it.ID == req.QueueRowID && (it.Status == "scored" || it.Status == "archived") {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // TestScoreAsync_ImageFileMetadataOnly verifies an image share with no temp
