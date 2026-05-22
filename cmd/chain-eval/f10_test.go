@@ -164,3 +164,74 @@ func TestFlowBenchFixtureSchema(t *testing.T) {
 		t.Error("CT-16: docs_state must be non-empty after loading fixture dir")
 	}
 }
+
+// CT-17: judge parser accepts common labeled and embedded score formats.
+// Regression guard: judge parse must not error on realistic LLM response shapes.
+func TestExtractJudgeScore_Variants(t *testing.T) {
+	cases := []struct {
+		input string
+		want  int
+		desc  string
+	}{
+		{"5", 5, "bare integer"},
+		{"Score: 5", 5, "labeled Score:"},
+		{"score=4", 4, "labeled score="},
+		{"score: 3", 3, "lowercase score:"},
+		{"**4**", 4, "bold markdown"},
+		{"The response correctly identifies step 6. Score: 5", 5, "explanatory with trailing Score:"},
+		{"I would rate this a 3 out of 5.\n3", 3, "last-line bare integer"},
+		{"  5  ", 5, "padded bare integer"},
+	}
+	for _, tc := range cases {
+		got, err := extractJudgeScore(tc.input)
+		if err != nil {
+			t.Errorf("CT-17 [%s] %q: unexpected error: %v", tc.desc, tc.input, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("CT-17 [%s] %q: want %d, got %d", tc.desc, tc.input, tc.want, got)
+		}
+	}
+}
+
+// CT-17b: judge parser errors on unparseable content.
+func TestExtractJudgeScore_Errors(t *testing.T) {
+	cases := []struct {
+		input string
+		desc  string
+	}{
+		{"", "empty string"},
+		{"N/A", "non-numeric"},
+		{"0", "out of range low"},
+		{"6", "out of range high"},
+		{"The model performed well overall.", "no score at all"},
+	}
+	for _, tc := range cases {
+		_, err := extractJudgeScore(tc.input)
+		if err == nil {
+			t.Errorf("CT-17b [%s] %q: expected error, got nil", tc.desc, tc.input)
+		}
+	}
+}
+
+// CT-18: threshold boundary — score exactly at threshold is PASS, score 1 ULP below is FAIL.
+// Regression guard: displayed margin must be non-negative for PASS, negative for FAIL.
+func TestAllPass_ThresholdBoundary(t *testing.T) {
+	threshold := 0.85
+
+	passCollector := &scoreCollector{byDim: make(map[string][]float64)}
+	for _, dim := range dimensions {
+		passCollector.record(dim, threshold) // exactly at threshold
+	}
+	if !allPass(passCollector, threshold) {
+		t.Error("CT-18: score exactly at threshold must PASS")
+	}
+
+	failCollector := &scoreCollector{byDim: make(map[string][]float64)}
+	for _, dim := range dimensions {
+		failCollector.record(dim, threshold-0.0001) // just below threshold
+	}
+	if allPass(failCollector, threshold) {
+		t.Error("CT-18: score just below threshold must FAIL")
+	}
+}

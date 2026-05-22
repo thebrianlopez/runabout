@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -30,6 +32,40 @@ var judgeRubrics = map[Dimension]string{
 // judgeBaseURL is the HF Inference Providers OpenAI-compatible router base.
 // Overridable in tests via httptest.
 var judgeBaseURL = "https://router.huggingface.co/v1"
+
+// reScore matches the last 1-5 integer in a judge response, tolerating labeled
+// formats like "Score: 5", "score=4", markdown bold "**3**", and bare integers.
+var reScore = regexp.MustCompile(`(?i)(?:score[=:\s]+)?\*{0,2}([1-5])\*{0,2}\s*$`)
+
+// extractJudgeScore extracts a 1-5 integer score from a judge response that may
+// be a bare integer, labeled ("Score: 5"), fenced, or explanatory with a trailing
+// score. Returns an error only when no valid 1-5 integer can be found anywhere.
+func extractJudgeScore(content string) (int, error) {
+	// Fast path: bare integer.
+	if n, err := strconv.Atoi(content); err == nil {
+		if n >= 1 && n <= 5 {
+			return n, nil
+		}
+		return 0, fmt.Errorf("integer %d out of 1-5 range", n)
+	}
+	// Labeled / embedded: scan the last line first, then full content.
+	for _, candidate := range []string{lastLine(content), content} {
+		if m := reScore.FindStringSubmatch(candidate); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				return n, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("no 1-5 score found in judge response")
+}
+
+func lastLine(s string) string {
+	s = strings.TrimRight(s, "\n\r ")
+	if i := strings.LastIndexAny(s, "\n\r"); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}
 
 // judgeScore calls an HF Inference Providers chat-completions judge and returns a
 // normalized score 0.0-1.0 (1-5 → (score-1)/4). On error: returns 0.0, non-fatal.
@@ -90,8 +126,8 @@ func judgeScore(ctx context.Context, output string, dim Dimension) (float64, err
 	}
 
 	content := strings.TrimSpace(result.Choices[0].Message.Content)
-	var score int
-	if _, err := fmt.Sscanf(content, "%d", &score); err != nil {
+	score, err := extractJudgeScore(content)
+	if err != nil {
 		return 0.0, fmt.Errorf("judge parse %q: %w", content, err)
 	}
 	if score < 1 {

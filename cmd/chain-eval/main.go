@@ -474,8 +474,8 @@ func allPass(coll *scoreCollector, threshold float64) bool {
 
 func printScoreTable(coll *scoreCollector, threshold float64) {
 	fmt.Println()
-	fmt.Printf("%-20s  %s\n", "Dimension", "Avg Score")
-	fmt.Println(strings.Repeat("-", 40))
+	fmt.Printf("%-20s  %-10s  %-10s  %s\n", "Dimension", "Avg Score", "Margin", "")
+	fmt.Println(strings.Repeat("-", 50))
 	for _, dim := range dimensions {
 		avg, ok := coll.avg(dim)
 		if !ok {
@@ -483,12 +483,13 @@ func printScoreTable(coll *scoreCollector, threshold float64) {
 			continue
 		}
 		status := "PASS"
+		margin := avg - threshold
 		if avg < threshold {
 			status = "FAIL"
 		}
-		fmt.Printf("%-20s  %.2f  %s\n", dim, avg, status)
+		fmt.Printf("%-20s  %.4f  %+.4f  %s\n", dim, avg, margin, status)
 	}
-	fmt.Printf("%-20s  %.2f\n", "Threshold", threshold)
+	fmt.Printf("%-20s  %.4f\n", "Threshold", threshold)
 	fmt.Println()
 }
 
