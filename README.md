@@ -21,7 +21,7 @@ These tools represent patterns that graduated from ad-hoc shell scripts into typ
 - **ghwatch** - stream GitHub repository activity to the terminal (push, PRs, workflow runs)
 - **ts-go** - tree-sitter-based structural Go source analysis (signatures, types, body extraction, search, rewrite)
 
-**Last Updated:** 2026-05-05
+
 
 ## Install
 
@@ -545,4 +545,4 @@ Active development. Fourteen tools building and passing tests. `plaid-service` P
 - tsnet outbound client injected (F5) - all Plaid API traffic routes through Tailnet node `plaid-service`
 - jira-poller added as satellite module alongside plaid-service
 
-**Last Updated:** 2026-04-30
+**Last Updated:** 2026-05-22
