@@ -186,14 +186,10 @@ func run(ctx context.Context, cfg runConfig) int {
 
 	printScoreTable(coll, cfg.minScore)
 
-	// Push results to HF Hub (non-fatal).
-	for _, row := range rows {
-		if err := hubPush(ctx, row); err != nil {
-			fmt.Fprintf(os.Stderr, "⚠ hub push failed: %v\n", err)
-		}
-	}
-
-	if repo := os.Getenv("HF_DATASET_REPO"); repo != "" {
+	// Push all results to HF Hub as a single commit (non-fatal).
+	if err := hubPushBatch(ctx, rows); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ hub push failed: %v\n", err)
+	} else if repo := os.Getenv("HF_DATASET_REPO"); repo != "" {
 		fmt.Fprintf(os.Stderr, "HF Hub: https://huggingface.co/datasets/%s\n", repo)
 	}
 

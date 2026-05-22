@@ -99,9 +99,12 @@ func TestScoreNextAction_JudgeAPIError(t *testing.T) {
 	}
 }
 
-// CT-14: hub_push_error is non-fatal  -  hubPush returns error, does not panic or exit.
+// CT-14: hub_push_error is non-fatal  -  hubPushBatch returns error, does not panic or exit.
+// Also validates batch contract: N rows produce exactly 1 HTTP request to the Hub API.
 func TestHubPush_ErrorNonFatal(t *testing.T) {
+	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
 		http.Error(w, "forbidden", http.StatusForbidden)
 	}))
 	defer srv.Close()
@@ -111,10 +114,18 @@ func TestHubPush_ErrorNonFatal(t *testing.T) {
 	hubBaseURL = srv.URL
 	t.Cleanup(func() { hubBaseURL = "https://huggingface.co" })
 
-	row := ResultRow{RunID: "test-run", Fixture: "pomo_pending", Command: "/chain next"}
-	err := hubPush(context.Background(), row)
+	rows := []ResultRow{
+		{RunID: "test-run", Fixture: "pomo_pending", Command: "/chain next"},
+		{RunID: "test-run", Fixture: "release_gate_violation", Command: "/chain validate"},
+		{RunID: "test-run", Fixture: "tdd_approved_no_epic", Command: "/chain next"},
+	}
+	err := hubPushBatch(context.Background(), rows)
 	if err == nil {
 		t.Error("CT-14: hub push to failing server should return error")
+	}
+	// Batch contract: 3 rows must produce exactly 1 HTTP request.
+	if requests != 1 {
+		t.Errorf("CT-14: want 1 HTTP request for %d rows, got %d", len(rows), requests)
 	}
 	// Non-fatal contract: error returned, no panic, no os.Exit - test reaches here.
 }
