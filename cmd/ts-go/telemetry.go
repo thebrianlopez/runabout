@@ -91,6 +91,7 @@ type event struct {
 	SessionID     string                 `json:"session_id"`
 	User          string                 `json:"user"`
 	CWD           string                 `json:"cwd"`
+	SourceMachine string                 `json:"source_machine"`
 	DurationMs    int64                  `json:"duration_ms"`
 	ExitCode      int                    `json:"exit_code"`
 	Agent         *string                `json:"agent"`
@@ -162,6 +163,8 @@ func buildEvent(cliName, subcmd string, durationMs int64, exitCode int, flags ma
 		sid = "unknown"
 	}
 
+	hostname, _ := os.Hostname()
+
 	return event{
 		SchemaVersion: "2",
 		Timestamp:     time.Now().UTC().Format("20060102T150405Z"),
@@ -172,6 +175,7 @@ func buildEvent(cliName, subcmd string, durationMs int64, exitCode int, flags ma
 		SessionID:     sid,
 		User:          user,
 		CWD:           cwd,
+		SourceMachine: hostname,
 		DurationMs:    durationMs,
 		ExitCode:      exitCode,
 		Metadata: map[string]interface{}{
