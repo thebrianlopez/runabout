@@ -40,7 +40,8 @@ jobs:
     name: Run chain eval
     runs-on: ubuntu-latest
     needs: build-and-dry-run
-    if: secrets.ANTHROPIC_API_KEY != '' && secrets.BRAINTRUST_API_KEY != ''
+    # Secrets are not evaluable in job-level if conditions; gate via step env instead.
+    # The eval steps will skip gracefully when ANTHROPIC_API_KEY is absent.
     steps:
       - uses: actions/checkout@v4
 
@@ -56,20 +57,30 @@ jobs:
         if: github.event.inputs.fixture == ''
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          BRAINTRUST_API_KEY: ${{ secrets.BRAINTRUST_API_KEY }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
           CHAIN_PROMPTS_DIR: docs/core/prompts
           CHAIN_FIXTURES_DIR: cmd/chain-eval/fixtures
         run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "⚠ ANTHROPIC_API_KEY not set — skipping live eval"
+            exit 0
+          fi
           MIN_SCORE="${{ github.event.inputs.min_score || '0.85' }}"
-          ./bin/chain-eval --all --min-score "$MIN_SCORE" --project chain
+          ./bin/chain-eval --all --min-score "$MIN_SCORE"
 
       - name: Run chain eval (single fixture)
         if: github.event.inputs.fixture != ''
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          BRAINTRUST_API_KEY: ${{ secrets.BRAINTRUST_API_KEY }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
           CHAIN_PROMPTS_DIR: docs/core/prompts
           CHAIN_FIXTURES_DIR: cmd/chain-eval/fixtures
         run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "⚠ ANTHROPIC_API_KEY not set — skipping live eval"
+            exit 0
+          fi
           MIN_SCORE="${{ github.event.inputs.min_score || '0.85' }}"
-          ./bin/chain-eval --fixture "${{ github.event.inputs.fixture }}" --min-score "$MIN_SCORE" --project chain
+          ./bin/chain-eval --fixture "${{ github.event.inputs.fixture }}" --min-score "$MIN_SCORE"
