@@ -10,17 +10,20 @@ import (
 	"testing"
 )
 
-// mockJudge creates an httptest server that returns the given Prometheus score (1-5).
+// mockJudge creates an httptest server that returns the given judge score (1-5).
 // Caller must defer srv.Close().
 func mockJudge(t *testing.T, score int) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("judge path = %s, want /chat/completions", r.URL.Path)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]map[string]string{{"generated_text": string(rune('0' + score))}}) //nolint:errcheck
+		json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": string(rune('0' + score))}}}}) //nolint:errcheck
 	}))
 	t.Setenv("HUGGINGFACE_API_KEY", "test-key")
 	judgeBaseURL = srv.URL
-	t.Cleanup(func() { judgeBaseURL = "https://api-inference.huggingface.co" })
+	t.Cleanup(func() { judgeBaseURL = "https://router.huggingface.co/v1" })
 	return srv
 }
 
@@ -32,7 +35,7 @@ func mockJudgeError(t *testing.T) *httptest.Server {
 	}))
 	t.Setenv("HUGGINGFACE_API_KEY", "test-key")
 	judgeBaseURL = srv.URL
-	t.Cleanup(func() { judgeBaseURL = "https://api-inference.huggingface.co" })
+	t.Cleanup(func() { judgeBaseURL = "https://router.huggingface.co/v1" })
 	return srv
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
@@ -44,12 +45,12 @@ func hubPush(ctx context.Context, row ResultRow) error {
 	}
 
 	payload := map[string]any{
-		"commit_message": fmt.Sprintf("chain-eval %s %s", row.RunID, row.Fixture),
-		"operations": []map[string]any{
+		"summary": fmt.Sprintf("chain-eval %s %s", row.RunID, row.Fixture),
+		"files": []map[string]any{
 			{
-				"operation": "addOrUpdate",
-				"path":      "results.jsonl",
-				"content":   string(line) + "\n",
+				"path":     "results.jsonl",
+				"content":  string(line) + "\n",
+				"encoding": "utf-8",
 			},
 		},
 	}
@@ -71,7 +72,15 @@ func hubPush(ctx context.Context, row ResultRow) error {
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("hub API %d", resp.StatusCode)
+		return fmt.Errorf("hub API %d: %s", resp.StatusCode, limitedBody(resp))
 	}
 	return nil
+}
+
+func limitedBody(resp *http.Response) string {
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return err.Error()
+	}
+	return string(data)
 }

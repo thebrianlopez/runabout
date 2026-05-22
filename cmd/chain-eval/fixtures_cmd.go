@@ -183,11 +183,11 @@ func collectDumps(fixturesDir string) ([]FixtureDump, error) {
 // hubPushFile uploads a full file to an HF Hub dataset via the commit API.
 func hubPushFile(ctx context.Context, repo, apiKey, path, content string) error {
 	payload := map[string]any{
-		"commit_message": fmt.Sprintf("chain-eval fixture sync %s", time.Now().UTC().Format("20060102T150405Z")),
-		"operations": []map[string]any{{
-			"operation": "addOrUpdate",
-			"path":      path,
-			"content":   content,
+		"summary": fmt.Sprintf("chain-eval fixture sync %s", time.Now().UTC().Format("20060102T150405Z")),
+		"files": []map[string]any{{
+			"path":     path,
+			"content":  content,
+			"encoding": "utf-8",
 		}},
 	}
 	body, _ := json.Marshal(payload)
@@ -208,7 +208,7 @@ func hubPushFile(ctx context.Context, repo, apiKey, path, content string) error 
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("API %d", resp.StatusCode)
+		return fmt.Errorf("API %d: %s", resp.StatusCode, limitedBody(resp))
 	}
 	return nil
 }

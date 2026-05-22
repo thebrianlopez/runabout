@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -123,9 +124,17 @@ func run(ctx context.Context, cfg runConfig) int {
 	coll := &scoreCollector{byDim: make(map[string][]float64)}
 	client := anthropic.NewClient()
 
-	// Run fixtures in parallel (max 3 concurrent), collect ResultRows for hub push.
+	// Run fixtures with bounded concurrency, collect ResultRows for hub push.
+	// Default to 1 to stay under low Anthropic TPM limits; callers can raise with
+	// CHAIN_EVAL_CONCURRENCY once quota is available.
+	concurrency := 1
+	if raw := os.Getenv("CHAIN_EVAL_CONCURRENCY"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			concurrency = parsed
+		}
+	}
 	rows := make([]ResultRow, len(cases))
-	sem := make(chan struct{}, 3)
+	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	for i, c := range cases {
 		wg.Add(1)
