@@ -88,7 +88,7 @@ func judgeScore(ctx context.Context, output string, dim Dimension) (float64, err
 		"messages": []map[string]string{
 			{"role": "user", "content": prompt},
 		},
-		"max_tokens": 5,
+		"max_tokens": 20,
 	})
 
 	url := fmt.Sprintf("%s/chat/completions", strings.TrimRight(judgeBaseURL, "/"))
