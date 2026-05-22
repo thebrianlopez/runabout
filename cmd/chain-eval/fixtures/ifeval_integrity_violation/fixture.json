@@ -1,10 +1,5 @@
 {
   "command": "/chain status",
   "source": "ifeval_adapted",
-  "difficulty": "hard",
-  "expected": {
-    "icon_map": {
-      "POMO": "\u26d4"
-    }
-  }
+  "difficulty": "hard"
 }

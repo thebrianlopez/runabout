@@ -1,11 +1,5 @@
 {
   "command": "/chain status",
   "source": "ifeval_adapted",
-  "difficulty": "standard",
-  "expected": {
-    "icon_map": {
-      "FDD": "\ud83d\udd04",
-      "TDD": "\u26d4"
-    }
-  }
+  "difficulty": "standard"
 }

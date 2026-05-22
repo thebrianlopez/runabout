@@ -194,6 +194,10 @@ func TestExtractJudgeScore_Variants(t *testing.T) {
 		{"  5  ", 5, "padded bare integer"},
 		{"Score: 4\n\nThe single highest-priority step is step 4.", 4, "score on first line, explanation after"},
 		{"**Score:** 4\n\nRationale: ...", 4, "bold score on first line"},
+		{"1.", 1, "period-terminated integer"},
+		{"5.", 5, "period-terminated integer high"},
+		{"3\n\nThe response implies the step is correct.", 3, "bare integer first line, explanation after"},
+		{"4\n\nThe response identifies most violations.", 4, "bare integer first line, explanation after high"},
 	}
 	for _, tc := range cases {
 		got, err := extractJudgeScore(tc.input)

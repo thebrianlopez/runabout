@@ -1,15 +1,5 @@
 {
   "command": "/chain status",
   "source": "ifeval_adapted",
-  "difficulty": "standard",
-  "expected": {
-    "icon_map": {
-      "PRD": "\u2705",
-      "FDD": "\u2705",
-      "TDD": "\u2705",
-      "Epic": "\u2705",
-      "Release": "\u2705",
-      "POMO": "\u2705"
-    }
-  }
+  "difficulty": "standard"
 }

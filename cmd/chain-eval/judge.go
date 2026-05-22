@@ -33,9 +33,15 @@ var judgeRubrics = map[Dimension]string{
 // Overridable in tests via httptest.
 var judgeBaseURL = "https://router.huggingface.co/v1"
 
-// reScore matches the last 1-5 integer in a judge response, tolerating labeled
-// formats like "Score: 5", "score=4", markdown bold "**3**", and bare integers.
-var reScore = regexp.MustCompile(`(?i)(?:score[=:\s]+)?\*{0,2}([1-5])\*{0,2}\s*$`)
+// reScore matches a 1-5 score at end of a string, tolerating labeled formats
+// ("Score: 5", "score=4", bold "**3**"), bare integers, and period-terminated integers.
+var reScore = regexp.MustCompile(`(?i)(?:score[=:\s]+)?\*{0,2}([1-5])\*{0,2}[.]?\s*$`)
+
+// reScoreLabeled matches only explicitly labeled first-line scores
+// ("Score: 5", "score=4", "**Score:** 3", "**Score: 4**") — not bare end-of-line integers.
+// Used for first-line extraction to avoid false matches on prose like
+// "I would rate this a 3 out of 5."
+var reScoreLabeled = regexp.MustCompile(`(?i)\*{0,2}score\*{0,2}[*=:\s]+([1-5])`)
 
 // extractJudgeScore extracts a 1-5 integer score from a judge response that may
 // be a bare integer, labeled ("Score: 5"), fenced, or explanatory with a trailing
@@ -48,8 +54,20 @@ func extractJudgeScore(content string) (int, error) {
 		}
 		return 0, fmt.Errorf("integer %d out of 1-5 range", n)
 	}
-	// Labeled / embedded: scan first line, last line, then full content.
-	for _, candidate := range []string{firstLine(content), lastLine(content), content} {
+	// First line: accept (a) explicit label ("Score: 5", "**Score:** 4") or
+	// (b) a bare integer [1-5] possibly with period — but only when the entire
+	// first line IS the integer (no surrounding prose like "a 3 out of 5").
+	fl := strings.TrimRight(firstLine(content), ". ")
+	if m := reScoreLabeled.FindStringSubmatch(fl); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			return n, nil
+		}
+	}
+	if n, err := strconv.Atoi(fl); err == nil && n >= 1 && n <= 5 {
+		return n, nil
+	}
+	// Last line and full content: broader reScore pattern (bare int + labeled).
+	for _, candidate := range []string{lastLine(content), content} {
 		if m := reScore.FindStringSubmatch(candidate); m != nil {
 			if n, err := strconv.Atoi(m[1]); err == nil {
 				return n, nil
@@ -85,7 +103,10 @@ func judgeScore(ctx context.Context, output string, dim Dimension) (float64, err
 
 	model := os.Getenv("HF_JUDGE_MODEL")
 	if model == "" {
-		model = "meta-llama/Llama-3.2-1B-Instruct"
+		// Llama-3.1-8B-Instruct: 8B, strong rubric instruction-following, bare integer
+		// output compliance. Replaces Llama-3.2-1B-Instruct which was too small for
+		// consistent icon rubric scoring (POMO chain-eval-icon-accuracy-variance).
+		model = "meta-llama/Llama-3.1-8B-Instruct"
 	}
 
 	rubric := judgeRubrics[dim]
