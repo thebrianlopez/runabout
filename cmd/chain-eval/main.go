@@ -186,11 +186,25 @@ func run(ctx context.Context, cfg runConfig) int {
 
 	printScoreTable(coll, cfg.minScore)
 
-	// Push all results to HF Hub as a single commit (non-fatal).
-	if err := hubPushBatch(ctx, rows); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠ hub push failed: %v\n", err)
-	} else if repo := os.Getenv("HF_DATASET_REPO"); repo != "" {
-		fmt.Fprintf(os.Stderr, "HF Hub: https://huggingface.co/datasets/%s\n", repo)
+	// Push results: prefer HF Bucket (no commit rate limit, accumulates history)
+	// over dataset commit. Falls back to hubPushBatch when bucket not configured.
+	if bucket := os.Getenv("HF_RESULTS_BUCKET"); bucket != "" {
+		runID := ""
+		if len(rows) > 0 {
+			runID = rows[0].RunID
+		}
+		if err := hubPushBucket(ctx, rows, bucket); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ bucket push failed: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "HF Bucket: %s\n", bucketRunURL(bucket, runID))
+		}
+	} else {
+		// Legacy: dataset commit (1 commit/run, subject to 128/hr free-tier limit).
+		if err := hubPushBatch(ctx, rows); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ hub push failed: %v\n", err)
+		} else if repo := os.Getenv("HF_DATASET_REPO"); repo != "" {
+			fmt.Fprintf(os.Stderr, "HF Hub: https://huggingface.co/datasets/%s\n", repo)
+		}
 	}
 
 	if !pass {

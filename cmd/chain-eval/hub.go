@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"time"
 )
 
@@ -88,6 +89,45 @@ func hubPushBatch(ctx context.Context, rows []ResultRow) error {
 		return fmt.Errorf("hub API %d: %s", resp.StatusCode, limitedBody(resp))
 	}
 	return nil
+}
+
+// hubPushBucket writes all scored rows to an HF Bucket using the `hf` CLI.
+// Target path: hf://buckets/{bucket}/{runID}/results.jsonl
+// One write per run at a unique timestamped path — no commit rate limit,
+// historical runs accumulate. Requires `hf` CLI on PATH and HUGGINGFACE_API_KEY
+// (or prior `hf auth login`). Non-fatal: errors logged by caller.
+func hubPushBucket(ctx context.Context, rows []ResultRow, bucket string) error {
+	if len(rows) == 0 || bucket == "" {
+		return nil
+	}
+
+	var buf bytes.Buffer
+	for _, row := range rows {
+		line, err := json.Marshal(row)
+		if err != nil {
+			return fmt.Errorf("bucket marshal: %w", err)
+		}
+		buf.Write(line)
+		buf.WriteByte('\n')
+	}
+
+	runID := rows[0].RunID
+	dst := fmt.Sprintf("hf://buckets/%s/%s/results.jsonl", bucket, runID)
+
+	cmd := exec.CommandContext(ctx, "hf", "buckets", "cp", "-", dst)
+	cmd.Stdin = &buf
+	if apiKey := os.Getenv("HUGGINGFACE_API_KEY"); apiKey != "" {
+		cmd.Env = append(os.Environ(), "HF_TOKEN="+apiKey)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("hf buckets cp: %w: %s", err, string(out))
+	}
+	return nil
+}
+
+// bucketRunURL returns the canonical URL for a run's results in the bucket.
+func bucketRunURL(bucket, runID string) string {
+	return fmt.Sprintf("https://huggingface.co/buckets/%s/%s/results.jsonl", bucket, runID)
 }
 
 func limitedBody(resp *http.Response) string {
