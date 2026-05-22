@@ -364,3 +364,40 @@ integration-test: lima-test
 	@cd cmd/linkari && LINKARI_RUNTIME_SOCKET=$(LIMA_SOCKET) \
 		go test -v -tags=integration -run TestContainer ./...
 	@echo "OK: Integration tests passed"
+
+# -----------------------------------------------------------------------------
+# docs-core S3 publish
+# Pushes the local docs-core tree to the git-remote-s3 bundle repo at
+# s3://www-brianlopez-us/repos/docs-core so CI can clone it via git-remote-s3.
+#
+# Usage:
+#   make push-docs-artifact                   # push from ~/code/personal/docs
+#   DOCS_CORE_PATH=/other/path make push-docs-artifact
+#
+# Requires:
+#   - git-remote-s3 installed (pipx install git-remote-s3)
+#   - AWS_PROFILE=brianonpoint (or default credentials with s3:PutObject on www-brianlopez-us)
+# -----------------------------------------------------------------------------
+
+DOCS_CORE_PATH  ?= $(HOME)/code/personal/docs
+DOCS_CORE_S3    := s3://www-brianlopez-us/repos/docs-core
+DOCS_PUSH_TMPDIR := /tmp/docs-core-push-$(shell date +%s)
+
+.PHONY: push-docs-artifact
+push-docs-artifact:
+	@echo "→ Pushing docs-core to $(DOCS_CORE_S3)"
+	@echo "  Source: $(DOCS_CORE_PATH)"
+	@if [ ! -d "$(DOCS_CORE_PATH)/.git" ]; then \
+		echo "ERROR: $(DOCS_CORE_PATH) is not a git repo"; exit 1; \
+	fi
+	@if ! command -v git-remote-s3 >/dev/null 2>&1; then \
+		echo "ERROR: git-remote-s3 not found. Run: pipx install git-remote-s3"; exit 1; \
+	fi
+	@# Clone local docs-core, add S3 remote, push main
+	@rm -rf "$(DOCS_PUSH_TMPDIR)" && git clone "$(DOCS_CORE_PATH)" "$(DOCS_PUSH_TMPDIR)" 2>&1
+	@cd "$(DOCS_PUSH_TMPDIR)" && \
+		git remote add s3 "$(DOCS_CORE_S3)" && \
+		AWS_PROFILE=brianonpoint git push --force s3 main 2>&1
+	@rm -rf "$(DOCS_PUSH_TMPDIR)"
+	@echo "✓ docs-core pushed to $(DOCS_CORE_S3)"
+	@echo "  SHA: $$(AWS_PROFILE=brianonpoint aws s3 ls $(DOCS_CORE_S3)/refs/heads/main/ | awk '{print $$4}' | sed 's/.bundle//')"
