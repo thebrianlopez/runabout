@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -152,6 +153,31 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					addCheck(warnCheck("sources_config", msg))
 				} else {
 					addCheck(okCheck("sources_config", msg))
+				}
+			}
+
+			// --- Check 1c: OAuth-backed YouTube sources can refresh credentials. ---
+			if serverCfg != nil && (serverCfg.Sources.YouTubeWatchLaterEnabled || serverCfg.Sources.YouTubeLikedEnabled || serverCfg.Sources.YouTubeMonitoredEnabled) {
+				queuePath := resolveQueueDB(serverCfg.QueueDB)
+				q, err := NewQueue(queuePath, false)
+				if err != nil {
+					addCheck(failCheck("youtube_oauth", fmt.Sprintf("open queue db: %v", err)))
+				} else {
+					checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+					ts, err := youtubeTokenSource(checkCtx, "default", q, serverCfg.GoogleClientID, serverCfg.GoogleClientSecret)
+					if err != nil {
+						addCheck(failCheck("youtube_oauth", fmt.Sprintf("%v — run `linkari auth youtube`", err)))
+					} else if _, err := ts.Token(); err != nil {
+						errClass, remediation := classifyYouTubeAPIError(err)
+						if remediation == "" {
+							remediation = "check Google OAuth client configuration and network access"
+						}
+						addCheck(failCheck("youtube_oauth", fmt.Sprintf("%s: %v — %s", errClass, err, remediation)))
+					} else {
+						addCheck(okCheck("youtube_oauth", "stored YouTube credential refreshes successfully"))
+					}
+					cancel()
+					_ = q.Close()
 				}
 			}
 

@@ -132,9 +132,8 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 		pageNum++
 		items, next, err := execYouTubePlaylistItems(ctx, ts, "WL", nextPageToken)
 		if err != nil {
-			errClass := "api_error"
-			if isQuotaExhausted(err) {
-				errClass = "quota_exhausted"
+			errClass, remediation := classifyYouTubeAPIError(err)
+			if errClass == "quota_exhausted" {
 				slog.Warn("syncWatchLaterAsync: quota exhausted",
 					"event_type", "watchlater_quota_exhausted",
 					"source", "yt_watch_later",
@@ -157,6 +156,7 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 					"source", "yt_watch_later",
 					"profile", profile,
 					"error_class", errClass,
+					"remediation", remediation,
 					"error", err,
 				)
 				if events != nil {
@@ -164,6 +164,7 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 						"source":      "yt_watch_later",
 						"profile":     profile,
 						"error_class": errClass,
+						"remediation": remediation,
 						"error":       err.Error(),
 					})
 				}
@@ -183,8 +184,8 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 		if len(items) == 0 && pageNum == 1 {
 			if events != nil {
 				_ = events.Emit("watchlater_empty", map[string]interface{}{
-					"source":   "yt_watch_later",
-					"profile":  profile,
+					"source":  "yt_watch_later",
+					"profile": profile,
 				})
 			}
 			break

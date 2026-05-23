@@ -130,8 +130,8 @@ type YouTubeSubsSource struct {
 	autoEnqueue  bool // EPIC-098 F3: gate for queue.Enqueue() calls
 }
 
-func (s *YouTubeSubsSource) Name() string         { return "yt_monitored" }
-func (s *YouTubeSubsSource) AuthDeps() []string   { return []string{"google_youtube"} }
+func (s *YouTubeSubsSource) Name() string       { return "yt_monitored" }
+func (s *YouTubeSubsSource) AuthDeps() []string { return []string{"google_youtube"} }
 
 // Start polls subscription channels every hour with exponential backoff on error.
 // Matches the timing of the former backgroundWorkerPool worker.
@@ -212,18 +212,16 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 	// Step 1: fetch all subscription channels.
 	subs, err := execYouTubeSubscriptionsList(ctx, ts)
 	if err != nil {
-		errClass := "api_error"
-		if isQuotaExhausted(err) {
-			errClass = "quota_exceeded"
-		}
+		errClass, remediation := classifyYouTubeAPIError(err)
 		evType := "subscriptions_api_error"
-		if errClass == "quota_exceeded" {
+		if errClass == "quota_exhausted" {
 			evType = "subscriptions_quota_exceeded"
 		}
 		slog.Warn("watchSubscriptionsAsync: subscriptions.list failed",
 			"event_type", evType,
 			"profile", profile,
 			"error_class", errClass,
+			"remediation", remediation,
 			"error", err,
 		)
 		if events != nil {
@@ -231,6 +229,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 				"source":      "yt_monitored",
 				"profile":     profile,
 				"error_class": errClass,
+				"remediation": remediation,
 				"error":       err.Error(),
 			})
 		}
