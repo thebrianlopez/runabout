@@ -32,6 +32,7 @@ func authYouTubeCmd() *cobra.Command {
 	var queueDB string
 	var profile string
 	var noBrowser bool
+	var callbackAddr string
 
 	cmd := &cobra.Command{
 		Use:   "youtube",
@@ -62,7 +63,7 @@ func authYouTubeCmd() *cobra.Command {
 			}
 			defer q.Close()
 
-			tok, err := runYouTubeLoopbackAuth(ctx, clientID, clientSecret, noBrowser)
+			tok, err := runYouTubeLoopbackAuth(ctx, clientID, clientSecret, callbackAddr, noBrowser)
 			if err != nil {
 				return err
 			}
@@ -86,11 +87,15 @@ func authYouTubeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&queueDB, "queue-db", "", "path to SQLite queue database (or LINKARI_QUEUE_DB)")
 	cmd.Flags().StringVar(&profile, "profile", "default", "Linkari profile/user token slot to update")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "print auth URL instead of opening browser")
+	cmd.Flags().StringVar(&callbackAddr, "callback-addr", "127.0.0.1:53682", "OAuth loopback callback address; register http://127.0.0.1:53682/callback in Google Cloud")
 	return cmd
 }
 
-func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret string, noBrowser bool) (*oauth2.Token, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbackAddr string, noBrowser bool) (*oauth2.Token, error) {
+	if callbackAddr == "" {
+		callbackAddr = "127.0.0.1:53682"
+	}
+	ln, err := net.Listen("tcp", callbackAddr)
 	if err != nil {
 		return nil, fmt.Errorf("listen loopback: %w", err)
 	}
