@@ -87,9 +87,8 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 		pageNum++
 		items, next, err := execYouTubePlaylistItems(ctx, ts, "LL", nextPageToken)
 		if err != nil {
-			errClass := "api_error"
-			if isQuotaExhausted(err) {
-				errClass = "quota_exhausted"
+			errClass, remediation := classifyYouTubeAPIError(err)
+			if errClass == "quota_exhausted" {
 				slog.Warn("syncLikedVideosAsync: quota exhausted",
 					"event_type", "likedvideos_quota_exhausted",
 					"source", "yt_liked",
@@ -112,6 +111,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 					"source", "yt_liked",
 					"profile", profile,
 					"error_class", errClass,
+					"remediation", remediation,
 					"error", err,
 				)
 				if events != nil {
@@ -119,6 +119,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 						"source":      "yt_liked",
 						"profile":     profile,
 						"error_class": errClass,
+						"remediation": remediation,
 						"error":       err.Error(),
 					})
 				}

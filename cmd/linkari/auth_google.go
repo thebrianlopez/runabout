@@ -284,3 +284,16 @@ func storeYouTubeToken(q *Queue, profile, refreshToken string, expiresAt int64) 
 	slog.Info("youtube token stored", "event_type", "youtube_token_stored", "profile", profile, "expires_at", expiresAt)
 	return nil
 }
+
+func classifyYouTubeAPIError(err error) (eventClass, remediation string) {
+	if err == nil {
+		return "", ""
+	}
+	if strings.Contains(err.Error(), "invalid_grant") {
+		return "oauth_invalid_grant", "run `linkari auth youtube` to re-authorize Google/YouTube access"
+	}
+	if isQuotaExhausted(err) {
+		return "quota_exhausted", "wait for YouTube API quota reset or reduce polling"
+	}
+	return "api_error", ""
+}

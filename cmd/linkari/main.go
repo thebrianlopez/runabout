@@ -19,8 +19,8 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/thebrianlopez/runabout/cmd/linkari/internal/linklog"
-	"github.com/thebrianlopez/runabout/internal/secrets"
 	"github.com/thebrianlopez/runabout/cmd/linkari/internal/xdgpath"
+	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
 // provenanceEntry buffers a (field, source, fingerprint, tier) tuple resolved
@@ -73,6 +73,7 @@ func main() {
 
 	rootCmd.AddCommand(serveCmd())
 	rootCmd.AddCommand(configCmd())
+	rootCmd.AddCommand(authCmd())
 	rootCmd.AddCommand(doctorCmd())
 	rootCmd.AddCommand(scoreCmd())
 	rootCmd.AddCommand(scoreWriteCmd())
@@ -100,28 +101,28 @@ func serveCmd() *cobra.Command {
 		port            int
 		token           string
 		jiraToken       string
-		jiraAPIUsername  string
+		jiraAPIUsername string
 		jiraAPIPassword string
 		jiraDomain      string
 		pagerDutyToken  string
-		debug         bool
-		firebaseSA    string
-		queueDB       string
-		tlsEnabled    bool
-		certFile      string
-		keyFile       string
-		tsnetEnabled  bool
-		localEnabled  bool
-		tsnetHostname  string
-		tsnetStateDir  string
-		tsnetAuthKey   string
-		notifyMinScore int
-		shell          string
-		shellArgs      string
-		configFile     string
-		detach         bool
-		logFormat      string
-		logLevel       string
+		debug           bool
+		firebaseSA      string
+		queueDB         string
+		tlsEnabled      bool
+		certFile        string
+		keyFile         string
+		tsnetEnabled    bool
+		localEnabled    bool
+		tsnetHostname   string
+		tsnetStateDir   string
+		tsnetAuthKey    string
+		notifyMinScore  int
+		shell           string
+		shellArgs       string
+		configFile      string
+		detach          bool
+		logFormat       string
+		logLevel        string
 	)
 
 	cmd := &cobra.Command{
