@@ -642,7 +642,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 func (s *Server) registerFunnelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/share", s.handleShare)
 	mux.HandleFunc("/actions", s.handleActions)
+	mux.HandleFunc("GET /intents", s.handleIntents)
 	mux.HandleFunc("/register", s.handleRegister)
+	mux.HandleFunc("POST /devices/register", s.handleRegisterDevice)
+	mux.HandleFunc("GET /devices", s.handleListDevices)
+	mux.HandleFunc("POST /devices/{device_id}/disable", s.handleDisableDevice)
 	mux.HandleFunc("/queue", s.handleQueue)
 	mux.HandleFunc("POST /queue/{id}/score", s.handleQueueScore)
 	mux.HandleFunc("POST /queue/{id}/outcome", s.handleQueueOutcome)

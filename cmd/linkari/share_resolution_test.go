@@ -166,3 +166,30 @@ func TestShareActionRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// PA-5 (uinit-action-unresolved POMO): bare "uinit" must normalize to "uinit_auto"
+// when intent is present. Guards against Android clients that emit the bare
+// intent keyword instead of the fully-qualified action ID.
+func TestResolveShareAction_BareUinitNormalizesToAuto(t *testing.T) {
+	idx := testCfgIndex()
+	cases := []struct {
+		action string
+		intent string
+	}{
+		{"uinit", "score"},
+		{"uinit", "capture"},
+		{"uinit", ""},
+	}
+	for _, tc := range cases {
+		req := &ShareRequest{Action: tc.action, Intent: tc.intent, Type: "url", URL: "https://example.com"}
+		got := resolveShareAction(req, idx, false)
+		if got.ResolvedAction != "uinit_auto" {
+			t.Errorf("action=%q intent=%q: expected ResolvedAction=uinit_auto, got %q",
+				tc.action, tc.intent, got.ResolvedAction)
+		}
+		if got.Reason != "bare_action_normalized" {
+			t.Errorf("action=%q intent=%q: expected Reason=bare_action_normalized, got %q",
+				tc.action, tc.intent, got.Reason)
+		}
+	}
+}
