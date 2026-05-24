@@ -130,6 +130,14 @@ type ShareRequest struct {
 	// EPIC-149: user-applied tags from share-time UI.
 	UserTags []string `json:"user_tags,omitempty"`
 
+	// Share-time rationale is optional user intent context captured as typed text
+	// or a voice transcript. Raw audio is not retained in the F1 contract.
+	UserRationaleText       string `json:"user_rationale_text,omitempty"`
+	UserRationaleSource     string `json:"user_rationale_source,omitempty"`
+	UserRationaleDurationMS int64  `json:"user_rationale_duration_ms,omitempty"`
+	CaptureMode             string `json:"capture_mode,omitempty"`
+	SourceApp               string `json:"source_app,omitempty"`
+
 	// EPIC-154 F1: intent field from client (score|capture|transcribe).
 	// When set, intent wins over action for routing; profile is dual-written for soak compat.
 	Intent string `json:"intent,omitempty"`
@@ -1075,6 +1083,23 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 				// EPIC-154 F1: intent field from Android share sheet.
 				b, _ := io.ReadAll(io.LimitReader(part, 64))
 				req.Intent = strings.TrimSpace(string(b))
+			case "user_rationale_text":
+				b, _ := io.ReadAll(io.LimitReader(part, maxUserRationaleChars+1024))
+				req.UserRationaleText = string(b)
+			case "user_rationale_source":
+				b, _ := io.ReadAll(io.LimitReader(part, 64))
+				req.UserRationaleSource = string(b)
+			case "user_rationale_duration_ms":
+				b, _ := io.ReadAll(io.LimitReader(part, 32))
+				if n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil {
+					req.UserRationaleDurationMS = n
+				}
+			case "capture_mode":
+				b, _ := io.ReadAll(io.LimitReader(part, 128))
+				req.CaptureMode = string(b)
+			case "source_app":
+				b, _ := io.ReadAll(io.LimitReader(part, 256))
+				req.SourceApp = string(b)
 			case "audio", "file":
 				req.OriginalFilename = part.FileName() // EPIC-071: preserve original filename
 				ext := filepath.Ext(part.FileName())
@@ -1215,6 +1240,9 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		slog.DebugContext(ctx, "share rejected: user_tags validation error", "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if dropped := normalizeRationale(&req); dropped != "" {
+		slog.WarnContext(ctx, "share: rationale dropped", "event_type", "share_rationale_dropped", "reason", dropped)
 	}
 
 	// EPIC-154 F1: validate intent field.

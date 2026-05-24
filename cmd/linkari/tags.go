@@ -26,6 +26,8 @@ func normalizeTag(s string) string {
 
 // validateUserTags checks that every tag is non-empty and at most 50 chars
 // after normalization. Returns the first violation found.
+const maxUserRationaleChars = 500
+
 func validateUserTags(tags []string) error {
 	for _, tag := range tags {
 		n := normalizeTag(tag)
@@ -43,6 +45,34 @@ func validateUserTags(tags []string) error {
 // user_tags column of the queue row, and upserts each tag into the tags
 // inventory table. All writes run inside a single transaction. Callers
 // treat any error as non-blocking  -  the share row already exists.
+func normalizeRationale(req *ShareRequest) (droppedReason string) {
+	req.UserRationaleText = strings.TrimSpace(req.UserRationaleText)
+	req.UserRationaleSource = strings.TrimSpace(req.UserRationaleSource)
+	req.CaptureMode = strings.TrimSpace(req.CaptureMode)
+	req.SourceApp = strings.TrimSpace(req.SourceApp)
+	if req.UserRationaleText == "" {
+		req.UserRationaleSource = ""
+		req.UserRationaleDurationMS = 0
+		return ""
+	}
+	if len(req.UserRationaleText) > maxUserRationaleChars {
+		req.UserRationaleText = ""
+		req.UserRationaleSource = ""
+		req.UserRationaleDurationMS = 0
+		return "rationale_too_long"
+	}
+	if req.UserRationaleSource != "typed" && req.UserRationaleSource != "voice_transcript" {
+		req.UserRationaleText = ""
+		req.UserRationaleSource = ""
+		req.UserRationaleDurationMS = 0
+		return "invalid_rationale_source"
+	}
+	if req.UserRationaleDurationMS < 0 {
+		req.UserRationaleDurationMS = 0
+	}
+	return ""
+}
+
 func (q *Queue) persistUserTags(rowID int64, tags []string) error {
 	normalized := make([]string, len(tags))
 	for i, tag := range tags {
