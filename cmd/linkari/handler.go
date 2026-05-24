@@ -424,7 +424,27 @@ func resolveShareAction(req *ShareRequest, cfgIndex map[string]*ActionConfig, he
 		return res
 	}
 
-	// Unknown / missing action  -  return as-is and let Route fail fast.
+	// Unknown / missing action — try bare-intent normalization before failing fast.
+	// If caller sent a bare intent keyword (e.g. "uinit") without a profile suffix,
+	// attempt to resolve to the "_auto" variant (e.g. "uinit_auto"). This guards
+	// against Android clients that derive the action field from the intent name
+	// rather than the fully-qualified ActionConfig.ID. (PA-3: uinit-action-unresolved)
+	if autoID := actionID + "_auto"; cfgIndex[autoID] != nil {
+		ac := cfgIndex[autoID]
+		if ac.ProfileMap == "prefix" && profile == "" {
+			if parts := strings.SplitN(autoID, "_", 2); len(parts) == 2 {
+				profile = parts[1]
+			}
+		}
+		res.ResolvedAction = autoID
+		res.ResolvedProfile = profile
+		res.ResolvedIntent = req.Intent
+		res.ClassifySource = req.ClassifySource
+		res.Reason = "bare_action_normalized"
+		return res
+	}
+
+	// Fallback: return as-is and let Route fail fast.
 	res.ResolvedAction = actionID
 	res.ResolvedProfile = profile
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -100,6 +101,7 @@ func (s *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	tokenUpdated, err := s.queue.RegisterDevice(r.Context(), uid, req)
 	if err != nil {
+		slog.Error("register_device_db_error", "error", err, "user_id", uid, "device_id", req.DeviceID, "platform", req.Platform)
 		writeError(w, http.StatusServiceUnavailable, "device_registry_unavailable")
 		return
 	}
