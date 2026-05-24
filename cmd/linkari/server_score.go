@@ -839,6 +839,16 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	if tagSection := formatUserTags(req.UserTags); tagSection != "" {
 		sysPrompt += tagSection
 	}
+	// Share-time rationale is explicit user intent/context, distinct from source content.
+	if rationaleSection := formatUserRationale(req.UserRationaleText, req.UserRationaleSource); rationaleSection != "" {
+		sysPrompt += rationaleSection
+		slog.DebugContext(ctx, "score_async: user rationale injected",
+			"event_type", "score_user_rationale_injected",
+			"row_id", req.QueueRowID,
+			"source", req.UserRationaleSource,
+			"text_len", len(strings.TrimSpace(req.UserRationaleText)),
+		)
+	}
 
 	// EPIC-079 M3: use vision evaluator for image shares with a readable file.
 	// EPIC-080 M7: when image file is absent, log degradation  -  the image is
