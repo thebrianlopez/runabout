@@ -150,11 +150,28 @@ func (q *Queue) RegisterDevice(ctx context.Context, userID int64, req deviceRegi
 		return false, err
 	}
 	tokenUpdated := err == sql.ErrNoRows || old != req.FCMToken
-	_, err = q.db.ExecContext(ctx, `INSERT INTO devices(token, updated_at, user_id, device_id, device_name, platform, app_version, enabled, created_at, token_updated_at, last_seen_at)
+
+	tx, err := q.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	// FCM tokens are globally unique (legacy schema uses token as PRIMARY KEY),
+	// while Android app reinstall / data-clear can generate a new device_id for
+	// the same token. Reassign the token before the (user_id, device_id) upsert
+	// so registration remains idempotent instead of surfacing a 503.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM devices WHERE token=? AND NOT (user_id=? AND device_id=?)`, req.FCMToken, userID, req.DeviceID); err != nil {
+		return false, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO devices(token, updated_at, user_id, device_id, device_name, platform, app_version, enabled, created_at, token_updated_at, last_seen_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(user_id, device_id) DO UPDATE SET token=excluded.token, updated_at=excluded.updated_at, device_name=excluded.device_name, platform=excluded.platform, app_version=excluded.app_version, enabled=1, token_updated_at=CASE WHEN token<>excluded.token THEN excluded.token_updated_at ELSE token_updated_at END, last_seen_at=excluded.last_seen_at`,
 		req.FCMToken, now, userID, req.DeviceID, req.DeviceName, platform, req.AppVersion, 1, now, now, now)
-	return tokenUpdated, err
+	if err != nil {
+		return false, err
+	}
+	return tokenUpdated, tx.Commit()
 }
 
 func (q *Queue) LookupDeviceToken(ctx context.Context, userID int64, deviceID string) (string, error) {
