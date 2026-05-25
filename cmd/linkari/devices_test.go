@@ -311,3 +311,40 @@ func TestDeviceCT10_ListDevicesScoped(t *testing.T) {
 
 	_ = fmt.Sprintf("") // keep fmt import used
 }
+
+// CT-11: Re-registering a token under a regenerated Android device_id is idempotent.
+func TestDeviceCT11_SameTokenNewDeviceIDReassigns(t *testing.T) {
+	srv, ts, token, userID := testServerWithSession(t)
+	ctx := t.Context()
+
+	resp1 := postRegisterDevice(t, ts, token, map[string]any{
+		"device_id": "android-old-install",
+		"fcm_token": "fcm-token-stable",
+		"platform":  "android",
+	})
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("first status = %d, want 200", resp1.StatusCode)
+	}
+	resp2 := postRegisterDevice(t, ts, token, map[string]any{
+		"device_id": "android-new-install",
+		"fcm_token": "fcm-token-stable",
+		"platform":  "android",
+	})
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("second status = %d, want 200", resp2.StatusCode)
+	}
+
+	var count int
+	srv.queue.db.QueryRow(`SELECT COUNT(*) FROM devices WHERE token=?`, "fcm-token-stable").Scan(&count)
+	if count != 1 {
+		t.Fatalf("token row count = %d, want 1", count)
+	}
+	oldTok, _ := srv.queue.LookupDeviceToken(ctx, userID, "android-old-install")
+	if oldTok != "" {
+		t.Errorf("old device token = %q, want empty", oldTok)
+	}
+	newTok, _ := srv.queue.LookupDeviceToken(ctx, userID, "android-new-install")
+	if newTok != "fcm-token-stable" {
+		t.Errorf("new device token = %q, want fcm-token-stable", newTok)
+	}
+}
