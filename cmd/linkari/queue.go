@@ -269,6 +269,41 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		db.Exec(m) // Ignore "duplicate column" errors.
 	}
 
+	// EPIC-171: append-only share/tag analytics lifecycle event log.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS share_analytics_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		event_id TEXT NOT NULL UNIQUE,
+		event_type TEXT NOT NULL,
+		share_id INTEGER,
+		created_at TEXT NOT NULL,
+		profile TEXT,
+		intent TEXT,
+		content_type TEXT,
+		share_surface TEXT,
+		source_app TEXT,
+		url_domain TEXT,
+		user_tags_json TEXT,
+		has_user_rationale INTEGER NOT NULL DEFAULT 0,
+		rationale_word_count INTEGER NOT NULL DEFAULT 0,
+		score REAL,
+		verdict TEXT,
+		outcome TEXT,
+		feedback TEXT,
+		details_json TEXT NOT NULL DEFAULT '{}'
+	)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create share_analytics_events: %w", err)
+	}
+	for _, m := range []string{
+		"CREATE INDEX IF NOT EXISTS idx_share_analytics_created_at ON share_analytics_events(created_at)",
+		"CREATE INDEX IF NOT EXISTS idx_share_analytics_event_type ON share_analytics_events(event_type)",
+		"CREATE INDEX IF NOT EXISTS idx_share_analytics_url_domain ON share_analytics_events(url_domain)",
+		"CREATE INDEX IF NOT EXISTS idx_share_analytics_profile ON share_analytics_events(profile)",
+		"CREATE INDEX IF NOT EXISTS idx_share_analytics_intent ON share_analytics_events(intent)",
+	} {
+		db.Exec(m)
+	}
+
 	// EPIC-149: tag inventory table for ranked suggestions.
 	db.Exec(`CREATE TABLE IF NOT EXISTS tags (
 		name         TEXT PRIMARY KEY,

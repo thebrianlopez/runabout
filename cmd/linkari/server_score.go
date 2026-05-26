@@ -1327,6 +1327,24 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		itemURL = ""
 	}
 
+	scoreFloat := float64(sc.Score)
+	recordAnalyticsEvent(ctx, q, AnalyticsEvent{
+		EventID:     fmt.Sprintf("share_scored:%d:%s", itemID, time.Now().UTC().Format("20060102T150405.000000000Z")),
+		EventType:   AnalyticsEventShareScored,
+		ShareID:     itemID,
+		CreatedAt:   time.Now().UTC(),
+		Profile:     itemProfile,
+		Intent:      req.Intent,
+		ContentType: req.Type,
+		URLDomain:   analyticsDomain(itemURL),
+		Score:       &scoreFloat,
+		Verdict:     itemVerdict,
+		Details: map[string]any{
+			"slug":   itemSlug,
+			"status": itemStatus,
+		},
+	})
+
 	// EPIC-088 M3: persist scoring cost and image tokens after back-calculation.
 	// GAP-07: MetricsCollector.RecordScoringCost is the future hook point for
 	// linkari.llm.cost_usd emission  -  wire when a metrics backend is configured.
@@ -2502,6 +2520,18 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		)
 		return
 	}
+
+	scoreFloat := float64(audioScore)
+	recordAnalyticsEvent(context.Background(), q, AnalyticsEvent{
+		EventID:     fmt.Sprintf("share_scored:%d:%s", rowID, time.Now().UTC().Format("20060102T150405.000000000Z")),
+		EventType:   AnalyticsEventShareScored,
+		ShareID:     rowID,
+		CreatedAt:   time.Now().UTC(),
+		Profile:     profile,
+		ContentType: "audio",
+		Score:       &scoreFloat,
+		Verdict:     audioVerdict,
+	})
 
 	// Step 8: auto-archive voice notes (always  -  no threshold gating).
 	q.Archive(rowID)
