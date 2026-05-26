@@ -1533,6 +1533,29 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if s.queue != nil && queueID > 0 {
+		recordAnalyticsEvent(ctx, s.queue, AnalyticsEvent{
+			EventID:            fmt.Sprintf("share_created:%d", queueID),
+			EventType:          AnalyticsEventShareCreated,
+			ShareID:            queueID,
+			CreatedAt:          time.Now().UTC(),
+			Profile:            req.Profile,
+			Intent:             req.Intent,
+			ContentType:        req.Type,
+			ShareSurface:       req.CaptureMode,
+			SourceApp:          req.SourceApp,
+			URLDomain:          analyticsDomain(req.URL),
+			UserTags:           req.UserTags,
+			HasUserRationale:   strings.TrimSpace(req.UserRationaleText) != "",
+			RationaleWordCount: rationaleWordCount(req.UserRationaleText),
+			Details: map[string]any{
+				"tags_persisted":  tagsPersisted,
+				"classify_source": req.ClassifySource,
+				"mime_type":       req.MimeType,
+			},
+		})
+	}
+
 	// F2: KindCapture actions dispatch to captureAsync instead of router.Route.
 	// No LLM call is made for any KindCapture action (structural invariant).
 	if ac := s.router.LookupAction(req.Action); ac != nil && ac.Kind == KindCapture {
@@ -1861,6 +1884,17 @@ func (s *Server) handleQueueOutcome(w http.ResponseWriter, r *http.Request) {
 		"outcome", req.Outcome,
 		"profile", item.Profile,
 	)
+	recordAnalyticsEvent(r.Context(), s.queue, AnalyticsEvent{
+		EventID:     fmt.Sprintf("share_outcome:%d:%s:%s", id, req.Outcome, time.Now().UTC().Format("20060102T150405.000000000Z")),
+		EventType:   AnalyticsEventShareOutcome,
+		ShareID:     id,
+		CreatedAt:   time.Now().UTC(),
+		Profile:     item.Profile,
+		Intent:      item.Intent,
+		ContentType: item.Type,
+		URLDomain:   analyticsDomain(item.URL),
+		Outcome:     req.Outcome,
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(item)
@@ -1910,6 +1944,17 @@ func (s *Server) handleQueueFeedback(w http.ResponseWriter, r *http.Request) {
 		"feedback", req.Feedback,
 		"profile", item.Profile,
 	)
+	recordAnalyticsEvent(r.Context(), s.queue, AnalyticsEvent{
+		EventID:     fmt.Sprintf("share_feedback:%d:%s:%s", id, req.Feedback, time.Now().UTC().Format("20060102T150405.000000000Z")),
+		EventType:   AnalyticsEventShareFeedback,
+		ShareID:     id,
+		CreatedAt:   time.Now().UTC(),
+		Profile:     item.Profile,
+		Intent:      item.Intent,
+		ContentType: item.Type,
+		URLDomain:   analyticsDomain(item.URL),
+		Feedback:    req.Feedback,
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(item)
