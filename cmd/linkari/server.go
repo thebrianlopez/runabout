@@ -641,6 +641,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// EPIC-159 F6: intent and tag stats.
 	mux.HandleFunc("GET /stats/intents", s.handleIntentStats)
 	mux.HandleFunc("GET /stats/tags", s.handleTagStats)
+	mux.HandleFunc("GET /analytics/share-tags", s.handleShareTagAnalytics)
 }
 
 // registerFunnelRoutes adds the public-facing route allowlist for the Funnel
@@ -2065,6 +2066,28 @@ func (s *Server) handleQueueOutcomeBySlug(w http.ResponseWriter, r *http.Request
 }
 
 // handleProfileStats handles GET /profiles/stats (EPIC-070 M2).
+func (s *Server) handleShareTagAnalytics(w http.ResponseWriter, r *http.Request) {
+	window := r.URL.Query().Get("window")
+	if window == "" {
+		window = "7d"
+	}
+	report, err := s.queue.ShareTagAnalytics(r.Context(), window)
+	if err != nil {
+		status := http.StatusInternalServerError
+		code := "analytics_query_failed"
+		if errors.Is(err, ErrAnalyticsSchemaInvalid) {
+			status = http.StatusBadRequest
+			code = "unsupported_window"
+		}
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, code), status)
+		slog.WarnContext(r.Context(), "share tag analytics failed", "event_type", "analytics_query_failed", "window", window, "error", err)
+		return
+	}
+	slog.InfoContext(r.Context(), "share tag analytics served", "event_type", "analytics_share_tags_served", "window", window, "event_count", report.EventCount)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(report)
+}
+
 func (s *Server) handleProfileStats(w http.ResponseWriter, r *http.Request) {
 	if !s.authenticateRequest(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
