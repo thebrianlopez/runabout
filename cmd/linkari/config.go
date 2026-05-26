@@ -34,7 +34,7 @@ type PushConfig struct {
 // resolvePushConfigOnce loads ~/.config/linkari/config.toml (if present) and
 // installs its push settings on the given queue. Used by the CLI score path
 // so `linkari score` honors the operator's configured throttles / min-score
-// floor without booting a server. Errors are swallowed intentionally — the
+// floor without booting a server. Errors are swallowed intentionally  -  the
 // CLI should fall back to zero-value defaults rather than refuse to score.
 func resolvePushConfigOnce(q *Queue) {
 	if q == nil {
@@ -120,7 +120,7 @@ type WhisperConfig struct {
 //
 // EPIC-054 M3: 60s interval, 15m (900s) max age chosen so a scoring pipeline
 // stuck in `relayed` is reclassified within one tick of the 15-minute budget
-// — long enough to absorb a slow-but-working score run, short enough to keep
+//  -  long enough to absorb a slow-but-working score run, short enough to keep
 // orphans from accumulating across the overnight window where the epic was
 // discovered.
 //
@@ -264,7 +264,7 @@ type ActionConfig struct {
 	Pattern          string     `toml:"pattern"`          // regex for kind=regex
 	ArchiveThreshold int        `toml:"archive_threshold"` // -1 = no auto-archive
 	ProfileMap       string     `toml:"profile_map"`       // "prefix" = extract from id prefix; "auto" = server-side heuristic (EPIC-061)
-	Condition        string     `toml:"condition"`         // "env:VAR=VALUE" — only register when condition met
+	Condition        string     `toml:"condition"`         // "env:VAR=VALUE"  -  only register when condition met
 	InlineTriage        bool `toml:"inline_triage"`        // EPIC-043 M5: run command headlessly, skip tmux window (fire-and-forget)
 	AutoScore           bool `toml:"auto_score"`           // EPIC-057: enqueue as scored immediately (skip watchdog)
 	ConfidenceThreshold int  `toml:"confidence_threshold"` // EPIC-058 M3: minimum score to pass confidence gate (0 = no gate)
@@ -273,7 +273,7 @@ type ActionConfig struct {
 	ForceContentClassify bool `toml:"force_content_classify"` // EPIC-084 M3: always run content-LLM classification even when cascade produces a profile
 	ShortsRubricTemplate string `toml:"shorts_rubric_template"` // EPIC-012 M7: rubric override for YouTube Shorts scoring
 
-	// F2: KindCapture fields — required when kind=capture.
+	// F2: KindCapture fields  -  required when kind=capture.
 	ArtifactDir              string `toml:"artifact_dir"`               // base dir, e.g. "docs/captures"
 	ArtifactFilenameTemplate string `toml:"artifact_filename_template"` // Go tmpl, e.g. "{{.Date}}_{{.Key}}.md"
 	PostCaptureCommand       string `toml:"post_capture_command"`       // F5 hook point (no-op until F5 TDD)
@@ -301,14 +301,14 @@ type Config struct {
 	// Evaluated before scoped-auth; first-match wins.
 	DomainRoutes []DomainRoute `toml:"domain_routes"`
 	// Routing holds action routing thresholds (EPIC-111 F4 M12).
-	// Optional — defaults applied when absent (DefaultThreshold=80, ExtractionConfidenceGate=0.5).
+	// Optional  -  defaults applied when absent (DefaultThreshold=80, ExtractionConfidenceGate=0.5).
 	Routing RoutingConfig `toml:"routing" yaml:"routing"`
 }
 
 // ServerConfig holds runtime knobs for `linkari serve` that previously lived
 // only as command-line flags or LINKARI_* environment variables. Resolution
 // order at startup: CLI flag > environment variable > config file > built-in
-// default. The env var fallback preserves backward compatibility — existing
+// default. The env var fallback preserves backward compatibility  -  existing
 // LINKARI_* exports keep working unchanged.
 //
 // All fields are optional; an empty value means "fall back to env/default".
@@ -358,11 +358,11 @@ type ServerConfig struct {
 
 	// Periodic VACUUM INTO snapshot. SnapshotInterval defaults to 1h; a
 	// negative value disables the worker. SnapshotPath defaults to
-	// <queue_db>.bak — a single rotating file so disk usage is bounded.
+	// <queue_db>.bak  -  a single rotating file so disk usage is bounded.
 	SnapshotInterval Duration `toml:"snapshot_interval"`
 	SnapshotPath     string   `toml:"snapshot_path"`
 
-	// EPIC-052: share action resolution policy. Default is caller-wins —
+	// EPIC-052: share action resolution policy. Default is caller-wins  - 
 	// the invariant check in resolveShareAction refuses to override a
 	// non-empty received_action unless Share.HeuristicOverrideEnabled is true.
 	Share ShareConfig `toml:"share"`
@@ -402,18 +402,18 @@ type ServerConfig struct {
 	ClaudePath  string `toml:"claude_path"`  // path to claude binary (default: "claude" on PATH)
 	VisionModel string `toml:"vision_model"` // model for vision scoring (default: claudeModel)
 
-	// EPIC-081 M3: image noise gate — minimum file size in bytes to invoke
+	// EPIC-081 M3: image noise gate  -  minimum file size in bytes to invoke
 	// vision subprocess. Images below this threshold with no text metadata
 	// are scored 0 without a vision API call. Default: 1024 (1KB).
 	ImageNoiseGateMinBytes int64 `toml:"image_noise_gate_min_bytes"`
 
-	// EPIC-083 M1-3: upper-bound file size gate — images above this threshold
+	// EPIC-083 M1-3: upper-bound file size gate  -  images above this threshold
 	// skip vision scoring entirely. Default: 15MB (15 * 1024 * 1024).
 	ImageNoiseGateMaxBytes int64 `toml:"image_noise_gate_max_bytes"`
 
 	// EPIC-083 M2-3: per-call scoring cost ceiling (USD). When a single
 	// eval.Evaluate call exceeds this amount, a score_cost_exceeded event
-	// is logged. Monitoring only — does not block processing. Default: 0.05.
+	// is logged. Monitoring only  -  does not block processing. Default: 0.05.
 	MaxScoringCostUSD float64 `toml:"max_scoring_cost_usd"`
 
 	// EPIC-084 M2: when true, prefilter skips (unsupported pipeline, login
@@ -425,7 +425,7 @@ type ServerConfig struct {
 	// ffmpeg/whisper/claude subprocess calls are routed through ContainerRuntime.
 	Sandbox SandboxConfig `toml:"sandbox"`
 
-	// EPIC-001 M3: IP blocklist — IPs and CIDRs rejected with 403 before routing.
+	// EPIC-001 M3: IP blocklist  -  IPs and CIDRs rejected with 403 before routing.
 	Blocklist []string `toml:"blocklist"`
 
 	// EPIC-001 M3: CORS origins allowlist for FunnelMux. When empty,
@@ -460,7 +460,7 @@ type ServerConfig struct {
 // a strict caller-wins invariant: whatever the Android client sent in the
 // share request's `action` field is preserved verbatim into the queue row. Any
 // server-side heuristic that wants to override the caller MUST go through the
-// feature flag below — and will still emit a `share_action_resolved` event
+// feature flag below  -  and will still emit a `share_action_resolved` event
 // with the override reason recorded.
 type ShareConfig struct {
 	// HeuristicOverrideEnabled, when true, allows resolveShareAction to
@@ -490,7 +490,7 @@ type MetricsYAMLConfig struct {
 }
 
 // MetricsEnabled returns true when metrics collection is active. The default
-// when the `metrics:` block is absent is true — callers only skip initialization
+// when the `metrics:` block is absent is true  -  callers only skip initialization
 // when Enabled is explicitly set to false.
 func (s *ServerConfig) MetricsEnabled() bool {
 	if s.Metrics.Enabled == nil {
@@ -654,7 +654,7 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 	// EPIC-051 M5: merge the on-disk file on top of the builtin action list
 	// by ID so operators can override individual fields without having to
 	// re-declare every builtin action. A user file with zero actions cleanly
-	// inherits all builtins — previously it would wipe the list entirely.
+	// inherits all builtins  -  previously it would wipe the list entirely.
 	merged, err := MergeWithBuiltin(builtinConfig(), &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("merge config: %w", err)
@@ -691,7 +691,7 @@ func (c *Config) validate() error {
 			a.compiledTemplate = t
 
 		case KindLiteral:
-			// No template needed — text is sent literally.
+			// No template needed  -  text is sent literally.
 
 		case KindRegex:
 			if a.Pattern == "" {
@@ -751,7 +751,7 @@ func (c *Config) ActiveActions() []ActionConfig {
 }
 
 // evalCondition evaluates a simple condition string.
-// Supported: "env:VAR=VALUE" — checks os.Getenv(VAR) == VALUE.
+// Supported: "env:VAR=VALUE"  -  checks os.Getenv(VAR) == VALUE.
 func evalCondition(cond string) bool {
 	if strings.HasPrefix(cond, "env:") {
 		rest := strings.TrimPrefix(cond, "env:")
@@ -803,7 +803,7 @@ func (a *ActionConfig) ToAction() Action {
 //
 //   - Every builtin action is present in the result.
 //   - If the user file defines an action with the same ID, its non-zero
-//     fields override the builtin's fields (shallow merge — compiled
+//     fields override the builtin's fields (shallow merge  -  compiled
 //     template sources are not deep-merged).
 //   - Extra actions in the user file (IDs not present in builtin) are
 //     appended verbatim.
@@ -953,7 +953,18 @@ func builtinConfig() *Config {
 				Type:            "audio,url", // EPIC-090 M1: added "url" so YouTube shares reach vnote_auto
 				Target:          "linkari:0",
 				Kind:            KindTemplate,
-				CommandTemplate: "echo vnote", // stub — never rendered when ServerScore=true
+				CommandTemplate: "echo vnote", // stub  -  never rendered when ServerScore=true
+				ProfileMap:      "auto",
+				ServerScore:     true,
+			},
+			{
+				ID:              "note_auto",
+				Label:           "Score",
+				Icon:            "description",
+				Type:            "document",
+				Target:          "linkari:0",
+				Kind:            KindTemplate,
+				CommandTemplate: "echo note", // stub  -  never rendered when ServerScore=true
 				ProfileMap:      "auto",
 				ServerScore:     true,
 			},
@@ -968,7 +979,7 @@ func builtinConfig() *Config {
 				ProfileMap:      "auto",
 				AutoScore:       true,
 			},
-			// F2: capture actions — wired with ArtifactDir/ArtifactFilenameTemplate.
+			// F2: capture actions  -  wired with ArtifactDir/ArtifactFilenameTemplate.
 			// JiraRenderer registered at startup (F3); confluence renderer deferred to F6.
 			{
 				ID:                      "capture_jira_auto",
