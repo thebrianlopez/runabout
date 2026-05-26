@@ -113,3 +113,122 @@ func analyticsDomain(raw string) string {
 }
 
 func rationaleWordCount(s string) int { return len(strings.Fields(strings.TrimSpace(s))) }
+
+type AnalyticsTagSummary struct {
+	Tag          string  `json:"tag"`
+	Count        int     `json:"count"`
+	AvgScore     float64 `json:"avg_score"`
+	ThumbsUpRate float64 `json:"thumbs_up_rate"`
+}
+
+type AnalyticsDomainSummary struct {
+	Domain   string  `json:"domain"`
+	Shares   int     `json:"shares"`
+	AvgScore float64 `json:"avg_score"`
+}
+
+type AnalyticsSourceAppSummary struct {
+	SourceApp string `json:"source_app"`
+	Shares    int    `json:"shares"`
+}
+
+type ShareTagAnalyticsReport struct {
+	Window                    string                      `json:"window"`
+	EventCount                int                         `json:"event_count"`
+	InsufficientData          bool                        `json:"insufficient_data"`
+	TopTags                   []AnalyticsTagSummary       `json:"top_tags"`
+	HighSignalDomains         []AnalyticsDomainSummary    `json:"high_signal_domains"`
+	LowSignalDomains          []AnalyticsDomainSummary    `json:"low_signal_domains"`
+	SourceApps                []AnalyticsSourceAppSummary `json:"source_apps"`
+	RecurringPositiveCriteria []string                    `json:"recurring_positive_criteria"`
+	RecurringNoiseCriteria    []string                    `json:"recurring_noise_criteria"`
+}
+
+func (q *Queue) ShareTagAnalytics(ctx context.Context, window string) (ShareTagAnalyticsReport, error) {
+	report := ShareTagAnalyticsReport{Window: window, TopTags: []AnalyticsTagSummary{}, HighSignalDomains: []AnalyticsDomainSummary{}, LowSignalDomains: []AnalyticsDomainSummary{}, SourceApps: []AnalyticsSourceAppSummary{}, RecurringPositiveCriteria: []string{}, RecurringNoiseCriteria: []string{}}
+	where, args, err := analyticsWindowWhere(window)
+	if err != nil {
+		return report, err
+	}
+	if err := q.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM share_analytics_events `+where, args...).Scan(&report.EventCount); err != nil {
+		return report, fmt.Errorf("analytics_query_failed: event_count: %w", err)
+	}
+	report.InsufficientData = report.EventCount < 3
+
+	if rows, err := q.db.QueryContext(ctx, `SELECT json_each.value AS tag, COUNT(*) AS c, COALESCE(AVG(score),0) AS avg_score,
+		COALESCE(AVG(CASE WHEN feedback='up' THEN 1.0 WHEN feedback IN ('down','neutral') THEN 0.0 END),0) AS thumbs_up_rate
+		FROM share_analytics_events, json_each(COALESCE(NULLIF(user_tags_json,''),'[]')) `+where+`
+		GROUP BY tag ORDER BY c DESC, tag ASC LIMIT 10`, args...); err != nil {
+		return report, fmt.Errorf("analytics_query_failed: top_tags: %w", err)
+	} else {
+		defer rows.Close()
+		for rows.Next() {
+			var item AnalyticsTagSummary
+			if err := rows.Scan(&item.Tag, &item.Count, &item.AvgScore, &item.ThumbsUpRate); err != nil {
+				return report, err
+			}
+			report.TopTags = append(report.TopTags, item)
+		}
+	}
+
+	report.HighSignalDomains, err = q.analyticsDomains(ctx, where, args, "DESC")
+	if err != nil {
+		return report, err
+	}
+	report.LowSignalDomains, err = q.analyticsDomains(ctx, where, args, "ASC")
+	if err != nil {
+		return report, err
+	}
+
+	if rows, err := q.db.QueryContext(ctx, `SELECT COALESCE(NULLIF(source_app,''),'unknown') AS source_app, COUNT(DISTINCT share_id) AS shares FROM share_analytics_events `+where+` GROUP BY source_app ORDER BY shares DESC, source_app ASC LIMIT 10`, args...); err != nil {
+		return report, fmt.Errorf("analytics_query_failed: source_apps: %w", err)
+	} else {
+		defer rows.Close()
+		for rows.Next() {
+			var item AnalyticsSourceAppSummary
+			if err := rows.Scan(&item.SourceApp, &item.Shares); err != nil {
+				return report, err
+			}
+			report.SourceApps = append(report.SourceApps, item)
+		}
+	}
+	for _, tag := range report.TopTags {
+		if tag.AvgScore >= 70 || tag.ThumbsUpRate >= 0.6 {
+			report.RecurringPositiveCriteria = append(report.RecurringPositiveCriteria, tag.Tag)
+		}
+		if tag.AvgScore > 0 && tag.AvgScore <= 40 {
+			report.RecurringNoiseCriteria = append(report.RecurringNoiseCriteria, tag.Tag)
+		}
+	}
+	return report, nil
+}
+
+func analyticsWindowWhere(window string) (string, []any, error) {
+	switch window {
+	case "7d":
+		return "WHERE created_at >= ?", []any{time.Now().UTC().AddDate(0, 0, -7).Format(time.RFC3339Nano)}, nil
+	case "30d":
+		return "WHERE created_at >= ?", []any{time.Now().UTC().AddDate(0, 0, -30).Format(time.RFC3339Nano)}, nil
+	case "all", "":
+		return "", nil, nil
+	default:
+		return "", nil, fmt.Errorf("%w: unsupported analytics window", ErrAnalyticsSchemaInvalid)
+	}
+}
+
+func (q *Queue) analyticsDomains(ctx context.Context, where string, args []any, direction string) ([]AnalyticsDomainSummary, error) {
+	rows, err := q.db.QueryContext(ctx, `SELECT url_domain, COUNT(DISTINCT share_id) AS shares, COALESCE(AVG(score),0) AS avg_score FROM share_analytics_events `+where+` GROUP BY url_domain HAVING url_domain IS NOT NULL AND url_domain != '' ORDER BY avg_score `+direction+`, shares DESC, url_domain ASC LIMIT 10`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("analytics_query_failed: domains: %w", err)
+	}
+	defer rows.Close()
+	out := []AnalyticsDomainSummary{}
+	for rows.Next() {
+		var item AnalyticsDomainSummary
+		if err := rows.Scan(&item.Domain, &item.Shares, &item.AvgScore); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}

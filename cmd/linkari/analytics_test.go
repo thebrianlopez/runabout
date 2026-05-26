@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -41,6 +45,87 @@ func TestAppendAnalyticsEventContracts(t *testing.T) {
 
 	if err := q.AppendAnalyticsEvent(ctx, AnalyticsEvent{EventID: "bad", EventType: "nope"}); !errors.Is(err, ErrAnalyticsSchemaInvalid) {
 		t.Fatalf("unsupported event err=%v, want ErrAnalyticsSchemaInvalid", err)
+	}
+}
+
+func TestShareTagAnalyticsAggregationContracts(t *testing.T) {
+	q := newTestQueue(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seed := func(id string, daysAgo int, shareID int64, tag string, domain string, source string, score float64, feedback string) {
+		t.Helper()
+		if err := q.AppendAnalyticsEvent(ctx, AnalyticsEvent{EventID: id, EventType: AnalyticsEventShareScored, ShareID: shareID, CreatedAt: now.AddDate(0, 0, -daysAgo), UserTags: []string{tag}, URLDomain: domain, SourceApp: source, Score: &score, Feedback: feedback}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seed("recent-ai", 1, 1, "ai", "github.com", "chrome", 92, "up")
+	seed("recent-ai-2", 2, 2, "ai", "github.com", "chrome", 88, "up")
+	seed("recent-marketing", 3, 3, "marketing", "vendor.example", "firefox", 22, "down")
+	seed("old-ai", 20, 4, "ai", "old.example", "chrome", 75, "up")
+
+	report, err := q.ShareTagAnalytics(ctx, "7d")
+	if err != nil {
+		t.Fatalf("7d report: %v", err)
+	}
+	if report.EventCount != 3 || report.InsufficientData {
+		t.Fatalf("7d event_count=%d insufficient=%v, want 3 false", report.EventCount, report.InsufficientData)
+	}
+	if len(report.TopTags) < 2 || report.TopTags[0].Tag != "ai" || report.TopTags[0].Count != 2 {
+		t.Fatalf("top_tags=%+v, want ai count 2 first", report.TopTags)
+	}
+	if len(report.HighSignalDomains) == 0 || report.HighSignalDomains[0].Domain != "github.com" {
+		t.Fatalf("high_signal_domains=%+v, want github.com first", report.HighSignalDomains)
+	}
+	if len(report.LowSignalDomains) == 0 || report.LowSignalDomains[0].Domain != "vendor.example" {
+		t.Fatalf("low_signal_domains=%+v, want vendor.example first", report.LowSignalDomains)
+	}
+
+	report30, err := q.ShareTagAnalytics(ctx, "30d")
+	if err != nil {
+		t.Fatalf("30d report: %v", err)
+	}
+	if report30.EventCount != 4 {
+		t.Fatalf("30d event_count=%d, want 4", report30.EventCount)
+	}
+	reportAll, err := q.ShareTagAnalytics(ctx, "all")
+	if err != nil {
+		t.Fatalf("all report: %v", err)
+	}
+	if reportAll.EventCount != 4 {
+		t.Fatalf("all event_count=%d, want 4", reportAll.EventCount)
+	}
+	if _, err := q.ShareTagAnalytics(ctx, "90d"); !errors.Is(err, ErrAnalyticsSchemaInvalid) {
+		t.Fatalf("unsupported window err=%v, want ErrAnalyticsSchemaInvalid", err)
+	}
+}
+
+func TestHandleShareTagAnalyticsContracts(t *testing.T) {
+	q := newTestQueue(t)
+	score := 91.0
+	if err := q.AppendAnalyticsEvent(context.Background(), AnalyticsEvent{EventID: "api-1", EventType: AnalyticsEventShareScored, ShareID: 1, CreatedAt: time.Now().UTC(), UserTags: []string{"benchmarks"}, URLDomain: "github.com", SourceApp: "chrome", Score: &score}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	srv := &Server{queue: q}
+	w := httptest.NewRecorder()
+	srv.handleShareTagAnalytics(w, httptest.NewRequest(http.MethodGet, "/analytics/share-tags?window=7d", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var report ShareTagAnalyticsReport
+	if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if report.Window != "7d" || report.EventCount != 1 || !report.InsufficientData {
+		t.Fatalf("report=%+v, want 7d count 1 insufficient", report)
+	}
+	if strings.Contains(w.Body.String(), "read this later") {
+		t.Fatalf("aggregate response leaked raw rationale text: %s", w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	srv.handleShareTagAnalytics(w, httptest.NewRequest(http.MethodGet, "/analytics/share-tags?window=90d", nil))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad window status=%d, want 400", w.Code)
 	}
 }
 
