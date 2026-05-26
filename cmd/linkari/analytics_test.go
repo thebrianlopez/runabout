@@ -129,6 +129,76 @@ func TestHandleShareTagAnalyticsContracts(t *testing.T) {
 	}
 }
 
+func TestShareTagInsightReportContracts(t *testing.T) {
+	q := newTestQueue(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seed := func(id string, shareID int64, tag string, domain string, source string, score float64, feedback string) {
+		t.Helper()
+		if err := q.AppendAnalyticsEvent(ctx, AnalyticsEvent{EventID: id, EventType: AnalyticsEventShareScored, ShareID: shareID, CreatedAt: now, UserTags: []string{tag}, URLDomain: domain, SourceApp: source, Score: &score, Feedback: feedback, Details: map[string]any{"raw_rationale_text": "read this later"}}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seed("report-ai-1", 1, "benchmarks", "github.com", "chrome", 91, "up")
+	seed("report-ai-2", 2, "benchmarks", "github.com", "chrome", 86, "up")
+	seed("report-noise", 3, "politics", "vendor.example", "android", 18, "down")
+
+	report, err := q.ShareTagInsightReport(ctx, "7d")
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	if report.Window != "7d" || report.InsufficientData {
+		t.Fatalf("report=%+v, want 7d sufficient", report)
+	}
+	if len(report.Observations) < 3 {
+		t.Fatalf("observations=%+v, want at least three", report.Observations)
+	}
+	if len(report.Recommendations) == 0 {
+		t.Fatalf("recommendations empty; want facts separated from recommendations")
+	}
+	if report.Observations[0].Evidence.Count == 0 && report.Observations[0].Evidence.Shares == 0 {
+		t.Fatalf("observation missing numeric evidence: %+v", report.Observations[0])
+	}
+	body, _ := json.Marshal(report)
+	if strings.Contains(string(body), "read this later") || strings.Contains(string(body), "raw_rationale_text") {
+		t.Fatalf("report leaked raw rationale text/details: %s", string(body))
+	}
+
+	w := httptest.NewRecorder()
+	(&Server{queue: q}).handleShareTagAnalyticsReport(w, httptest.NewRequest(http.MethodGet, "/analytics/share-tags/report?window=7d", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var apiReport ShareTagInsightReport
+	if err := json.Unmarshal(w.Body.Bytes(), &apiReport); err != nil {
+		t.Fatalf("decode api report: %v", err)
+	}
+	if len(apiReport.Observations) < 3 {
+		t.Fatalf("api observations=%+v, want at least three", apiReport.Observations)
+	}
+
+	w = httptest.NewRecorder()
+	(&Server{queue: q}).handleShareTagAnalyticsReport(w, httptest.NewRequest(http.MethodGet, "/analytics/share-tags/report?window=90d", nil))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad window status=%d, want 400", w.Code)
+	}
+}
+
+func TestShareTagInsightReportInsufficientData(t *testing.T) {
+	q := newTestQueue(t)
+	score := 70.0
+	if err := q.AppendAnalyticsEvent(context.Background(), AnalyticsEvent{EventID: "report-one", EventType: AnalyticsEventShareScored, ShareID: 1, CreatedAt: time.Now().UTC(), UserTags: []string{"ai"}, URLDomain: "example.com", Score: &score}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	report, err := q.ShareTagInsightReport(context.Background(), "7d")
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	if !report.InsufficientData || len(report.Observations) != 0 || len(report.Recommendations) != 0 {
+		t.Fatalf("report=%+v, want friendly insufficient-data empty state", report)
+	}
+}
+
 func TestAnalyticsLifecycleEmissionHelpers(t *testing.T) {
 	q := newTestQueue(t)
 	req := &ShareRequest{Type: "url", URL: "https://example.com/a", Profile: "default", Intent: "score", SourceApp: "chrome", CaptureMode: "share_sheet", UserRationaleText: "read this later"}

@@ -642,6 +642,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /stats/intents", s.handleIntentStats)
 	mux.HandleFunc("GET /stats/tags", s.handleTagStats)
 	mux.HandleFunc("GET /analytics/share-tags", s.handleShareTagAnalytics)
+	mux.HandleFunc("GET /analytics/share-tags/report", s.handleShareTagAnalyticsReport)
 }
 
 // registerFunnelRoutes adds the public-facing route allowlist for the Funnel
@@ -2084,6 +2085,28 @@ func (s *Server) handleShareTagAnalytics(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	slog.InfoContext(r.Context(), "share tag analytics served", "event_type", "analytics_share_tags_served", "window", window, "event_count", report.EventCount)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(report)
+}
+
+func (s *Server) handleShareTagAnalyticsReport(w http.ResponseWriter, r *http.Request) {
+	window := r.URL.Query().Get("window")
+	if window == "" {
+		window = "7d"
+	}
+	report, err := s.queue.ShareTagInsightReport(r.Context(), window)
+	if err != nil {
+		status := http.StatusInternalServerError
+		code := "analytics_query_failed"
+		if errors.Is(err, ErrAnalyticsSchemaInvalid) {
+			status = http.StatusBadRequest
+			code = "unsupported_window"
+		}
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, code), status)
+		slog.WarnContext(r.Context(), "share tag analytics report failed", "event_type", "analytics_report_failed", "window", window, "error", err)
+		return
+	}
+	slog.InfoContext(r.Context(), "share tag analytics report served", "event_type", "analytics_report_served", "window", window, "insufficient_data", report.InsufficientData, "observations", len(report.Observations))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(report)
 }

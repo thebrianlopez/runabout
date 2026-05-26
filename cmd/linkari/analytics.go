@@ -144,6 +144,30 @@ type ShareTagAnalyticsReport struct {
 	RecurringNoiseCriteria    []string                    `json:"recurring_noise_criteria"`
 }
 
+type ShareTagInsightEvidence struct {
+	Count        int     `json:"count,omitempty"`
+	Shares       int     `json:"shares,omitempty"`
+	AvgScore     float64 `json:"avg_score,omitempty"`
+	ThumbsUpRate float64 `json:"thumbs_up_rate,omitempty"`
+	SourceApp    string  `json:"source_app,omitempty"`
+	Domain       string  `json:"domain,omitempty"`
+	Tag          string  `json:"tag,omitempty"`
+}
+
+type ShareTagInsightObservation struct {
+	Summary  string                  `json:"summary"`
+	Kind     string                  `json:"kind"`
+	Evidence ShareTagInsightEvidence `json:"evidence"`
+}
+
+type ShareTagInsightReport struct {
+	Window           string                       `json:"window"`
+	GeneratedAt      string                       `json:"generated_at"`
+	Observations     []ShareTagInsightObservation `json:"observations"`
+	Recommendations  []string                     `json:"recommendations"`
+	InsufficientData bool                         `json:"insufficient_data"`
+}
+
 func (q *Queue) ShareTagAnalytics(ctx context.Context, window string) (ShareTagAnalyticsReport, error) {
 	report := ShareTagAnalyticsReport{Window: window, TopTags: []AnalyticsTagSummary{}, HighSignalDomains: []AnalyticsDomainSummary{}, LowSignalDomains: []AnalyticsDomainSummary{}, SourceApps: []AnalyticsSourceAppSummary{}, RecurringPositiveCriteria: []string{}, RecurringNoiseCriteria: []string{}}
 	where, args, err := analyticsWindowWhere(window)
@@ -199,6 +223,61 @@ func (q *Queue) ShareTagAnalytics(ctx context.Context, window string) (ShareTagA
 		if tag.AvgScore > 0 && tag.AvgScore <= 40 {
 			report.RecurringNoiseCriteria = append(report.RecurringNoiseCriteria, tag.Tag)
 		}
+	}
+	return report, nil
+}
+
+func (q *Queue) ShareTagInsightReport(ctx context.Context, window string) (ShareTagInsightReport, error) {
+	agg, err := q.ShareTagAnalytics(ctx, window)
+	if err != nil {
+		return ShareTagInsightReport{Window: window, Observations: []ShareTagInsightObservation{}, Recommendations: []string{}}, err
+	}
+	report := ShareTagInsightReport{
+		Window:           agg.Window,
+		GeneratedAt:      time.Now().UTC().Format(time.RFC3339),
+		Observations:     []ShareTagInsightObservation{},
+		Recommendations:  []string{},
+		InsufficientData: agg.InsufficientData,
+	}
+	if agg.InsufficientData {
+		return report, nil
+	}
+	for _, tag := range agg.TopTags {
+		if len(report.Observations) >= 3 {
+			break
+		}
+		kind := "tag_pattern"
+		summary := fmt.Sprintf("%s appears in %d shared items with average score %.1f", tag.Tag, tag.Count, tag.AvgScore)
+		if tag.AvgScore >= 70 || tag.ThumbsUpRate >= 0.6 {
+			kind = "high_signal_tag"
+			summary = fmt.Sprintf("%s is a high-signal tag across %d shares", tag.Tag, tag.Count)
+			report.Recommendations = append(report.Recommendations, fmt.Sprintf("Prioritize review of new items tagged %s when time is limited.", tag.Tag))
+		} else if tag.AvgScore > 0 && tag.AvgScore <= 40 {
+			kind = "low_signal_tag"
+			summary = fmt.Sprintf("%s is trending low-signal with average score %.1f", tag.Tag, tag.AvgScore)
+			report.Recommendations = append(report.Recommendations, fmt.Sprintf("Consider tightening capture criteria for %s-tagged items.", tag.Tag))
+		}
+		report.Observations = append(report.Observations, ShareTagInsightObservation{Summary: summary, Kind: kind, Evidence: ShareTagInsightEvidence{Tag: tag.Tag, Count: tag.Count, AvgScore: tag.AvgScore, ThumbsUpRate: tag.ThumbsUpRate}})
+	}
+	for _, domain := range agg.HighSignalDomains {
+		if len(report.Observations) >= 3 {
+			break
+		}
+		report.Observations = append(report.Observations, ShareTagInsightObservation{Summary: fmt.Sprintf("%s is a high-signal domain with average score %.1f", domain.Domain, domain.AvgScore), Kind: "high_signal_domain", Evidence: ShareTagInsightEvidence{Domain: domain.Domain, Shares: domain.Shares, AvgScore: domain.AvgScore}})
+		report.Recommendations = append(report.Recommendations, fmt.Sprintf("Keep %s in the active capture path while its score remains high.", domain.Domain))
+	}
+	for _, domain := range agg.LowSignalDomains {
+		if len(report.Observations) >= 3 {
+			break
+		}
+		report.Observations = append(report.Observations, ShareTagInsightObservation{Summary: fmt.Sprintf("%s is a low-signal domain with average score %.1f", domain.Domain, domain.AvgScore), Kind: "low_signal_domain", Evidence: ShareTagInsightEvidence{Domain: domain.Domain, Shares: domain.Shares, AvgScore: domain.AvgScore}})
+		report.Recommendations = append(report.Recommendations, fmt.Sprintf("Review whether %s should be filtered or routed differently.", domain.Domain))
+	}
+	for _, source := range agg.SourceApps {
+		if len(report.Observations) >= 3 {
+			break
+		}
+		report.Observations = append(report.Observations, ShareTagInsightObservation{Summary: fmt.Sprintf("%s is the most active share surface with %d shares", source.SourceApp, source.Shares), Kind: "source_app_volume", Evidence: ShareTagInsightEvidence{SourceApp: source.SourceApp, Shares: source.Shares}})
 	}
 	return report, nil
 }
