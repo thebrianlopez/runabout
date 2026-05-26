@@ -24,6 +24,13 @@ func testCfgIndex() map[string]*ActionConfig {
 			CommandTemplate: "ginit {{.Text}}",
 			AutoScore:       true,
 		},
+		"note_auto": {
+			ID:          "note_auto",
+			Kind:        KindTemplate,
+			ProfileMap:  "auto",
+			Target:      "linkari:0",
+			ServerScore: true,
+		},
 	}
 }
 
@@ -47,7 +54,7 @@ func TestResolveShareAction_CallerWins(t *testing.T) {
 	}
 }
 
-// Unknown action — returned as-is; Route fails fast on lookup miss.
+// Unknown action  -  returned as-is; Route fails fast on lookup miss.
 func TestResolveShareAction_UnknownActionPassThrough(t *testing.T) {
 	idx := testCfgIndex()
 	req := &ShareRequest{Action: "unknown_action", Type: "url", URL: "https://example.com", Profile: "eng"}
@@ -123,7 +130,7 @@ func TestResolveShareAction_JiraAutoRoute(t *testing.T) {
 		if req.Action != "capture_jira_auto" {
 			t.Errorf("url=%s: expected req.Action=capture_jira_auto after resolveDomainRoute, got %q", u, req.Action)
 		}
-		// After domain route, resolveShareAction sees capture_jira_auto — caller-wins.
+		// After domain route, resolveShareAction sees capture_jira_auto  -  caller-wins.
 		got := resolveShareAction(req, idx, true)
 		if got.ResolvedAction != "capture_jira_auto" {
 			t.Errorf("url=%s: expected resolveShareAction to preserve capture_jira_auto, got %q", u, got.ResolvedAction)
@@ -131,7 +138,7 @@ func TestResolveShareAction_JiraAutoRoute(t *testing.T) {
 	}
 }
 
-// EPIC-061 M2: heuristic override disabled — profile stays empty, no rerouting.
+// EPIC-061 M2: heuristic override disabled  -  profile stays empty, no rerouting.
 func TestResolveShareAction_HeuristicDisabledNoProfile(t *testing.T) {
 	idx := testCfgIndex()
 	req := &ShareRequest{Action: "uinit_auto", Type: "url", URL: "https://github.com/golang/go"}
@@ -191,5 +198,21 @@ func TestResolveShareAction_BareUinitNormalizesToAuto(t *testing.T) {
 			t.Errorf("action=%q intent=%q: expected Reason=bare_action_normalized, got %q",
 				tc.action, tc.intent, got.Reason)
 		}
+	}
+}
+
+// RG-3 (POMO_20260526T202824Z_pdf-action-routing-gap): bare "note" sent by
+// Android for PDF file shares must normalize to "note_auto" via bare-intent
+// normalization. Guards against the silent routing failure observed in
+// trace_id 5382e37d where every PDF share returned HTTP 200 with no scoring.
+func TestResolveShareAction_NoteNormalizesToNoteAuto(t *testing.T) {
+	idx := testCfgIndex()
+	req := &ShareRequest{Action: "note", Type: "document", MimeType: "application/pdf"}
+	got := resolveShareAction(req, idx, false)
+	if got.ResolvedAction != "note_auto" {
+		t.Errorf("expected ResolvedAction=note_auto, got %q (PDF shares will fail routing)", got.ResolvedAction)
+	}
+	if got.Reason != "bare_action_normalized" {
+		t.Errorf("expected Reason=bare_action_normalized, got %q", got.Reason)
 	}
 }

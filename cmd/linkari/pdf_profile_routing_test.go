@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -197,5 +198,55 @@ func TestRG2_URLShare_CategoryFinance_NoPDFMime_NotFinance(t *testing.T) {
 	got := classifyByIntentMetadata(req)
 	if got == "finance" {
 		t.Errorf("RG-2: URL share with CategoryFinance and no PDF mime should not be \"finance\"; got %q", got)
+	}
+}
+
+// --- RG-3 (POMO_20260526T202824Z_pdf-action-routing-gap): bare "note" from Android --
+
+// TestRG3_BareNoteAction_PDFShare_RoutesOK guards against the silent routing
+// failure from trace_id 5382e37d where every PDF file share sent action=note
+// and received HTTP 200 + no scoring. The Android share sheet sends the bare
+// action string "note" for PDF file shares; the server must normalize this to
+// note_auto via bare-intent normalization and complete routing without error.
+func TestRG3_BareNoteAction_PDFShare_RoutesOK(t *testing.T) {
+	installLiteParseStub(t, "extracted pdf text", 0.9, nil)
+	installHaikuJSONStub(t)
+
+	cfg := builtinConfig()
+	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
+	q := newTestQueue(t)
+	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
+
+	body, ct := buildPDFMultipart(t, "note", "paperwork.pdf", 143545, false)
+	req := httptest.NewRequest(http.MethodPost, "/share", body)
+	req.Header.Set("Content-Type", ct)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rr := httptest.NewRecorder()
+
+	srv.Mux().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("RG-3: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp ShareResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("RG-3: decode response: %v", err)
+	}
+	if resp.Status == "queued" {
+		t.Errorf("RG-3: response status=%q indicates routing failure; action=note must resolve to note_auto", resp.Status)
+	}
+	if resp.Status != "ok" {
+		t.Errorf("RG-3: response status=%q, want \"ok\"", resp.Status)
+	}
+	if resp.ID == 0 {
+		t.Fatal("RG-3: expected non-zero queue row ID in response")
+	}
+
+	item, err := q.GetByID(resp.ID)
+	if err != nil {
+		t.Fatalf("RG-3: GetByID(%d): %v", resp.ID, err)
+	}
+	if item.Type != "document" {
+		t.Errorf("RG-3: queue row type=%q, want \"document\"", item.Type)
 	}
 }
