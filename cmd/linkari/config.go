@@ -80,6 +80,13 @@ type LiteParseConfig struct {
 	TessDataPrefix      string  `toml:"tessdata_prefix"`      // TESSDATA_PREFIX env for lit subprocess; empty = inherit from process env
 }
 
+// YouTubeAccountConfig maps a named OAuth slot to the YouTube sources it services.
+// Used in [server.youtube.accounts.*] config stanza (EPIC-181 F3).
+type YouTubeAccountConfig struct {
+	Slot    string   `toml:"slot"`
+	Sources []string `toml:"sources"`
+}
+
 type YouTubeConfig struct {
 	SubtitleLangs       string `toml:"subtitle_langs"`        // yt-dlp --sub-langs value (default: "en.*,en")
 	TimeoutSeconds      int    `toml:"timeout_seconds"`       // extraction timeout in seconds (default: 30)
@@ -94,6 +101,48 @@ type YouTubeConfig struct {
 	TranscribeWatchLater     bool `toml:"transcribe_watch_later"`     // default: true; false = skip Whisper for yt_watch_later items without subtitles
 	AutoEnqueueSubscriptions bool `toml:"auto_enqueue_subscriptions"` // default: true; false = observe-only (track dedup but don't enqueue for scoring)
 	AutoEnqueueWatchLater    bool `toml:"auto_enqueue_watch_later"`   // default: true; false = observe-only for Watch Later
+
+	// EPIC-181 F3: per-account OAuth slot routing.
+	Accounts map[string]YouTubeAccountConfig `toml:"accounts"`
+}
+
+// resolveSourceSlot returns the OAuth slot name configured for the given source identifier.
+// Returns "default" when source is not assigned in any accounts block.
+// Source not found = fall back to "default" (zero-config backward compatibility).
+func resolveSourceSlot(cfg *ServerConfig, source string) string {
+	for _, account := range cfg.YouTube.Accounts {
+		slot := account.Slot
+		if slot == "" {
+			slot = "default"
+		}
+		for _, s := range account.Sources {
+			if s == source {
+				return slot
+			}
+		}
+	}
+	return "default"
+}
+
+// validateSlotConfig checks for sources assigned to multiple account blocks.
+// Returns a non-nil error listing conflicting sources when any conflict is found.
+func validateSlotConfig(cfg *ServerConfig) error {
+	seen := make(map[string]string) // source -> first account name
+	var conflicts []string
+	for accountName, account := range cfg.YouTube.Accounts {
+		for _, source := range account.Sources {
+			if first, ok := seen[source]; ok {
+				conflicts = append(conflicts, source+" (accounts: "+first+", "+accountName+")")
+			} else {
+				seen[source] = accountName
+			}
+		}
+	}
+	if len(conflicts) > 0 {
+		return fmt.Errorf("youtube_slot_conflict: sources assigned to multiple account blocks: %s",
+			strings.Join(conflicts, "; "))
+	}
+	return nil
 }
 
 // SourcesConfig holds per-source enabled flags for all integration sources.

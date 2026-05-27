@@ -31,11 +31,11 @@ func (p *googleYouTubeAuthProvider) Ready() bool  { return p.clientID != "" }
 // ContentSource is implemented by every ingestion source.
 // Name() returns a stable, lowercase snake_case identifier used as the
 // seen_content.source dedup key. WARNING: Name() must never change after
-// first deployment — changing it silently discards all prior dedup history
+// first deployment  -  changing it silently discards all prior dedup history
 // for that source and re-enqueues previously seen content.
 // AuthDeps() returns the names of auth providers this source requires.
 // The registry checks all deps are Ready() before calling Start().
-// Start() may assume auth is available — no nil-guard needed inside Start().
+// Start() may assume auth is available  -  no nil-guard needed inside Start().
 type ContentSource interface {
 	Name() string
 	AuthDeps() []string
@@ -273,6 +273,7 @@ func registeredSources(srv *Server) []ContentSource {
 			clientSecret: srv.googleClientSecret,
 			events:       srv.events,
 			autoEnqueue:  srv.serverConfig.YouTube.AutoEnqueueWatchLater, // EPIC-098 F3
+			slot:         resolveSourceSlot(&srv.serverConfig, "watch_later"),
 		})
 	} else {
 		emitSourceDisabled(srv, "yt_watch_later")
@@ -284,6 +285,7 @@ func registeredSources(srv *Server) []ContentSource {
 			clientSecret: srv.googleClientSecret,
 			events:       srv.events,
 			autoEnqueue:  true, // EPIC-098 F3: yt_liked uses simple auto-enqueue for now
+			slot:         resolveSourceSlot(&srv.serverConfig, "liked"),
 		})
 	} else {
 		emitSourceDisabled(srv, "yt_liked")

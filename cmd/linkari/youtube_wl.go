@@ -7,6 +7,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -60,7 +62,8 @@ type YouTubeWatchLaterSource struct {
 	clientID     string
 	clientSecret string
 	events       *EventLogger
-	autoEnqueue  bool // EPIC-098 F3: gate for queue.Enqueue() calls
+	autoEnqueue  bool   // EPIC-098 F3: gate for queue.Enqueue() calls
+	slot         string // EPIC-181 F4: OAuth slot resolved from config at startup
 }
 
 func (s *YouTubeWatchLaterSource) Name() string       { return "yt_watch_later" }
@@ -69,6 +72,10 @@ func (s *YouTubeWatchLaterSource) AuthDeps() []string { return []string{"google_
 // Start polls the Watch Later playlist every hour until ctx is cancelled.
 func (s *YouTubeWatchLaterSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
 	const interval = 1 * time.Hour
+	slot := s.slot
+	if slot == "" {
+		slot = "default"
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -76,7 +83,7 @@ func (s *YouTubeWatchLaterSource) Start(ctx context.Context, q *Queue, emit func
 		case <-time.After(interval):
 		}
 		// EPIC-098 F3: pass autoEnqueue flag to control queue writes
-		syncWatchLaterAsync("default", q, s.events, s.clientID, s.clientSecret, s.autoEnqueue)
+		syncWatchLaterAsync("default", slot, q, s.events, s.clientID, s.clientSecret, s.autoEnqueue)
 	}
 }
 
@@ -85,7 +92,8 @@ func (s *YouTubeWatchLaterSource) Start(ctx context.Context, q *Queue, emit func
 // EPIC-018 M4 + M8.
 // EPIC-098 F3: autoEnqueue gates queue.Enqueue() calls; when false, videos are
 // tracked in dedup but not enqueued for scoring (observe-only mode).
-func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool) {
+// EPIC-181 F4: slot routes credential lookup to the configured OAuth slot.
+func syncWatchLaterAsync(profile string, slot string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("syncWatchLaterAsync panic", "recover", r)
@@ -101,15 +109,33 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 		_ = events.Emit("source_start", map[string]interface{}{
 			"source":  "yt_watch_later",
 			"profile": profile,
+			"slot":    slot,
 		})
 	}
 
-	ts, err := youtubeTokenSource(ctx, profile, q, clientID, clientSecret)
+	ts, err := youtubeTokenSourceForSlot(ctx, slot, 1, q, clientID, clientSecret)
 	if err != nil {
+		if isSQLErrNoRows(err) {
+			slog.Warn("syncWatchLaterAsync: slot has no token",
+				"event_type", "source_disabled",
+				"source", "yt_watch_later",
+				"slot", slot,
+				"reason", "slot_no_token",
+			)
+			if events != nil {
+				_ = events.Emit("source_disabled", map[string]interface{}{
+					"source": "yt_watch_later",
+					"slot":   slot,
+					"reason": "slot_no_token",
+				})
+			}
+			return
+		}
 		slog.Warn("syncWatchLaterAsync: auth error",
 			"event_type", "watchlater_api_error",
 			"source", "yt_watch_later",
 			"profile", profile,
+			"slot", slot,
 			"error_class", "auth_error",
 			"error", err,
 		)
@@ -117,6 +143,7 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 			_ = events.Emit("watchlater_api_error", map[string]interface{}{
 				"source":      "yt_watch_later",
 				"profile":     profile,
+				"slot":        slot,
 				"error_class": "auth_error",
 				"error":       err.Error(),
 			})
@@ -268,6 +295,7 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 		"event_type", "source_complete",
 		"source", "yt_watch_later",
 		"profile", profile,
+		"slot", slot,
 		"enqueued", enqueued,
 		"skipped", skipped,
 		"duration_ms", durMS,
@@ -276,6 +304,7 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 		payload := map[string]interface{}{
 			"source":      "yt_watch_later",
 			"profile":     profile,
+			"slot":        slot,
 			"enqueued":    enqueued,
 			"skipped":     skipped,
 			"duration_ms": durMS,
@@ -286,6 +315,11 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 		}
 		_ = events.Emit("source_complete", payload)
 	}
+}
+
+// isSQLErrNoRows returns true when err is database/sql.ErrNoRows.
+func isSQLErrNoRows(err error) bool {
+	return errors.Is(err, sql.ErrNoRows)
 }
 
 // isQuotaExhausted returns true when err looks like a YouTube API 403 quota error.

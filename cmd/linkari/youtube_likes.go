@@ -17,7 +17,8 @@ type YouTubeLikedSource struct {
 	clientID     string
 	clientSecret string
 	events       *EventLogger
-	autoEnqueue  bool // EPIC-098 F3: gate for queue.Enqueue() calls (future use)
+	autoEnqueue  bool   // EPIC-098 F3: gate for queue.Enqueue() calls (future use)
+	slot         string // EPIC-181 F4: OAuth slot resolved from config at startup
 }
 
 func (s *YouTubeLikedSource) Name() string       { return "yt_liked" }
@@ -26,6 +27,10 @@ func (s *YouTubeLikedSource) AuthDeps() []string { return []string{"google_youtu
 // Start polls the Liked Videos playlist every hour until ctx is cancelled.
 func (s *YouTubeLikedSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
 	const interval = 1 * time.Hour
+	slot := s.slot
+	if slot == "" {
+		slot = "default"
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -33,14 +38,15 @@ func (s *YouTubeLikedSource) Start(ctx context.Context, q *Queue, emit func(*Sha
 		case <-time.After(interval):
 		}
 		// EPIC-098 F3: pass autoEnqueue flag (currently always true for yt_liked)
-		syncLikedVideosAsync("default", q, s.events, s.clientID, s.clientSecret, s.autoEnqueue)
+		syncLikedVideosAsync("default", slot, q, s.events, s.clientID, s.clientSecret, s.autoEnqueue)
 	}
 }
 
 // syncLikedVideosAsync fetches the Liked Videos playlist and enqueues unseen
 // videos for scoring. Runs in a goroutine; errors are logged, not returned.
 // EPIC-098 F3: autoEnqueue gates queue.Enqueue() calls.
-func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool) {
+// EPIC-181 F4: slot routes credential lookup to the configured OAuth slot.
+func syncLikedVideosAsync(profile string, slot string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("syncLikedVideosAsync panic", "recover", r)
@@ -56,15 +62,33 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 		_ = events.Emit("source_start", map[string]interface{}{
 			"source":  "yt_liked",
 			"profile": profile,
+			"slot":    slot,
 		})
 	}
 
-	ts, err := youtubeTokenSource(ctx, profile, q, clientID, clientSecret)
+	ts, err := youtubeTokenSourceForSlot(ctx, slot, 1, q, clientID, clientSecret)
 	if err != nil {
+		if isSQLErrNoRows(err) {
+			slog.Warn("syncLikedVideosAsync: slot has no token",
+				"event_type", "source_disabled",
+				"source", "yt_liked",
+				"slot", slot,
+				"reason", "slot_no_token",
+			)
+			if events != nil {
+				_ = events.Emit("source_disabled", map[string]interface{}{
+					"source": "yt_liked",
+					"slot":   slot,
+					"reason": "slot_no_token",
+				})
+			}
+			return
+		}
 		slog.Warn("syncLikedVideosAsync: auth error",
 			"event_type", "likedvideos_api_error",
 			"source", "yt_liked",
 			"profile", profile,
+			"slot", slot,
 			"error_class", "auth_error",
 			"error", err,
 		)
@@ -72,6 +96,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 			_ = events.Emit("likedvideos_api_error", map[string]interface{}{
 				"source":      "yt_liked",
 				"profile":     profile,
+				"slot":        slot,
 				"error_class": "auth_error",
 				"error":       err.Error(),
 			})
@@ -219,6 +244,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 		"event_type", "source_complete",
 		"source", "yt_liked",
 		"profile", profile,
+		"slot", slot,
 		"enqueued", enqueued,
 		"skipped", skipped,
 		"duration_ms", durMS,
@@ -227,6 +253,7 @@ func syncLikedVideosAsync(profile string, q *Queue, events *EventLogger, clientI
 		_ = events.Emit("source_complete", map[string]interface{}{
 			"source":      "yt_liked",
 			"profile":     profile,
+			"slot":        slot,
 			"enqueued":    enqueued,
 			"skipped":     skipped,
 			"duration_ms": durMS,

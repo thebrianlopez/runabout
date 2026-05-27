@@ -2795,13 +2795,14 @@ func (s *Server) handleSyncWatchLater(w http.ResponseWriter, r *http.Request) {
 		profile = "default"
 	}
 
+	wlSlot := resolveSourceSlot(&s.serverConfig, "watch_later")
 	go func() {
 		defer func() {
 			watchLaterSyncMu.Lock()
 			watchLaterSyncing = false
 			watchLaterSyncMu.Unlock()
 		}()
-		syncWatchLaterAsync(profile, s.queue, s.events, s.googleClientID, s.googleClientSecret, true)
+		syncWatchLaterAsync(profile, wlSlot, s.queue, s.events, s.googleClientID, s.googleClientSecret, true)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
@@ -2829,13 +2830,14 @@ func (s *Server) handleSyncLikedVideos(w http.ResponseWriter, r *http.Request) {
 		profile = "default"
 	}
 
+	likedSlot := resolveSourceSlot(&s.serverConfig, "liked")
 	go func() {
 		defer func() {
 			likedVideosSyncMu.Lock()
 			likedVideosSyncing = false
 			likedVideosSyncMu.Unlock()
 		}()
-		syncLikedVideosAsync(profile, s.queue, s.events, s.googleClientID, s.googleClientSecret, true)
+		syncLikedVideosAsync(profile, likedSlot, s.queue, s.events, s.googleClientID, s.googleClientSecret, true)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
