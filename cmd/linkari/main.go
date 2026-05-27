@@ -188,7 +188,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				return fmt.Errorf("load config: %w", cfgErr)
 			}
 			if cfg == nil {
-				// No config file present — use builtins with empty ServerConfig.
+				// No config file present  -  use builtins with empty ServerConfig.
 				cfg = builtinConfig()
 			}
 			serverFileCfg := &cfg.Server
@@ -227,7 +227,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// err is used throughout this function for assignment without :=.
 			var err error
 
-			// Build the resolver early — it lazily wires AWS SDK on first
+			// Build the resolver early  -  it lazily wires AWS SDK on first
 			// secretsmanager:// URI, so cost is zero when no SM URIs are used.
 			resolver := secrets.New(secrets.DefaultAWSFactory())
 
@@ -255,13 +255,13 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				return fmt.Errorf("bearer token required: set --token, LINKARI_TOKEN, or server.token in config.toml")
 			}
 
-			// EPIC-057: jira_token — optional scoped bearer for ginit_* actions.
+			// EPIC-057: jira_token  -  optional scoped bearer for ginit_* actions.
 			// flag > LINKARI_JIRA_TOKEN > server.yaml.jira_token > (empty = disabled)
 			jiraToken, _ = resolveField("jira_token", jiraToken, os.Getenv("LINKARI_JIRA_TOKEN"), "",
 				func(s *ServerConfig) string { return s.JiraToken })
 
 			// Outbound Jira API + PagerDuty credentials (linkari/jira-webhook secret).
-			// All optional — empty = integration disabled.
+			// All optional  -  empty = integration disabled.
 			jiraAPIUsername, _ = resolveField("atlassian_email", "", os.Getenv("LINKARI_ATLASSIAN_EMAIL"), "",
 				func(s *ServerConfig) string { return s.JiraAPIUsername })
 			jiraAPIPassword, _ = resolveField("atlassian_api_token", "", os.Getenv("LINKARI_ATLASSIAN_API_TOKEN"), "",
@@ -443,7 +443,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			ring := NewRingLog(100)
 			logWriter := ring.Writer()
 
-			// Optional file logging — no CLI flag; yaml+env only (EPIC-048).
+			// Optional file logging  -  no CLI flag; yaml+env only (EPIC-048).
 			// INVARIANT (pinned by EPIC-048 M4): log_file MUST be fully resolved
 			// into logWriter before log.SetOutput so flushProvenance lines land
 			// in the configured sink. Do not move this block below log.SetOutput.
@@ -594,9 +594,12 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			srv.jiraDomain = jiraDomain
 			srv.pagerDutyToken = pagerDutyToken
 			srv.notifyMinScore = notifyMinScore
-			// EPIC-061: heuristic override is always on — auto-profile
+			// EPIC-061: heuristic override is always on  -  auto-profile
 			// actions require domain heuristics for profile classification.
 			srv.shareHeuristicOverride = true
+
+			// EPIC-180 M2: wiki topic resolver (nil-safe; disabled when wiki.enabled=false or vault missing).
+			router.SetWikiResolver(NewWikiTopicResolver(serverFileCfg.Wiki))
 
 			// F1: wire domain_routes from loaded config; fatal on misconfigured override_action.
 			if cfg != nil && len(cfg.DomainRoutes) > 0 {
@@ -649,7 +652,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				queue.SetPushConfig(pcfg)
 			}
 
-			// Event logging — append to logs/ next to queue db.
+			// Event logging  -  append to logs/ next to queue db.
 			eventsPath := filepath.Join(filepath.Dir(queueDB), "linkari_events.jsonl")
 			events, err := NewEventLogger(eventsPath)
 			if err != nil {
@@ -657,7 +660,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			} else {
 				srv.events = events
 				router.SetEvents(events) // EPIC-076 M1: wire into scoring goroutines
-				// EPIC-010 M5: domain router — github.com wired via EPIC-011 M5.
+				// EPIC-010 M5: domain router  -  github.com wired via EPIC-011 M5.
 				dr := NewDomainRouter(nil, fetchJinaContent)
 				dr.EmitVia(events)
 				// EPIC-011 M5: register GitHub REST client for github.com URLs.
@@ -672,7 +675,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				ghClient := NewGitHubClient(ghToken)
 				ghClient.EmitVia(events)
 				dr.RegisterClient("github.com", ghClient)
-				// F7: GitHubPRRenderer has no auth dependency — register unconditionally.
+				// F7: GitHubPRRenderer has no auth dependency  -  register unconditionally.
 				srv.RegisterCaptureRenderer("capture_github_pr_auto", NewGitHubPRRenderer())
 				// F3: startup warnings for unconfigured domain clients (non-fatal).
 				if cfgGitHubToken == "" && os.Getenv("GITHUB_TOKEN") == "" {
@@ -715,7 +718,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				router.SetDomainRouter(dr)
 				slog.Info("event logging enabled", "path", eventsPath)
 			}
-			// GAP-08: metrics collector — gated on metrics.enabled (default: true).
+			// GAP-08: metrics collector  -  gated on metrics.enabled (default: true).
 			metricsCollector := NewMetricsCollector(serverFileCfg)
 			srv.SetMetrics(metricsCollector)
 			if metricsCollector != nil {
@@ -749,13 +752,13 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				go relayedWatchdog.Run(cmd.Context())
 			}
 
-			// EPIC-090: ContentSource registry — starts all registered sources
+			// EPIC-090: ContentSource registry  -  starts all registered sources
 			// uniformly in goroutines with panic isolation. Replaces the former
 			// backgroundWorkerPool subs worker (EPIC-019 M7) and bare firehose
 			// goroutine (EPIC-016 M5); subscription poller requires uinit_auto action.
 			if queue != nil {
 				if router.LookupAction("uinit_auto") == nil {
-					slog.Warn("subscription poller requires action=uinit_auto but it is not registered — subscription videos will fail at replay; add uinit_auto to actions.yaml")
+					slog.Warn("subscription poller requires action=uinit_auto but it is not registered  -  subscription videos will fail at replay; add uinit_auto to actions.yaml")
 				}
 				registry := NewSourceRegistry()
 				// EPIC-094: register auth providers so the registry can skip
@@ -772,7 +775,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				})
 			}
 
-			// Periodic VACUUM INTO snapshot — point-in-time recovery baseline
+			// Periodic VACUUM INTO snapshot  -  point-in-time recovery baseline
 			// if queue.db becomes corrupt (2026-04-13 incident). Defaults to
 			// 1h interval writing <queue_db>.bak; configurable via config.toml.
 			if queue != nil {
@@ -793,7 +796,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			logHaikuEnvKeys()
 
 			// When tsnet Funnel is active, bind the local listener to
-			// 127.0.0.1 only — LAN exposure is unnecessary since the
+			// 127.0.0.1 only  -  LAN exposure is unnecessary since the
 			// Funnel provides the public ingress path (GAP-1).
 			listenHost := ""
 			if tsnetEnabled {
@@ -821,7 +824,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				go func() {
 					errCh <- httpServer.ListenAndServeTLS(certFile, keyFile)
 				}()
-				// TLS: signal after starting goroutine (optimistic — port binds inside).
+				// TLS: signal after starting goroutine (optimistic  -  port binds inside).
 				signalDetachReady()
 			} else {
 				listenAddr := fmt.Sprintf("%s:%d", listenHost, port)
@@ -966,7 +969,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					}
 					return nil
 				case <-cmd.Context().Done():
-					// Context cancelled — integration tests use this for clean shutdown.
+					// Context cancelled  -  integration tests use this for clean shutdown.
 					slog.Info("shutting down (context cancelled)")
 					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer shutdownCancel()

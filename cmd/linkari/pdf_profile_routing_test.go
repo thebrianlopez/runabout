@@ -82,7 +82,7 @@ func TestCT4_ContentTypePDF_PrependedForDocument(t *testing.T) {
 		MimeType:  "application/pdf",
 		AudioPath: "/dev/null",
 	}
-	scoreAsync(req, nil, cap, nil, nil)
+	scoreAsync(req, nil, cap, nil, nil, nil)
 
 	if !strings.HasPrefix(cap.prompt, ContentTypePDF) {
 		prefix := cap.prompt
@@ -112,7 +112,7 @@ func TestCT5_ContentTypePDF_NotPrependedForURL(t *testing.T) {
 		Profile: "eng",
 		URL:     "https://example.com/article",
 	}
-	scoreAsync(req, nil, cap, nil, nil)
+	scoreAsync(req, nil, cap, nil, nil, nil)
 
 	if strings.HasPrefix(cap.prompt, ContentTypePDF) {
 		t.Error("CT-5: sysPrompt for type=url should NOT start with ContentTypePDF")

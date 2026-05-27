@@ -91,6 +91,7 @@ type Router struct {
 	ytdlpPath    string         // EPIC-009: path to yt-dlp binary for YouTube transcription
 	events       *EventLogger   // EPIC-076: classification telemetry; nil when event logging not configured
 	serverConfig *ServerConfig  // EPIC-098 F3: server config for YouTube sub-behavior toggles
+	wikiResolver *WikiTopicResolver // EPIC-180 M2: nil when wiki is disabled or vault missing
 }
 
 // SetQueue wires the queue for server-side uinit_* scoring (EPIC-060 M1).
@@ -143,6 +144,14 @@ func (r *Router) SetServerConfig(cfg *ServerConfig) {
 // Called after router construction in main.go during server init.
 func (r *Router) SetDomainRouter(dr *DomainRouter) {
 	setDomainRouter(dr)
+}
+
+// SetWikiResolver wires the wiki topic resolver for wiki-context scoring.
+// Called after server config load in main.go; nil disables wiki context injection.
+func (r *Router) SetWikiResolver(wr *WikiTopicResolver) {
+	r.mu.Lock()
+	r.wikiResolver = wr
+	r.mu.Unlock()
 }
 
 // Handler processes a share request and returns a result message.
@@ -595,7 +604,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	//   - "document": lit parse text extraction, metadata fallback
 	//   - "image": metadata synthesis
 	if ac.ServerScore && (req.Type == "image" || req.Type == "document" || req.Type == "url" || req.Type == "") {
-		go scoreAsync(req, r.queue, HaikuJSONEvaluator{}, r.events, r.bskyClient)
+		go scoreAsync(req, r.queue, HaikuJSONEvaluator{}, r.events, r.bskyClient, r.wikiResolver)
 		switch req.Type {
 		case "image", "document":
 			return "Scoring file  -  verdict via FCM", nil

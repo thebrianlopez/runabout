@@ -26,7 +26,7 @@ func runScoreAsyncCapturePrompt(t *testing.T, req *ShareRequest, q *Queue) strin
 	inner := &captureEval{}
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: inner, done: done}
-	go scoreAsync(req, q, wrapped, nil, nil)
+	go scoreAsync(req, q, wrapped, nil, nil, nil)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):

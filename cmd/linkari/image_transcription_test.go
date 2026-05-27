@@ -464,7 +464,7 @@ func TestF2_CT8_RG1_ChromeScreenshot_ScoresAboveZero(t *testing.T) {
 
 	// scoreAsync replaces the passed-in eval with HaikuVisionEvaluator for image shares.
 	// Synchronize by polling the queue row for terminal status (scored/archived/failed).
-	go scoreAsync(req, q, nil, nil, nil)
+	go scoreAsync(req, q, nil, nil, nil, nil)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
