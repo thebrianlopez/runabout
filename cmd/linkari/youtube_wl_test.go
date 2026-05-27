@@ -1,4 +1,4 @@
-// EPIC-018: YouTube Watch Later Auto Score — test suite.
+// EPIC-018: YouTube Watch Later Auto Score  -  test suite.
 // M1: Contract tests CT-1 through CT-5.
 // M6: Behavioral tests BT-1 through BT-4.
 // M7: Regression guards RG-1, RG-2.
@@ -155,7 +155,7 @@ func TestWatchLaterCT4_MarkScored(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CT-5: pagination — nextPageToken followed through 2 pages
+// CT-5: pagination  -  nextPageToken followed through 2 pages
 // ---------------------------------------------------------------------------
 
 func TestWatchLaterCT5_Pagination(t *testing.T) {
@@ -327,7 +327,7 @@ func TestWatchLaterRG1_HandlerReturns202NoRace(t *testing.T) {
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("expected 202, got %d", rr.Code)
 	}
-	// Handler must return 202 before goroutine writes — rr must not be written after return.
+	// Handler must return 202 before goroutine writes  -  rr must not be written after return.
 	// If there were a race, the race detector would catch it.
 }
 
@@ -357,6 +357,56 @@ func TestWatchLaterRG2_ConcurrentSyncReturns409(t *testing.T) {
 
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d", rr.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RG-3: invalid_grant emits error_class in source_complete (PA-5, PA-6)
+// ---------------------------------------------------------------------------
+
+func TestWatchLaterRG3_InvalidGrant_EmitsErrorClass(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+
+	if err := q.SetYouTubeRefreshToken("default", "fake-tok", time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := execYouTubePlaylistItems
+	defer func() { execYouTubePlaylistItems = orig }()
+
+	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+		return nil, "", fmt.Errorf("oauth2: cannot fetch token: 400 Bad Request\nResponse: {\"error\":\"invalid_grant\"}")
+	}
+
+	evPath := t.TempDir() + "/events.jsonl"
+	el, err := NewEventLogger(evPath)
+	if err != nil {
+		t.Fatalf("NewEventLogger: %v", err)
+	}
+	defer el.Close()
+
+	syncWatchLaterAsync("default", q, el, "", "", true)
+
+	content, err := os.ReadFile(evPath)
+	if err != nil {
+		t.Fatalf("read event log: %v", err)
+	}
+	eventsStr := string(content)
+
+	// source_complete must be present.
+	if !strings.Contains(eventsStr, "source_complete") {
+		t.Fatalf("expected source_complete event, got:\n%s", eventsStr)
+	}
+
+	// source_complete must carry error_class, not look like a silent zero-work success.
+	if !strings.Contains(eventsStr, "oauth_invalid_grant") {
+		t.Fatalf("expected oauth_invalid_grant in source_complete event, got:\n%s", eventsStr)
+	}
+
+	// source_complete must carry actionable error text.
+	if !strings.Contains(eventsStr, "invalid_grant") {
+		t.Fatalf("expected invalid_grant error text in source_complete event, got:\n%s", eventsStr)
 	}
 }
 

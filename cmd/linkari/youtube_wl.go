@@ -125,6 +125,8 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 	}
 
 	var enqueued, skipped int
+	var lastErr error
+	var lastErrClass string
 	pageNum := 0
 	nextPageToken := ""
 
@@ -132,7 +134,9 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 		pageNum++
 		items, next, err := execYouTubePlaylistItems(ctx, ts, "WL", nextPageToken)
 		if err != nil {
+			lastErr = err
 			errClass, remediation := classifyYouTubeAPIError(err)
+			lastErrClass = errClass
 			if errClass == "quota_exhausted" {
 				slog.Warn("syncWatchLaterAsync: quota exhausted",
 					"event_type", "watchlater_quota_exhausted",
@@ -269,13 +273,18 @@ func syncWatchLaterAsync(profile string, q *Queue, events *EventLogger, clientID
 		"duration_ms", durMS,
 	)
 	if events != nil {
-		_ = events.Emit("source_complete", map[string]interface{}{
+		payload := map[string]interface{}{
 			"source":      "yt_watch_later",
 			"profile":     profile,
 			"enqueued":    enqueued,
 			"skipped":     skipped,
 			"duration_ms": durMS,
-		})
+		}
+		if lastErr != nil {
+			payload["error_class"] = lastErrClass
+			payload["error"] = lastErr.Error()
+		}
+		_ = events.Emit("source_complete", payload)
 	}
 }
 
