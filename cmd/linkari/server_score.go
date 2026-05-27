@@ -839,22 +839,29 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	if tagSection := formatUserTags(req.UserTags); tagSection != "" {
 		sysPrompt += tagSection
 	}
-	// EPIC-180 M2: resolve wiki topic index path for eligible profiles.
-	// wikiBlock is empty until M3 wires buildWikiContextBlock; the nil-guard here
-	// ensures the resolver is only called when configured.
+	// EPIC-180 M3: resolve wiki topic index and build context block for eligible profiles.
 	var wikiBlock string
 	if wikiResolver != nil {
 		if indexPath, found := wikiResolver.Resolve(profile, req.UserTags); found {
-			_ = indexPath // M3: wikiBlock = buildWikiContextBlock(indexPath, wikiResolver.cfg.MaxContextTokens)
-			slog.DebugContext(ctx, "wiki_context_resolved",
-				"event_type", "wiki_context_resolved",
-				"row_id", req.QueueRowID,
-				"index_path", indexPath,
-				"profile", profile,
-			)
+			var wikiErr error
+			wikiBlock, wikiErr = buildWikiContextBlock(indexPath, wikiResolver.cfg.MaxContextTokens)
+			if wikiErr != nil {
+				slog.Warn("score_async: wiki context block failed",
+					"event_type", "wiki_context_block_failed",
+					"row_id", req.QueueRowID,
+					"error", wikiErr,
+				)
+			} else {
+				slog.DebugContext(ctx, "wiki_context_resolved",
+					"event_type", "wiki_context_resolved",
+					"row_id", req.QueueRowID,
+					"index_path", indexPath,
+					"profile", profile,
+				)
+			}
 		}
 	}
-	_ = wikiBlock // M3 will use this
+	sysPrompt = buildScoringPrompt(sysPrompt, wikiBlock)
 
 	// Share-time rationale is explicit user intent/context, distinct from source content.
 	if rationaleSection := formatUserRationale(req.UserRationaleText, req.UserRationaleSource); rationaleSection != "" {
