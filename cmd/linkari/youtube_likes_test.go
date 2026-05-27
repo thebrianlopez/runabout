@@ -68,7 +68,7 @@ func TestLikedVideosCT2_SyncOnePage(t *testing.T) {
 		}, "", nil
 	}
 
-	syncLikedVideosAsync("default", q, nil, "", "", true)
+	syncLikedVideosAsync("default", "default", q, nil, "", "", true)
 
 	if !called {
 		t.Fatal("execYouTubePlaylistItems was not called")
@@ -151,7 +151,7 @@ func TestLikedVideosCT4_MarkScored(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CT-5: pagination — nextPageToken followed through 2 pages
+// CT-5: pagination  -  nextPageToken followed through 2 pages
 // ---------------------------------------------------------------------------
 
 func TestLikedVideosCT5_Pagination(t *testing.T) {
@@ -181,7 +181,7 @@ func TestLikedVideosCT5_Pagination(t *testing.T) {
 		}
 	}
 
-	syncLikedVideosAsync("default", q, nil, "", "", true)
+	syncLikedVideosAsync("default", "default", q, nil, "", "", true)
 
 	if pageCount != 2 {
 		t.Fatalf("expected 2 pages fetched, got %d", pageCount)
@@ -217,7 +217,7 @@ func TestLikedVideosBT1_PlaylistIDIsLL(t *testing.T) {
 		return nil, "", nil
 	}
 
-	syncLikedVideosAsync("default", q, nil, "", "", true)
+	syncLikedVideosAsync("default", "default", q, nil, "", "", true)
 
 	if gotPlaylistID != "LL" {
 		t.Fatalf("expected PlaylistId=LL, got %q", gotPlaylistID)
@@ -263,7 +263,7 @@ func TestLikedVideosBT3_QuotaExhaustion(t *testing.T) {
 	}
 	defer el.Close()
 
-	syncLikedVideosAsync("default", q, el, "", "", true)
+	syncLikedVideosAsync("default", "default", q, el, "", "", true)
 
 	items, err := q.Pending()
 	if err != nil {
@@ -349,7 +349,7 @@ func TestLikedVideosRG2_ConcurrentSyncReturns409(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// RG-3: yt_liked emits uinit_auto — replay routing must succeed
+// RG-3: yt_liked emits uinit_auto  -  replay routing must succeed
 // Regression guard for POMO youtube-likes-default-action-routing-gap:
 // previously emitted Action:"default" which is not a registered action,
 // causing replay to fail with "no action for \"default\"".
@@ -369,7 +369,7 @@ func TestLikedVideosRG3_ActionIsUinitAuto(t *testing.T) {
 		return []ytPlaylistItem{{VideoID: "rg3-vid", Title: "RG-3 Video"}}, "", nil
 	}
 
-	syncLikedVideosAsync("default", q, nil, "", "", true)
+	syncLikedVideosAsync("default", "default", q, nil, "", "", true)
 
 	items, err := q.Pending()
 	if err != nil {
@@ -379,7 +379,7 @@ func TestLikedVideosRG3_ActionIsUinitAuto(t *testing.T) {
 		t.Fatal("expected 1 pending queue item")
 	}
 	if items[0].Action != "uinit_auto" {
-		t.Fatalf("expected Action=%q, got %q — unregistered action causes replay routing failure", "uinit_auto", items[0].Action)
+		t.Fatalf("expected Action=%q, got %q  -  unregistered action causes replay routing failure", "uinit_auto", items[0].Action)
 	}
 }
 

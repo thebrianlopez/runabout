@@ -276,6 +276,27 @@ func youtubeTokenSourceWithExchanger(ctx context.Context, profile string, q *Que
 	return ts, nil
 }
 
+// youtubeTokenSourceForSlot returns an oauth2.TokenSource for the given OAuth slot.
+// Returns sql.ErrNoRows when the slot has no stored credential (not yet authed).
+// Propagates other DB errors as-is.
+func youtubeTokenSourceForSlot(ctx context.Context, slot string, userID int64, q *Queue, clientID, clientSecret string) (oauth2.TokenSource, error) {
+	refreshToken, expiresAt, err := q.GetYouTubeSlotToken(userID, slot)
+	if err != nil {
+		return nil, err // sql.ErrNoRows propagated for slot_no_token handling
+	}
+	tok := &oauth2.Token{
+		RefreshToken: refreshToken,
+		Expiry:       time.Unix(expiresAt, 0),
+	}
+	cfg := &oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Scopes:       []string{"https://www.googleapis.com/auth/youtube.readonly", "https://www.googleapis.com/auth/youtube"},
+		Endpoint:     google.Endpoint,
+	}
+	return cfg.TokenSource(ctx, tok), nil
+}
+
 // storeYouTubeToken persists a YouTube refresh token and emits a youtube_token_stored event.
 func storeYouTubeToken(q *Queue, profile, refreshToken string, expiresAt int64) error {
 	if err := q.SetYouTubeRefreshToken(profile, refreshToken, expiresAt); err != nil {

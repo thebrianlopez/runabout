@@ -534,6 +534,25 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	// EPIC-014 M2: YouTube OAuth token persistence.
 	db.Exec("ALTER TABLE users ADD COLUMN youtube_refresh_token TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE users ADD COLUMN youtube_token_expires_at INTEGER NOT NULL DEFAULT 0")
+	// EPIC-181 M1: YouTube multi-account OAuth slots table.
+	db.Exec(`CREATE TABLE IF NOT EXISTS youtube_oauth_slots (
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id          INTEGER NOT NULL REFERENCES users(id),
+		slot_name        TEXT    NOT NULL,
+		refresh_token    TEXT    NOT NULL DEFAULT '',
+		token_expires_at INTEGER NOT NULL DEFAULT 0,
+		created_at       INTEGER NOT NULL,
+		updated_at       INTEGER NOT NULL,
+		UNIQUE(user_id, slot_name)
+	)`)
+	// Migration: copy existing youtube_refresh_token rows to slot "default" (idempotent via INSERT OR IGNORE).
+	db.Exec(`INSERT OR IGNORE INTO youtube_oauth_slots
+		(user_id, slot_name, refresh_token, token_expires_at, created_at, updated_at)
+	SELECT
+		id, 'default', youtube_refresh_token, COALESCE(youtube_token_expires_at, 0),
+		strftime('%s','now'), strftime('%s','now')
+	FROM users
+	WHERE youtube_refresh_token IS NOT NULL AND youtube_refresh_token != ''`)
 
 	// FTS5 full-text search index over queue content.
 	// EPIC-072 M5: includes topic_tags column. Version sentinel triggers drop+recreate
@@ -2143,10 +2162,38 @@ func (q *Queue) GetYouTubeRefreshToken(profile string) (token string, expiresAt 
 }
 
 // SetYouTubeRefreshToken persists a YouTube refresh token for user_id=1 (single-user).
+// Soak-window write-through: also upserts to youtube_oauth_slots "default" so that
+// callers using the old API continue to work after the slot-based lookup is live.
 func (q *Queue) SetYouTubeRefreshToken(profile, token string, expiresAt int64) error {
 	_, err := q.db.Exec(
 		`UPDATE users SET youtube_refresh_token=?, youtube_token_expires_at=? WHERE id=1`,
 		token, expiresAt,
+	)
+	if err != nil {
+		return err
+	}
+	return q.SetYouTubeSlotToken(1, "default", token, expiresAt)
+}
+
+// GetYouTubeSlotToken retrieves the stored refresh token and expiry for a named OAuth slot.
+// Returns sql.ErrNoRows if the slot has no stored token (slot was never authed).
+func (q *Queue) GetYouTubeSlotToken(userID int64, slot string) (refreshToken string, expiresAt int64, err error) {
+	err = q.db.QueryRow(
+		`SELECT refresh_token, token_expires_at FROM youtube_oauth_slots WHERE user_id=? AND slot_name=?`,
+		userID, slot,
+	).Scan(&refreshToken, &expiresAt)
+	return refreshToken, expiresAt, err
+}
+
+// SetYouTubeSlotToken upserts a refresh token for a named OAuth slot.
+// Creates the row if absent; replaces in place if present.
+func (q *Queue) SetYouTubeSlotToken(userID int64, slot string, refreshToken string, expiresAt int64) error {
+	now := time.Now().Unix()
+	_, err := q.db.Exec(
+		`INSERT OR REPLACE INTO youtube_oauth_slots
+			(user_id, slot_name, refresh_token, token_expires_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		userID, slot, refreshToken, expiresAt, now, now,
 	)
 	return err
 }

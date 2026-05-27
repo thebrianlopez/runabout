@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"time"
 
@@ -17,6 +18,11 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
+
+// runYouTubeLoopbackAuthFn is the injectable seam for testing.
+var runYouTubeLoopbackAuthFn = runYouTubeLoopbackAuth
+
+var youtubeSlotNameRe = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
 
 func authCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -31,6 +37,7 @@ func authYouTubeCmd() *cobra.Command {
 	var configFile string
 	var queueDB string
 	var profile string
+	var slotFlag string
 	var noBrowser bool
 	var callbackAddr string
 
@@ -41,6 +48,11 @@ func authYouTubeCmd() *cobra.Command {
 			ctx := cmd.Context()
 			if profile == "" {
 				profile = "default"
+			}
+
+			// Validate slot name before starting the OAuth flow.
+			if !youtubeSlotNameRe.MatchString(slotFlag) {
+				return errors.New("slot name must match [a-zA-Z0-9-]+")
 			}
 
 			if configFile == "" {
@@ -63,7 +75,7 @@ func authYouTubeCmd() *cobra.Command {
 			}
 			defer q.Close()
 
-			tok, err := runYouTubeLoopbackAuth(ctx, clientID, clientSecret, callbackAddr, noBrowser)
+			tok, err := runYouTubeLoopbackAuthFn(ctx, clientID, clientSecret, callbackAddr, noBrowser)
 			if err != nil {
 				return err
 			}
@@ -74,18 +86,27 @@ func authYouTubeCmd() *cobra.Command {
 			if expiresAt <= 0 {
 				expiresAt = time.Now().Add(time.Hour).Unix()
 			}
-			if err := storeYouTubeToken(q, profile, tok.RefreshToken, expiresAt); err != nil {
-				return fmt.Errorf("store youtube token: %w", err)
+
+			// Write to the slots table (primary path).
+			if err := q.SetYouTubeSlotToken(1, slotFlag, tok.RefreshToken, expiresAt); err != nil {
+				return fmt.Errorf("store youtube slot token: %w", err)
+			}
+			// Backward compat: also write to the legacy users column for the default slot
+			// during the soak window, so existing youtubeTokenSource callers still work.
+			if slotFlag == "default" {
+				if err := storeYouTubeToken(q, profile, tok.RefreshToken, expiresAt); err != nil {
+					return fmt.Errorf("store youtube token: %w", err)
+				}
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "YouTube reauth complete for profile %q. Stored refresh token in %s.\n", profile, queueDB)
-			fmt.Fprintln(cmd.OutOrStdout(), "Validate with: linkari doctor && POST /sync/youtube-watchlater")
+			fmt.Fprintf(cmd.OutOrStdout(), "YouTube credential saved to slot %q.\n", slotFlag)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&configFile, "config", "", "path to config.toml (default ~/.config/linkari/config.toml, or LINKARI_CONFIG)")
 	cmd.Flags().StringVar(&queueDB, "queue-db", "", "path to SQLite queue database (or LINKARI_QUEUE_DB)")
 	cmd.Flags().StringVar(&profile, "profile", "default", "Linkari profile/user token slot to update")
+	cmd.Flags().StringVar(&slotFlag, "slot", "default", "OAuth credential slot name (default: \"default\")")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "print auth URL instead of opening browser")
 	cmd.Flags().StringVar(&callbackAddr, "callback-addr", "127.0.0.1:53682", "OAuth loopback callback address; register http://127.0.0.1:53682/callback in Google Cloud")
 	return cmd
