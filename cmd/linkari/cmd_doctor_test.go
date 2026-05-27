@@ -67,7 +67,7 @@ func TestDoctor_LiteralToken(t *testing.T) {
 	}
 
 	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
-	_ = run() // may fail due to firebase_sa/tsnet_authkey being optional warns — that's fine
+	_ = run() // may fail due to firebase_sa/tsnet_authkey being optional warns  -  that's fine
 
 	got := out.String()
 	if !strings.Contains(got, "✓ config_toml") {
@@ -409,6 +409,110 @@ func TestDoctorSecretsManager_NoAWSCredentials_FailsFast(t *testing.T) {
 	}
 	if !strings.Contains(got, "AWS_PROFILE=brianonpoint") {
 		t.Fatalf("CT-7: expected actionable AWS_PROFILE guidance; output:\n%s", got)
+	}
+}
+
+// CT-4: config tessdata_prefix takes precedence over TESSDATA_PREFIX env var when both are set.
+func TestDoctorTessdata_ConfigPrecedenceOverEnv(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Valid tessdata dir in config.
+	validDir := filepath.Join(dir, "tessdata-valid")
+	if err := os.MkdirAll(validDir, 0o700); err != nil {
+		t.Fatalf("mkdir tessdata-valid: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(validDir, "eng.traineddata"), []byte("fake"), 0o600); err != nil {
+		t.Fatalf("write traineddata: %v", err)
+	}
+	// Invalid dir set via env (no traineddata files).
+	invalidDir := filepath.Join(dir, "tessdata-invalid")
+	if err := os.MkdirAll(invalidDir, 0o700); err != nil {
+		t.Fatalf("mkdir tessdata-invalid: %v", err)
+	}
+
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	content := fmt.Sprintf("[server]\ntoken = \"test-token\"\n\n[server.liteparse]\ntessdata_prefix = %q\n", validDir)
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+	t.Setenv("TESSDATA_PREFIX", invalidDir)
+
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--json"})
+	_ = run()
+
+	var result struct {
+		Checks []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("JSON parse: %v\noutput:\n%s", err, out.String())
+	}
+	for _, c := range result.Checks {
+		if c.Name == "tessdata_prefix" {
+			if c.Status != statusOK {
+				t.Errorf("CT-4: tessdata_prefix status = %q, want %q (config must win over env); detail=%q", c.Status, statusOK, c.Message)
+			}
+			return
+		}
+	}
+	t.Error("CT-4: tessdata_prefix check not present in output")
+}
+
+// CT-5: probeHealth reflects the caller-supplied config prefix, ignoring TESSDATA_PREFIX env.
+func TestHealthProbe_TessdataConfigAware(t *testing.T) {
+	noLit := func(string) (string, error) { return "", fmt.Errorf("not found") }
+
+	// Non-empty config prefix → TessdataPrefixSet = true, even with env absent.
+	t.Setenv("TESSDATA_PREFIX", "")
+	probeWithCfg := probeHealth(noLit, "/from/config")
+	if !probeWithCfg.TessdataPrefixSet {
+		t.Errorf("CT-5: TessdataPrefixSet = false with non-empty config prefix, want true")
+	}
+
+	// Empty config prefix → TessdataPrefixSet = false, even with env set.
+	// probeHealth ignores the process env; the caller is responsible for passing cfg value.
+	t.Setenv("TESSDATA_PREFIX", "/from/env")
+	probeEmpty := probeHealth(noLit, "")
+	if probeEmpty.TessdataPrefixSet {
+		t.Errorf("CT-5: TessdataPrefixSet = true with empty config prefix (env should be ignored), want false")
+	}
+}
+
+// CT-8: when explicit AWS credentials are present, the aws_credentials fast-fail check
+// is not emitted even when the config contains Secrets Manager refs.
+// Requires AWS_PROFILE=brianonpoint and a real SM-backed config  -  skipped otherwise.
+func TestDoctorSecretsMgr_ExpectedProfileResolves(t *testing.T) {
+	if os.Getenv("AWS_PROFILE") != "brianonpoint" {
+		t.Skip("CT-8: requires AWS_PROFILE=brianonpoint and real SM-backed config")
+	}
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	content := "[server]\ntoken = \"${secretsmanager:linkari/bearer-token}\"\n"
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--json"})
+	err := run()
+	if err != nil {
+		t.Fatalf("CT-8: doctor failed: %v\noutput:\n%s", err, out.String())
+	}
+	var result struct {
+		Checks []doctorCheck `json:"checks"`
+	}
+	if jsonErr := json.Unmarshal(out.Bytes(), &result); jsonErr != nil {
+		t.Fatalf("CT-8: JSON parse: %v\noutput:\n%s", jsonErr, out.String())
+	}
+	for _, c := range result.Checks {
+		if c.Name == "aws_credentials" && c.Status == statusFail {
+			t.Errorf("CT-8: aws_credentials fail check should not be emitted with explicit credentials; detail=%q", c.Message)
+		}
 	}
 }
 
