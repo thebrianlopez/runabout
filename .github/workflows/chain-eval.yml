@@ -23,10 +23,10 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # docs-core S3 git remote — git-remote-s3 bundle repo
-  DOCS_CORE_S3: s3://REDACTED/repos/docs-core
+  # docs-core S3 git remote  -  git-remote-s3 bundle repo
+  DOCS_CORE_S3: ${{ secrets.DOCS_CORE_S3 }}
   # AWS role assumed via OIDC for both S3 docs clone and Secrets Manager
-  AWS_ROLE_ARN: arn:aws:iam::REDACTED_AWS_ACCT:role/github-actions-runabout
+  AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
   AWS_REGION: us-east-1
 
 jobs:
@@ -90,7 +90,7 @@ jobs:
           CHAIN_FIXTURES_DIR: cmd/chain-eval/fixtures
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "⚠ ANTHROPIC_API_KEY not set — skipping live eval"
+            echo "⚠ ANTHROPIC_API_KEY not set  -  skipping live eval"
             exit 0
           fi
           MIN_SCORE="${{ github.event.inputs.min_score || '0.85' }}"
@@ -106,7 +106,7 @@ jobs:
           CHAIN_FIXTURES_DIR: cmd/chain-eval/fixtures
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "⚠ ANTHROPIC_API_KEY not set — skipping live eval"
+            echo "⚠ ANTHROPIC_API_KEY not set  -  skipping live eval"
             exit 0
           fi
           MIN_SCORE="${{ github.event.inputs.min_score || '0.85' }}"
