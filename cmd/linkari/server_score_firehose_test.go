@@ -55,7 +55,7 @@ func runScoreAsyncWithEvents(t *testing.T, req *ShareRequest, eval Evaluator, ev
 	goroutineDone := make(chan struct{})
 	go func() {
 		defer close(goroutineDone)
-		scoreAsync(req, nil, eval, el, nil) // nil q: avoids resolvePushConfigOnce blocking
+		scoreAsync(req, nil, eval, el, nil, nil) // nil q: avoids resolvePushConfigOnce blocking
 	}()
 	select {
 	case <-goroutineDone:

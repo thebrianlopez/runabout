@@ -408,7 +408,7 @@ func classificationPreamble(profile, rawURL string, source string, ct ContentTyp
 //
 // Must be launched as a goroutine from handleTemplate.
 // Takes eval as a parameter so tests can inject a stub Evaluator.
-func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger, bskyClient *BlueskyClient) {
+func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger, bskyClient *BlueskyClient, wikiResolver *WikiTopicResolver) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -839,6 +839,23 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	if tagSection := formatUserTags(req.UserTags); tagSection != "" {
 		sysPrompt += tagSection
 	}
+	// EPIC-180 M2: resolve wiki topic index path for eligible profiles.
+	// wikiBlock is empty until M3 wires buildWikiContextBlock; the nil-guard here
+	// ensures the resolver is only called when configured.
+	var wikiBlock string
+	if wikiResolver != nil {
+		if indexPath, found := wikiResolver.Resolve(profile, req.UserTags); found {
+			_ = indexPath // M3: wikiBlock = buildWikiContextBlock(indexPath, wikiResolver.cfg.MaxContextTokens)
+			slog.DebugContext(ctx, "wiki_context_resolved",
+				"event_type", "wiki_context_resolved",
+				"row_id", req.QueueRowID,
+				"index_path", indexPath,
+				"profile", profile,
+			)
+		}
+	}
+	_ = wikiBlock // M3 will use this
+
 	// Share-time rationale is explicit user intent/context, distinct from source content.
 	if rationaleSection := formatUserRationale(req.UserRationaleText, req.UserRationaleSource); rationaleSection != "" {
 		sysPrompt += rationaleSection
@@ -1433,14 +1450,14 @@ func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLog
 	if req.Type == "" && req.URL != "" {
 		req.Type = "url"
 	}
-	scoreAsync(req, q, eval, events, nil)
+	scoreAsync(req, q, eval, events, nil, nil)
 }
 
 // scoreFileAsync delegates to scoreAsync. EPIC-077 M5: retained for the same
 // reason as scoreURLAsync. handleTemplate dispatch will be updated to call
 // scoreAsync directly.
 func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
-	scoreAsync(req, q, eval, events, nil)
+	scoreAsync(req, q, eval, events, nil, nil)
 }
 
 // isCameraPhoto returns true when a share request looks like a raw camera photo

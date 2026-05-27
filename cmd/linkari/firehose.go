@@ -430,7 +430,7 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 					"profile", profile,
 					"keyword", keyword,
 				)
-				scoreAsync(req, q, fsc.Eval, fsc.Events, fsc.BskyClient)
+				scoreAsync(req, q, fsc.Eval, fsc.Events, fsc.BskyClient, nil)
 				slog.Info("firehose scoring goroutine done",
 					"event_type", "firehose_scoring_done",
 					"queue_id", req.QueueRowID,

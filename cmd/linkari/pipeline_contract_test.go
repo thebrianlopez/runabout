@@ -169,7 +169,7 @@ func TestScoreAsyncTerminalStatus(t *testing.T) {
 			done := make(chan struct{})
 			wrapped := &onceDoneEval{inner: inner, done: done}
 
-			go scoreAsync(req, q, wrapped, nil, nil)
+			go scoreAsync(req, q, wrapped, nil, nil, nil)
 			select {
 			case <-done:
 				// Eval was called — give goroutine time to finish post-eval work.
@@ -404,7 +404,7 @@ func TestVisionDoubleFailure_MarksFailedNotScored(t *testing.T) {
 
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: HaikuVisionEvaluator{ImagePath: tmpFile}, done: done}
-	go scoreAsync(req, q, wrapped, nil, nil)
+	go scoreAsync(req, q, wrapped, nil, nil, nil)
 	select {
 	case <-done:
 		time.Sleep(100 * time.Millisecond)

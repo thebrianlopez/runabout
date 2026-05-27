@@ -80,7 +80,7 @@ func TestFeatureFlag_Disabled_Fallthrough(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	go scoreAsync(req, q, nil, nil, nil)
+	go scoreAsync(req, q, nil, nil, nil, nil)
 
 	// Poll for terminal status.
 	deadline := time.Now().Add(5 * time.Second)
@@ -215,7 +215,7 @@ func TestFeatureFlag_Enabled_EmitsEvents(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	go scoreAsync(req, q, nil, evLogger, nil)
+	go scoreAsync(req, q, nil, evLogger, nil, nil)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
