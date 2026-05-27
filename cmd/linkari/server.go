@@ -2487,7 +2487,7 @@ func (s *Server) handleTestPush(w http.ResponseWriter, r *http.Request) {
 		testURL     = "https://linkari.test/ping"
 	)
 
-	if err := sendOutboxFCM(s, deviceToken, testScore, testSlug, testVerdict, testURL, "", "", "", "", "", ""); err != nil {
+	if err := sendOutboxFCM(s, deviceToken, testScore, testSlug, testVerdict, testURL, "", "", "", "", "", "", ""); err != nil {
 		slog.WarnContext(ctx, "test push: FCM send failed", "error", err)
 		emitPushEvent("push_test_failed", map[string]interface{}{
 			"reason":    "fcm_send_failed",

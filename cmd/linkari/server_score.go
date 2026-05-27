@@ -839,10 +839,12 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	if tagSection := formatUserTags(req.UserTags); tagSection != "" {
 		sysPrompt += tagSection
 	}
-	// EPIC-180 M3: resolve wiki topic index and build context block for eligible profiles.
-	var wikiBlock string
+	// EPIC-180 M3/M4: resolve wiki topic index and build context block for eligible profiles.
+	// wikiIndexPath is carried to M4 for topic name derivation and persistence.
+	var wikiBlock, wikiIndexPath string
 	if wikiResolver != nil {
 		if indexPath, found := wikiResolver.Resolve(profile, req.UserTags); found {
+			wikiIndexPath = indexPath
 			var wikiErr error
 			wikiBlock, wikiErr = buildWikiContextBlock(indexPath, wikiResolver.cfg.MaxContextTokens)
 			if wikiErr != nil {
@@ -851,6 +853,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 					"row_id", req.QueueRowID,
 					"error", wikiErr,
 				)
+				wikiIndexPath = "" // don't persist if block build failed
 			} else {
 				slog.DebugContext(ctx, "wiki_context_resolved",
 					"event_type", "wiki_context_resolved",
@@ -1385,6 +1388,15 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		}
 	}
 
+	// EPIC-180 M4: persist wiki context state from M3.
+	var wikiTopic string
+	if wikiIndexPath != "" && wikiBlock != "" {
+		wikiTopic = filepath.Base(filepath.Dir(wikiIndexPath))
+		if wikiErr := q.SetWikiContext(itemID, true, wikiTopic); wikiErr != nil {
+			slog.Warn("score_async: SetWikiContext failed", "id", itemID, "error", wikiErr)
+		}
+	}
+
 	// Auto-archive when score meets threshold.
 	threshold := archiveThreshold(itemProfile)
 	if itemScore != nil && threshold >= 0 && *itemScore >= threshold {
@@ -1426,7 +1438,9 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	if itemScore != nil {
 		resolvePushConfigOnce(q)
 		if req.SubmittedByDeviceID != "" {
-			_, _ = q.EnqueueDevicePush(itemProfile, *itemScore, itemSlug, itemVerdict, itemURL, req.SubmittedByUserID, req.SubmittedByDeviceID)
+			if pushID, pushErr := q.EnqueueDevicePush(itemProfile, *itemScore, itemSlug, itemVerdict, itemURL, req.SubmittedByUserID, req.SubmittedByDeviceID); pushErr == nil && pushID > 0 && wikiTopic != "" {
+				_ = q.SetPushWikiTopic(pushID, wikiTopic)
+			}
 		} else {
 			_, _ = q.EnqueueDigestIfDue(context.Background(),
 				itemProfile, *itemScore, itemSlug, itemVerdict, itemURL,

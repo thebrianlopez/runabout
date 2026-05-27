@@ -83,6 +83,8 @@ type QueueItem struct {
 	SourceApp               string   `json:"source_app,omitempty"`                       // originating Android package when known
 	SubmittedByDeviceID     string   `json:"submitted_by_device_id,omitempty"`           // EPIC-167 F3
 	SubmittedByUserID       int64    `json:"-"`                                          // EPIC-167 F4 internal token lookup owner
+	WikiContextUsed         bool     `json:"wiki_context_used,omitempty"`                // EPIC-180 M4
+	WikiTopic               string   `json:"wiki_topic,omitempty"`                       // EPIC-180 M4
 }
 
 // Queue persists share requests in SQLite for deferred replay.
@@ -264,6 +266,9 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"CREATE INDEX IF NOT EXISTS idx_queue_submitted_by_device ON queue(submitted_by_device_id)",
 		// EPIC-159 F6: indexes for intent/tag stats queries.
 		"CREATE INDEX IF NOT EXISTS idx_queue_intent_status ON queue(intent, status)",
+		// EPIC-180 M4: wiki context gap-signal persistence.
+		"ALTER TABLE queue ADD COLUMN wiki_context_used INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE queue ADD COLUMN wiki_topic TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -387,6 +392,8 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		"ALTER TABLE devices ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE devices ADD COLUMN token_updated_at INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE devices ADD COLUMN last_seen_at INTEGER NOT NULL DEFAULT 0",
+		// EPIC-180 M4: wiki topic threading for FCM payload.
+		"ALTER TABLE push_outbox ADD COLUMN wiki_topic TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range pushMigrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -986,6 +993,22 @@ func (q *Queue) SetTopicTags(id int64, topicTags []string) error {
 	return err
 }
 
+// SetWikiContext persists wiki context state for a queue row (EPIC-180 M4).
+func (q *Queue) SetWikiContext(id int64, used bool, topic string) error {
+	usedInt := 0
+	if used {
+		usedInt = 1
+	}
+	_, err := q.db.Exec("UPDATE queue SET wiki_context_used=?, wiki_topic=? WHERE id=?", usedInt, topic, id)
+	return err
+}
+
+// SetPushWikiTopic stores the wiki topic on a push_outbox row for FCM payload inclusion (EPIC-180 M4).
+func (q *Queue) SetPushWikiTopic(id int64, topic string) error {
+	_, err := q.db.Exec("UPDATE push_outbox SET wiki_topic=? WHERE id=?", topic, id)
+	return err
+}
+
 // Archive promotes an item to 'archived' status.
 func (q *Queue) Archive(id int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -1065,6 +1088,8 @@ type ProfileStat struct {
 	AvgScore7d                *float64           `json:"avg_score_7d,omitempty"`               // EPIC-082 M3
 	AvgScore30d               *float64           `json:"avg_score_30d,omitempty"`              // EPIC-082 M3
 	FeedbackCalibrationScore  *float64           `json:"feedback_calibration_score,omitempty"` // EPIC-082 M3: (TooHigh-TooLow)/FeedbackCount
+	WikiEnrichedCount         int                `json:"wiki_enriched_count,omitempty"`         // EPIC-180 M4: items scored with wiki context
+	WikiEnrichedThumbsUp      int                `json:"wiki_enriched_thumbs_up,omitempty"`     // EPIC-180 M4: wiki-enriched items with outcome=acted
 }
 
 // ProfileStats returns aggregate scoring and feedback stats, optionally filtered by profile.
@@ -1131,6 +1156,17 @@ func (q *Queue) ProfileStats(profile string) ([]ProfileStat, error) {
 		if stats[i].FeedbackCount > 0 {
 			fcs := float64(stats[i].TooHighCount-stats[i].TooLowCount) / float64(stats[i].FeedbackCount)
 			stats[i].FeedbackCalibrationScore = &fcs
+		}
+
+		// EPIC-180 M4: wiki enrichment counts (per-profile sub-query).
+		var wikiCount, wikiThumbsUp int
+		_ = q.db.QueryRow(
+			"SELECT COUNT(*), COALESCE(SUM(CASE WHEN outcome='acted' THEN 1 ELSE 0 END),0) FROM queue WHERE wiki_context_used=1 AND status IN ('scored','archived') AND profile=?",
+			stats[i].Profile,
+		).Scan(&wikiCount, &wikiThumbsUp)
+		if wikiCount > 0 {
+			stats[i].WikiEnrichedCount = wikiCount
+			stats[i].WikiEnrichedThumbsUp = wikiThumbsUp
 		}
 	}
 	return stats, nil
@@ -1587,6 +1623,7 @@ type PushItem struct {
 	TargetDeviceID string // EPIC-167 F4: route to this device only
 	TargetUserID   int64  // EPIC-167 F4: target device owner
 	PushKind       string // EPIC-167 F4: semantic kind (e.g. score_complete)
+	WikiTopic      string // EPIC-180 M4: non-empty when wiki context was used
 }
 
 // EnqueuePush inserts a pending row into push_outbox and returns its id.
@@ -1797,7 +1834,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 		limit = 50
 	}
 	rows, err := q.db.Query(
-		`SELECT id, score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at, last_error, gap_summary, content_type, COALESCE(classify_source,''), COALESCE(content_warning,''), COALESCE(error_reason,''), COALESCE(target_device_id,''), COALESCE(target_user_id,0), COALESCE(push_kind,'')
+		`SELECT id, score, slug, verdict, url, kind, profile, status, attempts, next_attempt, created_at, updated_at, last_error, gap_summary, content_type, COALESCE(classify_source,''), COALESCE(content_warning,''), COALESCE(error_reason,''), COALESCE(target_device_id,''), COALESCE(target_user_id,0), COALESCE(push_kind,''), COALESCE(wiki_topic,'')
 		 FROM push_outbox WHERE status='pending' AND next_attempt <= ? ORDER BY id ASC LIMIT ?`,
 		time.Now().Unix(), limit,
 	)
@@ -1808,7 +1845,7 @@ func (q *Queue) PendingPushes(limit int) ([]PushItem, error) {
 	var items []PushItem
 	for rows.Next() {
 		var p PushItem
-		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Profile, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError, &p.GapSummary, &p.ContentType, &p.ClassifySource, &p.ContentWarning, &p.ErrorReason, &p.TargetDeviceID, &p.TargetUserID, &p.PushKind); err != nil {
+		if err := rows.Scan(&p.ID, &p.Score, &p.Slug, &p.Verdict, &p.URL, &p.Kind, &p.Profile, &p.Status, &p.Attempts, &p.NextAttempt, &p.CreatedAt, &p.UpdatedAt, &p.LastError, &p.GapSummary, &p.ContentType, &p.ClassifySource, &p.ContentWarning, &p.ErrorReason, &p.TargetDeviceID, &p.TargetUserID, &p.PushKind, &p.WikiTopic); err != nil {
 			return nil, err
 		}
 		items = append(items, p)
