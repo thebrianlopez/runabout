@@ -96,7 +96,7 @@ func (s *Server) StartPushWorker(ctx context.Context) {
 
 // drainPushOutbox runs one drain pass and returns the number of rows
 // processed (attempted + completed). A return of 0 means the outbox was
-// idle this tick — used by StartPushWorker to emit push_outbox_idle_metric.
+// idle this tick  -  used by StartPushWorker to emit push_outbox_idle_metric.
 func (s *Server) drainPushOutbox(ctx context.Context) int {
 	outboxMu.Lock()
 	defer outboxMu.Unlock()
@@ -153,7 +153,7 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 			)
 			continue
 		}
-		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary, p.ContentType, p.ClassifySource, p.ContentWarning, p.ErrorReason); err != nil {
+		if err := sendOutboxFCM(s, deviceToken, p.Score, p.Slug, p.Verdict, p.URL, p.Profile, p.GapSummary, p.ContentType, p.ClassifySource, p.ContentWarning, p.ErrorReason, p.WikiTopic); err != nil {
 			attempts := p.Attempts + 1
 			if attempts >= pushMaxAttempts {
 				_ = s.queue.MarkPushDead(p.ID, err.Error())
@@ -245,12 +245,12 @@ func emitShareActionResolved(res ShareResolution, url string, queueID int64) {
 // sendOutboxFCM is the single production caller of the FCM HTTP v1 API.
 // EPIC-061: profile parameter added to include auto-classified profile in
 // the FCM data payload so the Android client can display it.
-// EPIC-071 M3: contentType parameter added — "voice_note" triggers a
+// EPIC-071 M3: contentType parameter added  -  "voice_note" triggers a
 // different notification title/body and includes content_type in the data map.
-// EPIC-077 M6: classifySource parameter added — included in FCM data payload
+// EPIC-077 M6: classifySource parameter added  -  included in FCM data payload
 // so the Android client can surface classification provenance in debug views.
-// EPIC-102: contentWarning parameter added — "lit_parse_failed" when PDF extraction failed.
-func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, profile, gapSummary, contentType, classifySource, contentWarning, errorReason string) error {
+// EPIC-102: contentWarning parameter added  -  "lit_parse_failed" when PDF extraction failed.
+func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url, profile, gapSummary, contentType, classifySource, contentWarning, errorReason, wikiTopic string) error {
 	tok, err := s.fcmTokenSource.Token()
 	if err != nil {
 		return fmt.Errorf("obtaining oauth2 token: %w", err)
@@ -267,18 +267,18 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 		title = "YouTube transcript ready"
 		notifBody = verdict // verdict holds video title or "transcribed"
 	case "youtube":
-		// EPIC-090 M5: YouTube scored notification (score path) — YouTube-specific title.
+		// EPIC-090 M5: YouTube scored notification (score path)  -  YouTube-specific title.
 		notifBody = firstSentence(verdict, 120)
 		switch {
 		case score >= 70:
-			title = fmt.Sprintf("YouTube · Worth saving — %d/100", score)
+			title = fmt.Sprintf("YouTube · Worth saving  -  %d/100", score)
 		case score >= 40:
-			title = fmt.Sprintf("YouTube · Maybe — %d/100", score)
+			title = fmt.Sprintf("YouTube · Maybe  -  %d/100", score)
 		default:
-			title = fmt.Sprintf("YouTube · Skip — %d/100", score)
+			title = fmt.Sprintf("YouTube · Skip  -  %d/100", score)
 		}
 	case "youtube_shorts":
-		// EPIC-012 M8: YouTube Shorts — abbreviated title prefixed with "Short:".
+		// EPIC-012 M8: YouTube Shorts  -  abbreviated title prefixed with "Short:".
 		notifBody = firstSentence(verdict, 120)
 		title = fmt.Sprintf("Short: %s", firstSentence(verdict, 60))
 	default:
@@ -288,11 +288,11 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 		}
 		switch {
 		case score >= 70:
-			title = fmt.Sprintf("Worth reading — %d/100", score)
+			title = fmt.Sprintf("Worth reading  -  %d/100", score)
 		case score >= 40:
-			title = fmt.Sprintf("Maybe — %d/100", score)
+			title = fmt.Sprintf("Maybe  -  %d/100", score)
 		default:
-			title = fmt.Sprintf("Skip it — %d/100", score)
+			title = fmt.Sprintf("Skip it  -  %d/100", score)
 		}
 	}
 
@@ -302,6 +302,23 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 		itemStatus = "failed"
 	}
 
+	data := map[string]string{
+		"slug":            slug,
+		"verdict":         verdict,
+		"url":             url,
+		"score":           fmt.Sprintf("%d", score),
+		"profile":         profile,
+		"gap_summary":     gapSummary,
+		"content_type":    contentType,
+		"classify_source": classifySource,
+		"content_warning": contentWarning,
+		"status":          itemStatus,
+		"error_reason":    errorReason,
+	}
+	// EPIC-180 M4: include wiki_topic only when wiki context was used.
+	if wikiTopic != "" {
+		data["wiki_topic"] = wikiTopic
+	}
 	payload := map[string]interface{}{
 		"message": map[string]interface{}{
 			"token": deviceToken,
@@ -309,19 +326,7 @@ func sendOutboxFCM(s *Server, deviceToken string, score int, slug, verdict, url,
 				"title": title,
 				"body":  notifBody,
 			},
-			"data": map[string]string{
-				"slug":            slug,
-				"verdict":         verdict,
-				"url":             url,
-				"score":           fmt.Sprintf("%d", score),
-				"profile":         profile,
-				"gap_summary":     gapSummary,
-				"content_type":    contentType,
-				"classify_source": classifySource,
-				"content_warning": contentWarning,
-				"status":          itemStatus,
-				"error_reason":    errorReason,
-			},
+			"data": data,
 			"android": map[string]string{
 				"priority": "high",
 			},
