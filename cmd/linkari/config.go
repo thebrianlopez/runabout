@@ -114,6 +114,59 @@ type WhisperConfig struct {
 	MaxRetries     int `toml:"max_retries"`     // dead-letter retry limit for audio fallback (default 3)
 }
 
+// WikiConfigWarning is returned by WikiConfig.Validate when the vault root is
+// absent. It is non-fatal: scoring continues without wiki context injection.
+type WikiConfigWarning struct{ Msg string }
+
+func (w WikiConfigWarning) Error() string { return w.Msg }
+
+// WikiConfig holds optional Obsidian vault context-injection settings.
+// Nested under [wiki] in config.toml. Absent block or Enabled=false is a no-op.
+// EPIC-180 M1.
+type WikiConfig struct {
+	Enabled          bool     `toml:"enabled"`
+	RootPath         string   `toml:"root_path"`
+	WikiSubdir       string   `toml:"wiki_subdir"`
+	Profiles         []string `toml:"profiles"`
+	MaxContextTokens int      `toml:"max_context_tokens"`
+	IndexFilename    string   `toml:"index_filename"`
+}
+
+// TopicRootPath returns the directory where topic subdirectories live.
+// When WikiSubdir is empty, topics are flat siblings of RootPath; otherwise
+// they live under RootPath/WikiSubdir.
+func (c WikiConfig) TopicRootPath() string {
+	if c.WikiSubdir == "" {
+		return c.RootPath
+	}
+	return filepath.Join(c.RootPath, c.WikiSubdir)
+}
+
+// Validate returns an error for hard-reject config values and a WikiConfigWarning
+// when the vault root is missing (non-fatal: scoring continues without wiki context).
+func (c WikiConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if len(c.Profiles) == 0 {
+		return fmt.Errorf("wiki_config_invalid: profiles must not be empty")
+	}
+	if c.IndexFilename == "" {
+		return fmt.Errorf("wiki_config_invalid: index_filename must not be empty")
+	}
+	if c.MaxContextTokens > 2000 {
+		return fmt.Errorf("wiki_config_invalid: max_context_tokens %d exceeds 2000 limit", c.MaxContextTokens)
+	}
+	if c.RootPath == "" {
+		return WikiConfigWarning{"wiki_root_missing: root_path not set  -  wiki context injection disabled"}
+	}
+	fi, err := os.Stat(c.RootPath)
+	if err != nil || !fi.IsDir() {
+		return WikiConfigWarning{fmt.Sprintf("wiki_root_missing: root_path %q does not exist or is not a directory  -  wiki context injection disabled", c.RootPath)}
+	}
+	return nil
+}
+
 // RelayedWatchdogConfig is the resolved runtime view of the watchdog knobs,
 // with defaults filled in. Returns (0, 0) iff the watchdog is explicitly
 // disabled (max age <= 0 after defaults).
@@ -453,6 +506,10 @@ type ServerConfig struct {
 	// personal-photo short-circuit instruction. Default: 20.
 	// Set via config.toml: image_short_circuit_bypass_min_chars.
 	ImageShortCircuitBypassMinChars int `toml:"image_short_circuit_bypass_min_chars"`
+
+	// EPIC-180 M1: optional Obsidian vault context-injection.
+	// Absent block or Enabled=false is a no-op; scoring path unchanged.
+	Wiki WikiConfig `toml:"wiki"`
 }
 
 // ShareConfig controls how share requests map their received action/profile to

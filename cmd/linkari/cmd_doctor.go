@@ -54,22 +54,22 @@ func doctorCmd() *cobra.Command {
 binding any listeners, starting the tsnet engine, or opening tmux sessions.
 
 Checks:
-  server_yaml      — file present and parseable
-  token            — bearer token resolvable
-  firebase_sa      — firebase service account resolvable
-  tsnet_authkey    — tsnet auth key resolvable
-  jira_token       — Jira bearer token resolvable (optional)
-  atlassian_email — Atlassian email resolvable (optional)
-  atlassian_api_token — Atlassian API token resolvable (optional)
-  jira_domain       — Jira domain resolvable (optional)
-  pagerduty_token   — PagerDuty API token resolvable (optional)
-  aws_identity     — AWS STS caller identity (only when SM URIs present)
-  xdg_config_dir   — ~/.config/linkari/ exists and is writable
-  xdg_cache_dir    — ~/.cache/linkari/ exists and is writable
-  xdg_state_dir    — ~/.local/state/linkari/ exists and is writable
-  tsnet_state      — tsnet state directory status
-  firebase_sa_cache — firebase-sa.json cache path is writable
-  log_file         — log_file path is writable (if configured)
+  server_yaml       -  file present and parseable
+  token             -  bearer token resolvable
+  firebase_sa       -  firebase service account resolvable
+  tsnet_authkey     -  tsnet auth key resolvable
+  jira_token        -  Jira bearer token resolvable (optional)
+  atlassian_email  -  Atlassian email resolvable (optional)
+  atlassian_api_token  -  Atlassian API token resolvable (optional)
+  jira_domain        -  Jira domain resolvable (optional)
+  pagerduty_token    -  PagerDuty API token resolvable (optional)
+  aws_identity      -  AWS STS caller identity (only when SM URIs present)
+  xdg_config_dir    -  ~/.config/linkari/ exists and is writable
+  xdg_cache_dir     -  ~/.cache/linkari/ exists and is writable
+  xdg_state_dir     -  ~/.local/state/linkari/ exists and is writable
+  tsnet_state       -  tsnet state directory status
+  firebase_sa_cache  -  firebase-sa.json cache path is writable
+  log_file          -  log_file path is writable (if configured)
 
 Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -107,7 +107,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				if err != nil {
 					if errors.Is(err, os.ErrNotExist) {
 						addCheck(warnCheck("config_toml",
-							fmt.Sprintf("not found at %s — run 'linkari config init' to create", configPath)))
+							fmt.Sprintf("not found at %s  -  run 'linkari config init' to create", configPath)))
 					} else {
 						addCheck(failCheck("config_toml", fmt.Sprintf("parse error: %v", err)))
 					}
@@ -118,7 +118,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					addCheck(okCheck("config_toml", configPath))
 				}
 				if awsCredsUnavailable {
-					addCheck(failCheck("aws_credentials", "config contains secretsmanager refs but no explicit AWS credentials/profile are available — set AWS_PROFILE=brianonpoint before running linkari doctor"))
+					addCheck(failCheck("aws_credentials", "config contains secretsmanager refs but no explicit AWS credentials/profile are available  -  set AWS_PROFILE=brianonpoint before running linkari doctor"))
 				}
 			}
 
@@ -166,13 +166,13 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 					ts, err := youtubeTokenSource(checkCtx, "default", q, serverCfg.GoogleClientID, serverCfg.GoogleClientSecret)
 					if err != nil {
-						addCheck(failCheck("youtube_oauth", fmt.Sprintf("%v — run `linkari auth youtube`", err)))
+						addCheck(failCheck("youtube_oauth", fmt.Sprintf("%v  -  run `linkari auth youtube`", err)))
 					} else if _, err := ts.Token(); err != nil {
 						errClass, remediation := classifyYouTubeAPIError(err)
 						if remediation == "" {
 							remediation = "check Google OAuth client configuration and network access"
 						}
-						addCheck(failCheck("youtube_oauth", fmt.Sprintf("%s: %v — %s", errClass, err, remediation)))
+						addCheck(failCheck("youtube_oauth", fmt.Sprintf("%s: %v  -  %s", errClass, err, remediation)))
 					} else {
 						addCheck(okCheck("youtube_oauth", "stored YouTube credential refreshes successfully"))
 					}
@@ -187,12 +187,12 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 			var hasSMURI bool
 			for _, r := range resolutions {
 				if r.Err != nil {
-					addCheck(failCheck(r.Field, fmt.Sprintf("resolve error: %v — check SM permissions or URI spelling", r.Err)))
+					addCheck(failCheck(r.Field, fmt.Sprintf("resolve error: %v  -  check SM permissions or URI spelling", r.Err)))
 					continue
 				}
 				if r.Value == "" {
 					if r.Field == "token" {
-						addCheck(failCheck("token", "not configured — set token in config.toml, or export LINKARI_TOKEN"))
+						addCheck(failCheck("token", "not configured  -  set token in config.toml, or export LINKARI_TOKEN"))
 					} else {
 						addCheck(warnCheck(r.Field, fmt.Sprintf("not configured (optional for %s)", r.Field)))
 					}
@@ -210,12 +210,12 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 			if hasSMURI {
 				awsCfg, err := config.LoadDefaultConfig(ctx)
 				if err != nil {
-					addCheck(failCheck("aws_identity", fmt.Sprintf("load AWS config: %v — set AWS_PROFILE or configure ~/.aws/credentials", err)))
+					addCheck(failCheck("aws_identity", fmt.Sprintf("load AWS config: %v  -  set AWS_PROFILE or configure ~/.aws/credentials", err)))
 				} else {
 					stsClient := sts.NewFromConfig(awsCfg)
 					identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 					if err != nil {
-						addCheck(failCheck("aws_identity", fmt.Sprintf("sts:GetCallerIdentity failed: %v — check credentials and region", err)))
+						addCheck(failCheck("aws_identity", fmt.Sprintf("sts:GetCallerIdentity failed: %v  -  check credentials and region", err)))
 					} else {
 						addCheck(okCheck("aws_identity",
 							fmt.Sprintf("Account=%s ARN=%s", strOrEmpty(identity.Account), strOrEmpty(identity.Arn))))
@@ -248,7 +248,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 			// --- Check 9: whisper-cli and model (EPIC-067) ---
 			{
 				if _, err := exec.LookPath("whisper-cli"); err != nil {
-					addCheck(warnCheck("whisper_cli", "whisper-cli not found on PATH — voice note transcription will fail"))
+					addCheck(warnCheck("whisper_cli", "whisper-cli not found on PATH  -  voice note transcription will fail"))
 				} else {
 					addCheck(okCheck("whisper_cli", "whisper-cli found on PATH"))
 				}
@@ -259,7 +259,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 				if _, err := os.Stat(whisperModel); err != nil {
 					addCheck(warnCheck("whisper_model",
-						fmt.Sprintf("model not found at %s — download ggml-large-v3-turbo.bin for voice note transcription", whisperModel)))
+						fmt.Sprintf("model not found at %s  -  download ggml-large-v3-turbo.bin for voice note transcription", whisperModel)))
 				} else {
 					addCheck(okCheck("whisper_model", whisperModel))
 				}
@@ -273,7 +273,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 				if resolved, err := exec.LookPath(ytPath); err != nil {
 					addCheck(warnCheck("ytdlp",
-						fmt.Sprintf("yt-dlp not found at %q — YouTube URL transcription will fail (install yt-dlp or set ytdlp_path in server.yaml)", ytPath)))
+						fmt.Sprintf("yt-dlp not found at %q  -  YouTube URL transcription will fail (install yt-dlp or set ytdlp_path in server.yaml)", ytPath)))
 				} else {
 					ver := resolved
 					if out, verErr := exec.Command(resolved, "--version").Output(); verErr == nil {
@@ -291,7 +291,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 				if resolved, err := exec.LookPath(ffPath); err != nil {
 					addCheck(warnCheck("ffmpeg",
-						fmt.Sprintf("ffmpeg not found at %q — audio conversion for YouTube fallback will fail (install ffmpeg or set ffmpeg_path in server.yaml)", ffPath)))
+						fmt.Sprintf("ffmpeg not found at %q  -  audio conversion for YouTube fallback will fail (install ffmpeg or set ffmpeg_path in server.yaml)", ffPath)))
 				} else {
 					addCheck(okCheck("ffmpeg", resolved))
 				}
@@ -305,7 +305,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 				if _, err := exec.LookPath(litPath); err != nil {
 					addCheck(warnCheck("lit",
-						fmt.Sprintf("not found — brew install llamaindex-liteparse")))
+						fmt.Sprintf("not found  -  brew install llamaindex-liteparse")))
 				} else {
 					ver := ""
 					if out, err := exec.Command(litPath, "--version").Output(); err == nil {
@@ -335,7 +335,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 				if effective == "" {
 					addCheck(warnCheck("tessdata_prefix",
-						"tessdata_prefix not set in config and TESSDATA_PREFIX not in env — OCR via lit will be unavailable"))
+						"tessdata_prefix not set in config and TESSDATA_PREFIX not in env  -  OCR via lit will be unavailable"))
 				} else {
 					// EPIC-164: upgrade from presence-only to functional validation.
 					entries, err := os.ReadDir(effective)
@@ -349,6 +349,29 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					default:
 						addCheck(okCheck("tessdata_prefix", effective))
 					}
+				}
+			}
+
+			// --- Check: wiki config (EPIC-180 M1) ---
+			// Only runs when [wiki] block is present and Enabled=true.
+			if serverCfg != nil && serverCfg.Wiki.Enabled {
+				switch err := serverCfg.Wiki.Validate(); err.(type) {
+				case nil:
+					// Count topic directories under TopicRootPath.
+					entries, readErr := os.ReadDir(serverCfg.Wiki.TopicRootPath())
+					topicCount := 0
+					if readErr == nil {
+						for _, e := range entries {
+							if e.IsDir() {
+								topicCount++
+							}
+						}
+					}
+					addCheck(okCheck("wiki", fmt.Sprintf("vault=%s topics=%d index=%s", serverCfg.Wiki.RootPath, topicCount, serverCfg.Wiki.IndexFilename)))
+				case WikiConfigWarning:
+					addCheck(warnCheck("wiki", err.Error()))
+				default:
+					addCheck(failCheck("wiki", err.Error()))
 				}
 			}
 
@@ -367,7 +390,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					fi, err := os.Stat(tsnetStateDir)
 					if os.IsNotExist(err) {
 						addCheck(warnCheck("tsnet_state",
-							fmt.Sprintf("%s absent — will be created on first tsnet bring-up (normal for fresh installs)", tsnetStateDir)))
+							fmt.Sprintf("%s absent  -  will be created on first tsnet bring-up (normal for fresh installs)", tsnetStateDir)))
 					} else if err != nil {
 						addCheck(failCheck("tsnet_state", fmt.Sprintf("stat %s: %v", tsnetStateDir, err)))
 					} else if fi.IsDir() {
@@ -404,7 +427,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				addCheck(doctorCheck{
 					Name:    "notify_on_prefilter_skip",
 					Status:  statusWarn,
-					Message: "FCM is configured but notify_on_prefilter_skip=false — pre-filtered shares will be silently dropped without a push notification. Set notify_on_prefilter_skip: true in server.yaml to enable transparency.",
+					Message: "FCM is configured but notify_on_prefilter_skip=false  -  pre-filtered shares will be silently dropped without a push notification. Set notify_on_prefilter_skip: true in server.yaml to enable transparency.",
 				})
 			}
 

@@ -250,3 +250,25 @@ func TestRG3_BareNoteAction_PDFShare_RoutesOK(t *testing.T) {
 		t.Errorf("RG-3: queue row type=%q, want \"document\"", item.Type)
 	}
 }
+
+// TestRG3b_UnknownAction_Returns400 guards the no-queue case: when no queue is
+// active and the action has no ActionConfig entry, the server must return 400
+// rather than 500. With a queue, legacy action names are queued for replay per
+// backward-compat RG-1 (TestCompat_RG1_ActionOnlyNotRejected).
+func TestRG3b_UnknownAction_Returns400(t *testing.T) {
+	cfg := builtinConfig()
+	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
+	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
+
+	body, ct := buildPDFMultipart(t, "totally_unknown_action_xyz", "doc.pdf", 1024, false)
+	req := httptest.NewRequest(http.MethodPost, "/share", body)
+	req.Header.Set("Content-Type", ct)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rr := httptest.NewRecorder()
+
+	srv.Mux().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("RG-3b: unknown action should return 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}

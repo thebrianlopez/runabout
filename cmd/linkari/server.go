@@ -1578,8 +1578,29 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	result, err := s.router.Route(&req)
 	if err != nil {
 		s.emitShareEvent(&req, "failure", shareStart, "")
-		// If queue is active, return 200 "queued" instead of 500  -
-		// the replay goroutine will retry when tmux is available.
+		// ErrActionNotFound is a permanent config gap - no ActionConfig entry for
+		// the resolved action. When no queue is available, return 400 so the client
+		// knows the share was rejected. When a queue IS active, fall through and queue
+		// for replay so old Android clients (which may send legacy action names like
+		// uinit_eng) are not hard-rejected - backward compat RG-1.
+		if errors.Is(err, ErrActionNotFound) && s.queue == nil {
+			slog.WarnContext(ctx, "share rejected: action not configured",
+				"event_type", "share_action_not_found",
+				"action", req.Action,
+				"type", req.Type,
+				"error", err.Error(),
+			)
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("action not configured: %s", req.Action))
+			return
+		}
+		if errors.Is(err, ErrActionNotFound) {
+			slog.WarnContext(ctx, "share queued: action not configured, queueing for compat",
+				"event_type", "share_action_not_found_queued",
+				"action", req.Action,
+				"type", req.Type,
+			)
+		}
+		// Transient failure (e.g. tmux unavailable): queue for replay.
 		if s.queue != nil {
 			slog.InfoContext(ctx, "share queued: routing failed",
 				"event_type", "share_queued",

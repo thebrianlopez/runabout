@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -10,6 +11,11 @@ import (
 	"strings"
 	"sync"
 )
+
+// ErrActionNotFound is returned by Route when the resolved action ID has no
+// ActionConfig entry. This is a permanent config gap, not a transient tmux
+// failure, so callers should return 4xx rather than queuing for replay.
+var ErrActionNotFound = errors.New("action not found")
 
 // archiveThresholdCache lazily loads the actions config on first use and
 // supports hot-reload via SIGHUP (EPIC-051 M6). The sync.Once pattern that
@@ -424,7 +430,7 @@ func resolveShareAction(req *ShareRequest, cfgIndex map[string]*ActionConfig, he
 		return res
 	}
 
-	// Unknown / missing action — try bare-intent normalization before failing fast.
+	// Unknown / missing action  -  try bare-intent normalization before failing fast.
 	// If caller sent a bare intent keyword (e.g. "uinit") without a profile suffix,
 	// attempt to resolve to the "_auto" variant (e.g. "uinit_auto"). This guards
 	// against Android clients that derive the action field from the intent name
@@ -506,7 +512,7 @@ func (r *Router) Route(req *ShareRequest) (string, error) {
 
 	ac, ok := r.cfgIndex[actionID]
 	if !ok {
-		return "", fmt.Errorf("no action for %q", actionID)
+		return "", fmt.Errorf("no action for %q: %w", actionID, ErrActionNotFound)
 	}
 
 	slog.Debug("route decision",
