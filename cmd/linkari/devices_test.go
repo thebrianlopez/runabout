@@ -65,7 +65,7 @@ func decodeJSON(t *testing.T, resp *http.Response) map[string]any {
 	return m
 }
 
-// CT-1: Register a new device — row inserted, response ok.
+// CT-1: Register a new device  -  row inserted, response ok.
 func TestDeviceCT1_RegisterNew(t *testing.T) {
 	_, ts, token, _ := testServerWithSession(t)
 
@@ -88,7 +88,7 @@ func TestDeviceCT1_RegisterNew(t *testing.T) {
 	}
 }
 
-// CT-2: Re-register same device with new FCM token — row updated, row count unchanged.
+// CT-2: Re-register same device with new FCM token  -  row updated, row count unchanged.
 func TestDeviceCT2_TokenRotation(t *testing.T) {
 	srv, ts, token, userID := testServerWithSession(t)
 	ctx := t.Context()
@@ -117,7 +117,7 @@ func TestDeviceCT2_TokenRotation(t *testing.T) {
 	}
 }
 
-// CT-3: Two devices for same user — two independent rows.
+// CT-3: Two devices for same user  -  two independent rows.
 func TestDeviceCT3_TwoDevices(t *testing.T) {
 	srv, ts, token, userID := testServerWithSession(t)
 	ctx := t.Context()
@@ -193,7 +193,7 @@ func TestDeviceCT6_CrossUserDeviceNotAttributed(t *testing.T) {
 		t.Fatalf("RegisterDevice: %v", err)
 	}
 
-	// User B tries to look up that same device_id — should not find a token.
+	// User B tries to look up that same device_id  -  should not find a token.
 	tok, _ := srv.queue.LookupDeviceToken(ctx, userB, "shared-device-ct6")
 	if tok != "" {
 		t.Errorf("user B should not see user A's device token, got %q", tok)
@@ -221,7 +221,7 @@ func TestDeviceCT7_Unauthenticated(t *testing.T) {
 	resp.Body.Close()
 }
 
-// CT-8: Disabled device — LookupDeviceToken returns empty string.
+// CT-8: Disabled device  -  LookupDeviceToken returns empty string.
 func TestDeviceCT8_DisabledDeviceExcluded(t *testing.T) {
 	_, ts, token, userID := testServerWithSession(t)
 	ctx := t.Context()
@@ -347,4 +347,226 @@ func TestDeviceCT11_SameTokenNewDeviceIDReassigns(t *testing.T) {
 	if newTok != "fcm-token-stable" {
 		t.Errorf("new device token = %q, want fcm-token-stable", newTok)
 	}
+}
+
+// EPIC-178: Device management observability contract tests.
+
+func getDevicesReq(t *testing.T, ts *httptest.Server, token string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/devices", nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /devices: %v", err)
+	}
+	return resp
+}
+
+func postDisableDevice(t *testing.T, ts *httptest.Server, token, deviceID string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/devices/"+deviceID+"/disable", nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /devices/%s/disable: %v", deviceID, err)
+	}
+	return resp
+}
+
+// CT-1: GET /devices returns registered devices for the authenticated user.
+func TestGetDevices_ReturnsRegisteredDevices(t *testing.T) {
+	_, ts, token, _ := testServerWithSession(t)
+	postRegisterDevice(t, ts, token, map[string]any{
+		"device_id": "android-obs-ct1",
+		"fcm_token": "tok-obs-ct1",
+		"platform":  "android",
+	})
+	resp := getDevicesReq(t, ts, token)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /devices status = %d, want 200", resp.StatusCode)
+	}
+	body := decodeJSON(t, resp)
+	devices, ok := body["devices"].([]any)
+	if !ok || len(devices) < 1 {
+		t.Errorf("devices = %v, want non-empty list", body["devices"])
+	}
+}
+
+// CT-2: GET /devices returns only the authenticated user's devices.
+func TestGetDevices_UserScoped(t *testing.T) {
+	q := newTestQueue(t)
+	ctx := t.Context()
+	userA := insertTestUser(t, q, "obs-ct2-a", "obs-ct2-a@example.com")
+	userB := insertTestUser(t, q, "obs-ct2-b", "obs-ct2-b@example.com")
+	_, _ = q.RegisterDevice(ctx, userA, deviceRegisterRequest{DeviceID: "dev-ct2-a", FCMToken: "tok-ct2-a", Platform: "android"})
+	_, _ = q.RegisterDevice(ctx, userB, deviceRegisterRequest{DeviceID: "dev-ct2-b", FCMToken: "tok-ct2-b", Platform: "android"})
+
+	devsA, _ := q.ListDevices(ctx, userA)
+	if len(devsA) != 1 || devsA[0].DeviceID != "dev-ct2-a" {
+		t.Errorf("userA devices = %v, want [{dev-ct2-a}]", devsA)
+	}
+	devsB, _ := q.ListDevices(ctx, userB)
+	if len(devsB) != 1 || devsB[0].DeviceID != "dev-ct2-b" {
+		t.Errorf("userB devices = %v, want [{dev-ct2-b}]", devsB)
+	}
+}
+
+// CT-3: GET /devices includes disabled devices with enabled: false.
+func TestGetDevices_IncludesDisabledDevices(t *testing.T) {
+	q := newTestQueue(t)
+	ctx := t.Context()
+	uid := insertTestUser(t, q, "obs-ct3", "obs-ct3@example.com")
+	_, _ = q.RegisterDevice(ctx, uid, deviceRegisterRequest{DeviceID: "dev-ct3", FCMToken: "tok-ct3", Platform: "android"})
+	if err := q.DisableDevice(ctx, uid, "dev-ct3"); err != nil {
+		t.Fatalf("DisableDevice: %v", err)
+	}
+	devs, err := q.ListDevices(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListDevices: %v", err)
+	}
+	if len(devs) != 1 {
+		t.Fatalf("device count = %d, want 1", len(devs))
+	}
+	if devs[0].Enabled {
+		t.Errorf("disabled device Enabled = true, want false")
+	}
+}
+
+// CT-4: POST /devices/{id}/disable disables the device.
+func TestDisableDevice_DisablesDevice(t *testing.T) {
+	_, ts, token, _ := testServerWithSession(t)
+	postRegisterDevice(t, ts, token, map[string]any{
+		"device_id": "android-obs-ct4",
+		"fcm_token": "tok-obs-ct4",
+		"platform":  "android",
+	})
+	resp := postDisableDevice(t, ts, token, "android-obs-ct4")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("disable status = %d, want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Verify via GET /devices: disabled device appears with enabled: false.
+	listResp := getDevicesReq(t, ts, token)
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /devices after disable status = %d", listResp.StatusCode)
+	}
+	body := decodeJSON(t, listResp)
+	devList, ok := body["devices"].([]any)
+	if !ok {
+		t.Fatalf("response devices not array: %v", body["devices"])
+	}
+	found := false
+	for _, d := range devList {
+		dm, _ := d.(map[string]any)
+		if dm["device_id"] == "android-obs-ct4" {
+			found = true
+			if en, _ := dm["enabled"].(bool); en {
+				t.Errorf("device enabled = true after disable, want false")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("device android-obs-ct4 not found in GET /devices after disable")
+	}
+}
+
+// CT-5: POST /devices/{id}/disable is idempotent  -  second call still returns 200.
+func TestDisableDevice_Idempotent(t *testing.T) {
+	_, ts, token, _ := testServerWithSession(t)
+	postRegisterDevice(t, ts, token, map[string]any{
+		"device_id": "android-obs-ct5",
+		"fcm_token": "tok-obs-ct5",
+		"platform":  "android",
+	})
+	for i := 1; i <= 2; i++ {
+		resp := postDisableDevice(t, ts, token, "android-obs-ct5")
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("call %d: disable status = %d, want 200", i, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+}
+
+// CT-6: Unauthenticated GET /devices → 401.
+func TestGetDevices_Unauthenticated(t *testing.T) {
+	_, ts, _, _ := testServerWithSession(t)
+	resp := getDevicesReq(t, ts, "")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("GET /devices without auth status = %d, want 401", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+// CT-7: Unauthenticated POST /devices/{id}/disable → 401.
+func TestDisableDevice_Unauthenticated(t *testing.T) {
+	_, ts, _, _ := testServerWithSession(t)
+	resp := postDisableDevice(t, ts, "", "android-any-ct7")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("POST disable without auth status = %d, want 401", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+// M4 CT-8: LookupDeviceToken returns empty string for a disabled device.
+func TestLookupDeviceToken_DisabledReturnsEmpty(t *testing.T) {
+	q := newTestQueue(t)
+	ctx := t.Context()
+	uid := insertTestUser(t, q, "obs-m4-ct8", "obs-m4-ct8@example.com")
+	if _, err := q.RegisterDevice(ctx, uid, deviceRegisterRequest{DeviceID: "dev-m4-ct8", FCMToken: "tok-m4-ct8", Platform: "android"}); err != nil {
+		t.Fatalf("RegisterDevice: %v", err)
+	}
+	if err := q.DisableDevice(ctx, uid, "dev-m4-ct8"); err != nil {
+		t.Fatalf("DisableDevice: %v", err)
+	}
+	tok, err := q.LookupDeviceToken(ctx, uid, "dev-m4-ct8")
+	if err != nil {
+		t.Fatalf("LookupDeviceToken: %v", err)
+	}
+	if tok != "" {
+		t.Errorf("disabled device token = %q, want empty", tok)
+	}
+}
+
+// RG-6 (PA-6): Legacy devices row (user_id=NULL, device_id='') must not cause 503 on
+// a valid registration. Regression guard for the a207e45 cleanup path.
+func TestRegisterDevice_LegacyNullRowDoesNotCause503(t *testing.T) {
+	srv, ts, token, _ := testServerWithSession(t)
+
+	// Seed a legacy row mimicking the NULL/empty stale entry that caused the original 503.
+	if _, err := srv.queue.db.Exec(
+		`INSERT INTO devices(token, user_id, device_id, platform, enabled, created_at, updated_at, token_updated_at, last_seen_at)
+		 VALUES('', NULL, '', 'android', 1, 0, 0, 0, 0)`,
+	); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+
+	resp := postRegisterDevice(t, ts, token, map[string]any{
+		"device_id": "android-pa6",
+		"fcm_token": "fcm-pa6-token",
+		"platform":  "android",
+	})
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		body := decodeJSON(t, resp)
+		t.Fatalf("RG-6: got 503 device_registry_unavailable; legacy NULL row caused regression: %v", body)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body := decodeJSON(t, resp)
+		t.Fatalf("RG-6: status = %d, want 200; body: %v", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	// Verify new row was written.
+	tok, err := srv.queue.LookupDeviceToken(t.Context(), 0, "android-pa6")
+	_ = err // userID mismatch expected; just verify row exists via direct query
+	var count int
+	srv.queue.db.QueryRow(`SELECT COUNT(*) FROM devices WHERE device_id='android-pa6' AND token='fcm-pa6-token'`).Scan(&count)
+	if count != 1 {
+		t.Errorf("RG-6: expected 1 row for android-pa6, got %d", count)
+	}
+	_ = tok
 }
