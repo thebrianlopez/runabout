@@ -19,7 +19,7 @@ LIMA_VM        ?= lima-gvisor
 # containerd socket at {{.Dir}}/containerd.sock → ~/.lima/<name>/containerd.sock.
 LIMA_SOCKET    ?= $(HOME)/.lima/$(LIMA_VM)/containerd.sock
 
-.PHONY: all core build clean install test test-ts-go test-jira-poller linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage linkari-labeler install-linkari-labeler \
+.PHONY: all core build clean install test test-fish manifest-audit test-ts-go test-jira-poller linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage linkari-labeler install-linkari-labeler \
 	container-build container-push lima-start lima-test \
 	install-bmux-completions install-linkari-completions \
 	jira-poller install-jira-poller run-jira-poller lint-jira-poller \
@@ -42,6 +42,16 @@ clean:
 test:
 	go test ./...
 	cd cmd/jira-poller && go test ./...
+
+test-fish:
+	@echo "Running Fish contract tests..."
+	@fish fish/tests/ct-f001.fish; \
+	 fish fish/tests/ct-f002.fish; \
+	 fish fish/tests/ct-f003.fish
+
+manifest-audit:
+	@echo "Running manifest audit (F-003 static checks)..."
+	@fish fish/tests/ct-f003.fish
 
 # EPIC-112 F5 M2: Copy profile YAMLs from personal-docs to testdata/profiles snapshot.
 # Run this whenever personal-docs profiles are updated to keep CI in sync.
