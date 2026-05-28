@@ -209,6 +209,12 @@ func TestRG2_URLShare_CategoryFinance_NoPDFMime_NotFinance(t *testing.T) {
 // action string "note" for PDF file shares; the server must normalize this to
 // note_auto via bare-intent normalization and complete routing without error.
 func TestRG3_BareNoteAction_PDFShare_RoutesOK(t *testing.T) {
+	// Redirect transcriptDir so the background scoreAsync goroutine spawned by
+	// ServeHTTP writes to a temp dir rather than the real transcripts directory.
+	prevTranscriptDir := transcriptDir
+	transcriptDir = t.TempDir()
+	t.Cleanup(func() { transcriptDir = prevTranscriptDir })
+
 	installLiteParseStub(t, "extracted pdf text", 0.9, nil)
 	installHaikuJSONStub(t)
 
