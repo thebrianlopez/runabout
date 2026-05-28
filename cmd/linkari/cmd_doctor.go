@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,6 +41,18 @@ const (
 func okCheck(name, msg string) doctorCheck   { return doctorCheck{name, statusOK, msg} }
 func warnCheck(name, msg string) doctorCheck { return doctorCheck{name, statusWarn, msg} }
 func failCheck(name, msg string) doctorCheck { return doctorCheck{name, statusFail, msg} }
+
+// probeYouTubeSlotFn probes a single YouTube OAuth slot for credential health.
+// Returns nil on success, sql.ErrNoRows if no token is stored for the slot,
+// or an error with "invalid_grant" for expired tokens. Injectable for tests.
+var probeYouTubeSlotFn = func(ctx context.Context, slot string, userID int64, q *Queue, clientID, clientSecret string) error {
+	ts, err := youtubeTokenSourceForSlot(ctx, slot, userID, q, clientID, clientSecret)
+	if err != nil {
+		return err
+	}
+	_, err = ts.Token()
+	return err
+}
 
 func doctorCmd() *cobra.Command {
 	var (
@@ -156,28 +169,66 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
-			// --- Check 1c: OAuth-backed YouTube sources can refresh credentials. ---
-			if serverCfg != nil && (serverCfg.Sources.YouTubeWatchLaterEnabled || serverCfg.Sources.YouTubeLikedEnabled || serverCfg.Sources.YouTubeMonitoredEnabled) {
-				queuePath := resolveQueueDB(serverCfg.QueueDB)
-				q, err := NewQueue(queuePath, false)
-				if err != nil {
-					addCheck(failCheck("youtube_oauth", fmt.Sprintf("open queue db: %v", err)))
-				} else {
-					checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-					ts, err := youtubeTokenSource(checkCtx, "default", q, serverCfg.GoogleClientID, serverCfg.GoogleClientSecret)
+			// --- Check 1c: YouTube OAuth credential health ---
+			if serverCfg != nil {
+				if len(serverCfg.YouTube.Accounts) > 0 {
+					// EPIC-182 F5: per-slot probes when [server.youtube.accounts] is configured.
+					queuePath := resolveQueueDB(serverCfg.QueueDB)
+					q, err := NewQueue(queuePath, false)
 					if err != nil {
-						addCheck(failCheck("youtube_oauth", fmt.Sprintf("%v  -  run `linkari auth youtube`", err)))
-					} else if _, err := ts.Token(); err != nil {
-						errClass, remediation := classifyYouTubeAPIError(err)
-						if remediation == "" {
-							remediation = "check Google OAuth client configuration and network access"
-						}
-						addCheck(failCheck("youtube_oauth", fmt.Sprintf("%s: %v  -  %s", errClass, err, remediation)))
+						addCheck(failCheck("youtube_oauth", fmt.Sprintf("open queue db: %v", err)))
 					} else {
-						addCheck(okCheck("youtube_oauth", "stored YouTube credential refreshes successfully"))
+						if conflictErr := validateSlotConfig(serverCfg); conflictErr != nil {
+							addCheck(failCheck("youtube_slot_conflict", conflictErr.Error()))
+						}
+						for _, account := range serverCfg.YouTube.Accounts {
+							slot := account.Slot
+							if slot == "" {
+								slot = "default"
+							}
+							checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+							probeErr := probeYouTubeSlotFn(checkCtx, slot, 1, q, serverCfg.GoogleClientID, serverCfg.GoogleClientSecret)
+							cancel()
+							checkName := fmt.Sprintf("youtube_oauth[slot=%s]", slot)
+							if errors.Is(probeErr, sql.ErrNoRows) {
+								addCheck(warnCheck("youtube_slot_missing",
+									fmt.Sprintf("slot '%s' has no stored token - run: linkari auth youtube --slot %s", slot, slot)))
+							} else if probeErr != nil {
+								errClass, _ := classifyYouTubeAPIError(probeErr)
+								if errClass == "" {
+									errClass = "api_error"
+								}
+								addCheck(failCheck(checkName,
+									fmt.Sprintf("slot '%s' token error (%s) - run: linkari auth youtube --slot %s", slot, errClass, slot)))
+							} else {
+								addCheck(okCheck(checkName, fmt.Sprintf("slot '%s' refreshes successfully", slot)))
+							}
+						}
+						_ = q.Close()
 					}
-					cancel()
-					_ = q.Close()
+				} else if serverCfg.Sources.YouTubeWatchLaterEnabled || serverCfg.Sources.YouTubeLikedEnabled || serverCfg.Sources.YouTubeMonitoredEnabled {
+					// Backward compat: single youtube_oauth check when no accounts config.
+					queuePath := resolveQueueDB(serverCfg.QueueDB)
+					q, err := NewQueue(queuePath, false)
+					if err != nil {
+						addCheck(failCheck("youtube_oauth", fmt.Sprintf("open queue db: %v", err)))
+					} else {
+						checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+						ts, err := youtubeTokenSource(checkCtx, "default", q, serverCfg.GoogleClientID, serverCfg.GoogleClientSecret)
+						if err != nil {
+							addCheck(failCheck("youtube_oauth", fmt.Sprintf("%v  -  run `linkari auth youtube`", err)))
+						} else if _, err := ts.Token(); err != nil {
+							errClass, remediation := classifyYouTubeAPIError(err)
+							if remediation == "" {
+								remediation = "check Google OAuth client configuration and network access"
+							}
+							addCheck(failCheck("youtube_oauth", fmt.Sprintf("%s: %v  -  %s", errClass, err, remediation)))
+						} else {
+							addCheck(okCheck("youtube_oauth", "stored YouTube credential refreshes successfully"))
+						}
+						cancel()
+						_ = q.Close()
+					}
 				}
 			}
 
