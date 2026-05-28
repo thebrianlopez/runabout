@@ -20,6 +20,9 @@ jobs:
           go-version-file: go.work
           cache: true
 
+      - name: Check formatting (gofumpt)
+        run: test -z "$(go tool gofumpt -l .)"
+
       - name: Test root module
         run: go test -race -coverprofile=coverage-root.out ./...
 
@@ -65,4 +68,4 @@ jobs:
             --fixtures ./cmd/linkari/testdata/triage \
             --tolerance 10 \
           && echo "eval gate: PASS" \
-          || echo "WARN: eval gate failed — check fixture corpus or scorer availability"
+          || echo "WARN: eval gate failed  -  check fixture corpus or scorer availability"

@@ -1,4 +1,4 @@
-# runabout — Linkari Backend
+# runabout  -  Linkari Backend
 
 ## Repo Context
 
@@ -13,15 +13,15 @@ Read `../CLAUDE.md` for: workspace topology, full `cmd/linkari/` file index, API
 
 ---
 
-## Role — What This Repo Owns
+## Role  -  What This Repo Owns
 
 - `linkari serve`: HTTP API server consumed by Android, Chrome extension, and Bluesky firehose
-- Scoring pipeline: `scoreAsync` in `server_score.go` — classifies and scores shares via `claude` CLI
-- Queue + persistence: `queue.go` — SQLite-backed dedup, archive, digest
-- Intent-conditioned routing: `handler.go` + `intent*.go` — resolves share → intent → profile → action
-- Config: `config.go` — `ServerConfig` (63 fields), `ActionConfig` per domain/action
+- Scoring pipeline: `scoreAsync` in `server_score.go`  -  classifies and scores shares via `claude` CLI
+- Queue + persistence: `queue.go`  -  SQLite-backed dedup, archive, digest
+- Intent-conditioned routing: `handler.go` + `intent*.go`  -  resolves share → intent → profile → action
+- Config: `config.go`  -  `ServerConfig` (63 fields), `ActionConfig` per domain/action
 
-**Scope your changes to this repo.** Cross-repo changes (e.g., Android API contract) coordinate via workspace manifest — do not cross-commit.
+**Scope your changes to this repo.** Cross-repo changes (e.g., Android API contract) coordinate via workspace manifest  -  do not cross-commit.
 
 ---
 
@@ -52,6 +52,12 @@ go run ./cmd/linkari serve
 
 # Install ts-go and other tools
 make install
+
+# Format all Go files (gofumpt enforced in CI)
+make fmt
+
+# Check formatting without writing (mirrors CI gate)
+make fmt-check
 ```
 
 ---
@@ -72,6 +78,6 @@ Circuit-breaker: same tool call fails 3× → stop, surface the blocker.
 
 1. Run `go test ./cmd/linkari/...` before committing
 2. Commit messages reference epic IDs when applicable (e.g., `EPIC-161 F2:`)
-3. Changes must be independently valid — do not cross-commit across repos
+3. Changes must be independently valid  -  do not cross-commit across repos
 </content>
 </invoke>

@@ -19,7 +19,7 @@ LIMA_VM        ?= lima-gvisor
 # containerd socket at {{.Dir}}/containerd.sock → ~/.lima/<name>/containerd.sock.
 LIMA_SOCKET    ?= $(HOME)/.lima/$(LIMA_VM)/containerd.sock
 
-.PHONY: all core build clean install test test-fish manifest-audit test-ts-go test-jira-poller linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage linkari-labeler install-linkari-labeler \
+.PHONY: all core build clean install test fmt fmt-check test-fish manifest-audit test-ts-go test-jira-poller linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage linkari-labeler install-linkari-labeler \
 	container-build container-push lima-start lima-test \
 	install-bmux-completions install-linkari-completions \
 	jira-poller install-jira-poller run-jira-poller lint-jira-poller \
@@ -42,6 +42,12 @@ clean:
 test:
 	go test ./...
 	cd cmd/jira-poller && go test ./...
+
+fmt:
+	go tool gofumpt -w .
+
+fmt-check:
+	@test -z "$$(go tool gofumpt -l .)" || (go tool gofumpt -l . && exit 1)
 
 test-fish:
 	@echo "Running Fish contract tests..."
