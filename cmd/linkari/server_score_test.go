@@ -1322,22 +1322,20 @@ func TestScoreAsync_PDFTranscriptSaved(t *testing.T) {
 	eval := &stubEvaluator{score: 75, verdict: "Interesting document"}
 	runScoreFileAsyncSync(t, req, q, eval)
 
-	entries, err := os.ReadDir(transcriptDir)
+	// Match the exact filename: {date}_pdf_{id}_report.md.
+	// Glob on the row ID + base name to avoid picking up stale files from
+	// concurrent goroutines spawned by other tests in this package.
+	pattern := filepath.Join(transcriptDir, fmt.Sprintf("*_pdf_%d_report.md", id))
+	matches, err := filepath.Glob(pattern)
 	if err != nil {
-		t.Fatalf("read transcriptDir: %v", err)
+		t.Fatalf("glob: %v", err)
 	}
-	var found bool
-	for _, e := range entries {
-		if strings.Contains(e.Name(), "_pdf_") {
-			found = true
-			data, _ := os.ReadFile(filepath.Join(transcriptDir, e.Name()))
-			if !strings.Contains(string(data), "Extracted PDF text content") {
-				t.Errorf("transcript body missing expected content; got:\n%s", data)
-			}
-		}
+	if len(matches) == 0 {
+		t.Fatalf("no transcript file matching *_pdf_%d_report.md in %s", id, transcriptDir)
 	}
-	if !found {
-		t.Errorf("no transcript file with _pdf_ prefix found in %s", transcriptDir)
+	data, _ := os.ReadFile(matches[0])
+	if !strings.Contains(string(data), "Extracted PDF text content") {
+		t.Errorf("transcript body missing expected content; got:\n%s", data)
 	}
 }
 
