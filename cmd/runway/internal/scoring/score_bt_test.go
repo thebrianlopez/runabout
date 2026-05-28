@@ -161,9 +161,9 @@ func TestScoreMatch_BT5_VerdictReasonNonEmptyOnAllVerdicts(t *testing.T) {
 	//   weak_fit  (25–39):  30*0.4+25*0.25+35*0.25+30*0.1 = 12+6.25+8.75+3  = 30
 	//   do_not_apply (<25): 15*0.4+15*0.25+15*0.25+15*0.1 = 6+3.75+3.75+1.5 = 15
 	cases := []struct {
-		name   string
-		dims   [4]int // skills, seniority, domain, title
-		want   Verdict
+		name string
+		dims [4]int // skills, seniority, domain, title
+		want Verdict
 	}{
 		{"strong_fit", [4]int{95, 90, 90, 85}, VerdictStrongFit},
 		{"apply", [4]int{70, 60, 65, 50}, VerdictApply},

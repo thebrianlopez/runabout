@@ -11,14 +11,16 @@ import (
 	"filippo.io/age"
 )
 
-const keyFileName = "cache.key.age"
-const ageHeaderPrefix = "age-encryption.org/v1"
+const (
+	keyFileName     = "cache.key.age"
+	ageHeaderPrefix = "age-encryption.org/v1"
+)
 
 // loadOrCreateIdentity loads the X25519 identity from configDir/cache.key.age,
 // generating and saving a new one if the file doesn't exist. scrypt runs exactly once here.
 func loadOrCreateIdentity(configDir, passphrase string) (*age.X25519Identity, error) {
 	keyPath := filepath.Join(configDir, keyFileName)
-	if err := os.MkdirAll(configDir, 0700); err != nil {
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return nil, fmt.Errorf("cache config dir: %w", err)
 	}
 	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
@@ -61,7 +63,7 @@ func generateAndSaveIdentity(keyPath, passphrase string) (*age.X25519Identity, e
 		tmp.Close()
 		os.Remove(tmpName) // no-op if rename succeeded
 	}()
-	if err := os.Chmod(tmpName, 0600); err != nil {
+	if err := os.Chmod(tmpName, 0o600); err != nil {
 		return nil, err
 	}
 	if _, err := tmp.Write(buf.Bytes()); err != nil {

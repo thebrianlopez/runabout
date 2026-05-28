@@ -78,7 +78,8 @@ func (w *RelayedWatchdog) Run(ctx context.Context) {
 		slog.Info("relayed watchdog disabled", "event_type", "relayed_watchdog_disabled")
 		return
 	}
-	slog.Info("relayed watchdog started",
+	slog.Info(
+		"relayed watchdog started",
 		"event_type", "relayed_watchdog_started",
 		"interval_secs", int(cfg.Interval.Seconds()),
 		"max_age_secs", int(cfg.MaxAge.Seconds()),
@@ -113,7 +114,8 @@ func (w *RelayedWatchdog) Run(ctx context.Context) {
 func (w *RelayedWatchdog) sweepOnce(now time.Time, cfg RelayedWatchdogCfg) {
 	stuck, err := w.queue.SelectStuckRelayed(now, cfg.MaxAge)
 	if err != nil {
-		slog.Error("relayed watchdog sweep failed",
+		slog.Error(
+			"relayed watchdog sweep failed",
 			"event_type", "relayed_watchdog_error",
 			"error", err,
 		)
@@ -132,7 +134,8 @@ func (w *RelayedWatchdog) sweepOnce(now time.Time, cfg RelayedWatchdogCfg) {
 		if !w.burstEmitted {
 			w.burstEmitted = true
 			w.burstEmittedMu.Unlock()
-			slog.Info("watchdog backfill burst",
+			slog.Info(
+				"watchdog backfill burst",
 				"event_type", "score_ingested_backfill_burst",
 				"count", len(rescued),
 			)
@@ -153,14 +156,16 @@ func (w *RelayedWatchdog) sweepOnce(now time.Time, cfg RelayedWatchdogCfg) {
 	}
 	if len(timedOutIDs) > 0 {
 		if err := w.queue.MarkRelayedTimedOut(timedOutIDs); err != nil {
-			slog.Error("relayed watchdog mark failed",
+			slog.Error(
+				"relayed watchdog mark failed",
 				"event_type", "relayed_watchdog_error",
 				"error", err,
 			)
 		}
 	}
 	for _, t := range unrescued {
-		slog.Warn("relayed row timed out",
+		slog.Warn(
+			"relayed row timed out",
 			"event_type", "share_scoring_timeout",
 			"id", t.ID,
 			"url", t.URL,
@@ -176,7 +181,8 @@ func (w *RelayedWatchdog) sweepOnce(now time.Time, cfg RelayedWatchdogCfg) {
 				"queued_at":   t.QueuedAt,
 				"age_seconds": t.AgeSecs,
 			}); emitErr != nil {
-				slog.Error("relayed watchdog emit failed",
+				slog.Error(
+					"relayed watchdog emit failed",
 					"event_type", "relayed_watchdog_emit_error",
 					"id", t.ID,
 					"error", emitErr,
@@ -205,7 +211,8 @@ func (w *RelayedWatchdog) rescueFromDisk(stuck []TimedOutRelayed, now time.Time,
 
 	index, err := buildScoreIndex(cfg.UrlWorkDir)
 	if err != nil {
-		slog.Warn("watchdog score index build failed",
+		slog.Warn(
+			"watchdog score index build failed",
 			"event_type", "relayed_watchdog_index_error",
 			"url_work_dir", cfg.UrlWorkDir,
 			"error", err,
@@ -232,7 +239,8 @@ func (w *RelayedWatchdog) rescueFromDisk(stuck []TimedOutRelayed, now time.Time,
 
 		ingested, ierr := w.queue.IngestScoreIfRelayed(t.ID, s.Score, s.Tags, s.Verdict, s.Slug, "", "")
 		if ierr != nil {
-			slog.Error("watchdog ingest failed",
+			slog.Error(
+				"watchdog ingest failed",
 				"event_type", "relayed_watchdog_ingest_error",
 				"id", t.ID,
 				"error", ierr,
@@ -255,7 +263,8 @@ func (w *RelayedWatchdog) rescueFromDisk(stuck []TimedOutRelayed, now time.Time,
 			return now
 		}()).Milliseconds()
 
-		slog.Info("score ingested from disk",
+		slog.Info(
+			"score ingested from disk",
 			"event_type", "score_ingested",
 			"id", t.ID,
 			"slug", s.Slug,
@@ -316,7 +325,8 @@ func (w *RelayedWatchdog) alertOnVolume(timedOut []TimedOutRelayed, now time.Tim
 	w.alertFiredAt = now
 
 	windowSecs := int(cfg.AlertWindow.Seconds())
-	slog.Warn("share_scoring_timeout volume alert",
+	slog.Warn(
+		"share_scoring_timeout volume alert",
 		"event_type", "share_scoring_timeout_alert",
 		"window_secs", windowSecs,
 		"count", count,
@@ -339,7 +349,8 @@ func (w *RelayedWatchdog) alertOnVolume(timedOut []TimedOutRelayed, now time.Tim
 		msg := "linkari: scoring pipeline stalled — see EPIC-055 for remediation"
 		_, err := w.queue.EnqueuePushWithProfile("alert", "ops", 0, "", msg, "", "")
 		if err != nil {
-			slog.Error("watchdog alert enqueue failed",
+			slog.Error(
+				"watchdog alert enqueue failed",
 				"event_type", "relayed_watchdog_alert_error",
 				"error", err,
 			)

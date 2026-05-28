@@ -287,7 +287,8 @@ func (c *plaidClientImpl) ExchangePublicToken(ctx context.Context, publicToken s
 
 // upsertTransaction inserts or ignores a raw transaction (idempotent via UNIQUE constraint).
 func upsertTransaction(db *sql.DB, plaidTxnID, itemID, accountID, jsonPayload string) error {
-	_, err := db.Exec(`
+	_, err := db.Exec(
+		`
 		INSERT OR IGNORE INTO plaid_transactions_raw
 		  (plaid_txn_id, item_id, account_id, json_payload, ingested_at)
 		VALUES (?, ?, ?, ?, ?)`,
@@ -298,7 +299,8 @@ func upsertTransaction(db *sql.DB, plaidTxnID, itemID, accountID, jsonPayload st
 
 // commitCursor persists the cursor only after a full page drain completes.
 func commitCursor(db *sql.DB, itemID, cursor string) error {
-	_, err := db.Exec(`
+	_, err := db.Exec(
+		`
 		UPDATE plaid_sync_state SET cursor = ?, last_sync_at = ? WHERE item_id = ?`,
 		cursor, nowUTC(), itemID,
 	)

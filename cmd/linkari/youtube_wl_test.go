@@ -475,4 +475,3 @@ func TestWatchLaterIntegration(t *testing.T) {
 		t.Fatal("expected at least 1 pending queue item")
 	}
 }
-

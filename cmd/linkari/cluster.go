@@ -220,7 +220,8 @@ func detectClusters(ctx context.Context, q *Queue, profile string, threshold flo
 			q.db.Exec("UPDATE queue SET cluster_id=? WHERE id=?", clusterID, id)
 		}
 
-		slog.InfoContext(ctx, "cluster formed",
+		slog.InfoContext(
+			ctx, "cluster formed",
 			"event_type", "cluster_formed",
 			"profile", profile,
 			"cluster_id", clusterID,

@@ -16,9 +16,9 @@ type Verdict string
 
 const (
 	VerdictStrongFit  Verdict = "strong_fit"   // OverallScore > 85
-	VerdictApply      Verdict = "apply"         // OverallScore 40–85
-	VerdictWeakFit    Verdict = "weak_fit"      // OverallScore 25–39
-	VerdictDoNotApply Verdict = "do_not_apply"  // OverallScore < 25
+	VerdictApply      Verdict = "apply"        // OverallScore 40–85
+	VerdictWeakFit    Verdict = "weak_fit"     // OverallScore 25–39
+	VerdictDoNotApply Verdict = "do_not_apply" // OverallScore < 25
 )
 
 // MatchDimensions holds per-axis scores, each in [0, 100].
@@ -106,7 +106,7 @@ type MetricsRecorder interface {
 // Scorer orchestrates match scoring with an injected LLMScorer.
 type Scorer struct {
 	LLM     LLMScorer
-	Logger  *slog.Logger  // nil disables logging
+	Logger  *slog.Logger    // nil disables logging
 	Metrics MetricsRecorder // nil disables metrics
 }
 
@@ -149,7 +149,8 @@ func (s *Scorer) ScoreMatch(ctx context.Context, jd *JobDescription, resume *Res
 	start := time.Now()
 	attempt := 1
 
-	s.logAttrs(ctx, slog.LevelInfo, "score.started",
+	s.logAttrs(
+		ctx, slog.LevelInfo, "score.started",
 		slog.String("jd_title", jd.Title),
 		slog.String("jd_company", jd.Company),
 	)
@@ -167,7 +168,8 @@ func (s *Scorer) ScoreMatch(ctx context.Context, jd *JobDescription, resume *Res
 	llmResp, err := s.LLM.ScoreWithLLM(ctx, jd, resume)
 	if err != nil {
 		if errors.Is(err, ErrScoreInvalidResponse) {
-			s.logAttrs(ctx, slog.LevelWarn, "score.retry",
+			s.logAttrs(
+				ctx, slog.LevelWarn, "score.retry",
 				slog.Int("attempt", attempt),
 				slog.String("error_class", "score/invalid_response"),
 			)
@@ -181,7 +183,8 @@ func (s *Scorer) ScoreMatch(ctx context.Context, jd *JobDescription, resume *Res
 			latencyMs := time.Since(start).Milliseconds()
 			var scoreErr *ScoreError
 			if errors.As(err, &scoreErr) {
-				s.logAttrs(ctx, slog.LevelError, "score.failed",
+				s.logAttrs(
+					ctx, slog.LevelError, "score.failed",
 					slog.String("error_class", scoreErr.Code),
 					slog.Int("attempt", attempt),
 					slog.Int64("latency_ms", latencyMs),
@@ -211,7 +214,8 @@ func (s *Scorer) ScoreMatch(ctx context.Context, jd *JobDescription, resume *Res
 	}
 
 	latencyMs := time.Since(start).Milliseconds()
-	s.logAttrs(ctx, slog.LevelInfo, "score.completed",
+	s.logAttrs(
+		ctx, slog.LevelInfo, "score.completed",
 		slog.Int("overall_score", result.OverallScore),
 		slog.String("verdict", string(result.Verdict)),
 		slog.Int64("latency_ms", latencyMs),

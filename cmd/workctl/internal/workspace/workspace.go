@@ -110,7 +110,7 @@ func Init(opts *InitOptions) (*Result, error) {
 	if opts.Force || !isStepDone(manifest, stepKey) {
 		printStep(stepNum, totalSteps, "Create workspace directory")
 		start := time.Now()
-		if err := os.MkdirAll(wsPath, 0755); err != nil {
+		if err := os.MkdirAll(wsPath, 0o755); err != nil {
 			markStep(manifest, stepKey, "error", err.Error())
 			saveManifest(wsPath, manifest)
 			return nil, fmt.Errorf("creating workspace directory: %w", err)
@@ -448,7 +448,7 @@ func writeIssueMD(wsPath string, issue *IssueInfo) error {
 		b.WriteString("\n")
 	}
 
-	return os.WriteFile(filepath.Join(wsPath, issue.Key+".md"), []byte(b.String()), 0600)
+	return os.WriteFile(filepath.Join(wsPath, issue.Key+".md"), []byte(b.String()), 0o600)
 }
 
 // loadManifest reads the .workspace.json manifest from a workspace directory.
@@ -470,7 +470,7 @@ func saveManifest(wsPath string, m *Manifest) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(filepath.Join(wsPath, ".workspace.json"), data, 0600)
+	_ = os.WriteFile(filepath.Join(wsPath, ".workspace.json"), data, 0o600)
 }
 
 func isStepDone(m *Manifest, key string) bool {

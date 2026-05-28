@@ -19,7 +19,8 @@ import (
 func fakeLiteCmd(responses []struct {
 	out []byte
 	err error
-}, callCount *int) func(context.Context, ...string) ([]byte, error) {
+}, callCount *int,
+) func(context.Context, ...string) ([]byte, error) {
 	return func(ctx context.Context, args ...string) ([]byte, error) {
 		idx := *callCount
 		*callCount++
@@ -67,7 +68,7 @@ func TestCT2_LowConfidenceTriggersOCRRetry(t *testing.T) {
 		out []byte
 		err error
 	}{
-		{out: []byte(`{"pages":[{"text":"page1","confidence":0.3}]}`), err: nil}, // first: no-OCR, low confidence
+		{out: []byte(`{"pages":[{"text":"page1","confidence":0.3}]}`), err: nil},     // first: no-OCR, low confidence
 		{out: []byte(`{"pages":[{"text":"page1 ocr","confidence":0.8}]}`), err: nil}, // second: OCR retry
 	}, &calls))
 
@@ -115,8 +116,8 @@ func TestCT4_JSONParseFallbackToPlainText(t *testing.T) {
 		out []byte
 		err error
 	}{
-		{out: []byte(`this is not json`), err: nil},     // first: --format json returns non-JSON
-		{out: []byte(`plain text result`), err: nil},    // second: fallback --no-ocr -q
+		{out: []byte(`this is not json`), err: nil},  // first: --format json returns non-JSON
+		{out: []byte(`plain text result`), err: nil}, // second: fallback --no-ocr -q
 	}, &calls))
 
 	text, conf, err := runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5})
@@ -156,8 +157,8 @@ func TestCT5_EmptyPagesTriggersOCRRetry(t *testing.T) {
 		out []byte
 		err error
 	}{
-		{out: []byte(`{"pages":[]}`), err: nil},                                          // first: empty pages
-		{out: []byte(`{"pages":[{"text":"ocr text","confidence":0.7}]}`), err: nil},     // second: OCR retry
+		{out: []byte(`{"pages":[]}`), err: nil},                                     // first: empty pages
+		{out: []byte(`{"pages":[{"text":"ocr text","confidence":0.7}]}`), err: nil}, // second: OCR retry
 	}, &calls))
 
 	_, _, err = runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5})

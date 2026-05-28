@@ -23,7 +23,7 @@ func appendToResearchDigest(path, url, verdict string, score int, profile string
 	entry := fmt.Sprintf("\n## %s (score: %d, profile: %s)\n\n- URL: %s\n- %s\n- Added: %s\n",
 		truncateString(verdict, 100), score, profile, url, verdict, now)
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("open digest: %w", err)
 	}
@@ -43,14 +43,16 @@ func dispatchResearchDigest(ctx context.Context, sc *Scorecard, profile, url str
 	}
 
 	if err := appendToResearchDigest(digestPath, url, sc.Verdict, sc.Score, profile); err != nil {
-		slog.WarnContext(ctx, "action_route: research digest append failed",
+		slog.WarnContext(
+			ctx, "action_route: research digest append failed",
 			"id", itemID,
 			"error", err,
 		)
 		return
 	}
 
-	slog.InfoContext(ctx, "action_route: research digest appended",
+	slog.InfoContext(
+		ctx, "action_route: research digest appended",
 		"event_type", "research_digest_appended",
 		"id", itemID,
 		"path", digestPath,

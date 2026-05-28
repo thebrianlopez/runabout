@@ -39,7 +39,7 @@ func writeLabelerConfig(path string, cfg *LabelerConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	return os.WriteFile(path, data, 0o600)
 }
 
 func validateLabelerConfig(cfg *LabelerConfig) error {

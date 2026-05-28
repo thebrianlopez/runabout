@@ -312,7 +312,8 @@ func draftJiraTicket(ctx context.Context, sc *Scorecard, profile, url string, q 
 
 	issueKey, browseURL, err := client.CreateDraftTicket(ctx, "LINK", summary, description)
 	if err != nil {
-		slog.WarnContext(ctx, "action_route: jira draft failed",
+		slog.WarnContext(
+			ctx, "action_route: jira draft failed",
 			"id", itemID,
 			"error", err,
 		)
@@ -323,7 +324,8 @@ func draftJiraTicket(ctx context.Context, sc *Scorecard, profile, url string, q 
 	q.db.Exec("UPDATE queue SET action_route=? WHERE id=?",
 		fmt.Sprintf("draft_jira_ticket:%s", browseURL), itemID)
 
-	slog.InfoContext(ctx, "action_route: jira draft created",
+	slog.InfoContext(
+		ctx, "action_route: jira draft created",
 		"event_type", "jira_draft_created",
 		"id", itemID,
 		"issue_key", issueKey,

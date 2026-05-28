@@ -20,7 +20,8 @@ func (r *ExecRenderPipeline) Render(ctx context.Context, slug, yamlPath, outputD
 		renderPy = "render.py"
 	}
 
-	cmd := exec.CommandContext(ctx, "python3", renderPy,
+	cmd := exec.CommandContext(
+		ctx, "python3", renderPy,
 		"--input", yamlPath,
 		"--output", outputDir,
 		"--slug", slug,
@@ -29,7 +30,8 @@ func (r *ExecRenderPipeline) Render(ctx context.Context, slug, yamlPath, outputD
 		return fmt.Errorf("render.py failed: %w\n%s", err, string(out))
 	}
 
-	typstCmd := exec.CommandContext(ctx, "typst", "compile", yamlPath,
+	typstCmd := exec.CommandContext(
+		ctx, "typst", "compile", yamlPath,
 		fmt.Sprintf("%s/resume-%s.pdf", outputDir, slug),
 	)
 	if out, err := typstCmd.CombinedOutput(); err != nil {

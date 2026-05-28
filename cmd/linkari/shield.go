@@ -66,7 +66,8 @@ func (s *Shield) Middleware(next http.Handler) http.Handler {
 		if !valid {
 			mode := s.Mode()
 			if mode == "enforce" {
-				slog.Debug("shield blocked request",
+				slog.Debug(
+					"shield blocked request",
 					"event_type", "shield_blocked",
 					"enforced", true,
 					"path", r.URL.Path,
@@ -77,7 +78,8 @@ func (s *Shield) Middleware(next http.Handler) http.Handler {
 				return
 			}
 			// mode: log — pass through with debug log (G-12: NOT slog.Warn).
-			slog.Debug("shield would block request",
+			slog.Debug(
+				"shield would block request",
 				"event_type", "shield_blocked",
 				"enforced", false,
 				"path", r.URL.Path,

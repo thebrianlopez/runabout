@@ -20,9 +20,10 @@ import (
 
 // execPublishReply and execGetRecord are package-level seams for testing.
 // Production code uses defaultExecPublishReply / defaultExecGetRecord.
-var execPublishReply = defaultExecPublishReply
-var execGetRecord = defaultExecGetRecord
-
+var (
+	execPublishReply = defaultExecPublishReply
+	execGetRecord    = defaultExecGetRecord
+)
 
 type bskyReplyRef struct {
 	URI string `json:"uri"`
@@ -66,7 +67,8 @@ func isATURI(url string) bool {
 // EPIC-015 M3.
 func publishVerdictReply(ctx context.Context, client *BlueskyClient, atURI string, score int, verdict string, q *Queue, userID int64) error {
 	if !isATURI(atURI) {
-		slog.Debug("bluesky reply skipped: not at:// URI",
+		slog.Debug(
+			"bluesky reply skipped: not at:// URI",
 			"event_type", "bluesky_reply_skipped_opt_out",
 			"row_id", userID,
 		)
@@ -74,14 +76,16 @@ func publishVerdictReply(ctx context.Context, client *BlueskyClient, atURI strin
 	}
 	optIn, err := q.GetBlueskyPublishOptIn(userID)
 	if err != nil || !optIn {
-		slog.Debug("bluesky reply skipped: opt out",
+		slog.Debug(
+			"bluesky reply skipped: opt out",
 			"event_type", "bluesky_reply_skipped_opt_out",
 			"row_id", userID,
 		)
 		return nil
 	}
 	if client == nil {
-		slog.Warn("bluesky reply skipped: session missing",
+		slog.Warn(
+			"bluesky reply skipped: session missing",
 			"event_type", "bluesky_reply_skipped_session_missing",
 			"row_id", userID,
 			"error_class", "bluesky_session_missing",
@@ -92,7 +96,8 @@ func publishVerdictReply(ctx context.Context, client *BlueskyClient, atURI strin
 	cid, err := execGetRecord(ctx, client, atURI)
 	if err != nil {
 		if strings.Contains(err.Error(), "bluesky_post_not_found") {
-			slog.Warn("bluesky reply: post not found",
+			slog.Warn(
+				"bluesky reply: post not found",
 				"event_type", "bluesky_reply_failed",
 				"row_id", userID,
 				"error_class", "bluesky_post_not_found",
@@ -100,7 +105,8 @@ func publishVerdictReply(ctx context.Context, client *BlueskyClient, atURI strin
 			)
 			return nil
 		}
-		slog.Warn("bluesky reply failed",
+		slog.Warn(
+			"bluesky reply failed",
 			"event_type", "bluesky_reply_failed",
 			"row_id", userID,
 			"error_class", "bluesky_getrecord_failed",
@@ -111,14 +117,16 @@ func publishVerdictReply(ctx context.Context, client *BlueskyClient, atURI strin
 
 	if err := execPublishReply(ctx, client, atURI, cid, verdict, "", score); err != nil {
 		if strings.Contains(err.Error(), "RateLimitExceeded") {
-			slog.Warn("bluesky reply rate limited",
+			slog.Warn(
+				"bluesky reply rate limited",
 				"event_type", "bluesky_reply_rate_limited",
 				"row_id", userID,
 				"retry_after_secs", 60,
 			)
 			return nil
 		}
-		slog.Warn("bluesky reply failed",
+		slog.Warn(
+			"bluesky reply failed",
 			"event_type", "bluesky_reply_failed",
 			"row_id", userID,
 			"error_class", "bluesky_reply_error",
@@ -127,7 +135,8 @@ func publishVerdictReply(ctx context.Context, client *BlueskyClient, atURI strin
 		return nil
 	}
 
-	slog.Info("bluesky reply published",
+	slog.Info(
+		"bluesky reply published",
 		"event_type", "bluesky_reply_published",
 		"row_id", userID,
 		"account_did", client.AccountDID(),

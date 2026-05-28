@@ -474,7 +474,8 @@ func initClaudeConfig(cfg *ServerConfig) {
 	// EPIC-122: image transcription config (F1 feature flag, F3 threshold).
 	initImageTranscriptionConfig(cfg)
 
-	slog.Info("claude config resolved",
+	slog.Info(
+		"claude config resolved",
 		"event_type", "claude_config_init",
 		"claude_path", claudeBinaryPath,
 		"vision_model", visionModelName,
@@ -488,7 +489,8 @@ func initClaudeConfig(cfg *ServerConfig) {
 	// accessible and responds to --version. Fail fast with an actionable
 	// error rather than discovering the problem on the first scoring request.
 	if err := validateClaudeCLI(); err != nil {
-		slog.Error("claude CLI validation failed — scoring will not work",
+		slog.Error(
+			"claude CLI validation failed — scoring will not work",
 			"event_type", "claude_cli_validation_failed",
 			"claude_path", claudeBinaryPath,
 			"error", err,
@@ -519,7 +521,8 @@ func validateClaudeCLI() error {
 		return fmt.Errorf("claude --version failed: %w (is %q in PATH?)", err, claudeBinaryPath)
 	}
 	version := strings.TrimSpace(string(out))
-	slog.Info("claude CLI validated",
+	slog.Info(
+		"claude CLI validated",
 		"event_type", "claude_cli_validated",
 		"claude_path", claudeBinaryPath,
 		"version", version,
@@ -561,13 +564,13 @@ func logHaikuEnvKeys() {
 // buildClaudeArgs assembles the args slice from these options, ensuring a
 // single point of flag assembly across all scoring paths. EPIC-008 M2.
 type claudeExecOpts struct {
-	Model          string // e.g. claudeModel or visionModelName
-	MaxTurns       string // "1" for plain text, "3" for JSON/vision
-	Tools          string // "--tools" value; empty string disables all
-	AllowedTools   string // "--allowedTools" value; empty omits the flag
-	OutputFormat   string // "json" or empty (plain text)
-	JSONSchema     string // schema string; empty omits --json-schema
-	SystemPrompt   string // path to system prompt temp file
+	Model        string // e.g. claudeModel or visionModelName
+	MaxTurns     string // "1" for plain text, "3" for JSON/vision
+	Tools        string // "--tools" value; empty string disables all
+	AllowedTools string // "--allowedTools" value; empty omits the flag
+	OutputFormat string // "json" or empty (plain text)
+	JSONSchema   string // schema string; empty omits --json-schema
+	SystemPrompt string // path to system prompt temp file
 }
 
 // buildClaudeArgs returns the args slice for exec.CommandContext. The binary
@@ -595,7 +598,8 @@ func buildClaudeArgs(opts claudeExecOpts) []string {
 	if opts.JSONSchema != "" {
 		args = append(args, "--json-schema", opts.JSONSchema)
 	}
-	args = append(args,
+	args = append(
+		args,
 		"--system-prompt-file", opts.SystemPrompt,
 		"--effort", "low",
 		"--no-session-persistence",
@@ -709,8 +713,10 @@ func extractVerdict(md string) string {
 
 // actionItemsRE locates the `## Action Items` block and grabs everything
 // up to the next `##` heading.
-var actionItemsRE = regexp.MustCompile(`(?s)##\s*Action Items\s*\n?(.+?)(?:\n##|$)`)
-var actionItemLineRE = regexp.MustCompile(`(?m)^(?:\s*[-*]\s+|\s*\d+\.\s+)(.+)$`)
+var (
+	actionItemsRE    = regexp.MustCompile(`(?s)##\s*Action Items\s*\n?(.+?)(?:\n##|$)`)
+	actionItemLineRE = regexp.MustCompile(`(?m)^(?:\s*[-*]\s+|\s*\d+\.\s+)(.+)$`)
+)
 
 func extractActionItems(md string) []string {
 	m := actionItemsRE.FindStringSubmatch(md)
@@ -823,14 +829,14 @@ func writeScoreSidecar(workspace string, score int, verdict, slug, profile, url 
 		return err
 	}
 	b = append(b, '\n')
-	return os.WriteFile(filepath.Join(workspace, "_score.json"), b, 0644)
+	return os.WriteFile(filepath.Join(workspace, "_score.json"), b, 0o644)
 }
 
 // appendTriageToReadme appends `\n---\n\n<raw>\n` to README.md, matching
 // fish line 122: `printf '\n---\n\n%s\n' "$triage_normalized" >> "$readme_file"`.
 func appendTriageToReadme(workspace, raw string) error {
 	path := filepath.Join(workspace, "README.md")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
 	}

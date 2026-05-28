@@ -48,7 +48,8 @@ func (x *xrpcRuleCtx) AtURI() string           { return x.uri }
 func (x *xrpcRuleCtx) AddRecordLabel(l string) { x.labels = append(x.labels, l) }
 
 func (s *labelerServer) run(ctx context.Context) error {
-	slog.Info("labeler started",
+	slog.Info(
+		"labeler started",
 		"event_type", "labeler_started",
 		"labeler_did", s.cfg.LabelerDID,
 		"listen_addr", s.cfg.ListenAddr,

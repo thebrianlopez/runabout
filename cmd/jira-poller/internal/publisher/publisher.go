@@ -40,7 +40,7 @@ type Publisher interface {
 
 // PublishResult summarises a Publish call.
 type PublishResult struct {
-	Succeeded []string     // ChangelogIDs successfully inserted
+	Succeeded []string // ChangelogIDs successfully inserted
 	Failed    []FailedEvent
 }
 
@@ -91,7 +91,8 @@ func (p *sqlitePublisher) Publish(ctx context.Context, events []types.Transition
 			continue
 		}
 
-		sqlResult, err := p.db.ExecContext(ctx,
+		sqlResult, err := p.db.ExecContext(
+			ctx,
 			`INSERT OR IGNORE INTO pending_events (event_id, payload) VALUES (?, ?)`,
 			ev.ChangelogID, string(payload),
 		)
@@ -170,7 +171,8 @@ func DrainOnce(ctx context.Context, db *sql.DB, sink Sink, nowFn func() time.Tim
 func drainOnce(ctx context.Context, db *sql.DB, sink Sink, nowFn func() time.Time) {
 	now := nowFn().Unix()
 
-	rows, err := db.QueryContext(ctx,
+	rows, err := db.QueryContext(
+		ctx,
 		`SELECT id, event_id, payload, attempts, created_at
 		 FROM pending_events
 		 WHERE status = 'pending' AND next_attempt_at <= ?
@@ -241,7 +243,8 @@ func drainOnce(ctx context.Context, db *sql.DB, sink Sink, nowFn func() time.Tim
 				markDead(ctx, db, r.id, r.eventID, err.Error(), now)
 			} else {
 				next := nextAttemptAt(newAttempts, now)
-				_, dbErr := db.ExecContext(ctx,
+				_, dbErr := db.ExecContext(
+					ctx,
 					`UPDATE pending_events SET attempts=?, last_attempt_at=?, next_attempt_at=?, error=? WHERE id=?`,
 					newAttempts, now, next, err.Error(), r.id,
 				)
@@ -255,7 +258,8 @@ func drainOnce(ctx context.Context, db *sql.DB, sink Sink, nowFn func() time.Tim
 
 	// Mark delivered.
 	for _, r := range toDeliver {
-		_, dbErr := db.ExecContext(ctx,
+		_, dbErr := db.ExecContext(
+			ctx,
 			`UPDATE pending_events SET status='delivered', last_attempt_at=? WHERE id=?`,
 			now, r.id,
 		)
@@ -266,7 +270,8 @@ func drainOnce(ctx context.Context, db *sql.DB, sink Sink, nowFn func() time.Tim
 }
 
 func markDead(ctx context.Context, db *sql.DB, id int64, eventID, reason string, now int64) {
-	_, err := db.ExecContext(ctx,
+	_, err := db.ExecContext(
+		ctx,
 		`UPDATE pending_events SET status='dead', last_attempt_at=?, error=? WHERE id=?`,
 		now, reason, id,
 	)

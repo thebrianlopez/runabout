@@ -159,7 +159,8 @@ func TestScoreURLAsync_HappyPath(t *testing.T) {
 	}
 
 	eval := &stubEvaluator{score: 88, verdict: "Worth reading"}
-	runScoreAsyncSync(t,
+	runScoreAsyncSync(
+		t,
 		"https://arxiv.org/abs/1706.03762", "eng",
 		q, eval,
 	)
@@ -183,7 +184,8 @@ func TestScoreURLAsync_HappyPath(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("expected scored/archived row in queue  -  statuses: %v",
+		t.Errorf(
+			"expected scored/archived row in queue  -  statuses: %v",
 			func() []string {
 				var ss []string
 				for _, it := range items {
@@ -365,7 +367,7 @@ func TestBuiltinConfig_UinitAutoIsServerScore(t *testing.T) {
 	t.Error("uinit_auto not found in builtinConfig")
 }
 
-// 10. fetchJinaContent timeout: a server that hangs past the deadline returns
+//  10. fetchJinaContent timeout: a server that hangs past the deadline returns
 //     an error (not a block forever). Uses a very short deadline so the test
 //     runs quickly.
 func TestFetchJinaContent_TimeoutReturnsError(t *testing.T) {
@@ -445,10 +447,10 @@ func TestClassifyURLProfile(t *testing.T) {
 		{"https://www.bloomberg.com/markets", "finance", true},
 		{"https://www.yelp.com/biz/restaurant", "dining", true},
 		{"https://www.zara.com/us/dress", "fashion", true},
-		{"https://www.tourismboard.bz/retire", "travel", true},  // new entry
-		{"https://retirement.gov/benefits", "life", true},        // new entry
-		{"https://www.example.com/unknown", "eng", false},        // fallback  -  not matched
-		{"https://www.reddit.com/r/golang", "eng", false},        // fallback
+		{"https://www.tourismboard.bz/retire", "travel", true}, // new entry
+		{"https://retirement.gov/benefits", "life", true},      // new entry
+		{"https://www.example.com/unknown", "eng", false},      // fallback  -  not matched
+		{"https://www.reddit.com/r/golang", "eng", false},      // fallback
 	}
 	for _, c := range cases {
 		got, matched := classifyURLProfile(c.url)
@@ -795,7 +797,7 @@ func TestScoreAsync_ImageVision(t *testing.T) {
 
 	// Create a temp image file to simulate Android upload.
 	tmpFile := filepath.Join(t.TempDir(), "test-image.jpg")
-	if err := os.WriteFile(tmpFile, []byte("fake-jpeg-data"), 0644); err != nil {
+	if err := os.WriteFile(tmpFile, []byte("fake-jpeg-data"), 0o644); err != nil {
 		t.Fatalf("write temp: %v", err)
 	}
 
@@ -867,7 +869,7 @@ func TestHaikuVisionEvaluator_FallbackOnExecError(t *testing.T) {
 	t.Cleanup(func() { execHaikuJSON = prevJSON })
 
 	tmpFile := filepath.Join(t.TempDir(), "test.jpg")
-	if err := os.WriteFile(tmpFile, []byte("fake"), 0644); err != nil {
+	if err := os.WriteFile(tmpFile, []byte("fake"), 0o644); err != nil {
 		t.Fatalf("write temp: %v", err)
 	}
 
@@ -961,7 +963,7 @@ func TestVisionExecArgs(t *testing.T) {
 	t.Cleanup(func() { execHaikuJSON = prevJSON })
 
 	tmpFile := filepath.Join(t.TempDir(), "test.jpg")
-	if err := os.WriteFile(tmpFile, []byte("fake"), 0644); err != nil {
+	if err := os.WriteFile(tmpFile, []byte("fake"), 0o644); err != nil {
 		t.Fatalf("write temp: %v", err)
 	}
 

@@ -60,7 +60,8 @@ func (s *Server) RegisterIntentCapture(key IntentTagKey, renderer CaptureWorkflo
 		panic(fmt.Sprintf("duplicate IntentCapture registration: intent=%q tag_sig=%q", key.Intent, key.TagSig))
 	}
 	s.intentCaptureRegistry[key] = renderer
-	slog.Debug("intent_capture_registered",
+	slog.Debug(
+		"intent_capture_registered",
 		"intent", key.Intent,
 		"tag_sig", key.TagSig,
 		"renderer", renderer.Name(),
@@ -93,7 +94,8 @@ func (s *Server) lookupIntentCapture(intent string, tags []string) (CaptureWorkf
 
 	// 1. Exact match.
 	if r, ok := registry[IntentTagKey{Intent: intent, TagSig: sig}]; ok {
-		slog.Info("capture_renderer_invoked",
+		slog.Info(
+			"capture_renderer_invoked",
 			"renderer_name", r.Name(),
 			"intent", intent,
 			"tag_sig", sig,
@@ -103,7 +105,8 @@ func (s *Server) lookupIntentCapture(intent string, tags []string) (CaptureWorkf
 
 	// 2. Intent-only fallback.
 	if r, ok := registry[IntentTagKey{Intent: intent, TagSig: ""}]; ok {
-		slog.Info("capture_renderer_invoked",
+		slog.Info(
+			"capture_renderer_invoked",
 			"renderer_name", r.Name(),
 			"intent", intent,
 			"tag_sig", "",
@@ -112,7 +115,8 @@ func (s *Server) lookupIntentCapture(intent string, tags []string) (CaptureWorkf
 		return r, true
 	}
 
-	slog.Warn("capture_renderer_not_found",
+	slog.Warn(
+		"capture_renderer_not_found",
 		"error_class", "capture_renderer_not_found",
 		"intent", intent,
 		"tag_sig", sig,

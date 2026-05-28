@@ -26,12 +26,15 @@ type mockSecretsClient struct {
 func (m *mockSecretsClient) GetSecretValue(ctx context.Context, in *secretsmanager.GetSecretValueInput, opts ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error) {
 	return m.getSecretValue(ctx, in, opts...)
 }
+
 func (m *mockSecretsClient) PutSecretValue(ctx context.Context, in *secretsmanager.PutSecretValueInput, opts ...func(*secretsmanager.Options)) (*secretsmanager.PutSecretValueOutput, error) {
 	return m.putSecretValue(ctx, in, opts...)
 }
+
 func (m *mockSecretsClient) CreateSecret(ctx context.Context, in *secretsmanager.CreateSecretInput, opts ...func(*secretsmanager.Options)) (*secretsmanager.CreateSecretOutput, error) {
 	return m.createSecret(ctx, in, opts...)
 }
+
 func (m *mockSecretsClient) DeleteSecret(ctx context.Context, in *secretsmanager.DeleteSecretInput, opts ...func(*secretsmanager.Options)) (*secretsmanager.DeleteSecretOutput, error) {
 	return m.deleteSecret(ctx, in, opts...)
 }

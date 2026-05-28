@@ -212,7 +212,8 @@ func CheckPlaintextTokens(raw *FileConfig) []string {
 		if f.value != "" && !strings.HasPrefix(f.value, "${") {
 			warnings = append(warnings, fmt.Sprintf(
 				"%s appears to contain a plaintext token. Consider using ${%s} instead.",
-				f.label, f.envHint))
+				f.label, f.envHint,
+			))
 		}
 	}
 	return warnings

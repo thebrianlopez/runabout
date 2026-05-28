@@ -33,7 +33,7 @@ Example config:
 				return fmt.Errorf("config already exists at %s\n  Use --force to overwrite", cfgPath)
 			}
 
-			if err := os.MkdirAll(cfgDir, 0700); err != nil {
+			if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 				return fmt.Errorf("creating config dir: %w", err)
 			}
 
@@ -82,7 +82,7 @@ defaults:
 #     github_repos: "myorg/myrepo1,myorg/myrepo2"
 #     since: 30d
 `
-			if err := os.WriteFile(cfgPath, []byte(template), 0600); err != nil {
+			if err := os.WriteFile(cfgPath, []byte(template), 0o600); err != nil {
 				return fmt.Errorf("writing config: %w", err)
 			}
 

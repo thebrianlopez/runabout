@@ -49,7 +49,8 @@ func parseUserTags(ctx context.Context, raw string) []string {
 	}
 	var tags []string
 	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
-		slog.WarnContext(ctx, "score: tag_injection_failed  -  malformed user_tags JSON",
+		slog.WarnContext(
+			ctx, "score: tag_injection_failed  -  malformed user_tags JSON",
 			"event_type", "tag_injection_failed",
 			"error", err,
 		)

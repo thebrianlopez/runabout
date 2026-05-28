@@ -7,8 +7,10 @@ import (
 	"time"
 )
 
-const stateVersion = 1
-const maxSeenEvents = 10000
+const (
+	stateVersion  = 1
+	maxSeenEvents = 10000
+)
 
 // PRState persists the known state of a pull request.
 type PRState struct {
@@ -81,7 +83,7 @@ func (s *Store) Save() error {
 		return err
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0600); err != nil {
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, s.path)

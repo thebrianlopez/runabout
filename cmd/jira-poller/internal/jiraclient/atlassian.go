@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	maxRetries     = 3
+	maxRetries        = 3
 	defaultRetryAfter = 60 * time.Second
-	defaultTimeout = 30 * time.Second
+	defaultTimeout    = 30 * time.Second
 	defaultMaxResults = 100
 )
 

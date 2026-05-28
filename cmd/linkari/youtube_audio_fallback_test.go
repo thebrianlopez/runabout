@@ -57,7 +57,7 @@ func installAudioDownloadStub(t *testing.T) {
 	execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		dir := t.TempDir()
 		p := filepath.Join(dir, "audio.m4a")
-		if err := os.WriteFile(p, []byte("fake audio"), 0644); err != nil {
+		if err := os.WriteFile(p, []byte("fake audio"), 0o644); err != nil {
 			return "", ytVideoMeta{}, fmt.Errorf("stub: write fake audio: %w", err)
 		}
 		return p, ytVideoMeta{Title: "Test Video", ID: "testv1", Duration: 60}, nil

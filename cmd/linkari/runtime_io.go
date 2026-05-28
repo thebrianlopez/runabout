@@ -189,7 +189,8 @@ func (r *ContainerRuntime) containerRunWithIO(
 		specOpts = append(specOpts, oci.WithCPUCFS(quota, period))
 	}
 
-	container, err := client.NewContainer(ctrdCtx, containerID,
+	container, err := client.NewContainer(
+		ctrdCtx, containerID,
 		containerd.WithNewSnapshot(containerID, img),
 		containerd.WithNewSpec(specOpts...),
 		containerd.WithRuntime(gvisorRuntime, nil),
@@ -233,7 +234,8 @@ func (r *ContainerRuntime) containerRunWithIO(
 		return nil, fmt.Errorf("container start %s: %w", containerID, err)
 	}
 
-	slog.Info("container_runtime: task started",
+	slog.Info(
+		"container_runtime: task started",
 		"event_type", "container_start",
 		"container_id", containerID,
 		"image", image,
@@ -256,7 +258,8 @@ func (r *ContainerRuntime) containerRunWithIO(
 			result.Stderr = buf.String()
 		}
 
-		slog.Info("container_runtime: task exited",
+		slog.Info(
+			"container_runtime: task exited",
 			"event_type", "container_exit",
 			"container_id", containerID,
 			"exit_code", result.ExitCode,
@@ -265,7 +268,8 @@ func (r *ContainerRuntime) containerRunWithIO(
 
 		// M7: detect OOM kill (exit code 137 = SIGKILL by the kernel OOM killer).
 		if result.ExitCode == 137 {
-			slog.Warn("container_runtime: OOM kill detected",
+			slog.Warn(
+				"container_runtime: OOM kill detected",
 				"event_type", "container_oom_kill",
 				"container_id", containerID,
 				"image", image,
@@ -320,7 +324,8 @@ func (r *ContainerRuntime) InvokeFFmpeg(ctx context.Context, inputPath, outputPa
 	containerOutput := "/linkari/io/output.wav"
 
 	var stderr strings.Builder
-	_, err = r.containerRunWithIO(ctx,
+	_, err = r.containerRunWithIO(
+		ctx,
 		r.cfg.ImageRegistry+"/ffmpeg:latest",
 		[]string{"-i", containerInput, "-ar", "16000", "-ac", "1", "-y", containerOutput},
 		nil,
@@ -357,7 +362,8 @@ func (r *ContainerRuntime) InvokeWhisperTranscribe(ctx context.Context, wavPath,
 	}
 
 	var stdout, stderr strings.Builder
-	_, err = r.containerRunWithIO(ctx,
+	_, err = r.containerRunWithIO(
+		ctx,
 		r.cfg.ImageRegistry+"/whisper:latest",
 		[]string{"--model", modelPath, "--file", containerWav, "--no-timestamps", "--output-txt"},
 		nil,

@@ -154,9 +154,11 @@ func encryptText(w io.Writer, kr *crypto.KeyRing, s *rfc822.Section) error {
 		// Remove old content type.
 		header.Del("Content-Type")
 
-		header.Set("Content-Type", mime.FormatMediaType(
-			string(contentType),
-			replace(contentParams, "charset", "utf-8")),
+		header.Set(
+			"Content-Type", mime.FormatMediaType(
+				string(contentType),
+				replace(contentParams, "charset", "utf-8"),
+			),
 		)
 	}
 

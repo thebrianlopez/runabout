@@ -15,7 +15,7 @@ import (
 
 // newClient creates a whatsmeow client with the configured database path.
 func newClient() (*whatsmeow.Client, *sqlstore.Container, error) {
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return nil, nil, fmt.Errorf("create db directory: %w", err)
 	}
 

@@ -282,10 +282,10 @@ func TestUpsertDevice_IdempotentReplay(t *testing.T) {
 
 func TestValidateRegisterFaultEnv(t *testing.T) {
 	cases := []struct {
-		name    string
-		val     string
-		want    int
-		wantOK  bool // true = no fatal
+		name   string
+		val    string
+		want   int
+		wantOK bool // true = no fatal
 	}{
 		{"unset", "", 0, true},
 		{"valid 503", "503", 503, true},

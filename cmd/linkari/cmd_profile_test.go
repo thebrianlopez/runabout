@@ -9,7 +9,7 @@ import (
 func TestProfileLintCmdValid(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := filepath.Join(dir, "eng.yaml")
-	if err := os.WriteFile(yamlPath, []byte(validEngYAML), 0644); err != nil {
+	if err := os.WriteFile(yamlPath, []byte(validEngYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := profileCmd()
@@ -22,11 +22,11 @@ func TestProfileLintCmdValid(t *testing.T) {
 func TestProfileLintCmdBadWeights(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := filepath.Join(dir, "broken.yaml")
-	bad := validEngYAML // mutate one weight
+	bad := validEngYAML    // mutate one weight
 	bad = bad[:len(bad)-0] // no-op so we can edit below
 	// Replace the first weight 20 → 21 to break the sum.
 	bad = replaceFirst(bad, "weight: 20", "weight: 21")
-	if err := os.WriteFile(yamlPath, []byte(bad), 0644); err != nil {
+	if err := os.WriteFile(yamlPath, []byte(bad), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := profileCmd()
@@ -39,7 +39,7 @@ func TestProfileLintCmdBadWeights(t *testing.T) {
 func writeFixture(t *testing.T, dir, id, profile string) {
 	t.Helper()
 	body := `{"id":"` + id + `","profile":"` + profile + `"}`
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte(body), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -47,7 +47,7 @@ func writeFixture(t *testing.T, dir, id, profile string) {
 func TestProfileLintMinFixturesAllPass(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := filepath.Join(dir, "eng.yaml")
-	if err := os.WriteFile(yamlPath, []byte(validEngYAML), 0644); err != nil {
+	if err := os.WriteFile(yamlPath, []byte(validEngYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fxDir := t.TempDir()
@@ -63,7 +63,7 @@ func TestProfileLintMinFixturesAllPass(t *testing.T) {
 func TestProfileLintMinFixturesHardFail(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := filepath.Join(dir, "eng.yaml")
-	if err := os.WriteFile(yamlPath, []byte(validEngYAML), 0644); err != nil {
+	if err := os.WriteFile(yamlPath, []byte(validEngYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fxDir := t.TempDir()
@@ -78,7 +78,7 @@ func TestProfileLintMinFixturesHardFail(t *testing.T) {
 func TestProfileLintWarnOnly(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := filepath.Join(dir, "eng.yaml")
-	if err := os.WriteFile(yamlPath, []byte(validEngYAML), 0644); err != nil {
+	if err := os.WriteFile(yamlPath, []byte(validEngYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fxDir := t.TempDir()

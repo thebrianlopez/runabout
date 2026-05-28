@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at);
 // Open creates or opens a SQLite cache database at dbPath.
 // Returns nil (not an error) if the database cannot be opened, enabling graceful degradation.
 func Open(dbPath string) *Store {
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return nil
 	}
 

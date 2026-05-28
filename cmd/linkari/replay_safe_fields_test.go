@@ -99,8 +99,8 @@ func TestReplaySafeCT4_TraceIDImmutableAcrossRetries(t *testing.T) {
 	}
 }
 
-// CT-5: Schema migration adds content_hash and trace_id with DEFAULT '' (not NULL).
-// Tests that rows inserted WITHOUT specifying these columns get '' not NULL.
+// CT-5: Schema migration adds content_hash and trace_id with DEFAULT ” (not NULL).
+// Tests that rows inserted WITHOUT specifying these columns get ” not NULL.
 func TestReplaySafeCT5_SchemaMigrationDefaultEmpty(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()

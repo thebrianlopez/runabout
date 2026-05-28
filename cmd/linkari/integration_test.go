@@ -26,12 +26,12 @@ import (
 // TestApplyTsnetFallback is a 5-row unit test of the fallback-to-local rule.
 func TestApplyTsnetFallback(t *testing.T) {
 	cases := []struct {
-		name         string
-		enabled      bool
-		explicit     bool
-		authKey      string
-		wantEnabled  bool
-		wantWarn     bool
+		name        string
+		enabled     bool
+		explicit    bool
+		authKey     string
+		wantEnabled bool
+		wantWarn    bool
 	}{
 		{"default-on-no-key-fires-fallback", true, false, "", false, true},
 		{"already-local-no-op", false, false, "", false, false},
@@ -203,7 +203,7 @@ func TestBareServeBootsFromYaml(t *testing.T) {
 
 	// Write config.toml with all required fields.
 	configDir := filepath.Join(tmpHome, ".config", "linkari")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	configTOML := `[server]
@@ -212,7 +212,7 @@ tsnet = true
 tsnet_authkey = "test-authkey-from-yaml"
 tsnet_hostname = "linkari-test"
 `
-	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(configTOML), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(configTOML), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("LINKARI_QUEUE_DB", filepath.Join(tmpHome, "queue.db"))

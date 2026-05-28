@@ -57,9 +57,9 @@ type CredentialCache struct {
 	ttl       time.Duration
 	nowFn     func() time.Time
 
-	mu         sync.RWMutex
-	cached     Credentials
-	fetchedAt  time.Time // zero = never fetched
+	mu        sync.RWMutex
+	cached    Credentials
+	fetchedAt time.Time // zero = never fetched
 }
 
 // NewCredentialCache constructs a CredentialCache.

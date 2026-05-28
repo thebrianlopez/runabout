@@ -62,7 +62,7 @@ func SaveResult(path string, result *RunResult) error {
 	if err != nil {
 		return fmt.Errorf("marshal result: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil

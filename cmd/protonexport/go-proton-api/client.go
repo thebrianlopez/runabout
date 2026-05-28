@@ -179,10 +179,8 @@ func (c *Client) authRefresh(ctx context.Context) error {
 	defer c.hookLock.RUnlock()
 
 	auth, err := c.m.authRefresh(ctx, c.uid, c.ref, c.acc)
-
 	if err != nil {
 		if respErr, ok := err.(*resty.ResponseError); ok {
-
 			switch respErr.Response.StatusCode() {
 			case http.StatusBadRequest, http.StatusUnprocessableEntity:
 				c.deauthOnce.Do(func() {

@@ -25,13 +25,13 @@ var prFixedNow = time.Date(2026, 5, 5, 18, 39, 41, 0, time.UTC)
 func prFullFixture() string {
 	mergedAt := "2026-05-04T12:00:00Z"
 	pr := map[string]interface{}{
-		"number":  42,
-		"title":   "Fix memory leak in capture pipeline",
-		"body":    "This PR fixes the memory leak reported in issue #41.",
-		"state":   "closed",
+		"number":    42,
+		"title":     "Fix memory leak in capture pipeline",
+		"body":      "This PR fixes the memory leak reported in issue #41.",
+		"state":     "closed",
 		"merged_at": mergedAt,
-		"html_url": "https://github.com/owner/repo/pull/42",
-		"user":    map[string]interface{}{"login": "octocat"},
+		"html_url":  "https://github.com/owner/repo/pull/42",
+		"user":      map[string]interface{}{"login": "octocat"},
 		"requested_reviewers": []interface{}{
 			map[string]interface{}{"login": "monalisa"},
 			map[string]interface{}{"login": "hubot"},

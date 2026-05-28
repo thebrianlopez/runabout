@@ -3,9 +3,9 @@ package metrics_test
 import (
 	"testing"
 
-	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/thebrianlopez/runabout/cmd/jira-poller/internal/metrics"
 )
 
 // freshReg returns a new isolated Prometheus registry for each test.

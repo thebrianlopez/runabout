@@ -185,7 +185,7 @@ func TestCLI_Attach_ExecsCorrectCommand(t *testing.T) {
 
 	// Write a status.json with the target host.
 	status := &daemon.DaemonStatus{
-		PID: os.Getpid(),
+		PID:   os.Getpid(),
 		Hosts: []daemon.HostStatus{{Name: "dev", Status: "connected"}},
 	}
 	require.NoError(t, daemon.WriteStatus(filepath.Join(stateDir, "status.json"), status))

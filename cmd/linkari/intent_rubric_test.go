@@ -25,14 +25,14 @@ content_types:
     Engineering context rubric for URL shares.
 default: |
   Default score rubric for evaluating content relevance.
-`), 0644)
+`), 0o644)
 
 	// Write capture.yaml
 	os.WriteFile(filepath.Join(dir, "capture.yaml"), []byte(`
 intent: capture
 default: |
   Capture rubric: evaluate whether this content maps to a tool workflow.
-`), 0644)
+`), 0o644)
 
 	// Write transcribe.yaml
 	os.WriteFile(filepath.Join(dir, "transcribe.yaml"), []byte(`
@@ -42,15 +42,15 @@ content_types:
     Transcription rubric: organize and summarize voice note.
 default: |
   Default transcription rubric.
-`), 0644)
+`), 0o644)
 
 	// Write overrides/jira.yaml
-	os.MkdirAll(filepath.Join(dir, "overrides"), 0755)
+	os.MkdirAll(filepath.Join(dir, "overrides"), 0o755)
 	os.WriteFile(filepath.Join(dir, "overrides", "jira.yaml"), []byte(`
 tag: jira
 instructions: |
   Jira capture context: extract ticket details from this Jira URL.
-`), 0644)
+`), 0o644)
 
 	return dir
 }
@@ -150,7 +150,7 @@ func TestIntentRubric_CT7_ParseFailedFallback(t *testing.T) {
 	invalidateIntentRubricCache()
 
 	// Write a malformed YAML file.
-	os.WriteFile(filepath.Join(dir, "score.yaml"), []byte("intent: score\n{invalid yaml here"), 0644)
+	os.WriteFile(filepath.Join(dir, "score.yaml"), []byte("intent: score\n{invalid yaml here"), 0o644)
 
 	// Should not error - falls back to minimal preamble (RG-1).
 	prompt, err := loadIntentRubric("score", "url", []string{"domain:eng"}, nil)

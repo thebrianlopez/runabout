@@ -133,13 +133,13 @@ func writeSilentWAV(path string, durationSec int) error {
 	writeStr("WAVE")
 	// fmt chunk
 	writeStr("fmt ")
-	writeLE(16, 4)            // chunk size
-	writeLE(1, 2)             // PCM
-	writeLE(channels, 2)      // channels
-	writeLE(sampleRate, 4)    // sample rate
+	writeLE(16, 4)                                     // chunk size
+	writeLE(1, 2)                                      // PCM
+	writeLE(channels, 2)                               // channels
+	writeLE(sampleRate, 4)                             // sample rate
 	writeLE(uint32(sampleRate*channels*bitDepth/8), 4) // byte rate
-	writeLE(uint32(channels*bitDepth/8), 2) // block align
-	writeLE(bitDepth, 2)      // bits per sample
+	writeLE(uint32(channels*bitDepth/8), 2)            // block align
+	writeLE(bitDepth, 2)                               // bits per sample
 	// data chunk
 	writeStr("data")
 	writeLE(uint32(dataSize), 4)

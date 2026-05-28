@@ -93,13 +93,13 @@ func TestFindBareRepo(t *testing.T) {
 
 	// Create name.git directory
 	gitDir := filepath.Join(tmp, "my-repo.git")
-	if err := os.Mkdir(gitDir, 0755); err != nil {
+	if err := os.Mkdir(gitDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create plain directory
 	plainDir := filepath.Join(tmp, "other-repo")
-	if err := os.Mkdir(plainDir, 0755); err != nil {
+	if err := os.Mkdir(plainDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -188,7 +188,7 @@ func TestLoadManifest_Missing(t *testing.T) {
 
 func TestLoadManifest_Invalid(t *testing.T) {
 	tmp := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmp, ".workspace.json"), []byte("not json"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, ".workspace.json"), []byte("not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	m := loadManifest(tmp)
@@ -276,7 +276,7 @@ func TestWriteIssueMD(t *testing.T) {
 			if err != nil {
 				t.Fatalf("stat: %v", err)
 			}
-			if info.Mode().Perm() != 0600 {
+			if info.Mode().Perm() != 0o600 {
 				t.Errorf("file permissions = %o, want 0600", info.Mode().Perm())
 			}
 		})
@@ -458,7 +458,7 @@ func TestWriteIssueMD_DescriptionFallback(t *testing.T) {
 func TestInitDryRun_WithDocsPath(t *testing.T) {
 	tmp := t.TempDir()
 	docsDir := filepath.Join(tmp, "org-docs")
-	if err := os.MkdirAll(docsDir, 0755); err != nil {
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -680,7 +680,7 @@ func setupBareAndClone(t *testing.T) (bareRepo, clonePath string) {
 	exec.Command("git", "-C", initCopy, "config", "user.name", "Test").Run()
 
 	initFile := filepath.Join(initCopy, "README.md")
-	if err := os.WriteFile(initFile, []byte("# Test Repo\n"), 0644); err != nil {
+	if err := os.WriteFile(initFile, []byte("# Test Repo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	exec.Command("git", "-C", initCopy, "add", ".").Run()
@@ -727,7 +727,7 @@ func TestGitPullMain_ValidRepo_PullsLatest(t *testing.T) {
 	exec.Command("git", "-C", otherClone, "checkout", "main").Run()
 
 	newFile := filepath.Join(otherClone, "new_file.txt")
-	if err := os.WriteFile(newFile, []byte("new content\n"), 0644); err != nil {
+	if err := os.WriteFile(newFile, []byte("new content\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	exec.Command("git", "-C", otherClone, "add", ".").Run()
@@ -752,7 +752,7 @@ func TestGitPullMain_ValidRepo_PullsLatest(t *testing.T) {
 func TestGitPullMain_NonGitDirectory(t *testing.T) {
 	tmp := t.TempDir()
 	plainDir := filepath.Join(tmp, "not-a-repo")
-	if err := os.MkdirAll(plainDir, 0755); err != nil {
+	if err := os.MkdirAll(plainDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -776,7 +776,7 @@ func TestGitPullMain_NoRemote(t *testing.T) {
 	exec.Command("git", "-C", repoPath, "config", "user.name", "Test").Run()
 
 	initFile := filepath.Join(repoPath, "README.md")
-	if err := os.WriteFile(initFile, []byte("# Local repo\n"), 0644); err != nil {
+	if err := os.WriteFile(initFile, []byte("# Local repo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	exec.Command("git", "-C", repoPath, "add", ".").Run()
@@ -905,11 +905,11 @@ func TestHasPandoc(t *testing.T) {
 func TestCreateDocsSymlink_ValidPaths(t *testing.T) {
 	tmp := t.TempDir()
 	wsPath := filepath.Join(tmp, "workspace")
-	if err := os.MkdirAll(wsPath, 0755); err != nil {
+	if err := os.MkdirAll(wsPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	docsPath := filepath.Join(tmp, "docs")
-	if err := os.MkdirAll(docsPath, 0755); err != nil {
+	if err := os.MkdirAll(docsPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -939,11 +939,11 @@ func TestCreateDocsSymlink_ValidPaths(t *testing.T) {
 func TestCreateDocsSymlink_Idempotent(t *testing.T) {
 	tmp := t.TempDir()
 	wsPath := filepath.Join(tmp, "workspace")
-	if err := os.MkdirAll(wsPath, 0755); err != nil {
+	if err := os.MkdirAll(wsPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	docsPath := filepath.Join(tmp, "docs")
-	if err := os.MkdirAll(docsPath, 0755); err != nil {
+	if err := os.MkdirAll(docsPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -969,7 +969,7 @@ func TestCreateDocsSymlink_Idempotent(t *testing.T) {
 func TestCreateDocsSymlink_NonExistentDocsPath(t *testing.T) {
 	tmp := t.TempDir()
 	wsPath := filepath.Join(tmp, "workspace")
-	if err := os.MkdirAll(wsPath, 0755); err != nil {
+	if err := os.MkdirAll(wsPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -989,7 +989,7 @@ func TestCreateDocsSymlink_NonExistentDocsPath(t *testing.T) {
 func TestCreateDocsSymlink_NonExistentWsPath(t *testing.T) {
 	tmp := t.TempDir()
 	docsPath := filepath.Join(tmp, "docs")
-	if err := os.MkdirAll(docsPath, 0755); err != nil {
+	if err := os.MkdirAll(docsPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1002,16 +1002,16 @@ func TestCreateDocsSymlink_NonExistentWsPath(t *testing.T) {
 func TestCreateDocsSymlink_ExistingNonSymlink(t *testing.T) {
 	tmp := t.TempDir()
 	wsPath := filepath.Join(tmp, "workspace")
-	if err := os.MkdirAll(wsPath, 0755); err != nil {
+	if err := os.MkdirAll(wsPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	docsPath := filepath.Join(tmp, "docs")
-	if err := os.MkdirAll(docsPath, 0755); err != nil {
+	if err := os.MkdirAll(docsPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create a regular directory where the symlink would go
-	if err := os.MkdirAll(filepath.Join(wsPath, "docs"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(wsPath, "docs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1027,15 +1027,15 @@ func TestCreateDocsSymlink_ExistingNonSymlink(t *testing.T) {
 func TestCreateDocsSymlink_VerifySymlinkTarget(t *testing.T) {
 	tmp := t.TempDir()
 	wsPath := filepath.Join(tmp, "workspace")
-	if err := os.MkdirAll(wsPath, 0755); err != nil {
+	if err := os.MkdirAll(wsPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	docsPath := filepath.Join(tmp, "shared-docs")
-	if err := os.MkdirAll(docsPath, 0755); err != nil {
+	if err := os.MkdirAll(docsPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(docsPath, "test.txt"), []byte("hello docs"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(docsPath, "test.txt"), []byte("hello docs"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

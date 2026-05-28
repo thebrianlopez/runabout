@@ -77,7 +77,7 @@ type Issue struct {
 // ChangelogEntry is one history item where field == "status".
 // Non-status items are filtered before reaching the caller.
 type ChangelogEntry struct {
-	HistoryID  string    // go-atlassian history ID; used as dedup key component
+	HistoryID  string // go-atlassian history ID; used as dedup key component
 	Created    time.Time
 	Author     User
 	FromStatus string // empty string when the issue was just created (null in Jira API)

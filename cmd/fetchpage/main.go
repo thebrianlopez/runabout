@@ -88,10 +88,10 @@ func fetchPage(url string, timeoutSec, waitSec float64, channel string, stealth 
 
 	if stealth {
 		ctx, err := browser.NewContext(playwright.BrowserNewContextOptions{
-			UserAgent:      playwright.String("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
-			Viewport:       &playwright.Size{Width: 1920, Height: 1080},
-			Locale:         playwright.String("en-US"),
-			TimezoneId:     playwright.String("America/New_York"),
+			UserAgent:         playwright.String("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+			Viewport:          &playwright.Size{Width: 1920, Height: 1080},
+			Locale:            playwright.String("en-US"),
+			TimezoneId:        playwright.String("America/New_York"),
 			DeviceScaleFactor: playwright.Float(1),
 		})
 		if err != nil {

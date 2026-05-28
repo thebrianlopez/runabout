@@ -102,7 +102,8 @@ func (p *Poller) Run(ctx context.Context) error {
 // Returns ErrPollOverlap if a cycle is already running (non-blocking check).
 func (p *Poller) PollOnce(ctx context.Context) error {
 	if !p.mu.TryLock() {
-		p.logger.Warn("poll skipped: previous cycle still running",
+		p.logger.Warn(
+			"poll skipped: previous cycle still running",
 			"reason", "overlap",
 			"error", ErrPollOverlap,
 		)
@@ -129,14 +130,14 @@ func (p *Poller) LastPollTime() time.Time {
 	return time.Time{}
 }
 
-
 // runCycle executes one complete poll-filter-publish-mark iteration.
 func (p *Poller) runCycle(ctx context.Context) {
 	pollID := newPollID()
 	now := p.nowFn()
 	lookbackMinutes := int(p.cfg.LookbackWindow.Minutes())
 
-	p.logger.Debug("poll cycle started",
+	p.logger.Debug(
+		"poll cycle started",
 		"poll_id", pollID,
 		"projects", p.cfg.JiraProjects,
 		"lookback_s", p.cfg.LookbackWindow.Seconds(),
@@ -153,7 +154,8 @@ func (p *Poller) runCycle(ctx context.Context) {
 			NextToken:       nextToken,
 		})
 		if err != nil {
-			p.logger.Error("poll: jira fetch failed",
+			p.logger.Error(
+				"poll: jira fetch failed",
 				"poll_id", pollID,
 				"error_class", "jira",
 				"error", err,
@@ -188,7 +190,8 @@ func (p *Poller) runCycle(ctx context.Context) {
 	for _, ev := range events {
 		result, err := p.pub.Publish(ctx, []types.TransitionEvent{ev})
 		if err != nil {
-			p.logger.Error("poll: publish error",
+			p.logger.Error(
+				"poll: publish error",
 				"poll_id", pollID,
 				"event_id", ev.ChangelogID,
 				"error_class", "publish",
@@ -203,7 +206,8 @@ func (p *Poller) runCycle(ctx context.Context) {
 		for _, id := range result.Succeeded {
 			isNew, merr := p.store.Mark(ctx, id, p.cfg.LookbackWindow*2)
 			if merr != nil {
-				p.logger.Error("poll: dedupe mark error",
+				p.logger.Error(
+					"poll: dedupe mark error",
 					"poll_id", pollID,
 					"event_id", id,
 					"error_class", "dedupe",
@@ -226,7 +230,8 @@ func (p *Poller) runCycle(ctx context.Context) {
 	t := p.nowFn()
 	p.lastPollTime.Store(t)
 
-	p.logger.Info("poll cycle complete",
+	p.logger.Info(
+		"poll cycle complete",
 		"poll_id", pollID,
 		"issues_returned", len(allIssues),
 		"transitions_found", len(events),
@@ -238,12 +243,12 @@ func (p *Poller) runCycle(ctx context.Context) {
 // buildEvent constructs a TransitionEvent from a Jira issue and changelog entry.
 func buildEvent(issue jiraclient.Issue, entry jiraclient.ChangelogEntry) types.TransitionEvent {
 	ev := types.TransitionEvent{
-		IssueKey:   issue.Key,
-		ProjectKey: extractProjectKey(issue.Key),
-		IssueType:  issue.IssueType,
-		Summary:    issue.Summary,
-		FromStatus: entry.FromStatus,
-		ToStatus:   entry.ToStatus,
+		IssueKey:       issue.Key,
+		ProjectKey:     extractProjectKey(issue.Key),
+		IssueType:      issue.IssueType,
+		Summary:        issue.Summary,
+		FromStatus:     entry.FromStatus,
+		ToStatus:       entry.ToStatus,
 		TransitionedAt: entry.Created,
 		TransitionedBy: types.UserRef{
 			AccountID:   entry.Author.AccountID,

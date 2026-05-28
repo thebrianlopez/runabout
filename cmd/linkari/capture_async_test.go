@@ -92,9 +92,9 @@ func enqueueCapturePending(t *testing.T, q *Queue) int64 {
 // captureJiraAutoConfig returns an ActionConfig for capture_jira_auto with ArtifactDir set.
 func captureJiraAutoConfig(artifactDir string) *ActionConfig {
 	return &ActionConfig{
-		ID:                      "capture_jira_auto",
-		Kind:                    KindCapture,
-		ArtifactDir:             artifactDir,
+		ID:                       "capture_jira_auto",
+		Kind:                     KindCapture,
+		ArtifactDir:              artifactDir,
 		ArtifactFilenameTemplate: "{{.Date}}_{{.Key}}.md",
 	}
 }

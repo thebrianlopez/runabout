@@ -87,8 +87,8 @@ func TestResolveShareAction_DomainHeuristic(t *testing.T) {
 		{"https://www.nytimes.com/section/food", "dining", ""},
 		{"https://www.yelp.com/biz/restaurant", "dining", ""},
 		{"https://www.zara.com/us/en/dress-123", "fashion", ""},
-		{"https://www.reddit.com/r/golang", "eng", "domain_fallback"},        // fallback to eng
-		{"https://unknown-site.example.com/page", "eng", "domain_fallback"},  // fallback to eng
+		{"https://www.reddit.com/r/golang", "eng", "domain_fallback"},       // fallback to eng
+		{"https://unknown-site.example.com/page", "eng", "domain_fallback"}, // fallback to eng
 	}
 	for _, c := range cases {
 		req := &ShareRequest{Action: "uinit_auto", Type: "url", URL: c.url}

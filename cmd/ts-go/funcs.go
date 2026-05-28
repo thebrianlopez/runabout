@@ -7,14 +7,14 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	"github.com/spf13/cobra"
+	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 // FuncInfo describes a function or method declaration.
 type FuncInfo struct {
 	Name             string  `json:"name"`
-	Kind             string  `json:"kind"`                         // "function" | "method"
+	Kind             string  `json:"kind"` // "function" | "method"
 	Signature        string  `json:"signature"`
 	StartLine        uint    `json:"start_line"`
 	EndLine          uint    `json:"end_line"`

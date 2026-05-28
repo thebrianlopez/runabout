@@ -90,10 +90,10 @@ type Storer struct {
 	Render      RenderPipeline
 	S3          S3Uploader
 	SSM         SSMWriter
-	Bucket      string          // default: cdn.blo.la
-	BaseURL     string          // default: https://brianlopez.us
-	SSMPrefix   string          // default: /runway/resume-variants
-	Logger      *slog.Logger    // nil disables logging
+	Bucket      string           // default: cdn.blo.la
+	BaseURL     string           // default: https://brianlopez.us
+	SSMPrefix   string           // default: /runway/resume-variants
+	Logger      *slog.Logger     // nil disables logging
 	Now         func() time.Time // injectable for tests
 	RetryDelays []time.Duration  // injectable for tests; default [1s,2s,4s]
 }
@@ -150,7 +150,8 @@ func (st *Storer) ServeVariant(ctx context.Context, slug, yamlPath string, usedF
 		return nil, &ServeError{Code: ErrSlugInvalid.Code, msg: fmt.Sprintf("invalid slug %q: must match [a-z0-9-]", slug)}
 	}
 
-	st.log(ctx, slog.LevelInfo, "serve.started",
+	st.log(
+		ctx, slog.LevelInfo, "serve.started",
 		slog.String("slug", slug),
 		slog.Bool("used_fallback", usedFallback),
 	)
@@ -164,7 +165,8 @@ func (st *Storer) ServeVariant(ctx context.Context, slug, yamlPath string, usedF
 	// CT-7: render is fatal — no S3 upload if it fails (RG-1)
 	st.log(ctx, slog.LevelInfo, "serve.render_started", slog.String("slug", slug))
 	if err := st.Render.Render(ctx, slug, yamlPath, outputDir); err != nil {
-		st.log(ctx, slog.LevelError, "serve.failed",
+		st.log(
+			ctx, slog.LevelError, "serve.failed",
 			slog.String("slug", slug),
 			slog.String("error_class", ErrRenderFailed.Code),
 			slog.String("step", "render"),
@@ -177,7 +179,8 @@ func (st *Storer) ServeVariant(ctx context.Context, slug, yamlPath string, usedF
 
 	// CT-1, CT-4, CT-5: upload 6 variants with retry
 	if err := st.uploadAll(ctx, slug, s3Prefix, outputDir); err != nil {
-		st.log(ctx, slog.LevelError, "serve.failed",
+		st.log(
+			ctx, slog.LevelError, "serve.failed",
 			slog.String("slug", slug),
 			slog.String("error_class", ErrS3UploadFailed.Code),
 			slog.String("step", "upload"),
@@ -191,7 +194,8 @@ func (st *Storer) ServeVariant(ctx context.Context, slug, yamlPath string, usedF
 	ssmWritten := true
 	if err := st.writeSSM(ctx, slug, s3Prefix, now, expiresAt); err != nil {
 		ssmWritten = false
-		st.log(ctx, slog.LevelWarn, "serve.ssm_failed",
+		st.log(
+			ctx, slog.LevelWarn, "serve.ssm_failed",
 			slog.String("slug", slug),
 			slog.String("error_class", ErrSSMWriteFailed.Code),
 			slog.String("error", err.Error()),
@@ -211,7 +215,8 @@ func (st *Storer) ServeVariant(ctx context.Context, slug, yamlPath string, usedF
 		Formats:    formatNames,
 		SSMWritten: ssmWritten,
 	}
-	st.log(ctx, slog.LevelInfo, "serve.completed",
+	st.log(
+		ctx, slog.LevelInfo, "serve.completed",
 		slog.String("slug", slug),
 		slog.String("url", url),
 		slog.Bool("ssm_written", ssmWritten),
@@ -241,7 +246,8 @@ func (st *Storer) uploadWithRetry(ctx context.Context, slug, format, s3Key, loca
 			return &ServeError{Code: ErrRenderFailed.Code, msg: fmt.Sprintf("rendered file missing %s: %v", localFile, err)}
 		}
 
-		st.log(ctx, slog.LevelInfo, "serve.upload_started",
+		st.log(
+			ctx, slog.LevelInfo, "serve.upload_started",
 			slog.String("slug", slug),
 			slog.String("format", format),
 			slog.String("s3_key", s3Key),
@@ -251,7 +257,8 @@ func (st *Storer) uploadWithRetry(ctx context.Context, slug, format, s3Key, loca
 		f.Close()
 
 		if putErr == nil {
-			st.log(ctx, slog.LevelInfo, "serve.upload_completed",
+			st.log(
+				ctx, slog.LevelInfo, "serve.upload_completed",
 				slog.String("slug", slug),
 				slog.String("format", format),
 				slog.Int("attempt", attempt),
@@ -260,7 +267,8 @@ func (st *Storer) uploadWithRetry(ctx context.Context, slug, format, s3Key, loca
 		}
 
 		lastErr = putErr
-		st.log(ctx, slog.LevelWarn, "serve.upload_retry",
+		st.log(
+			ctx, slog.LevelWarn, "serve.upload_retry",
 			slog.String("slug", slug),
 			slog.String("format", format),
 			slog.Int("attempt", attempt),

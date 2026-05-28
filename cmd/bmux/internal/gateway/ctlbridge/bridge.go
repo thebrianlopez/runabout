@@ -151,10 +151,10 @@ type bridge struct {
 	eventsCh chan ControlModeEvent
 	stopCh   chan struct{}
 
-	mu        sync.Mutex
-	started   bool
-	stopped   bool
-	stopOnce  sync.Once
+	mu         sync.Mutex
+	started    bool
+	stopped    bool
+	stopOnce   sync.Once
 	closedOnce sync.Once
 }
 

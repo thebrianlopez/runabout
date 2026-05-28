@@ -38,8 +38,8 @@ func New(b F1Bridge) SessionRegistry {
 type sessionRegistry struct {
 	b F1Bridge
 
-	mu          sync.RWMutex
-	sessions    map[string]*Session // keyed by session name
+	mu       sync.RWMutex
+	sessions map[string]*Session // keyed by session name
 
 	subMu       sync.Mutex
 	subscribers map[chan<- TopologyEvent]struct{}

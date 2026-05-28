@@ -898,9 +898,9 @@ func TestFeedbackAndroidVocabulary(t *testing.T) {
 	q := newTestQueue(t)
 
 	tests := []struct {
-		input    string
-		wantDB   string
-		wantErr  bool
+		input   string
+		wantDB  string
+		wantErr bool
 	}{
 		{"accurate", "accurate", false},
 		{"too_high", "too_high", false},

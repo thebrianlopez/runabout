@@ -18,10 +18,10 @@ type authGoogleRequest struct {
 // authGoogleResponse is returned by POST /auth/google.
 type authGoogleResponse struct {
 	Status       string `json:"status"`                  // "authenticated" or "invite_required"
-	SessionToken string `json:"session_token,omitempty"`  // present when authenticated
-	Email        string `json:"email,omitempty"`          // always present on valid token
-	Name         string `json:"name,omitempty"`           // from Google profile
-	UserID       int64  `json:"user_id,omitempty"`        // present when authenticated
+	SessionToken string `json:"session_token,omitempty"` // present when authenticated
+	Email        string `json:"email,omitempty"`         // always present on valid token
+	Name         string `json:"name,omitempty"`          // from Google profile
+	UserID       int64  `json:"user_id,omitempty"`       // present when authenticated
 }
 
 // authInviteRequest is the JSON body for POST /auth/invite.
@@ -170,7 +170,8 @@ func (s *Server) handleAuthInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("new user created via invite",
+	slog.Info(
+		"new user created via invite",
 		"user_id", userID,
 		"email", claims.Email,
 		"invite_code", req.InviteCode,
@@ -263,7 +264,8 @@ func (s *Server) handleAuthBluesky(w http.ResponseWriter, r *http.Request) {
 
 	client, err := LoginBluesky(r.Context(), req.Host, req.Handle, req.Password)
 	if err != nil {
-		slog.Warn("bluesky auth failed",
+		slog.Warn(
+			"bluesky auth failed",
 			"event_type", "bluesky_auth_failed",
 			"user_id", userID,
 			"error_class", "login_failed",
@@ -274,7 +276,8 @@ func (s *Server) handleAuthBluesky(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refreshCb := func(updated BlueskySessionData) error {
-		slog.Debug("bluesky token refreshed",
+		slog.Debug(
+			"bluesky token refreshed",
 			"event_type", "bluesky_token_refreshed",
 			"user_id", userID,
 			"account_did", updated.DID,
@@ -290,7 +293,8 @@ func (s *Server) handleAuthBluesky(w http.ResponseWriter, r *http.Request) {
 	}
 	s.bskyClient = client
 
-	slog.Info("bluesky auth connected",
+	slog.Info(
+		"bluesky auth connected",
 		"event_type", "bluesky_auth_connected",
 		"user_id", userID,
 		"account_did", client.Session.DID,

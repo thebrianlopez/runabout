@@ -21,7 +21,7 @@ func TestRefreshGoldensRewritesAndAudits(t *testing.T) {
 	}
 	path := filepath.Join(dir, orig.ID+".json")
 	b, _ := json.MarshalIndent(orig, "", "  ")
-	if err := os.WriteFile(path, b, 0644); err != nil {
+	if err := os.WriteFile(path, b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,11 +90,11 @@ func TestCaptureFromWorkspace(t *testing.T) {
 	ws := t.TempDir()
 	if err := os.WriteFile(filepath.Join(ws, "README.md"),
 		[]byte("# Page\n\nthe content\n\n---\n\n## Score: 81/100\n\n## Verdict\nkeep\n"),
-		0644); err != nil {
+		0o644); err != nil {
 		t.Fatal(err)
 	}
 	scoreJSON := `{"score":81,"verdict":"keep","slug":"test-slug","profile":"eng","url":"https://example.com","scored_at":"2026-04-06T11:00:00Z"}`
-	if err := os.WriteFile(filepath.Join(ws, "_score.json"), []byte(scoreJSON), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(ws, "_score.json"), []byte(scoreJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -127,7 +127,7 @@ func TestLoadFixturesAndIdentityScorerSelfTest(t *testing.T) {
 	}
 	for _, f := range fixtures {
 		b, _ := json.MarshalIndent(f, "", "  ")
-		if err := os.WriteFile(filepath.Join(dir, f.ID+".json"), b, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, f.ID+".json"), b, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -161,7 +161,7 @@ func TestLoadFixturesSkipsInvalidAndDecoys(t *testing.T) {
 	dir := t.TempDir()
 	good := Fixture{ID: "ok", Profile: "eng", Content: "c", Golden: Golden{Score: 50, Verdict: "v"}}
 	b, _ := json.MarshalIndent(good, "", "  ")
-	if err := os.WriteFile(filepath.Join(dir, "ok.json"), b, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ok.json"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Invalid ID "." — this is the real-world bogus fixture captured
@@ -169,15 +169,15 @@ func TestLoadFixturesSkipsInvalidAndDecoys(t *testing.T) {
 	bad := good
 	bad.ID = "."
 	bb, _ := json.MarshalIndent(bad, "", "  ")
-	if err := os.WriteFile(filepath.Join(dir, "dot_id.json"), bb, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dot_id.json"), bb, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Decoy dotfile (editor swapfile, hidden metadata).
-	if err := os.WriteFile(filepath.Join(dir, ".hidden.json"), []byte(`{"id":"x"}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".hidden.json"), []byte(`{"id":"x"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Decoy garbage JSON.
-	if err := os.WriteFile(filepath.Join(dir, "garbage.json"), []byte(`{not json`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "garbage.json"), []byte(`{not json`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -222,7 +222,7 @@ func TestEvalRunTreatsSkipAndScorerErrorAsSkip(t *testing.T) {
 	}
 	for _, f := range fixes {
 		b, _ := json.MarshalIndent(f, "", "  ")
-		if err := os.WriteFile(filepath.Join(dir, f.ID+".json"), b, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, f.ID+".json"), b, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

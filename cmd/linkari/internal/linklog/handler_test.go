@@ -148,7 +148,8 @@ func TestEventTypePromotion(t *testing.T) {
 	var buf bytes.Buffer
 	h := newTestHandler(&buf, FormatJSON, slog.LevelDebug)
 	logger := slog.New(h)
-	logger.Info("req",
+	logger.Info(
+		"req",
 		"event_type", "http_request",
 		"duration_ms", int64(42),
 		"exit_code", int64(0),

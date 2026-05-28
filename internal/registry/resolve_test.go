@@ -38,12 +38,12 @@ vocabulary:
 func writeWorkspace(t *testing.T, dir, name, agentID, agentPath string) string {
 	t.Helper()
 	wsDir := filepath.Join(dir, name)
-	if err := os.MkdirAll(wsDir, 0755); err != nil {
+	if err := os.MkdirAll(wsDir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", wsDir, err)
 	}
 	wsYAML := filepath.Join(wsDir, "workspace.yaml")
 	content := fmt.Sprintf("repos:\n  - agent: %s\n    path: %s\n", agentID, agentPath)
-	if err := os.WriteFile(wsYAML, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(wsYAML, []byte(content), 0o644); err != nil {
 		t.Fatalf("writing workspace.yaml: %v", err)
 	}
 	return wsYAML
@@ -203,14 +203,14 @@ agents:
 func TestF3_CT7_ClosedWorkspaceExcluded(t *testing.T) {
 	dir := t.TempDir()
 	wsDir := filepath.Join(dir, "closed-ws")
-	os.MkdirAll(wsDir, 0755)
+	os.MkdirAll(wsDir, 0o755)
 	wsYAML := filepath.Join(wsDir, "workspace.yaml")
 	os.WriteFile(wsYAML, []byte(`
 status: closed
 repos:
   - agent: closed-agent
     path: /some/path
-`), 0644)
+`), 0o644)
 
 	r := makeTestRegistry(t, `
 agents:
@@ -235,8 +235,8 @@ func TestF3_CT8_MalformedWorkspaceSkipped(t *testing.T) {
 
 	// Malformed workspace
 	badDir := filepath.Join(dir, "bad-ws")
-	os.MkdirAll(badDir, 0755)
-	os.WriteFile(filepath.Join(badDir, "workspace.yaml"), []byte(`%invalid: [yaml`), 0644)
+	os.MkdirAll(badDir, 0o755)
+	os.WriteFile(filepath.Join(badDir, "workspace.yaml"), []byte(`%invalid: [yaml`), 0o644)
 
 	// Valid workspace
 	validCWD := filepath.Join(dir, "valid-cwd")

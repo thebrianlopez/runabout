@@ -222,7 +222,8 @@ func (c WikiConfig) Validate() error {
 //
 // EPIC-054 M3: 60s interval, 15m (900s) max age chosen so a scoring pipeline
 // stuck in `relayed` is reclassified within one tick of the 15-minute budget
-//  -  long enough to absorb a slow-but-working score run, short enough to keep
+//   - long enough to absorb a slow-but-working score run, short enough to keep
+//
 // orphans from accumulating across the overnight window where the epic was
 // discovered.
 //
@@ -356,24 +357,24 @@ const (
 
 // ActionConfig defines a single share action in the TOML config.
 type ActionConfig struct {
-	ID               string     `toml:"id"`
-	Label            string     `toml:"label"`
-	Icon             string     `toml:"icon"`
-	Type             string     `toml:"type"`             // "url" or "text"
-	Target           string     `toml:"target"`           // tmux target "session:pane"
-	Kind             ActionKind `toml:"kind"`             // template, literal, regex
-	CommandTemplate  string     `toml:"command_template"` // Go text/template string
-	Pattern          string     `toml:"pattern"`          // regex for kind=regex
-	ArchiveThreshold int        `toml:"archive_threshold"` // -1 = no auto-archive
-	ProfileMap       string     `toml:"profile_map"`       // "prefix" = extract from id prefix; "auto" = server-side heuristic (EPIC-061)
-	Condition        string     `toml:"condition"`         // "env:VAR=VALUE"  -  only register when condition met
-	InlineTriage        bool `toml:"inline_triage"`        // EPIC-043 M5: run command headlessly, skip tmux window (fire-and-forget)
-	AutoScore           bool `toml:"auto_score"`           // EPIC-057: enqueue as scored immediately (skip watchdog)
-	ConfidenceThreshold int  `toml:"confidence_threshold"` // EPIC-058 M3: minimum score to pass confidence gate (0 = no gate)
-	AutoLaunch          bool `toml:"auto_launch"`          // EPIC-058 M3: auto-launch ginit when gate passes (requires confidence_threshold > 0)
-	ServerScore         bool `toml:"server_score"`         // EPIC-060: score uinit_* actions server-side via Jina+Haiku (no tmux window)
-	ForceContentClassify bool `toml:"force_content_classify"` // EPIC-084 M3: always run content-LLM classification even when cascade produces a profile
-	ShortsRubricTemplate string `toml:"shorts_rubric_template"` // EPIC-012 M7: rubric override for YouTube Shorts scoring
+	ID                   string     `toml:"id"`
+	Label                string     `toml:"label"`
+	Icon                 string     `toml:"icon"`
+	Type                 string     `toml:"type"`                   // "url" or "text"
+	Target               string     `toml:"target"`                 // tmux target "session:pane"
+	Kind                 ActionKind `toml:"kind"`                   // template, literal, regex
+	CommandTemplate      string     `toml:"command_template"`       // Go text/template string
+	Pattern              string     `toml:"pattern"`                // regex for kind=regex
+	ArchiveThreshold     int        `toml:"archive_threshold"`      // -1 = no auto-archive
+	ProfileMap           string     `toml:"profile_map"`            // "prefix" = extract from id prefix; "auto" = server-side heuristic (EPIC-061)
+	Condition            string     `toml:"condition"`              // "env:VAR=VALUE"  -  only register when condition met
+	InlineTriage         bool       `toml:"inline_triage"`          // EPIC-043 M5: run command headlessly, skip tmux window (fire-and-forget)
+	AutoScore            bool       `toml:"auto_score"`             // EPIC-057: enqueue as scored immediately (skip watchdog)
+	ConfidenceThreshold  int        `toml:"confidence_threshold"`   // EPIC-058 M3: minimum score to pass confidence gate (0 = no gate)
+	AutoLaunch           bool       `toml:"auto_launch"`            // EPIC-058 M3: auto-launch ginit when gate passes (requires confidence_threshold > 0)
+	ServerScore          bool       `toml:"server_score"`           // EPIC-060: score uinit_* actions server-side via Jina+Haiku (no tmux window)
+	ForceContentClassify bool       `toml:"force_content_classify"` // EPIC-084 M3: always run content-LLM classification even when cascade produces a profile
+	ShortsRubricTemplate string     `toml:"shorts_rubric_template"` // EPIC-012 M7: rubric override for YouTube Shorts scoring
 
 	// F2: KindCapture fields  -  required when kind=capture.
 	ArtifactDir              string `toml:"artifact_dir"`               // base dir, e.g. "docs/captures"
@@ -415,25 +416,25 @@ type Config struct {
 //
 // All fields are optional; an empty value means "fall back to env/default".
 type ServerConfig struct {
-	Port           int    `toml:"port"`
-	Token          string `toml:"token"`           // discouraged: prefer LINKARI_TOKEN env
-	JiraToken      string `toml:"jira_token"`      // EPIC-057: scoped bearer for ginit_* actions; ${secretsmanager:name#field} or literal
-	JiraAPIUsername string `toml:"atlassian_email"`     // ${secretsmanager:linkari/jira-webhook#ATLASSIAN_EMAIL} or literal
-	JiraAPIPassword string `toml:"atlassian_api_token"` // ${secretsmanager:linkari/jira-webhook#ATLASSIAN_API_TOKEN} or literal
-	JiraDomain      string `toml:"jira_domain"`       // ${secretsmanager:linkari/jira-webhook#JIRA_DOMAIN} or literal
-	PagerDutyToken              string `toml:"pagerduty_token"`               // ${secretsmanager:linkari/jira-webhook#PAGERDUTY_API_TOKEN} or literal
-	GitHubToken                 string `toml:"github_token"`                  // ${secretsmanager:linkari/github-pat} or literal PAT
-	GoogleServiceAccountPath    string `toml:"google_service_account_path"`   // path to service account JSON; ${secretsmanager:...} writes to cache dir
-	AtlassianConfluenceToken    string `toml:"atlassian_confluence_token"`    // ${secretsmanager:linkari/confluence-token} or literal
-	GoogleOAuthToken            string `toml:"google_oauth_token"`            // ${secretsmanager:linkari/google-oauth-token} or serialized oauth2.Token JSON
-	QueueDB        string `toml:"queue_db"`
-	FirebaseSA     string `toml:"firebase_sa"`
-	LogFile        string `toml:"log_file"`
-	Shell          string `toml:"shell"`
-	ShellArgs      string `toml:"shell_args"`
-	NotifyMinScore int    `toml:"notify_min_score"`
-	ServerURL      string `toml:"server_url"` // base URL fish callbacks should use
-	TSNetAuthKey   string `toml:"tsnet_authkey"` // EPIC-047: ${secretsmanager:...} or literal
+	Port                     int    `toml:"port"`
+	Token                    string `toml:"token"`                       // discouraged: prefer LINKARI_TOKEN env
+	JiraToken                string `toml:"jira_token"`                  // EPIC-057: scoped bearer for ginit_* actions; ${secretsmanager:name#field} or literal
+	JiraAPIUsername          string `toml:"atlassian_email"`             // ${secretsmanager:linkari/jira-webhook#ATLASSIAN_EMAIL} or literal
+	JiraAPIPassword          string `toml:"atlassian_api_token"`         // ${secretsmanager:linkari/jira-webhook#ATLASSIAN_API_TOKEN} or literal
+	JiraDomain               string `toml:"jira_domain"`                 // ${secretsmanager:linkari/jira-webhook#JIRA_DOMAIN} or literal
+	PagerDutyToken           string `toml:"pagerduty_token"`             // ${secretsmanager:linkari/jira-webhook#PAGERDUTY_API_TOKEN} or literal
+	GitHubToken              string `toml:"github_token"`                // ${secretsmanager:linkari/github-pat} or literal PAT
+	GoogleServiceAccountPath string `toml:"google_service_account_path"` // path to service account JSON; ${secretsmanager:...} writes to cache dir
+	AtlassianConfluenceToken string `toml:"atlassian_confluence_token"`  // ${secretsmanager:linkari/confluence-token} or literal
+	GoogleOAuthToken         string `toml:"google_oauth_token"`          // ${secretsmanager:linkari/google-oauth-token} or serialized oauth2.Token JSON
+	QueueDB                  string `toml:"queue_db"`
+	FirebaseSA               string `toml:"firebase_sa"`
+	LogFile                  string `toml:"log_file"`
+	Shell                    string `toml:"shell"`
+	ShellArgs                string `toml:"shell_args"`
+	NotifyMinScore           int    `toml:"notify_min_score"`
+	ServerURL                string `toml:"server_url"`    // base URL fish callbacks should use
+	TSNetAuthKey             string `toml:"tsnet_authkey"` // EPIC-047: ${secretsmanager:...} or literal
 
 	// EPIC-048: new fields for zero-flag boot.
 	// Tsnet uses *bool so nil encodes "absent" (→ default true) vs explicit false.
@@ -464,7 +465,7 @@ type ServerConfig struct {
 	SnapshotInterval Duration `toml:"snapshot_interval"`
 	SnapshotPath     string   `toml:"snapshot_path"`
 
-	// EPIC-052: share action resolution policy. Default is caller-wins  - 
+	// EPIC-052: share action resolution policy. Default is caller-wins  -
 	// the invariant check in resolveShareAction refuses to override a
 	// non-empty received_action unless Share.HeuristicOverrideEnabled is true.
 	Share ShareConfig `toml:"share"`
@@ -474,27 +475,27 @@ type ServerConfig struct {
 	FfmpegPath   string `toml:"ffmpeg_path"`   // path to ffmpeg binary (default: ffmpeg on PATH)
 
 	// EPIC-009: YouTube transcription config.
-	TranscriptsDir string       `toml:"transcripts_dir"` // directory for transcript markdown files (default: ~/code/personal/docs/transcripts)
-	YtdlpPath      string       `toml:"ytdlp_path"`      // path to yt-dlp binary (default: yt-dlp on PATH)
+	TranscriptsDir string `toml:"transcripts_dir"` // directory for transcript markdown files (default: ~/code/personal/docs/transcripts)
+	YtdlpPath      string `toml:"ytdlp_path"`      // path to yt-dlp binary (default: yt-dlp on PATH)
 
 	// EPIC-007: PDF document content extraction via LiteParse.
-	LiteParseePath string        `toml:"liteparse_path"` // path to lit binary (default: lit on PATH; install: brew install llamaindex-liteparse)
-	LiteParse      LiteParseConfig `toml:"liteparse"`  // EPIC-104: confidence-aware extraction config
-	YouTube        YouTubeConfig `toml:"youtube"`        // EPIC-090 M5: per-field YouTube tuning
-	Whisper        WhisperConfig `toml:"whisper"`        // EPIC-108: whisper-cli concurrency knobs
+	LiteParseePath string          `toml:"liteparse_path"` // path to lit binary (default: lit on PATH; install: brew install llamaindex-liteparse)
+	LiteParse      LiteParseConfig `toml:"liteparse"`      // EPIC-104: confidence-aware extraction config
+	YouTube        YouTubeConfig   `toml:"youtube"`        // EPIC-090 M5: per-field YouTube tuning
+	Whisper        WhisperConfig   `toml:"whisper"`        // EPIC-108: whisper-cli concurrency knobs
 
 	// EPIC-001: Google Sign-In config.
-	GoogleClientID     string `toml:"google_client_id"`     // ${secretsmanager:...} or literal; resolved via expandConfigRefs
-	GoogleClientSecret string `toml:"google_client_secret"` // ${secretsmanager:...} or literal; required for YouTube API token refresh
-	SessionTTLDays int      `toml:"session_ttl_days"` // session token TTL in days (default 90)
-	InviteCodes    []string `toml:"invite_codes"`     // static invite codes seeded into DB at startup
+	GoogleClientID     string   `toml:"google_client_id"`     // ${secretsmanager:...} or literal; resolved via expandConfigRefs
+	GoogleClientSecret string   `toml:"google_client_secret"` // ${secretsmanager:...} or literal; required for YouTube API token refresh
+	SessionTTLDays     int      `toml:"session_ttl_days"`     // session token TTL in days (default 90)
+	InviteCodes        []string `toml:"invite_codes"`         // static invite codes seeded into DB at startup
 
 	// EPIC-073: shield middleware config.
 	Shield ShieldYAMLConfig `toml:"shield"`
 
 	// EPIC-072 M6: cluster detection config.
 	ClusterThreshold float64 `toml:"cluster_threshold"` // Jaccard threshold (default 0.4)
-	ClusterMinItems  int     `toml:"cluster_min_items"`  // minimum items to form cluster (default 3)
+	ClusterMinItems  int     `toml:"cluster_min_items"` // minimum items to form cluster (default 3)
 
 	// EPIC-072 M9/M11: action routing config.
 	ActionRouteThreshold int    `toml:"action_route_threshold"` // score threshold for action routes (default 80)
@@ -663,7 +664,6 @@ func (m DurationMap) Durations() map[string]time.Duration {
 	}
 	return out
 }
-
 
 // TemplateData is the data passed to command templates.
 type TemplateData struct {
@@ -1088,33 +1088,33 @@ func builtinConfig() *Config {
 			// F2: capture actions  -  wired with ArtifactDir/ArtifactFilenameTemplate.
 			// JiraRenderer registered at startup (F3); confluence renderer deferred to F6.
 			{
-				ID:                      "capture_jira_auto",
-				Label:                   "Capture Jira",
-				Icon:                    "work",
-				Type:                    "url",
-				Kind:                    KindCapture,
-				ProfileMap:              "auto",
-				ArtifactDir:             "docs/captures",
+				ID:                       "capture_jira_auto",
+				Label:                    "Capture Jira",
+				Icon:                     "work",
+				Type:                     "url",
+				Kind:                     KindCapture,
+				ProfileMap:               "auto",
+				ArtifactDir:              "docs/captures",
 				ArtifactFilenameTemplate: "{{.Date}}_{{.Key}}.md",
 			},
 			{
-				ID:                      "capture_confluence_auto",
-				Label:                   "Capture Confluence",
-				Icon:                    "work",
-				Type:                    "url",
-				Kind:                    KindCapture,
-				ProfileMap:              "auto",
-				ArtifactDir:             "docs/captures",
+				ID:                       "capture_confluence_auto",
+				Label:                    "Capture Confluence",
+				Icon:                     "work",
+				Type:                     "url",
+				Kind:                     KindCapture,
+				ProfileMap:               "auto",
+				ArtifactDir:              "docs/captures",
 				ArtifactFilenameTemplate: "{{.Date}}_{{.Key}}.md",
 			},
 			{
-				ID:                      "capture_github_pr_auto",
-				Label:                   "Capture GitHub PR",
-				Icon:                    "work",
-				Type:                    "url",
-				Kind:                    KindCapture,
-				ProfileMap:              "auto",
-				ArtifactDir:             "docs/captures",
+				ID:                       "capture_github_pr_auto",
+				Label:                    "Capture GitHub PR",
+				Icon:                     "work",
+				Type:                     "url",
+				Kind:                     KindCapture,
+				ProfileMap:               "auto",
+				ArtifactDir:              "docs/captures",
 				ArtifactFilenameTemplate: "{{.Date}}_{{.Key}}.md",
 			},
 		},

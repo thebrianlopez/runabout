@@ -90,14 +90,16 @@ func NewExecutionRuntimeWithPing(ctx context.Context, cfg SandboxConfig) Executi
 	}
 	cr := &ContainerRuntime{cfg: cfg}
 	if err := cr.Ping(ctx); err != nil {
-		slog.Warn("container runtime unavailable — falling back to local exec",
+		slog.Warn(
+			"container runtime unavailable — falling back to local exec",
 			"event_type", "runtime_unavailable",
 			"socket", cfg.runtimeSocket(),
 			"error", err,
 		)
 		return &LocalRuntime{}
 	}
-	slog.Info("container runtime ready",
+	slog.Info(
+		"container runtime ready",
 		"event_type", "runtime_ready",
 		"socket", cfg.runtimeSocket(),
 	)

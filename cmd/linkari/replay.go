@@ -28,7 +28,8 @@ func StartReplay(q *Queue, router *Router, srv *Server, tmux *TmuxRunner, interv
 				continue
 			}
 
-			slog.Info("replay batch",
+			slog.Info(
+				"replay batch",
 				"event_type", "replay_batch",
 				"pending_count", len(items),
 			)
@@ -48,7 +49,8 @@ func StartReplay(q *Queue, router *Router, srv *Server, tmux *TmuxRunner, interv
 				}
 				result, err := router.Route(req)
 				if err != nil {
-					slog.Error("replay item failed",
+					slog.Error(
+						"replay item failed",
 						"event_type", "replay_result",
 						"id", it.ID,
 						"error", err.Error(),
@@ -57,7 +59,8 @@ func StartReplay(q *Queue, router *Router, srv *Server, tmux *TmuxRunner, interv
 					continue
 				}
 				q.MarkRelayed(it.ID)
-				slog.Info("replay item relayed",
+				slog.Info(
+					"replay item relayed",
 					"event_type", "replay_result",
 					"id", it.ID,
 					"type", it.Type,

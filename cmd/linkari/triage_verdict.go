@@ -263,7 +263,8 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		}
-		slog.Error("claude vision exec failed",
+		slog.Error(
+			"claude vision exec failed",
 			"event_type", "claude_vision_exec_error",
 			"image_path", imagePath,
 			"exit_code", exitCode,
@@ -283,9 +284,9 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 // envelopeMeta holds the token usage and cost metadata extracted from the
 // claude --output-format json envelope. EPIC-062 M2.
 type envelopeMeta struct {
-	CostUSD      float64     `json:"total_cost_usd"`
-	Usage        *TokenUsage `json:"usage,omitempty"`
-	RepairTurn   bool        `json:"repair_turn,omitempty"` // EPIC-084 M4: true when verdict required a repair turn
+	CostUSD    float64     `json:"total_cost_usd"`
+	Usage      *TokenUsage `json:"usage,omitempty"`
+	RepairTurn bool        `json:"repair_turn,omitempty"` // EPIC-084 M4: true when verdict required a repair turn
 }
 
 // parseHaikuEnvelope unwraps a `claude --output-format json` payload into

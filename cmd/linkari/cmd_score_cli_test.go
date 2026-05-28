@@ -102,7 +102,8 @@ func TestScoreCLI_DryRun_NoWrites(t *testing.T) {
 	prompt := writePromptFile(t, "system prompt v1")
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 
-	if _, err := runScore(t, dbPath, "the body",
+	if _, err := runScore(
+		t, dbPath, "the body",
 		"https://example.com/dry",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -141,7 +142,8 @@ func TestScoreCLI_NoPush_QueueOnly(t *testing.T) {
 	prompt := writePromptFile(t, "system prompt v1")
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 
-	if _, err := runScore(t, dbPath, "the body",
+	if _, err := runScore(
+		t, dbPath, "the body",
 		"https://example.com/nopush",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -178,7 +180,8 @@ func TestScoreCLI_Default_FullPath(t *testing.T) {
 	prompt := writePromptFile(t, "system prompt v1")
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 
-	if _, err := runScore(t, dbPath, "the body",
+	if _, err := runScore(
+		t, dbPath, "the body",
 		"https://example.com/full",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -226,7 +229,8 @@ func TestScoreCLI_DualWriterInvariant(t *testing.T) {
 	prompt := writePromptFile(t, "system prompt v1")
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 
-	if _, err := runScore(t, dbPath, "first",
+	if _, err := runScore(
+		t, dbPath, "first",
 		"https://example.com/one",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -237,7 +241,8 @@ func TestScoreCLI_DualWriterInvariant(t *testing.T) {
 	// Second call, different URL, same profile — must be throttled by
 	// EnqueueDigestIfDue. A fourth path that bypassed the helper would
 	// insert a second row.
-	if _, err := runScore(t, dbPath, "second",
+	if _, err := runScore(
+		t, dbPath, "second",
 		"https://example.com/two",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -280,7 +285,8 @@ func TestScoreCLI_PromptFile_Override(t *testing.T) {
 	cfgBefore := archiveThresholdCfg
 	archiveThresholdMu.RUnlock()
 
-	if _, err := runScore(t, dbPath, "the body",
+	if _, err := runScore(
+		t, dbPath, "the body",
 		"https://example.com/override",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -306,7 +312,8 @@ func TestScoreCLI_PromptFile_Override(t *testing.T) {
 
 	// --prompt-file with an empty file must error clearly.
 	empty := writePromptFile(t, "   \n  ")
-	_, err := runScore(t, dbPath, "body",
+	_, err := runScore(
+		t, dbPath, "body",
 		"https://example.com/empty-prompt",
 		"--profile", "eng",
 		"--prompt-file", empty,
@@ -317,7 +324,8 @@ func TestScoreCLI_PromptFile_Override(t *testing.T) {
 	}
 
 	// --prompt-file with a missing path must error clearly.
-	_, err = runScore(t, dbPath, "body",
+	_, err = runScore(
+		t, dbPath, "body",
 		"https://example.com/missing-prompt",
 		"--profile", "eng",
 		"--prompt-file", filepath.Join(t.TempDir(), "does-not-exist.md"),
@@ -348,7 +356,8 @@ func TestScoreCLI_BelowThreshold_StillPushes(t *testing.T) {
 		archiveThresholdMu.Unlock()
 	})
 
-	if _, err := runScore(t, dbPath, "the body",
+	if _, err := runScore(
+		t, dbPath, "the body",
 		"https://example.com/below-threshold",
 		"--profile", "eng",
 		"--prompt-file", prompt,

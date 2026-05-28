@@ -9,8 +9,8 @@ import (
 	"sort"
 	"text/tabwriter"
 
-	"github.com/thebrianlopez/runabout/internal/registry"
 	"github.com/spf13/cobra"
+	"github.com/thebrianlopez/runabout/internal/registry"
 )
 
 func newReportCmd() *cobra.Command {
@@ -39,10 +39,10 @@ type eventLine struct {
 }
 
 type agentStats struct {
-	agentID      string
+	agentID        string
 	classification registry.Classification
-	count        int
-	unknown      bool
+	count          int
+	unknown        bool
 }
 
 func runReport(cmd *cobra.Command, eventsDir, orgYAMLPath, localOverridePath string) error {

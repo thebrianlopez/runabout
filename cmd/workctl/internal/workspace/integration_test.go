@@ -15,7 +15,7 @@ func setupBareCache(t *testing.T, repoName string) string {
 	t.Helper()
 	orgRoot := t.TempDir()
 	cacheDir := filepath.Join(orgRoot, ".git_cache")
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -35,7 +35,7 @@ func setupBareCache(t *testing.T, repoName string) string {
 	exec.Command("git", "-C", tmpClone, "config", "user.name", "Test").Run()
 
 	readme := filepath.Join(tmpClone, "README.md")
-	if err := os.WriteFile(readme, []byte("# "+repoName+"\n"), 0644); err != nil {
+	if err := os.WriteFile(readme, []byte("# "+repoName+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	exec.Command("git", "-C", tmpClone, "add", ".").Run()
@@ -73,10 +73,10 @@ func TestIntegration_FullInit(t *testing.T) {
 
 	// Create docs directory for symlink
 	docsDir := filepath.Join(orgRoot, "docs")
-	if err := os.MkdirAll(docsDir, 0755); err != nil {
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(docsDir, "index.md"), []byte("# Docs\n"), 0644)
+	os.WriteFile(filepath.Join(docsDir, "index.md"), []byte("# Docs\n"), 0o644)
 
 	opts := &InitOptions{
 		OrgPath:       orgRoot,
@@ -143,7 +143,7 @@ func TestIntegration_FullInit(t *testing.T) {
 	}
 	// File permissions should be 0600
 	info, _ := os.Stat(mdPath)
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Errorf("issue markdown permissions = %o, want 0600", info.Mode().Perm())
 	}
 
@@ -312,7 +312,7 @@ func TestIntegration_MultipleRepos(t *testing.T) {
 	// Create org root with two bare repos
 	orgRoot := t.TempDir()
 	cacheDir := filepath.Join(orgRoot, ".git_cache")
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -328,7 +328,7 @@ func TestIntegration_MultipleRepos(t *testing.T) {
 		}
 		exec.Command("git", "-C", tmpClone, "config", "user.email", "test@test.com").Run()
 		exec.Command("git", "-C", tmpClone, "config", "user.name", "Test").Run()
-		os.WriteFile(filepath.Join(tmpClone, "README.md"), []byte("# "+repo+"\n"), 0644)
+		os.WriteFile(filepath.Join(tmpClone, "README.md"), []byte("# "+repo+"\n"), 0o644)
 		exec.Command("git", "-C", tmpClone, "add", ".").Run()
 		exec.Command("git", "-C", tmpClone, "commit", "-m", "initial").CombinedOutput()
 		exec.Command("git", "-C", tmpClone, "branch", "-M", "main").Run()

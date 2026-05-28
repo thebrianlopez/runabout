@@ -247,7 +247,6 @@ func (b *Backend) DeleteAddress(userID, addrID string) error {
 func (b *Backend) SetAddressOrder(userID string, addrIDs []string) error {
 	return writeBackendRet(b, func(b *unsafeBackend) error {
 		return b.withAcc(userID, func(acc *account) error {
-
 			primaryID := acc.primary().addrID
 
 			for i, addrID := range addrIDs {
@@ -349,7 +348,6 @@ func (b *Backend) GetLabels(userID string, types ...proton.LabelType) ([]proton.
 				return res, nil
 			})
 		})
-
 	})
 }
 
@@ -754,7 +752,6 @@ func (b *Backend) CreateDraft(userID, addrID string, draft proton.DraftTemplate,
 				})
 			})
 		})
-
 	})
 }
 
@@ -1065,7 +1062,6 @@ func (b *Backend) GetEvent(userID, rawEventID string) (event proton.Event, more 
 			})
 		})
 	})
-
 	if err != nil {
 		return proton.Event{}, false, err
 	}

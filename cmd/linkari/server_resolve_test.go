@@ -20,9 +20,9 @@ func TestResolveServerField(t *testing.T) {
 	ctx := context.Background()
 
 	cases := []struct {
-		name                          string
-		flag, env, yaml, def          string
-		wantValue, wantTier, wantSrc  string
+		name                         string
+		flag, env, yaml, def         string
+		wantValue, wantTier, wantSrc string
 	}{
 		{"flag wins", "F", "E", "Y", "D", "F", "flag", "literal"},
 		{"env wins", "", "E", "Y", "D", "E", "env", "literal"},

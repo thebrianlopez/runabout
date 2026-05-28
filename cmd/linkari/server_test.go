@@ -313,10 +313,10 @@ func TestTLSCertPresent(t *testing.T) {
 	certFile := filepath.Join(dir, "cert.pem")
 	keyFile := filepath.Join(dir, "key.pem")
 	// Write placeholder files to simulate mkcert output being present.
-	if err := os.WriteFile(certFile, []byte("cert"), 0600); err != nil {
+	if err := os.WriteFile(certFile, []byte("cert"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(keyFile, []byte("key"), 0600); err != nil {
+	if err := os.WriteFile(keyFile, []byte("key"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(certFile); err != nil {

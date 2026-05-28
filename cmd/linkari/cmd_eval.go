@@ -104,8 +104,8 @@ type Scorer interface {
 // goldens it just read").
 type identityScorer struct{}
 
-func (identityScorer) Name() string                           { return "identity" }
-func (identityScorer) Score(f Fixture) (Golden, error)        { return f.Golden, nil }
+func (identityScorer) Name() string                    { return "identity" }
+func (identityScorer) Score(f Fixture) (Golden, error) { return f.Golden, nil }
 
 // --- Subcommand wiring ---
 
@@ -308,10 +308,10 @@ is bumped to the refresh timestamp.`,
 					Score:         p.scorecard.Score,
 					Verdict:       p.scorecard.Verdict,
 					RawMarkdown:   p.scorecard.RawMarkdown,
-					Gaps:          p.scorecard.Gaps,           // EPIC-082 M4
-					SourceType:    "eval-refresh",             // EPIC-082 M4
-					PromptVersion: p.scorecard.PromptVersion,  // EPIC-082 M4
-					PromptHash:    p.scorecard.PromptHash,     // EPIC-082 M4
+					Gaps:          p.scorecard.Gaps,          // EPIC-082 M4
+					SourceType:    "eval-refresh",            // EPIC-082 M4
+					PromptVersion: p.scorecard.PromptVersion, // EPIC-082 M4
+					PromptHash:    p.scorecard.PromptHash,    // EPIC-082 M4
 					RefreshedFrom: &prior,
 				}
 				f, err := os.Create(p.path)
@@ -339,9 +339,9 @@ is bumped to the refresh timestamp.`,
 
 func evalCaptureCmd() *cobra.Command {
 	var (
-		workspace string
-		outDir    string
-		profile   string
+		workspace   string
+		outDir      string
+		profile     string
 		urlOverride string
 	)
 	cmd := &cobra.Command{
@@ -354,7 +354,7 @@ func evalCaptureCmd() *cobra.Command {
 			if outDir == "" {
 				outDir = defaultFixturesDirForWrite()
 			}
-			if err := os.MkdirAll(outDir, 0755); err != nil {
+			if err := os.MkdirAll(outDir, 0o755); err != nil {
 				return fmt.Errorf("mkdir fixtures: %w", err)
 			}
 

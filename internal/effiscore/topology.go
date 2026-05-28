@@ -11,16 +11,16 @@ import (
 // EmitEfficiency emits a cloud_llm_efficiency event to the topology bus.
 func EmitEfficiency(result ScoreResult) {
 	meta := map[string]interface{}{
-		"user":             result.User,
-		"window_days":      result.WindowDays,
-		"cache_hit_rate":   result.Signals.CacheHitRatePct,
-		"cache_reuse":      result.Signals.CacheReuseFactor,
-		"io_ratio":         result.Signals.IORatio,
-		"token_savings":    int64(result.Signals.TokenSavingsAbsolute),
-		"haiku_share":      result.Signals.HaikuSharePct,
-		"composite_score":  result.Score,
-		"tier":             result.Tier,
-		"rel_type":         "observes:cloud_llm",
+		"user":            result.User,
+		"window_days":     result.WindowDays,
+		"cache_hit_rate":  result.Signals.CacheHitRatePct,
+		"cache_reuse":     result.Signals.CacheReuseFactor,
+		"io_ratio":        result.Signals.IORatio,
+		"token_savings":   int64(result.Signals.TokenSavingsAbsolute),
+		"haiku_share":     result.Signals.HaikuSharePct,
+		"composite_score": result.Score,
+		"tier":            result.Tier,
+		"rel_type":        "observes:cloud_llm",
 	}
 	emitEvent("cloud_llm_efficiency", fmt.Sprintf("effiscore score --user %s", result.User), meta)
 }

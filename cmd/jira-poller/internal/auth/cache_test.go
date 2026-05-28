@@ -15,10 +15,10 @@ import (
 
 // fakeSM is an in-memory SecretsManagerAPI for tests.
 type fakeSM struct {
-	mu      sync.Mutex
-	data    map[string]string
-	err     error
-	calls   int
+	mu    sync.Mutex
+	data  map[string]string
+	err   error
+	calls int
 }
 
 func (f *fakeSM) GetSecretValue(_ context.Context, id string) (string, error) {

@@ -15,22 +15,24 @@ import (
 // --- Mocks ---
 
 type mockBridge struct {
-	mu         sync.Mutex
+	mu          sync.Mutex
 	ensureCalls []panePair
 	removeCalls []panePair
 	resizeCalls []resizeCall
 }
 
-type panePair struct{ host, paneID string }
-type resizeCall struct {
-	host, paneID    string
-	rows, cols      int
-}
+type (
+	panePair   struct{ host, paneID string }
+	resizeCall struct {
+		host, paneID string
+		rows, cols   int
+	}
+)
 
-func (b *mockBridge) EnsureSession(name string) error                      { return nil }
-func (b *mockBridge) RemoveSession(name string) error                      { return nil }
-func (b *mockBridge) ApplyOutput(name string, data []byte) error           { return nil }
-func (b *mockBridge) SocketPath() string                                   { return "" }
+func (b *mockBridge) EnsureSession(name string) error            { return nil }
+func (b *mockBridge) RemoveSession(name string) error            { return nil }
+func (b *mockBridge) ApplyOutput(name string, data []byte) error { return nil }
+func (b *mockBridge) SocketPath() string                         { return "" }
 
 func (b *mockBridge) EnsurePane(host, paneID string) error {
 	b.mu.Lock()
@@ -63,11 +65,11 @@ func newMockSession() *mockSession {
 	return &mockSession{disconnected: make(chan struct{})}
 }
 
-func (m *mockSession) Host() string                           { return "dev" }
-func (m *mockSession) Status() ssh.SessionStatus              { return ssh.StatusConnected }
-func (m *mockSession) Disconnected() <-chan struct{}           { return m.disconnected }
-func (m *mockSession) Events() <-chan ssh.PaneEvent            { return nil }
-func (m *mockSession) Close() error                           { return nil }
+func (m *mockSession) Host() string                  { return "dev" }
+func (m *mockSession) Status() ssh.SessionStatus     { return ssh.StatusConnected }
+func (m *mockSession) Disconnected() <-chan struct{} { return m.disconnected }
+func (m *mockSession) Events() <-chan ssh.PaneEvent  { return nil }
+func (m *mockSession) Close() error                  { return nil }
 func (m *mockSession) SendInput(data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

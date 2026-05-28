@@ -264,7 +264,7 @@ func (c *Contact) SetSettings(kr *crypto.KeyRing, email string, cardType CardTyp
 
 	// KEY
 	if len(settings.Keys) > 0 {
-		var keys = ""
+		keys := ""
 		for i, key := range settings.Keys {
 			if i > 0 {
 				keys += ","

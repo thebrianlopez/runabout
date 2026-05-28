@@ -17,8 +17,8 @@ type ActionRouteConfig struct {
 
 // validActionRoutes enumerates accepted action_route values.
 var validActionRoutes = map[string]bool{
-	"draft_jira_ticket":       true,
-	"append_research_digest":  true,
+	"draft_jira_ticket":      true,
+	"append_research_digest": true,
 }
 
 // computeActionRoute determines the action route based on score, profile, and verdict.
@@ -57,7 +57,8 @@ func dispatchActionRoute(ctx context.Context, sc *Scorecard, profile, url string
 		return
 	}
 
-	slog.InfoContext(ctx, "action_route dispatched",
+	slog.InfoContext(
+		ctx, "action_route dispatched",
 		"event_type", "action_route_dispatched",
 		"id", itemID,
 		"route", route,

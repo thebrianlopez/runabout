@@ -15,9 +15,9 @@ import (
 // ── mock ─────────────────────────────────────────────────────────────────────
 
 type mockTransactionsAPI struct {
-	syncPageFn           func(ctx context.Context, accessToken, cursor string) (plaid.TransactionsSyncResponse, error)
-	fetchAccountsFn      func(ctx context.Context, accessToken string) (plaid.AccountsGetResponse, error)
-	createLinkTokenFn    func(ctx context.Context) (string, error)
+	syncPageFn            func(ctx context.Context, accessToken, cursor string) (plaid.TransactionsSyncResponse, error)
+	fetchAccountsFn       func(ctx context.Context, accessToken string) (plaid.AccountsGetResponse, error)
+	createLinkTokenFn     func(ctx context.Context) (string, error)
 	exchangePublicTokenFn func(ctx context.Context, publicToken string) (string, string, error)
 }
 

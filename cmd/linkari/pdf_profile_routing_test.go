@@ -176,7 +176,7 @@ func TestRG1_MimeProfileMap_Unchanged(t *testing.T) {
 		{"application/vnd.ms-excel", "finance"},
 		{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "finance"},
 		{"text/x-vcard", "life"},
-		{"application/pdf", ""},  // intentionally excluded from mimeProfileMap; AppCategory=0 here
+		{"application/pdf", ""}, // intentionally excluded from mimeProfileMap; AppCategory=0 here
 	}
 	for _, c := range cases {
 		t.Run(c.mime, func(t *testing.T) {

@@ -2,12 +2,13 @@ package proton_test
 
 import (
 	"bytes"
+	"testing"
+
 	"github.com/ProtonMail/gluon/rfc822"
 	"github.com/ProtonMail/go-proton-api"
 	"github.com/ProtonMail/gopenpgp/v2/crypto"
 	"github.com/emersion/go-vcard"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 const message = `From: Nathaniel Borenstein <nsb@bellcore.com>
@@ -22,10 +23,10 @@ This is explicitly typed plain ASCII text.
 func TestContactSettings(t *testing.T) {
 	card, err := proton.NewCard(nil, proton.CardTypeClear)
 	require.NoError(t, err)
-	var field = vcard.Field{Value: "user@user"}
+	field := vcard.Field{Value: "user@user"}
 	err = card.Set(nil, vcard.FieldEmail, &field)
 	require.NoError(t, err)
-	var contact = proton.Contact{
+	contact := proton.Contact{
 		ContactMetadata: proton.ContactMetadata{},
 		ContactCards: proton.ContactCards{
 			Cards: []*proton.Card{card},

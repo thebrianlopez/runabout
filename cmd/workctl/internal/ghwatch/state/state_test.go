@@ -97,7 +97,7 @@ func TestMissingFile(t *testing.T) {
 func TestCorruptFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "corrupt.json")
-	if err := os.WriteFile(path, []byte("{not valid json"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("{not valid json"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 

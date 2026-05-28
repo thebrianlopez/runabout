@@ -92,8 +92,10 @@ func TestActiveActionsWithCondition(t *testing.T) {
 	// Condition evaluation still works on user-supplied actions.
 	cfg := &Config{
 		Actions: []ActionConfig{
-			{ID: "cond_test", Kind: KindTemplate, CommandTemplate: "echo",
-				Condition: "env:TEST_COND=1"},
+			{
+				ID: "cond_test", Kind: KindTemplate, CommandTemplate: "echo",
+				Condition: "env:TEST_COND=1",
+			},
 			{ID: "always_on", Kind: KindTemplate, CommandTemplate: "echo"},
 		},
 	}
@@ -371,7 +373,7 @@ dining = "24h"
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte(tomlStr), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(tomlStr), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	cfg, err := LoadConfig(context.Background(), path)
@@ -464,8 +466,10 @@ func TestMergeWithBuiltin_PartialOverride(t *testing.T) {
 func TestMergeWithBuiltin_AppendsExtras(t *testing.T) {
 	user := &Config{
 		Actions: []ActionConfig{
-			{ID: "custom_new", Label: "Custom", Type: "url", Target: "linkari:0",
-				Kind: KindTemplate, CommandTemplate: "echo {{.URL}}"},
+			{
+				ID: "custom_new", Label: "Custom", Type: "url", Target: "linkari:0",
+				Kind: KindTemplate, CommandTemplate: "echo {{.URL}}",
+			},
 		},
 	}
 	merged, err := MergeWithBuiltin(builtinConfig(), user)
@@ -531,8 +535,10 @@ func TestReloadArchiveThresholdConfig(t *testing.T) {
 	cfg := &Config{
 		DefaultArchiveThreshold: 50,
 		Actions: []ActionConfig{
-			{ID: "uinit_eng", Kind: KindTemplate, CommandTemplate: "echo",
-				ProfileMap: "prefix", ArchiveThreshold: 99},
+			{
+				ID: "uinit_eng", Kind: KindTemplate, CommandTemplate: "echo",
+				ProfileMap: "prefix", ArchiveThreshold: 99,
+			},
 		},
 	}
 	if err := cfg.validate(); err != nil {
@@ -549,8 +555,10 @@ func TestReloadArchiveThresholdConfig(t *testing.T) {
 	cfg2 := &Config{
 		DefaultArchiveThreshold: 50,
 		Actions: []ActionConfig{
-			{ID: "uinit_eng", Kind: KindTemplate, CommandTemplate: "echo",
-				ProfileMap: "prefix", ArchiveThreshold: 60},
+			{
+				ID: "uinit_eng", Kind: KindTemplate, CommandTemplate: "echo",
+				ProfileMap: "prefix", ArchiveThreshold: 60,
+			},
 		},
 	}
 	if err := cfg2.validate(); err != nil {

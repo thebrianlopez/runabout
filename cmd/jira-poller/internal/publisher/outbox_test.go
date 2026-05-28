@@ -171,7 +171,8 @@ func TestPublish_CT10_PayloadSchema(t *testing.T) {
 	}
 
 	var payload string
-	db.QueryRowContext(context.Background(),
+	db.QueryRowContext(
+		context.Background(),
 		`SELECT payload FROM pending_events WHERE event_id = ?`, "10234",
 	).Scan(&payload)
 
@@ -243,7 +244,8 @@ func TestDrain_CT12_BackoffOnError(t *testing.T) {
 
 	var attempts int
 	var nextAttemptAt int64
-	db.QueryRowContext(ctx,
+	db.QueryRowContext(
+		ctx,
 		`SELECT attempts, next_attempt_at FROM pending_events WHERE event_id='id1'`,
 	).Scan(&attempts, &nextAttemptAt)
 

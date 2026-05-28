@@ -11,13 +11,13 @@ import (
 
 // stubSource is a ContentSource that records whether Start was called.
 type stubSource struct {
-	name      string
-	authDeps  []string
-	startFn   func(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error
+	name     string
+	authDeps []string
+	startFn  func(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error
 }
 
-func (s *stubSource) Name() string         { return s.name }
-func (s *stubSource) AuthDeps() []string   { return s.authDeps }
+func (s *stubSource) Name() string       { return s.name }
+func (s *stubSource) AuthDeps() []string { return s.authDeps }
 func (s *stubSource) Start(ctx context.Context, q *Queue, emit func(*ShareRequest) error) error {
 	if s.startFn != nil {
 		return s.startFn(ctx, q, emit)
@@ -486,7 +486,7 @@ func TestSourceRegistry_F5_CT6_OneSkippedOneStarted(t *testing.T) {
 func TestSourceRegistry_F5_BT3_NilBskyClientSafe(t *testing.T) {
 	// scoreAsync is called with bskyClient=nil throughout test suite.
 	// This test asserts the compile-time interface is satisfied.
-	var _ = func(c *BlueskyClient) bool { return c == nil }(&BlueskyClient{})
+	_ = func(c *BlueskyClient) bool { return c == nil }(&BlueskyClient{})
 }
 
 // RG-1 (F5): BlueskyFirehoseSource with nil client is skipped via registry,

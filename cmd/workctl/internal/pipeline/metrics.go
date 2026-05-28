@@ -32,7 +32,8 @@ type MetricsRecord struct {
 
 // format returns the pipe-delimited log line (no trailing newline).
 func (r MetricsRecord) format() string {
-	return fmt.Sprintf("%s|%s|%d|%.2f|%d|%s|%s",
+	return fmt.Sprintf(
+		"%s|%s|%d|%.2f|%d|%s|%s",
 		r.Timestamp.UTC().Format("20060102T150405Z"),
 		r.Task,
 		r.LatencyMS,

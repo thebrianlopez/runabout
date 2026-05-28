@@ -72,7 +72,8 @@ func setUnsupportedPipelineDomains(domains []string) {
 	}
 	pattern := `(?i)(?:` + strings.Join(escaped, `|`) + `)`
 	unsupportedPipelineRE = regexp.MustCompile(pattern)
-	slog.Info("unsupported pipeline domains overridden from config",
+	slog.Info(
+		"unsupported pipeline domains overridden from config",
 		"event_type", "unsupported_pipeline_domains_set",
 		"count", len(domains),
 		"pattern", pattern,
@@ -172,7 +173,8 @@ var execFfmpegConvert = runFfmpegConvert
 
 // runFfmpegConvert invokes ffmpeg to convert an audio file to 16kHz mono WAV.
 func runFfmpegConvert(ctx context.Context, inputPath, outputPath string) error {
-	cmd := exec.CommandContext(ctx, ffmpegBinaryPath,
+	cmd := exec.CommandContext(
+		ctx, ffmpegBinaryPath,
 		"-i", inputPath,
 		"-ar", "16000",
 		"-ac", "1",
@@ -254,7 +256,8 @@ func runLiteParse(ctx context.Context, path string, cfg LiteParseConfig) (string
 	text, confidence, pageCount, parseErr := parseLiteParseJSON(out)
 	if parseErr != nil {
 		// JSON parse fallback: call --no-ocr -q (previous behavior).
-		slog.Warn("lit parse: json parse failed, falling back to plain-text",
+		slog.Warn(
+			"lit parse: json parse failed, falling back to plain-text",
 			"event_type", "pdf_extraction_json_fallback",
 			"parse_error", parseErr,
 		)
@@ -267,7 +270,8 @@ func runLiteParse(ctx context.Context, path string, cfg LiteParseConfig) (string
 
 	ocrRetry := false
 	if confidence < threshold {
-		slog.Info("lit parse: low confidence, triggering OCR retry",
+		slog.Info(
+			"lit parse: low confidence, triggering OCR retry",
 			"event_type", "pdf_extraction_ocr_triggered",
 			"confidence_before_ocr", confidence,
 		)
@@ -280,7 +284,8 @@ func runLiteParse(ctx context.Context, path string, cfg LiteParseConfig) (string
 		}
 	}
 
-	slog.Info("lit parse: complete",
+	slog.Info(
+		"lit parse: complete",
 		"event_type", "pdf_extraction_json",
 		"confidence", confidence,
 		"page_count", pageCount,
@@ -299,7 +304,8 @@ func runWhisperCLI(ctx context.Context, wavPath, modelPath string) (string, erro
 	if modelPath == "" {
 		modelPath = defaultWhisperModel()
 	}
-	cmd := exec.CommandContext(ctx, "whisper-cli",
+	cmd := exec.CommandContext(
+		ctx, "whisper-cli",
 		"--model", modelPath,
 		"--file", wavPath,
 		"--no-timestamps",
@@ -325,7 +331,8 @@ func runFfmpegSegment(ctx context.Context, wavPath string, segmentSecs int) ([]s
 	base := strings.TrimSuffix(filepath.Base(wavPath), filepath.Ext(wavPath))
 	pattern := filepath.Join(dir, base+"_chunk_%03d.wav")
 
-	cmd := exec.CommandContext(ctx, ffmpegBinaryPath,
+	cmd := exec.CommandContext(
+		ctx, ffmpegBinaryPath,
 		"-i", wavPath,
 		"-f", "segment",
 		"-segment_time", fmt.Sprintf("%d", segmentSecs),
@@ -417,7 +424,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// and cost. The pointer fields are updated as scoreAsync progresses.
 	scoreStart := time.Now()
 	var prefilterStage string
-	var evalSkipped = true // assume skipped until eval actually runs
+	evalSkipped := true // assume skipped until eval actually runs
 	var costUSD float64
 	// EPIC-015 M2: tracks the content format returned by FetchWithFallback so
 	// classificationPreamble can emit a format-specific hint to the evaluator.
@@ -526,14 +533,16 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// EPIC-105 M5: PDF profile routing observability.
 	if req.MimeType == "application/pdf" {
 		if classifySource == "intent_metadata" {
-			slog.InfoContext(ctx, "score_async: pdf profile routed via app_category heuristic",
+			slog.InfoContext(
+				ctx, "score_async: pdf profile routed via app_category heuristic",
 				"event_type", "pdf_profile_routed",
 				"row_id", req.QueueRowID,
 				"app_category", req.AppCategory,
 				"profile", profile,
 			)
 		} else {
-			slog.DebugContext(ctx, "score_async: pdf profile heuristic fallthrough",
+			slog.DebugContext(
+				ctx, "score_async: pdf profile heuristic fallthrough",
 				"event_type", "pdf_profile_fallthrough",
 				"row_id", req.QueueRowID,
 				"app_category", req.AppCategory,
@@ -541,7 +550,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		}
 	}
 
-	slog.Info("score_async: start",
+	slog.Info(
+		"score_async: start",
 		"event_type", "score_async_start",
 		"url", rawURL,
 		"type", req.Type,
@@ -560,7 +570,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	if isURLShare && unsupportedPipelineRE.MatchString(rawURL) {
 		prefilterStage = "unsupported_pipeline"
 		if q == nil || req.QueueRowID == 0 {
-			slog.Warn("score_async: unsupported pipeline reached without queue row  -  pre-enqueue gate may have been bypassed",
+			slog.Warn(
+				"score_async: unsupported pipeline reached without queue row  -  pre-enqueue gate may have been bypassed",
 				"event_type", "score_async_skip",
 				"url", rawURL,
 				"reason", "unsupported_pipeline",
@@ -568,7 +579,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				"row_id", req.QueueRowID,
 			)
 		} else {
-			slog.Info("score_async: unsupported pipeline (safety-net)",
+			slog.Info(
+				"score_async: unsupported pipeline (safety-net)",
 				"event_type", "score_async_skip",
 				"url", rawURL,
 				"reason", "unsupported_pipeline",
@@ -594,7 +606,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			// Screenshots use ExtraSubject+ExtraText instead of Jina.
 			screenshotContent := strings.TrimSpace(req.ExtraSubject + "\n" + req.ExtraText)
 			if screenshotContent == "" {
-				slog.Info("score_async: screenshot no text",
+				slog.Info(
+					"score_async: screenshot no text",
 					"event_type", "score_async_skip",
 					"url", rawURL,
 					"reason", "screenshot_no_text",
@@ -636,13 +649,15 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			// where the caller passed text (e.g. Android share with text + URL).
 			if err != nil || strings.TrimSpace(content) == "" {
 				if req.Text != "" {
-					slog.Info("score_async: using pre-populated text (fetch failed or empty)",
+					slog.Info(
+						"score_async: using pre-populated text (fetch failed or empty)",
 						"event_type", "score_async_text_fallback",
 						"url", rawURL,
 					)
 					content = req.Text
 				} else if err != nil {
-					slog.Warn("score_async: fetch failed",
+					slog.Warn(
+						"score_async: fetch failed",
 						"event_type", "score_async_fetch_error",
 						"url", rawURL,
 						"error", err,
@@ -669,7 +684,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 					classifyInput = "[Shared with subject: " + req.ExtraSubject + "]\n\n" + content
 				}
 				if classified := classifyContentProfile(ctx, classifyInput); classified != "" {
-					slog.Info("score_async: content-classified",
+					slog.Info(
+						"score_async: content-classified",
 						"event_type", "score_async_content_classify",
 						"url", rawURL,
 						"content_classified", classified,
@@ -684,7 +700,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		if req.Type == "document" {
 			text, confidence, err := execLiteParse(ctx, req.AudioPath, liteParseConfig)
 			if err != nil {
-				slog.Warn("score_async: pdf text extraction failed",
+				slog.Warn(
+					"score_async: pdf text extraction failed",
 					"event_type", "pdf_extraction_failed",
 					"row_id", req.QueueRowID,
 					"filename", req.Filename,
@@ -693,13 +710,15 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				contentWarning = "lit_parse_failed"
 				if q != nil && req.QueueRowID > 0 {
 					if cwErr := q.SetContentWarning(req.QueueRowID, contentWarning); cwErr != nil {
-						slog.Warn("score_async: SetContentWarning failed",
+						slog.Warn(
+							"score_async: SetContentWarning failed",
 							"event_type", "pdf_content_warning_set",
 							"row_id", req.QueueRowID,
 							"error", cwErr,
 						)
 					} else {
-						slog.Info("score_async: content_warning set",
+						slog.Info(
+							"score_async: content_warning set",
 							"event_type", "pdf_content_warning_set",
 							"row_id", req.QueueRowID,
 							"content_warning", contentWarning,
@@ -711,7 +730,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				// the normal JSON path and the -1.0 JSON parse fallback sentinel.
 				if q != nil && req.QueueRowID > 0 {
 					if setErr := q.SetExtractionConfidence(req.QueueRowID, confidence); setErr != nil {
-						slog.Warn("score_async: SetExtractionConfidence failed",
+						slog.Warn(
+							"score_async: SetExtractionConfidence failed",
 							"event_type", "pdf_confidence_set_failed",
 							"row_id", req.QueueRowID,
 							"error", setErr,
@@ -719,7 +739,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 					}
 				}
 				if text != "" {
-					slog.Info("score_async: pdf text extracted",
+					slog.Info(
+						"score_async: pdf text extracted",
 						"event_type", "pdf_extraction_json",
 						"row_id", req.QueueRowID,
 						"char_count", len(text),
@@ -750,7 +771,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			}
 			content = strings.Join(parts, "\n")
 			if strings.TrimSpace(content) == "" {
-				slog.Info("score_async: no metadata",
+				slog.Info(
+					"score_async: no metadata",
 					"event_type", "score_async_skip",
 					"type", req.Type,
 					"reason", "no_metadata",
@@ -767,7 +789,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		// profile signal from the fast cascade.
 		if contentClassify {
 			if classified := classifyContentProfile(ctx, content); classified != "" {
-				slog.Info("score_async: file content-classified",
+				slog.Info(
+					"score_async: file content-classified",
 					"event_type", "score_async_content_classify",
 					"type", req.Type,
 					"content_classified", classified,
@@ -788,7 +811,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		if classifySource == "" {
 			classifySource = "default_fallback"
 		}
-		slog.Info("score_async: default profile fallback",
+		slog.Info(
+			"score_async: default profile fallback",
 			"event_type", "score_async_default_profile",
 			"type", req.Type,
 			"row_id", req.QueueRowID,
@@ -807,7 +831,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		tmplPath, sysPrompt, err = loadProfileTemplateJSON(profile)
 	}
 	if err != nil {
-		slog.Warn("score_async: load template failed",
+		slog.Warn(
+			"score_async: load template failed",
 			"event_type", "score_async_template_error",
 			"profile", profile,
 			"error", err,
@@ -826,7 +851,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// the auto-classification note (if any) and the profile rubric.
 	if req.Type == "document" {
 		sysPrompt = ContentTypePDF + "\n\n" + sysPrompt
-		slog.DebugContext(ctx, "score_async: pdf content preamble applied",
+		slog.DebugContext(
+			ctx, "score_async: pdf content preamble applied",
 			"event_type", "pdf_content_preamble_applied",
 			"row_id", req.QueueRowID,
 			"type", req.Type,
@@ -848,14 +874,16 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			var wikiErr error
 			wikiBlock, wikiErr = buildWikiContextBlock(indexPath, wikiResolver.cfg.MaxContextTokens)
 			if wikiErr != nil {
-				slog.Warn("score_async: wiki context block failed",
+				slog.Warn(
+					"score_async: wiki context block failed",
 					"event_type", "wiki_context_block_failed",
 					"row_id", req.QueueRowID,
 					"error", wikiErr,
 				)
 				wikiIndexPath = "" // don't persist if block build failed
 			} else {
-				slog.DebugContext(ctx, "wiki_context_resolved",
+				slog.DebugContext(
+					ctx, "wiki_context_resolved",
 					"event_type", "wiki_context_resolved",
 					"row_id", req.QueueRowID,
 					"index_path", indexPath,
@@ -869,7 +897,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// Share-time rationale is explicit user intent/context, distinct from source content.
 	if rationaleSection := formatUserRationale(req.UserRationaleText, req.UserRationaleSource); rationaleSection != "" {
 		sysPrompt += rationaleSection
-		slog.DebugContext(ctx, "score_async: user rationale injected",
+		slog.DebugContext(
+			ctx, "score_async: user rationale injected",
 			"event_type", "score_user_rationale_injected",
 			"row_id", req.QueueRowID,
 			"source", req.UserRationaleSource,
@@ -888,7 +917,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				// EPIC-083 M1-3: upper-bound file size gate  -  validate against
 				// actual file on disk (don't trust client-supplied FileSize alone).
 				if fi, fiErr := os.Stat(req.AudioPath); fiErr == nil && fi.Size() > imageNoiseGateMaxBytes {
-					slog.Info("score_async: oversize file gate  -  skipping vision",
+					slog.Info(
+						"score_async: oversize file gate  -  skipping vision",
 						"event_type", "score_prefilter_skip",
 						"row_id", req.QueueRowID,
 						"file_size", fi.Size(),
@@ -916,7 +946,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 						if extractErr != nil {
 							isTimeout := errors.Is(extractErr, context.DeadlineExceeded)
 							if isTimeout {
-								slog.Warn("score_async: image text extraction timed out  -  falling through",
+								slog.Warn(
+									"score_async: image text extraction timed out  -  falling through",
 									"event_type", "image_text_extraction_timeout",
 									"row_id", req.QueueRowID,
 									"latency_ms", 30000, // F1 subprocess contract: 30s hard timeout
@@ -928,7 +959,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 									})
 								}
 							} else {
-								slog.Warn("score_async: image text extraction failed  -  falling through",
+								slog.Warn(
+									"score_async: image text extraction failed  -  falling through",
 									"event_type", "image_text_extraction_failed",
 									"row_id", req.QueueRowID,
 									"error_reason", extractErr.Error(),
@@ -944,7 +976,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 							}
 						} else {
 							hasText := imageExtractedText != ""
-							slog.Info("score_async: image text extracted",
+							slog.Info(
+								"score_async: image text extracted",
 								"event_type", "image_text_extracted",
 								"row_id", req.QueueRowID,
 								"text_length", len(imageExtractedText),
@@ -976,7 +1009,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 							}
 							transcriptPath, saveErr := saveImageTranscript(transcriptDir, req.QueueRowID, req.Filename, imageExtractedText, meta)
 							if saveErr != nil {
-								slog.Warn("score_async: image transcript save failed  -  continuing scoring",
+								slog.Warn(
+									"score_async: image transcript save failed  -  continuing scoring",
 									"event_type", "image_transcript_write_failed",
 									"row_id", req.QueueRowID,
 									"error_reason", saveErr.Error(),
@@ -991,7 +1025,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 								}
 							} else {
 								if fi, fiErr := os.Stat(transcriptPath); fiErr == nil {
-									slog.Info("score_async: image transcript saved",
+									slog.Info(
+										"score_async: image transcript saved",
 										"event_type", "image_transcript_saved",
 										"row_id", req.QueueRowID,
 										"file_path", transcriptPath,
@@ -1036,7 +1071,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 								}
 							}
 							present = append(present, "is_screenshot", "transcribed_text")
-							slog.Info("score_async: image metadata enriched",
+							slog.Info(
+								"score_async: image metadata enriched",
 								"event_type", "image_metadata_enrichment",
 								"row_id", req.QueueRowID,
 								"fields_present", present,
@@ -1056,7 +1092,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 					if isCameraPhoto(req) && !shouldSuppressShortCircuit(imageExtractedText, imageShortCircuitBypassMinChars) {
 						// EPIC-083 M1-2: camera photo noise gate  -  gallery app +
 						// camera timestamp filename + no text context + not screenshot.
-						slog.Info("score_async: camera photo gate  -  skipping vision",
+						slog.Info(
+							"score_async: camera photo gate  -  skipping vision",
 							"event_type", "score_prefilter_skip",
 							"row_id", req.QueueRowID,
 							"file_size", req.FileSize,
@@ -1074,7 +1111,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 					} else {
 						if isCameraPhoto(req) && shouldSuppressShortCircuit(imageExtractedText, imageShortCircuitBypassMinChars) {
 							// F3: short-circuit bypassed because extracted text exceeds threshold.
-							slog.Info("score_async: camera photo short-circuit bypassed",
+							slog.Info(
+								"score_async: camera photo short-circuit bypassed",
 								"event_type", "image_short_circuit_bypassed",
 								"row_id", req.QueueRowID,
 								"text_length", len(imageExtractedText),
@@ -1092,7 +1130,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 						// score_prefilter_skip with stage field.
 						hasMetadata := req.ExtraText != "" || req.ExtraSubject != "" || imageExtractedText != ""
 						if req.FileSize > 0 && req.FileSize < imageNoiseGateMinBytes && !hasMetadata {
-							slog.Info("score_async: image noise gate  -  skipping vision",
+							slog.Info(
+								"score_async: image noise gate  -  skipping vision",
 								"event_type", "score_prefilter_skip",
 								"row_id", req.QueueRowID,
 								"file_size", req.FileSize,
@@ -1122,7 +1161,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				}
 			}
 		} else {
-			slog.Warn("score_async: image share without file  -  scoring with metadata only",
+			slog.Warn(
+				"score_async: image share without file  -  scoring with metadata only",
 				"event_type", "score_async_vision_degraded",
 				"row_id", req.QueueRowID,
 				"filename", req.Filename,
@@ -1137,7 +1177,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// resolved profile, but this guard catches edge cases (e.g., an empty YAML
 	// manifest or a RenderForJSON implementation returning "" without error).
 	if strings.TrimSpace(sysPrompt) == "" {
-		slog.Error("score_async: sysPrompt is empty after template load  -  aborting eval",
+		slog.Error(
+			"score_async: sysPrompt is empty after template load  -  aborting eval",
 			"event_type", "score_async_empty_sysprompt",
 			"profile", profile,
 			"row_id", req.QueueRowID,
@@ -1204,7 +1245,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// Condition: no attached file, URL type, and text was pre-populated by the caller.
 	isTextOnlyURL := req.Filename == "" && req.Type == "url" && req.Text != ""
 	if isTextOnlyURL {
-		slog.Debug("score_async: text-only guard active  -  skipping vision token path",
+		slog.Debug(
+			"score_async: text-only guard active  -  skipping vision token path",
 			"event_type", "score_text_only_guard",
 			"url", rawURL,
 			"text_len", len(req.Text),
@@ -1217,7 +1259,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// using Haiku vision input pricing and write the corrected estimate.
 	// EPIC-088 M2: emit vision_token_correction_skipped when image share misses threshold.
 	if req.Type == "image" && sc.Usage != nil && (sc.Usage.InputTokens >= visionInputTokenThreshold || sc.CostUSD <= visionCostThreshold) {
-		slog.Warn("score_async: vision token correction skipped  -  thresholds not met",
+		slog.Warn(
+			"score_async: vision token correction skipped  -  thresholds not met",
 			"event_type", "vision_token_correction_skipped",
 			"input_tokens", tokenCount(sc.Usage, true),
 			"cost_usd", sc.CostUSD,
@@ -1231,7 +1274,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		if imageCost > 0 {
 			sc.Usage.ImageTokensEstimated = int(imageCost / haikuInputPricePerToken)
 		}
-		slog.Info("score_async: vision token back-calculated",
+		slog.Info(
+			"score_async: vision token back-calculated",
 			"event_type", "vision_token_correction",
 			"input_tokens", sc.Usage.InputTokens,
 			"image_tokens_estimated", sc.Usage.ImageTokensEstimated,
@@ -1250,7 +1294,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		}
 		// EPIC-088 M2: deferred token usage log  -  emitted after back-calculation so
 		// image_tokens_estimated reflects the corrected value rather than 0.
-		slog.Info("evaluator: token usage",
+		slog.Info(
+			"evaluator: token usage",
 			"backend", sc.Backend,
 			"cost_usd", sc.CostUSD,
 			"input_tokens", tokenCount(sc.Usage, true),
@@ -1263,7 +1308,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// EPIC-083 M2-3: per-call cost ceiling monitoring. Logs when a single eval
 	// exceeds MaxScoringCostUSD  -  monitoring only, does not block processing.
 	if sc.CostUSD > 0 && sc.CostUSD > maxScoringCostUSD {
-		slog.Warn("score_async: cost exceeded ceiling",
+		slog.Warn(
+			"score_async: cost exceeded ceiling",
 			"event_type", "score_cost_exceeded",
 			"cost_usd", sc.CostUSD,
 			"threshold_usd", maxScoringCostUSD,
@@ -1281,7 +1327,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		}
 	}
 
-	slog.Info("score_async: evaluated",
+	slog.Info(
+		"score_async: evaluated",
 		"event_type", "score_async_evaluated",
 		"url", rawURL,
 		"type", req.Type,
@@ -1417,7 +1464,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				detectClusters(clusterCtx, q, itemProfile, 0, 0)
 			}()
 		default:
-			slog.Warn("score_async: cluster detection skipped  -  semaphore full",
+			slog.Warn(
+				"score_async: cluster detection skipped  -  semaphore full",
 				"event_type", "score_cluster_semaphore_full",
 				"profile", itemProfile,
 			)
@@ -1450,7 +1498,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		_ = publishVerdictReply(context.Background(), bskyClient, itemURL, *itemScore, itemVerdict, q, 1)
 	}
 
-	slog.Info("score_async: complete",
+	slog.Info(
+		"score_async: complete",
 		"event_type", "score_async_complete",
 		"url", rawURL,
 		"type", req.Type,
@@ -2173,7 +2222,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		mimeType = req.MimeType
 		callingPackage = req.CallingPackage
 	}
-	slog.Info("score_audio: start",
+	slog.Info(
+		"score_audio: start",
 		"event_type", "score_audio_start",
 		"row_id", rowID,
 		"audio_path", audioPath,
@@ -2201,13 +2251,15 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			if audioInfo != nil {
 				actualMB = float64(audioInfo.Size()) / (1 << 20)
 			}
-			slog.Warn("score_audio: OOM killed during ffmpeg",
+			slog.Warn(
+				"score_audio: OOM killed during ffmpeg",
 				"event_type", "score_audio_oom",
 				"row_id", rowID,
 				"actual_file_size_mb", actualMB,
 			)
 		} else {
-			slog.Warn("score_audio: ffmpeg failed",
+			slog.Warn(
+				"score_audio: ffmpeg failed",
 				"event_type", "score_audio_ffmpeg_error",
 				"row_id", rowID,
 				"error", err,
@@ -2241,7 +2293,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		chunks, err := execFfmpegSegment(segCtx, wavPath, audioChunkSeconds)
 		segCancel()
 		if err != nil {
-			slog.Warn("score_audio: segment failed",
+			slog.Warn(
+				"score_audio: segment failed",
 				"event_type", "score_audio_segment_error",
 				"row_id", rowID,
 				"error", err,
@@ -2263,7 +2316,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			if q != nil {
 				q.SetProgress(rowID, fmt.Sprintf("transcribing %d/%d", i+1, len(chunks)))
 			}
-			slog.Info("score_audio: transcribing chunk",
+			slog.Info(
+				"score_audio: transcribing chunk",
 				"row_id", rowID,
 				"chunk", i+1,
 				"total", len(chunks),
@@ -2276,14 +2330,16 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 					if wavChunkInfo != nil {
 						actualMB = float64(wavChunkInfo.Size()) / (1 << 20)
 					}
-					slog.Warn("score_audio: OOM killed during whisper chunk",
+					slog.Warn(
+						"score_audio: OOM killed during whisper chunk",
 						"event_type", "score_audio_oom",
 						"row_id", rowID,
 						"chunk", i+1,
 						"actual_file_size_mb", actualMB,
 					)
 				} else {
-					slog.Warn("score_audio: whisper chunk failed",
+					slog.Warn(
+						"score_audio: whisper chunk failed",
 						"event_type", "score_audio_whisper_error",
 						"row_id", rowID,
 						"chunk", i+1,
@@ -2313,13 +2369,15 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 				if wavInfo != nil {
 					actualMB = float64(wavInfo.Size()) / (1 << 20)
 				}
-				slog.Warn("score_audio: OOM killed during whisper",
+				slog.Warn(
+					"score_audio: OOM killed during whisper",
 					"event_type", "score_audio_oom",
 					"row_id", rowID,
 					"actual_file_size_mb", actualMB,
 				)
 			} else {
-				slog.Warn("score_audio: whisper failed",
+				slog.Warn(
+					"score_audio: whisper failed",
 					"event_type", "score_audio_whisper_error",
 					"row_id", rowID,
 					"error", err,
@@ -2335,7 +2393,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 
 	transcript = strings.TrimSpace(transcript)
 	if transcript == "" {
-		slog.Warn("score_audio: empty transcript",
+		slog.Warn(
+			"score_audio: empty transcript",
 			"event_type", "score_audio_empty_transcript",
 			"row_id", rowID,
 		)
@@ -2345,7 +2404,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		return
 	}
 
-	slog.Info("score_audio: transcribed",
+	slog.Info(
+		"score_audio: transcribed",
 		"event_type", "score_audio_transcribed",
 		"row_id", rowID,
 		"transcript_len", len(transcript),
@@ -2370,7 +2430,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		if classified != "" {
 			profile = classified
 			audioClassifySource = "intent_metadata"
-			slog.Info("score_audio: classified via intent profile",
+			slog.Info(
+				"score_audio: classified via intent profile",
 				"event_type", "score_audio_intent_classify",
 				"row_id", rowID,
 				"classified_profile", classified,
@@ -2383,7 +2444,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		if classified != "" {
 			profile = classified
 			audioClassifySource = "content_lm"
-			slog.Info("score_audio: classified from extraText",
+			slog.Info(
+				"score_audio: classified from extraText",
 				"event_type", "score_audio_extratext_classify",
 				"row_id", rowID,
 				"classified_profile", classified,
@@ -2412,13 +2474,15 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	}
 	txPath, err := saveTranscriptFile(rowID, profile, originalFilename, transcript, "m4a", "", "", "", 0, "")
 	if err != nil {
-		slog.Warn("score_audio: save transcript failed",
+		slog.Warn(
+			"score_audio: save transcript failed",
 			"row_id", rowID,
 			"error", err,
 		)
 		// Non-fatal  -  continue to synopsis generation.
 	} else {
-		slog.Info("score_audio: transcript saved",
+		slog.Info(
+			"score_audio: transcript saved",
 			"event_type", "score_audio_transcript_saved",
 			"row_id", rowID,
 			"path", txPath,
@@ -2436,7 +2500,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	}
 	_, scoreSysPrompt, scoreErr := loadProfileTemplateForModeJSON(profile, "audio")
 	if scoreErr != nil {
-		slog.Warn("score_audio: load scoring template failed, using vnote_triage fallback",
+		slog.Warn(
+			"score_audio: load scoring template failed, using vnote_triage fallback",
 			"event_type", "score_audio_scoring_template_error",
 			"row_id", rowID,
 			"profile", profile,
@@ -2445,7 +2510,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		// Fallback: try vnote_triage directly.
 		_, scoreSysPrompt, scoreErr = loadProfileTemplateForModeJSON("vnote_triage", "audio")
 		if scoreErr != nil {
-			slog.Warn("score_audio: vnote_triage fallback template also missing",
+			slog.Warn(
+				"score_audio: vnote_triage fallback template also missing",
 				"event_type", "score_audio_double_template_miss",
 				"row_id", rowID,
 				"profile", profile,
@@ -2459,7 +2525,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		sc, evalErr := eval.Evaluate(rubricCtx, transcript, scoreSysPrompt)
 		rubricCancel()
 		if evalErr != nil {
-			slog.Warn("score_audio: rubric evaluation failed",
+			slog.Warn(
+				"score_audio: rubric evaluation failed",
 				"event_type", "score_audio_eval_error",
 				"row_id", rowID,
 				"error", evalErr,
@@ -2476,7 +2543,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			audioScore = sc.Score
 			audioVerdict = sc.Verdict
 			audioTopicTags = sc.Tags
-			slog.Info("score_audio: rubric scored",
+			slog.Info(
+				"score_audio: rubric scored",
 				"event_type", "score_audio_rubric_scored",
 				"row_id", rowID,
 				"score", sc.Score,
@@ -2491,7 +2559,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	// Synopsis is used for FCM notification body, not scoring.
 	_, synopsisSysPrompt, err := loadProfileTemplateJSON("vnote_synopsis")
 	if err != nil {
-		slog.Warn("score_audio: load vnote_synopsis template failed",
+		slog.Warn(
+			"score_audio: load vnote_synopsis template failed",
 			"event_type", "score_audio_template_error",
 			"row_id", rowID,
 			"error", err,
@@ -2518,7 +2587,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 
 	var synopsis string
 	if synopsisErr != nil {
-		slog.Warn("score_audio: synopsis failed, persisting rubric score with empty synopsis",
+		slog.Warn(
+			"score_audio: synopsis failed, persisting rubric score with empty synopsis",
 			"event_type", "score_audio_synopsis_error",
 			"row_id", rowID,
 			"score", audioScore,
@@ -2528,7 +2598,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	} else {
 		parsed, _, parseErr := parseSynopsisFromEnvelope(synopsisRaw)
 		if parseErr != nil {
-			slog.Warn("score_audio: synopsis parse failed",
+			slog.Warn(
+				"score_audio: synopsis parse failed",
 				"event_type", "score_audio_synopsis_parse_error",
 				"row_id", rowID,
 				"error", parseErr,
@@ -2538,7 +2609,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		}
 	}
 
-	slog.Info("score_audio: synopsis generated",
+	slog.Info(
+		"score_audio: synopsis generated",
 		"event_type", "score_audio_synopsis",
 		"row_id", rowID,
 		"synopsis_len", len(synopsis),
@@ -2551,7 +2623,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	}
 	slug := fmt.Sprintf("vnote-%d", rowID)
 	if err := q.UpdateScore(rowID, audioScore, audioTopicTags, audioVerdict, slug, "", ""); err != nil {
-		slog.Warn("score_audio: UpdateScore failed",
+		slog.Warn(
+			"score_audio: UpdateScore failed",
 			"event_type", "score_audio_queue_error",
 			"row_id", rowID,
 			"error", err,
@@ -2586,7 +2659,8 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			profile, audioScore, slug, synopsis, "", "", "voice_note", audioClassifySource)
 	}
 
-	slog.Info("score_audio: complete",
+	slog.Info(
+		"score_audio: complete",
 		"event_type", "score_audio_complete",
 		"row_id", rowID,
 		"profile", profile,

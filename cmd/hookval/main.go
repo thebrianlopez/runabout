@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
 	"github.com/thebrianlopez/runabout/internal/telemetry"
 	versionpkg "github.com/thebrianlopez/runabout/internal/version"
-	"github.com/spf13/cobra"
 )
 
 var (

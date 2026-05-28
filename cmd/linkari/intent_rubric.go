@@ -32,9 +32,9 @@ type tagOverrideFile struct {
 // intentRubricCache caches parsed rubric files to avoid per-call disk reads.
 // Invalidated by intentRubricCacheMu write lock (e.g., on SIGHUP).
 var (
-	intentRubricCache    map[string]*intentRubricFile
-	tagOverrideCache     map[string]*tagOverrideFile
-	intentRubricCacheMu  sync.RWMutex
+	intentRubricCache   map[string]*intentRubricFile
+	tagOverrideCache    map[string]*tagOverrideFile
+	intentRubricCacheMu sync.RWMutex
 )
 
 // IntentSearchPath returns the directories to search for intent YAML files.
@@ -61,7 +61,8 @@ func IntentSearchPath() []string {
 func loadIntentRubric(intent, contentType string, userTags, inferredTags []string) (string, error) {
 	rubric, err := loadIntentRubricFile(intent)
 	if err != nil {
-		slog.Error("intent_rubric_not_found",
+		slog.Error(
+			"intent_rubric_not_found",
 			"error_class", "intent_rubric_not_found",
 			"intent", intent,
 			"error", err,
@@ -81,7 +82,8 @@ func loadIntentRubric(intent, contentType string, userTags, inferredTags []strin
 		base = rubric.Default
 	}
 	if strings.TrimSpace(base) == "" {
-		slog.Warn("intent_rubric_empty",
+		slog.Warn(
+			"intent_rubric_empty",
 			"intent", intent,
 			"content_type", contentType,
 		)
@@ -97,13 +99,15 @@ func loadIntentRubric(intent, contentType string, userTags, inferredTags []strin
 	// Apply tag overrides for capture-relevant tags.
 	appliedOverrides := applyTagOverrides(&sb, intent, userTags)
 	if len(appliedOverrides) > 0 {
-		slog.Info("rubric_loaded",
+		slog.Info(
+			"rubric_loaded",
 			"intent", intent,
 			"content_type", contentType,
 			"override_tags", appliedOverrides,
 		)
 	} else {
-		slog.Info("rubric_loaded",
+		slog.Info(
+			"rubric_loaded",
 			"intent", intent,
 			"content_type", contentType,
 		)
@@ -144,7 +148,8 @@ func applyTagOverrides(sb *strings.Builder, intent string, userTags []string) []
 		}
 		override, err := loadTagOverrideFile(tag)
 		if err != nil {
-			slog.Info("tag_override_not_found",
+			slog.Info(
+				"tag_override_not_found",
 				"tag", tag,
 				"intent", intent,
 			)
@@ -156,7 +161,8 @@ func applyTagOverrides(sb *strings.Builder, intent string, userTags []string) []
 		sb.WriteString("\n")
 		sb.WriteString(override.Instructions)
 		sb.WriteString("\n")
-		slog.Info("tag_override_applied",
+		slog.Info(
+			"tag_override_applied",
 			"tag", tag,
 			"intent", intent,
 		)
@@ -187,7 +193,8 @@ func loadIntentRubricFile(intent string) (*intentRubricFile, error) {
 			continue
 		}
 		if err := yaml.Unmarshal(data, &rf); err != nil {
-			slog.Error("rubric_parse_failed",
+			slog.Error(
+				"rubric_parse_failed",
 				"error_class", "rubric_parse_failed",
 				"intent", intent,
 				"error", err,

@@ -37,7 +37,8 @@ func TestFetchViaEventsAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/users/testuser/events", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		events := fmt.Sprintf("[%s,%s]",
+		events := fmt.Sprintf(
+			"[%s,%s]",
 			eventJSON("1", "WatchEvent", inRange, "org/repo1"),
 			eventJSON("2", "WatchEvent", outOfRange, "org/repo2"),
 		)

@@ -169,7 +169,6 @@ func TestMessageImport_RelatedInlinePlaintext(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-
 			str, err := importMessage(t, c, ctx, "pass", tt.literal)
 			require.NoError(t, err)
 
@@ -186,5 +185,4 @@ func TestMessageImport_RelatedInlinePlaintext(t *testing.T) {
 			require.Equal(t, tt.want, full.MIMEType)
 		})
 	}
-
 }

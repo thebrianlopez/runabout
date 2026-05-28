@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	fixtureCapPerProfile  = 8
-	fixtureWarnThreshold  = 5
+	fixtureCapPerProfile = 8
+	fixtureWarnThreshold = 5
 )
 
 func profileCmd() *cobra.Command {

@@ -203,7 +203,7 @@ func normal() {}
 func TestParseFileNotGoFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.ts")
-	if err := os.WriteFile(path, []byte("const x = 1;"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("const x = 1;"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, _, _, err := parseFile(path)
@@ -251,7 +251,7 @@ func init() {
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "server.go")
-	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

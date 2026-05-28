@@ -38,11 +38,11 @@ func newMockSession(host string) *mockSession {
 	return &mockSession{host: host, disconnected: make(chan struct{})}
 }
 
-func (m *mockSession) Host() string                        { return m.host }
-func (m *mockSession) Status() ssh.SessionStatus           { return ssh.StatusConnected }
-func (m *mockSession) Disconnected() <-chan struct{}        { return m.disconnected }
-func (m *mockSession) SendInput([]byte) error              { return nil }
-func (m *mockSession) Events() <-chan ssh.PaneEvent        { return nil }
+func (m *mockSession) Host() string                  { return m.host }
+func (m *mockSession) Status() ssh.SessionStatus     { return ssh.StatusConnected }
+func (m *mockSession) Disconnected() <-chan struct{} { return m.disconnected }
+func (m *mockSession) SendInput([]byte) error        { return nil }
+func (m *mockSession) Events() <-chan ssh.PaneEvent  { return nil }
 func (m *mockSession) Close() error {
 	m.closedOnce.Do(func() { close(m.disconnected) })
 	return nil
@@ -84,7 +84,7 @@ func (m *mockManager) Connect(ctx context.Context, host config.HostConfig) (ssh.
 
 func (m *mockManager) Disconnect(name string) error { return nil }
 func (m *mockManager) Sessions() []ssh.Session      { return m.sessions }
-func (m *mockManager) Events() <-chan ssh.PaneEvent  { return nil }
+func (m *mockManager) Events() <-chan ssh.PaneEvent { return nil }
 
 func (m *mockManager) attemptCount() int {
 	m.mu.Lock()
@@ -413,7 +413,7 @@ func TestReconnectLoop_AttemptCounterReset(t *testing.T) {
 		results: []connectResult{
 			{nil, &ssh.SSHError{Code: "ssh_host_unreachable", Message: "err"}}, // attempt 0: fail
 			{nil, &ssh.SSHError{Code: "ssh_host_unreachable", Message: "err"}}, // attempt 1: fail
-			{session: reconnected1, err: nil},                                   // attempt 2: succeed
+			{session: reconnected1, err: nil},                                  // attempt 2: succeed
 		},
 	}
 	clk := newMockClock()
@@ -531,6 +531,6 @@ func TestRG2_AttemptCounterReset(t *testing.T) {
 	// Verified in CT-9. Additional targeted check:
 	s := NewBackoffScheduler(defaultReconnectCfg())
 	// After a 5-attempt history, reset means Next(0) is used, not Next(5).
-	assert.Equal(t, 2*time.Second, s.Next(0))   // reset → attempt 0
+	assert.Equal(t, 2*time.Second, s.Next(0)) // reset → attempt 0
 	assert.NotEqual(t, s.Next(5), s.Next(0), "attempt 5 delay differs from attempt 0")
 }

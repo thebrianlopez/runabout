@@ -56,7 +56,8 @@ func (s *Server) handleIntentStats(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := s.queue.IntentStats()
 	if err != nil {
-		slog.Error("stats_query_failed",
+		slog.Error(
+			"stats_query_failed",
 			"error_class", "stats_query_failed",
 			"endpoint", "/stats/intents",
 			"error", err,
@@ -88,7 +89,8 @@ func (s *Server) handleTagStats(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := s.queue.TagStats()
 	if err != nil {
-		slog.Error("stats_query_failed",
+		slog.Error(
+			"stats_query_failed",
 			"error_class", "stats_query_failed",
 			"endpoint", "/stats/tags",
 			"error", err,
