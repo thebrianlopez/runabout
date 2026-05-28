@@ -1,0 +1,5 @@
+fish_functions:
+  manifest_version: "1.0.0"
+  manifest_path: fish/functions/MANIFEST.txt
+  population: 1
+  count: 23

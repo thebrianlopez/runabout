@@ -1,0 +1,30 @@
+# Population 1 Fish Functions - Release Manifest
+# version: 1.0.0
+# updated: 2026-05-28
+# format: function | path | layer | dependencies
+#
+# layer values: telemetry | dispatch | epic | automation | core
+
+_registry_resolve_cwd   | fish/functions/_registry_resolve_cwd.fish   | dispatch   | yq
+_yolodispatch_resolve_cwd | fish/functions/_yolodispatch_resolve_cwd.fish | dispatch | yq
+adirective              | fish/functions/adirective.fish              | automation | emit_jsonl
+agrad                   | fish/functions/agrad.fish                   | automation | emit_jsonl
+ahealth                 | fish/functions/ahealth.fish                 | automation | emit_jsonl
+apropose                | fish/functions/apropose.fish                | automation | emit_jsonl
+arec                    | fish/functions/arec.fish                    | automation | emit_jsonl
+aregress                | fish/functions/aregress.fish                | automation | emit_jsonl
+ascore                  | fish/functions/ascore.fish                  | automation | emit_jsonl
+ascore-composite        | fish/functions/ascore-composite.fish        | automation | ascore
+atopology               | fish/functions/atopology.fish               | automation | emit_jsonl
+dispatch-check-stalled  | fish/functions/dispatch-check-stalled.fish  | dispatch   | yq, emit_jsonl
+dispatch-complete       | fish/functions/dispatch-complete.fish       | dispatch   | none
+dispatch-scan-validate  | fish/functions/dispatch-scan-validate.fish  | dispatch   | none
+dispatch-skill-emit     | fish/functions/dispatch-skill-emit.fish     | dispatch   | emit_jsonl
+emit_jsonl              | fish/functions/emit_jsonl.fish              | telemetry  | none
+epic-claim-discovery    | fish/functions/epic-claim-discovery.fish    | epic       | none
+epic-claim-milestone    | fish/functions/epic-claim-milestone.fish    | epic       | none
+epic-dispatch           | fish/functions/epic-dispatch.fish           | epic       | yq, emit_jsonl
+epic-inject             | fish/functions/epic-inject.fish             | epic       | yq
+epic-status             | fish/functions/epic-status.fish             | epic       | yq
+yolodispatch            | fish/functions/yolodispatch.fish            | dispatch   | _yolodispatch_resolve_cwd
+yolodispatch-all        | fish/functions/yolodispatch-all.fish        | dispatch   | yolodispatch, yq
