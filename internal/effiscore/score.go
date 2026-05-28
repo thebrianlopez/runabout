@@ -7,18 +7,18 @@ import (
 
 // Scoring weights (from epic specification).
 const (
-	weightCacheHit  = 0.30
-	weightReuse     = 0.25
-	weightIO        = 0.20
-	weightSavings   = 0.15
-	weightModelMix  = 0.10
+	weightCacheHit = 0.30
+	weightReuse    = 0.25
+	weightIO       = 0.20
+	weightSavings  = 0.15
+	weightModelMix = 0.10
 )
 
 // Normalization constants.
 const (
-	reuseFactorCap     = 5.0
-	ioRatioMaxPenalty  = 10.0 // ratios >= 10x score 0
-	savingsBaseline    = 100_000.0 // "good day" = 100K tokens saved
+	reuseFactorCap    = 5.0
+	ioRatioMaxPenalty = 10.0      // ratios >= 10x score 0
+	savingsBaseline   = 100_000.0 // "good day" = 100K tokens saved
 )
 
 // RawMetrics holds the six DD query scalars.

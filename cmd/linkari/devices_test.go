@@ -532,7 +532,7 @@ func TestLookupDeviceToken_DisabledReturnsEmpty(t *testing.T) {
 	}
 }
 
-// RG-6 (PA-6): Legacy devices row (user_id=NULL, device_id='') must not cause 503 on
+// RG-6 (PA-6): Legacy devices row (user_id=NULL, device_id=”) must not cause 503 on
 // a valid registration. Regression guard for the a207e45 cleanup path.
 func TestRegisterDevice_LegacyNullRowDoesNotCause503(t *testing.T) {
 	srv, ts, token, _ := testServerWithSession(t)

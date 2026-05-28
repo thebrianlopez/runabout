@@ -387,25 +387,39 @@ func discoverFixtures(fixturesDir string) []EvalCase {
 
 func hardcodedFixtures() []EvalCase {
 	return []EvalCase{
-		{Input: ChainInput{Command: "/chain next", Fixture: "tdd_approved_no_epic",
-			Expected: ChainExpected{PriorityStep: 6, IconMap: map[string]string{"PRD": "✅", "FDD": "✅", "TDD": "✅"}}}},
-		{Input: ChainInput{Command: "/chain next", Fixture: "pomo_pending",
+		{Input: ChainInput{
+			Command: "/chain next", Fixture: "tdd_approved_no_epic",
+			Expected: ChainExpected{PriorityStep: 6, IconMap: map[string]string{"PRD": "✅", "FDD": "✅", "TDD": "✅"}},
+		}},
+		{Input: ChainInput{
+			Command: "/chain next", Fixture: "pomo_pending",
 			// /chain next does not render a tree — icon_map omitted (n/a, scores 1.0)
-			Expected: ChainExpected{PriorityStep: 1}}},
-		{Input: ChainInput{Command: "/chain validate", Fixture: "release_gate_violation",
+			Expected: ChainExpected{PriorityStep: 1},
+		}},
+		{Input: ChainInput{
+			Command: "/chain validate", Fixture: "release_gate_violation",
 			// validate output: gate table only, no chain tree — drop icon_map
-			Expected: ChainExpected{Violations: []string{"release gate", "missing"}}}},
-		{Input: ChainInput{Command: "/chain next", Fixture: "design_check_blocked",
+			Expected: ChainExpected{Violations: []string{"release gate", "missing"}},
+		}},
+		{Input: ChainInput{
+			Command: "/chain next", Fixture: "design_check_blocked",
 			// /chain next does not render a tree — icon_map omitted (n/a, scores 1.0)
-			Expected: ChainExpected{PriorityStep: 4}}},
-		{Input: ChainInput{Command: "/chain next", Fixture: "design_check_clear",
+			Expected: ChainExpected{PriorityStep: 4},
+		}},
+		{Input: ChainInput{
+			Command: "/chain next", Fixture: "design_check_clear",
 			// /chain next does not render a tree — icon_map omitted (n/a, scores 1.0)
-			Expected: ChainExpected{PriorityStep: 5}}},
-		{Input: ChainInput{Command: "/chain next", Fixture: "batch_dispatch_ready",
+			Expected: ChainExpected{PriorityStep: 5},
+		}},
+		{Input: ChainInput{
+			Command: "/chain next", Fixture: "batch_dispatch_ready",
 			// /chain next does not render a tree — icon_map omitted (n/a, scores 1.0)
-			Expected: ChainExpected{PriorityStep: 7}}},
-		{Input: ChainInput{Command: "/chain status", Fixture: "all_approved",
-			Expected: ChainExpected{IconMap: map[string]string{"PRD": "✅", "FDD": "✅", "TDD": "✅", "Epic": "✅"}}}},
+			Expected: ChainExpected{PriorityStep: 7},
+		}},
+		{Input: ChainInput{
+			Command: "/chain status", Fixture: "all_approved",
+			Expected: ChainExpected{IconMap: map[string]string{"PRD": "✅", "FDD": "✅", "TDD": "✅", "Epic": "✅"}},
+		}},
 	}
 }
 

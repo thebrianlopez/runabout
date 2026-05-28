@@ -120,7 +120,8 @@ PRAGMA user_version = 3;
 // writeJournalEntry appends a completed sync run record to plaid_sync_journal.
 // Takes explicit counts rather than *SyncResult to avoid coupling db.go to the F3 type.
 func writeJournalEntry(db *sql.DB, itemID, runID string, added, modified, removed int, cursorBefore, cursorAfter, status string) error {
-	_, err := db.Exec(`
+	_, err := db.Exec(
+		`
 		INSERT INTO plaid_sync_journal
 		  (item_id, sync_run_id, started_at, completed_at,
 		   tx_added, tx_modified, tx_removed,

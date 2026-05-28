@@ -53,7 +53,8 @@ func (s *Server) StartPushWorker(ctx context.Context) {
 		defer t.Stop()
 		prune := time.NewTicker(1 * time.Hour)
 		defer prune.Stop()
-		slog.InfoContext(ctx, "push outbox worker started",
+		slog.InfoContext(
+			ctx, "push outbox worker started",
 			"event_type", "push_worker_start",
 			"poll_interval", pushPollInterval.String(),
 		)
@@ -75,7 +76,8 @@ func (s *Server) StartPushWorker(ctx context.Context) {
 				if drained == 0 {
 					idleCycles++
 					if idleCycles == 1 {
-						slog.InfoContext(ctx, "push outbox idle",
+						slog.InfoContext(
+							ctx, "push outbox idle",
 							"event_type", "push_outbox_idle",
 							"poll_interval", pushPollInterval.String(),
 						)
@@ -146,7 +148,8 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 			emitPushEvent("push_outbox_parked_missing_token", map[string]interface{}{
 				"id": p.ID, "age_seconds": int64(age.Seconds()),
 			})
-			slog.WarnContext(ctx, "push row parked: missing device token or FCM source",
+			slog.WarnContext(
+				ctx, "push row parked: missing device token or FCM source",
 				"event_type", "push_outbox_parked_missing_token",
 				"id", p.ID,
 				"age_seconds", int64(age.Seconds()),
@@ -164,7 +167,8 @@ func (s *Server) drainPushOutbox(ctx context.Context) int {
 			}
 			backoff := backoffSchedule[attempts]
 			_ = s.queue.BumpPushAttempt(p.ID, int64(backoff.Seconds()), err.Error())
-			slog.WarnContext(ctx, "push attempt failed",
+			slog.WarnContext(
+				ctx, "push attempt failed",
 				"event_type", "push_attempt",
 				"id", p.ID,
 				"attempt", attempts,

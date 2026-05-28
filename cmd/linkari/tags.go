@@ -96,7 +96,8 @@ func (q *Queue) persistUserTags(rowID int64, tags []string) error {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, name := range normalized {
-		_, err := tx.Exec(`
+		_, err := tx.Exec(
+			`
 			INSERT INTO tags (name, use_count, last_used_at, created_at)
 			VALUES (?, 1, ?, ?)
 			ON CONFLICT(name) DO UPDATE SET

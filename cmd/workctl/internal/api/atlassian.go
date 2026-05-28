@@ -98,7 +98,6 @@ func (a *AtlassianClients) GetJiraUserAccountID(email string) (string, error) {
 		users, response, err = a.Jira.User.Search.Do(ctx, "", email, 0, 50)
 		return err
 	})
-
 	if err != nil {
 		if response != nil && config.Debug {
 			config.LogDebug("API returned status %d: %s", response.Code, response.Endpoint)
@@ -145,7 +144,6 @@ func (a *AtlassianClients) GetConfluenceUserAccountID(email string) (string, err
 		result, response, err = a.Confluence.Search.Users(ctx, cql, 0, 10, []string{})
 		return err
 	})
-
 	if err != nil {
 		if response != nil && config.Debug {
 			config.LogDebug("API returned status %d: %s", response.Code, response.Endpoint)

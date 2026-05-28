@@ -30,7 +30,7 @@ func (m *mockRender) Render(_ context.Context, slug, _, outputDir string) error 
 	}
 	for _, v := range allVariants {
 		name := fmt.Sprintf("%s/resume-%s%s", outputDir, slug, v.ext)
-		if err := os.WriteFile(name, []byte("stub-"+v.name), 0600); err != nil {
+		if err := os.WriteFile(name, []byte("stub-"+v.name), 0o600); err != nil {
 			return err
 		}
 	}
@@ -278,12 +278,12 @@ func TestServeVariant_CT7_RenderFailureIsFatal(t *testing.T) {
 func TestServeVariant_CT8_SlugValidation(t *testing.T) {
 	render := &mockRender{}
 	cases := []string{
-		"Stripe-staff-20260508",       // uppercase
-		"stripe_staff_20260508",       // underscore
-		"stripe/staff/20260508",       // slash (path traversal)
-		"stripe staff 20260508",       // space
-		"",                            // empty
-		"../etc/passwd",               // traversal attempt
+		"Stripe-staff-20260508", // uppercase
+		"stripe_staff_20260508", // underscore
+		"stripe/staff/20260508", // slash (path traversal)
+		"stripe staff 20260508", // space
+		"",                      // empty
+		"../etc/passwd",         // traversal attempt
 	}
 	for _, slug := range cases {
 		st := newStorer(render, &mockS3{}, &mockSSM{})

@@ -137,5 +137,7 @@ func (m *Manager) authRefresh(ctx context.Context, uid, ref, acc string) (Auth, 
 	return res.Auth, nil
 }
 
-const hvPMTokenHeaderField = "x-pm-human-verification-token"
-const hvPMTokenType = "x-pm-human-verification-token-type"
+const (
+	hvPMTokenHeaderField = "x-pm-human-verification-token"
+	hvPMTokenType        = "x-pm-human-verification-token-type"
+)

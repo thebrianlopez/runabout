@@ -110,12 +110,12 @@ func (r *DomainRouter) FetchWithFallback(ctx context.Context, rawURL string) (st
 		content, err := r.jinaFetch(ctx, rawURL)
 		latency := time.Since(start).Milliseconds()
 		r.emit("domain_router_fetch_end", map[string]interface{}{
-			"url":          redactURL(rawURL),
-			"domain":       "youtube",
-			"client_used":  "jina_youtube_bypass",
+			"url":           redactURL(rawURL),
+			"domain":        "youtube",
+			"client_used":   "jina_youtube_bypass",
 			"fallback_used": false,
-			"latency_ms":   latency,
-			"content_type": ContentTypePlain.String(),
+			"latency_ms":    latency,
+			"content_type":  ContentTypePlain.String(),
 		})
 		return content, ContentTypePlain, err
 	}
@@ -126,12 +126,12 @@ func (r *DomainRouter) FetchWithFallback(ctx context.Context, rawURL string) (st
 		content, jinaErr := r.jinaFetch(ctx, rawURL)
 		latency := time.Since(start).Milliseconds()
 		r.emit("domain_router_fetch_end", map[string]interface{}{
-			"url":          redactURL(rawURL),
-			"domain":       "jina",
-			"client_used":  "jina",
+			"url":           redactURL(rawURL),
+			"domain":        "jina",
+			"client_used":   "jina",
 			"fallback_used": false,
-			"latency_ms":   latency,
-			"content_type": ContentTypePlain.String(),
+			"latency_ms":    latency,
+			"content_type":  ContentTypePlain.String(),
 		})
 		return content, ContentTypePlain, jinaErr
 	}
@@ -142,12 +142,12 @@ func (r *DomainRouter) FetchWithFallback(ctx context.Context, rawURL string) (st
 		content, jinaErr := r.jinaFetch(ctx, rawURL)
 		latency := time.Since(start).Milliseconds()
 		r.emit("domain_router_fetch_end", map[string]interface{}{
-			"url":          redactURL(rawURL),
-			"domain":       "jina",
-			"client_used":  "jina",
+			"url":           redactURL(rawURL),
+			"domain":        "jina",
+			"client_used":   "jina",
 			"fallback_used": false,
-			"latency_ms":   latency,
-			"content_type": ContentTypePlain.String(),
+			"latency_ms":    latency,
+			"content_type":  ContentTypePlain.String(),
 		})
 		return content, ContentTypePlain, jinaErr
 	}
@@ -161,12 +161,12 @@ func (r *DomainRouter) FetchWithFallback(ctx context.Context, rawURL string) (st
 	if clientErr == nil {
 		latency := time.Since(start).Milliseconds()
 		r.emit("domain_router_fetch_end", map[string]interface{}{
-			"url":          redactURL(rawURL),
-			"domain":       host,
-			"client_used":  host,
+			"url":           redactURL(rawURL),
+			"domain":        host,
+			"client_used":   host,
 			"fallback_used": false,
-			"latency_ms":   latency,
-			"content_type": ct.String(),
+			"latency_ms":    latency,
+			"content_type":  ct.String(),
 		})
 		return content, ct, nil
 	}
@@ -182,12 +182,12 @@ func (r *DomainRouter) FetchWithFallback(ctx context.Context, rawURL string) (st
 	jinaContent, jinaErr := r.jinaFetch(ctx, rawURL)
 	latency := time.Since(start).Milliseconds()
 	r.emit("domain_router_fetch_end", map[string]interface{}{
-		"url":          redactURL(rawURL),
-		"domain":       host,
-		"client_used":  "jina",
+		"url":           redactURL(rawURL),
+		"domain":        host,
+		"client_used":   "jina",
 		"fallback_used": true,
-		"latency_ms":   latency,
-		"content_type": ContentTypePlain.String(),
+		"latency_ms":    latency,
+		"content_type":  ContentTypePlain.String(),
 	})
 	return jinaContent, ContentTypePlain, jinaErr
 }

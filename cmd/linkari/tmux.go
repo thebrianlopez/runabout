@@ -19,7 +19,7 @@ import (
 // (which uses Go escaping — unsafe for shell paste because $, `, and \
 // are re-interpreted inside double-quoted strings), this uses POSIX
 // single-quote escaping where the only metacharacter is ' itself
-// (escaped as '\''). Safe identifier characters pass through unquoted.
+// (escaped as '\”). Safe identifier characters pass through unquoted.
 func posixQuote(s string) string {
 	if s == "" {
 		return "''"
@@ -60,7 +60,8 @@ func posixJoin(argv []string) string {
 // essential for debugging argv quoting/spacing bugs where slog's default
 // []string rendering hides element boundaries.
 func logTmuxExec(cmd *exec.Cmd) {
-	slog.Debug("tmux exec",
+	slog.Debug(
+		"tmux exec",
 		"argv", cmd.Args,
 		"repro", posixJoin(cmd.Args),
 	)
@@ -98,7 +99,8 @@ func (t *TmuxRunner) SendKeys(target, text string, enter bool) error {
 		return fmt.Errorf("tmux target is required")
 	}
 
-	slog.Debug("tmux send-keys",
+	slog.Debug(
+		"tmux send-keys",
 		"event_type", "tmux_send_keys",
 		"target", target,
 		"text_len", len(text),
@@ -154,7 +156,8 @@ func (t *TmuxRunner) NewWindow(session, command string, name string) error {
 		return fmt.Errorf("tmux session name is required")
 	}
 
-	slog.Debug("tmux new-window",
+	slog.Debug(
+		"tmux new-window",
 		"event_type", "tmux_new_window",
 		"session", session,
 		"command", command,

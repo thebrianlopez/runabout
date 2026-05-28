@@ -84,9 +84,9 @@ func (m *mockSession) inputCount() int {
 
 // mockBridge implements bridge.LocalTmuxBridge with recorded calls.
 type mockBridge struct {
-	applyErr    error
-	applyLog    []applyCall
-	mu          sync.Mutex
+	applyErr error
+	applyLog []applyCall
+	mu       sync.Mutex
 }
 
 type applyCall struct {
@@ -94,12 +94,12 @@ type applyCall struct {
 	data []byte
 }
 
-func (b *mockBridge) EnsureSession(name string) error                       { return nil }
-func (b *mockBridge) RemoveSession(name string) error                       { return nil }
-func (b *mockBridge) EnsurePane(host, paneID string) error                  { return nil }
-func (b *mockBridge) RemovePane(host, paneID string) error                  { return nil }
-func (b *mockBridge) ResizePane(host, paneID string, rows, cols int) error  { return nil }
-func (b *mockBridge) SocketPath() string                                    { return "/tmp/test" }
+func (b *mockBridge) EnsureSession(name string) error                      { return nil }
+func (b *mockBridge) RemoveSession(name string) error                      { return nil }
+func (b *mockBridge) EnsurePane(host, paneID string) error                 { return nil }
+func (b *mockBridge) RemovePane(host, paneID string) error                 { return nil }
+func (b *mockBridge) ResizePane(host, paneID string, rows, cols int) error { return nil }
+func (b *mockBridge) SocketPath() string                                   { return "/tmp/test" }
 
 func (b *mockBridge) ApplyOutput(name string, data []byte) error {
 	b.mu.Lock()

@@ -51,7 +51,6 @@ func TestSubtitleExtraction_CT1_SubtitlesFound(t *testing.T) {
 	}
 
 	subtitleEvent, transcript, meta, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=abc123", 1, el, nil)
-
 	if err != nil {
 		t.Fatalf("CT-1: unexpected error: %v", err)
 	}
@@ -86,7 +85,6 @@ func TestSubtitleExtraction_CT2_NoSubtitles(t *testing.T) {
 	}
 
 	subtitleEvent, transcript, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=nosubs", 2, el, nil)
-
 	// yt_no_subtitles is a normal signal — caller triggers F2, no dead-letter.
 	if err != nil {
 		t.Errorf("CT-2: err = %v, want nil (yt_no_subtitles must not be an error)", err)
@@ -324,7 +322,6 @@ func TestSubtitleExtraction_CT7_TimeoutConfigWired(t *testing.T) {
 	}
 
 	subtitleEvent, transcript, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=cfg1", 7, el, nil)
-
 	// Must succeed — 10ms is well within the 5s config limit.
 	if err != nil {
 		t.Errorf("CT-7: unexpected error with generous timeout config: %v", err)

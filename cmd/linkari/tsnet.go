@@ -112,7 +112,8 @@ func (t *TsnetServer) Start(ctx context.Context) (net.Listener, error) {
 	}
 
 	t.listener = ln
-	slog.Info("tsnet Funnel listening",
+	slog.Info(
+		"tsnet Funnel listening",
 		"event_type", "tsnet_funnel_up",
 		"fqdn", t.fqdn,
 		"url", "https://"+t.fqdn,

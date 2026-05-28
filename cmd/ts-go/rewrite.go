@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spf13/cobra"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
-	"github.com/spf13/cobra"
 )
 
 // byteEdit represents a single replacement in a source file.

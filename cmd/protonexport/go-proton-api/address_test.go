@@ -107,5 +107,4 @@ func TestAddress_Types(t *testing.T) {
 			require.Equal(t, addr.Type, proton.AddressTypeOriginal)
 		}
 	}
-
 }

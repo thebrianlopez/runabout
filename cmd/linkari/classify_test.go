@@ -38,10 +38,10 @@ func makeShareReq(pkg string, cat int, filename, relPath, subject, text string) 
 
 func TestClassifyByFilename(t *testing.T) {
 	cases := []struct {
-		name       string
-		filename   string
-		want       string    // expected result; "" = no match
-		wantOneOf  []string  // when set, accept any value in the set (non-deterministic multi-keyword)
+		name      string
+		filename  string
+		want      string   // expected result; "" = no match
+		wantOneOf []string // when set, accept any value in the set (non-deterministic multi-keyword)
 	}{
 		// Single-keyword matches
 		{"invoice", "invoice_2024.pdf", "finance", nil},
@@ -134,9 +134,9 @@ func TestClassifyByFilename(t *testing.T) {
 
 func TestClassifyByRelativePath(t *testing.T) {
 	cases := []struct {
-		name         string
-		relPath      string
-		wantProfile  string
+		name           string
+		relPath        string
+		wantProfile    string
 		wantScreenshot bool
 	}{
 		// Screenshot detection
@@ -339,8 +339,8 @@ func TestClassifyByIntentMetadata(t *testing.T) {
 
 func TestDetectScreenshot(t *testing.T) {
 	cases := []struct {
-		name         string
-		relPath      string
+		name           string
+		relPath        string
 		wantScreenshot bool
 	}{
 		{"DCIM/Screenshots → screenshot", "DCIM/Screenshots/shot.jpg", true},
@@ -509,7 +509,7 @@ func TestClassifyIntentProfile_Cascade(t *testing.T) {
 		req        *ShareRequest
 		llmReturn  string // what the stub returns when called
 		wantResult string
-		wantLLM    bool   // true if LLM should be called (stage 4)
+		wantLLM    bool // true if LLM should be called (stage 4)
 	}{
 		{
 			name:       "stage 1 wins: known package",

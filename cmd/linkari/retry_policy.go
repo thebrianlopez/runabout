@@ -17,8 +17,10 @@ const (
 	errorReasonMaxLen = 500
 )
 
-var extractionBackoff = [2]time.Duration{30 * time.Second, 5 * time.Minute}
-var scoringBackoff = [1]time.Duration{60 * time.Second}
+var (
+	extractionBackoff = [2]time.Duration{30 * time.Second, 5 * time.Minute}
+	scoringBackoff    = [1]time.Duration{60 * time.Second}
+)
 
 // retryOrFail transitions a queue row after a stage failure.
 // stage must be "extraction" or "scoring".
@@ -57,13 +59,15 @@ func retryOrFail(ctx context.Context, db *sql.DB, rowID int64, stage string, cau
 	if newCount >= maxAttempts {
 		reason := fmt.Sprintf("%s: %s", errorClass, truncatedCause)
 		if stage == "scoring" {
-			_, err := db.ExecContext(ctx,
+			_, err := db.ExecContext(
+				ctx,
 				"UPDATE queue SET status='failed', error_reason=?, retry_count=?, progress='score_failed' WHERE id=?",
 				reason, newCount, rowID,
 			)
 			return err
 		}
-		_, err := db.ExecContext(ctx,
+		_, err := db.ExecContext(
+			ctx,
 			"UPDATE queue SET status='failed', error_reason=?, retry_count=? WHERE id=?",
 			reason, newCount, rowID,
 		)
@@ -76,7 +80,8 @@ func retryOrFail(ctx context.Context, db *sql.DB, rowID int64, stage string, cau
 		idx = len(schedule) - 1
 	}
 	retryAfter := time.Now().Unix() + int64(schedule[idx].Seconds())
-	_, err := db.ExecContext(ctx,
+	_, err := db.ExecContext(
+		ctx,
 		"UPDATE queue SET status='pending', retry_count=?, retry_after=? WHERE id=?",
 		newCount, retryAfter, rowID,
 	)

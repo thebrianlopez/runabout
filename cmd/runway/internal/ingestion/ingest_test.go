@@ -79,7 +79,7 @@ func TestParseGreenhouseURL_Invalid(t *testing.T) {
 	cases := []string{
 		"https://example.com/jobs/123",
 		"not-a-url",
-		"https://boards.greenhouse.io/stripe",         // missing /jobs/ID
+		"https://boards.greenhouse.io/stripe",          // missing /jobs/ID
 		"https://boards.greenhouse.io/stripe/jobs/abc", // non-numeric ID
 	}
 	for _, url := range cases {

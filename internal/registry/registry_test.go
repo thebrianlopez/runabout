@@ -179,7 +179,7 @@ func TestRegistry_CT6_YQQueryability(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "org.yaml")
-	if err := os.WriteFile(path, []byte(minimalV2YAML), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(minimalV2YAML), 0o644); err != nil {
 		t.Fatalf("writing org.yaml: %v", err)
 	}
 	out, err := exec.Command("yq", ".agents[].id", path).Output()

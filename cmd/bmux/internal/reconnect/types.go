@@ -24,7 +24,7 @@ type Clock interface {
 type RealClock struct{}
 
 func (RealClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
-func (RealClock) Now() time.Time                        { return time.Now() }
+func (RealClock) Now() time.Time                         { return time.Now() }
 
 // BackoffScheduler computes the delay before the Nth reconnect attempt.
 // Attempt is zero-indexed: attempt=0 is the first retry after disconnect.

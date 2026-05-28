@@ -42,19 +42,19 @@ func (r *callRecorder) sequence() []string {
 type stubBridge struct{ rec *callRecorder }
 
 func (s *stubBridge) Start(_ context.Context) error { s.rec.record("bridge.Start"); return nil }
-func (s *stubBridge) Stop()                          { s.rec.record("bridge.Stop") }
+func (s *stubBridge) Stop()                         { s.rec.record("bridge.Stop") }
 
 // stubRegistry is a no-op SessionRegistry stub that records Start/Stop.
 type stubRegistry struct{ rec *callRecorder }
 
 func (s *stubRegistry) Start(_ context.Context) error { s.rec.record("registry.Start"); return nil }
-func (s *stubRegistry) Stop()                          { s.rec.record("registry.Stop") }
-func (s *stubRegistry) ActivePanes() []string          { return nil }
+func (s *stubRegistry) Stop()                         { s.rec.record("registry.Stop") }
+func (s *stubRegistry) ActivePanes() []string         { return nil }
 
 // stubMirror is a no-op HeadlessMirrorManager stub that records Close.
 type stubMirror struct{ rec *callRecorder }
 
-func (s *stubMirror) Close() error     { s.rec.record("mirror.Close"); return nil }
+func (s *stubMirror) Close() error          { s.rec.record("mirror.Close"); return nil }
 func (s *stubMirror) ActivePanes() []string { return nil }
 
 // stubGateway is a no-op Gateway stub that records Start/Stop.
@@ -66,8 +66,8 @@ type stubGateway struct {
 
 func (s *stubGateway) Start(_ context.Context) error { s.rec.record("gateway.Start"); return nil }
 func (s *stubGateway) Stop(_ context.Context) error  { s.rec.record("gateway.Stop"); return nil }
-func (s *stubGateway) ClientCount() int               { return s.clientCount }
-func (s *stubGateway) Addr() string                   { return s.addr }
+func (s *stubGateway) ClientCount() int              { return s.clientCount }
+func (s *stubGateway) Addr() string                  { return s.addr }
 
 // ---------- helpers ----------
 

@@ -63,7 +63,8 @@ func isCanonicalYouTubeURL(rawURL string) bool {
 func normalizeYouTubeURL(ctx context.Context, rawURL string) (string, error) {
 	// Short-circuit: already canonical, no HTTP call needed.
 	if isCanonicalYouTubeURL(rawURL) {
-		slog.Debug("yt_url_normalize_noop",
+		slog.Debug(
+			"yt_url_normalize_noop",
 			"event_type", "yt_url_normalize_noop",
 			"url", rawURL,
 		)
@@ -83,7 +84,8 @@ func normalizeYouTubeURL(ctx context.Context, rawURL string) (string, error) {
 
 		req, reqErr := http.NewRequestWithContext(callCtx, http.MethodHead, currentURL, nil)
 		if reqErr != nil {
-			slog.Warn("yt_url_normalize_fallback",
+			slog.Warn(
+				"yt_url_normalize_fallback",
 				"event_type", "yt_url_normalize_fallback",
 				"reason", "network",
 				"hops_completed", hop-1,
@@ -98,7 +100,8 @@ func normalizeYouTubeURL(ctx context.Context, rawURL string) (string, error) {
 			if errors.Is(callCtx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				reason = "timeout"
 			}
-			slog.Warn("yt_url_normalize_fallback",
+			slog.Warn(
+				"yt_url_normalize_fallback",
 				"event_type", "yt_url_normalize_fallback",
 				"reason", reason,
 				"hops_completed", hop-1,
@@ -111,7 +114,8 @@ func normalizeYouTubeURL(ctx context.Context, rawURL string) (string, error) {
 		hopDuration := time.Since(hopStart).Milliseconds()
 		location := resp.Header.Get("Location")
 
-		slog.Debug("yt_url_normalize_hop",
+		slog.Debug(
+			"yt_url_normalize_hop",
 			"event_type", "yt_url_normalize_hop",
 			"hop", hop,
 			"from", currentURL,
@@ -130,7 +134,8 @@ func normalizeYouTubeURL(ctx context.Context, rawURL string) (string, error) {
 		base, _ := url.Parse(currentURL)
 		loc, parseErr := url.Parse(location)
 		if parseErr != nil {
-			slog.Warn("yt_url_normalize_fallback",
+			slog.Warn(
+				"yt_url_normalize_fallback",
 				"event_type", "yt_url_normalize_fallback",
 				"reason", "network",
 				"hops_completed", hop,
@@ -142,7 +147,8 @@ func normalizeYouTubeURL(ctx context.Context, rawURL string) (string, error) {
 
 		// Non-HTTPS bail-out: downgrade from HTTPS to HTTP is not permitted.
 		if strings.HasPrefix(currentURL, "https://") && strings.HasPrefix(nextURL, "http://") {
-			slog.Warn("yt_url_normalize_fallback",
+			slog.Warn(
+				"yt_url_normalize_fallback",
 				"event_type", "yt_url_normalize_fallback",
 				"reason", "non_https_hop",
 				"hops_completed", hop,
@@ -155,7 +161,8 @@ func normalizeYouTubeURL(ctx context.Context, rawURL string) (string, error) {
 		// Chain resolved to canonical YouTube — success.
 		if isCanonicalYouTubeURL(nextURL) {
 			totalDuration := time.Since(start).Milliseconds()
-			slog.Info("yt_url_normalized",
+			slog.Info(
+				"yt_url_normalized",
 				"event_type", "yt_url_normalized",
 				"original_url", rawURL,
 				"canonical_url", nextURL,
@@ -169,7 +176,8 @@ func normalizeYouTubeURL(ctx context.Context, rawURL string) (string, error) {
 	}
 
 	if maxReached {
-		slog.Warn("yt_url_normalize_fallback",
+		slog.Warn(
+			"yt_url_normalize_fallback",
 			"event_type", "yt_url_normalize_fallback",
 			"reason", "max_redirects",
 			"hops_completed", maxNormalizeRedirects,

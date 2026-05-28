@@ -351,7 +351,6 @@ func (g *GitHubClient) fetchViaEventsAPI(ctx context.Context, username string, s
 			)
 			return fetchErr
 		})
-
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch GitHub events: %w", err)
 		}
@@ -680,7 +679,6 @@ func (g *GitHubClient) executeSearchQuery(ctx context.Context, query, resultType
 			results, resp, fetchErr = g.Client.Search.Issues(ctx, query, opt)
 			return fetchErr
 		})
-
 		if err != nil {
 			return nil, fmt.Errorf("search query failed: %w", err)
 		}
@@ -912,7 +910,6 @@ func (g *GitHubClient) queryContributionStats(ctx context.Context, username stri
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, fmt.Errorf("GraphQL query failed: %w", err)
 	}

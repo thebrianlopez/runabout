@@ -140,8 +140,10 @@ func detectSubtitleType(raw ytRawMeta) string {
 
 // srtTimingRE matches SRT timing lines (e.g. "00:00:01,000 --> 00:00:04,000")
 // and sequence number lines (digits-only lines). Both are stripped from transcripts.
-var srtTimingRE = regexp.MustCompile(`(?m)^\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}$`)
-var srtSequenceRE = regexp.MustCompile(`(?m)^\d+$`)
+var (
+	srtTimingRE   = regexp.MustCompile(`(?m)^\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}$`)
+	srtSequenceRE = regexp.MustCompile(`(?m)^\d+$`)
+)
 
 // srtTagRE strips HTML-style tags sometimes present in auto-generated subtitles
 // (e.g. <c>, <00:00:01.000>, font tags).
@@ -273,7 +275,8 @@ func runYtdlpExtract(ctx context.Context, ytdlpPath, videoURL string) (transcrip
 	}
 
 	outTemplate := filepath.Join(tmpDir, "%(id)s.%(ext)s")
-	cmd := exec.CommandContext(ctx, ytdlpPath,
+	cmd := exec.CommandContext(
+		ctx, ytdlpPath,
 		"--skip-download",
 		"--write-subs",
 		"--write-auto-subs",
@@ -384,7 +387,8 @@ func runYtdlpAudioDownload(ctx context.Context, ytdlpPath, videoURL string) (aud
 	defer dlCancel()
 
 	outTemplate := filepath.Join(tmpDir, "%(id)s.%(ext)s")
-	cmd := exec.CommandContext(dlCtx, ytdlpPath,
+	cmd := exec.CommandContext(
+		dlCtx, ytdlpPath,
 		"--format", "bestaudio[ext=m4a]/bestaudio",
 		"--no-playlist",
 		"--print-json",
@@ -438,7 +442,8 @@ func runYtdlpAudioDownload(ctx context.Context, ytdlpPath, videoURL string) (aud
 func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, q *Queue, events *EventLogger, whisperModel string) (string, ytVideoMeta, error) {
 	start := time.Now()
 
-	slog.Info("yt_audio_fallback: start",
+	slog.Info(
+		"yt_audio_fallback: start",
 		"event_type", "yt_audio_fallback_start",
 		"row_id", rowID,
 		"url", videoURL,
@@ -451,7 +456,8 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 	// Step 1: download audio via yt-dlp.
 	audioPath, meta, dlErr := execYtdlpAudio(ctx, ytPath, videoURL)
 	if dlErr != nil {
-		slog.Warn("yt_audio_fallback_failed",
+		slog.Warn(
+			"yt_audio_fallback_failed",
 			"event_type", "yt_audio_fallback_failed",
 			"row_id", rowID,
 			"step", "download",
@@ -480,7 +486,8 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 	ffErr := execFfmpegConvert(ffmpegCtx, audioPath, wavPath)
 	ffmpegCancel()
 	if ffErr != nil {
-		slog.Warn("yt_audio_fallback_failed",
+		slog.Warn(
+			"yt_audio_fallback_failed",
 			"event_type", "yt_audio_fallback_failed",
 			"row_id", rowID,
 			"step", "ffmpeg",
@@ -507,7 +514,8 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 	whisperCancel()
 	if whisperErr != nil {
 		if errors.Is(whisperErr, context.DeadlineExceeded) {
-			slog.Warn("yt_audio_timeout",
+			slog.Warn(
+				"yt_audio_timeout",
 				"event_type", "yt_audio_timeout",
 				"row_id", rowID,
 				"deadline_secs", deadlineSecs,
@@ -520,7 +528,8 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 			}
 			return "", meta, fmt.Errorf("yt_audio_timeout: %w", whisperErr)
 		}
-		slog.Warn("yt_audio_fallback_failed",
+		slog.Warn(
+			"yt_audio_fallback_failed",
 			"event_type", "yt_audio_fallback_failed",
 			"row_id", rowID,
 			"step", "whisper",
@@ -536,7 +545,8 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 		return "", meta, fmt.Errorf("whisper: %w", whisperErr)
 	}
 	if strings.TrimSpace(transcript) == "" {
-		slog.Warn("yt_audio_fallback_failed",
+		slog.Warn(
+			"yt_audio_fallback_failed",
 			"event_type", "yt_audio_fallback_failed",
 			"row_id", rowID,
 			"step", "whisper",
@@ -553,7 +563,8 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 	}
 
 	elapsed := time.Since(start).Milliseconds()
-	slog.Info("yt_audio_fallback_complete",
+	slog.Info(
+		"yt_audio_fallback_complete",
 		"event_type", "yt_audio_fallback_complete",
 		"row_id", rowID,
 		"duration_ms", elapsed,
@@ -593,7 +604,8 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 	videoURL := req.URL
 	profile := req.Profile
 
-	slog.Info("score_youtube: start",
+	slog.Info(
+		"score_youtube: start",
 		"event_type", "score_youtube_start",
 		"row_id", rowID,
 		"url", videoURL,
@@ -626,7 +638,8 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 		// yt_dlp_failed — extractYTSubtitles already emitted the event.
 		_ = subErr
 		if attempt > ytSubtitleMaxRetries {
-			slog.Warn("yt_dlp_terminal_failed",
+			slog.Warn(
+				"yt_dlp_terminal_failed",
 				"event_type", "yt_dlp_terminal_failed",
 				"row_id", rowID,
 				"total_attempts", attempt,
@@ -645,7 +658,8 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 	}
 	// yt_no_subtitles: audio fallback or fail.
 	if subtitleEvent == "yt_no_subtitles" {
-		slog.Warn("score_youtube: extraction failed",
+		slog.Warn(
+			"score_youtube: extraction failed",
 			"event_type", "yt_transcript_failed",
 			"row_id", rowID,
 			"url", videoURL,
@@ -664,7 +678,8 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 				source := q.SourceForQueueRow(rowID)
 				if (source == "yt_monitored" && !serverConfig.YouTube.TranscribeSubscriptions) ||
 					(source == "yt_watch_later" && !serverConfig.YouTube.TranscribeWatchLater) {
-					slog.Debug("yt_transcription_skipped_by_config",
+					slog.Debug(
+						"yt_transcription_skipped_by_config",
 						"event_type", "yt_transcription_skipped_by_config",
 						"row_id", rowID,
 						"source", source,
@@ -688,7 +703,8 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 				if events != nil {
 					_ = events.Emit("yt_audio_queued_pending_semaphore", map[string]interface{}{"row_id": rowID})
 				}
-				slog.Info("yt_audio_fallback: waiting for semaphore",
+				slog.Info(
+					"yt_audio_fallback: waiting for semaphore",
 					"event_type", "yt_audio_queued_pending_semaphore",
 					"row_id", rowID,
 				)
@@ -709,7 +725,8 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 			if strings.HasPrefix(audioErr.Error(), "yt_audio_timeout") {
 				audioVerdict = "yt_audio_timeout"
 			}
-			slog.Warn("score_youtube: audio fallback also failed",
+			slog.Warn(
+				"score_youtube: audio fallback also failed",
 				"event_type", "score_youtube_fallback_failed",
 				"row_id", rowID,
 				"url", videoURL,
@@ -721,7 +738,8 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 				if row, gErr := q.GetByID(rowID); gErr == nil && row != nil && row.RetryCount < ytAudioMaxRetries {
 					nextAttempt := row.RetryCount + 1
 					if rErr := q.EnqueueAudioRetry(rowID, nextAttempt); rErr == nil {
-						slog.Info("yt_audio_retry_enqueued",
+						slog.Info(
+							"yt_audio_retry_enqueued",
 							"event_type", "yt_audio_retry_enqueued",
 							"row_id", rowID,
 							"attempt", nextAttempt,
@@ -736,7 +754,8 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 					}
 				}
 				q.MarkFailedWithReason(rowID, "yt_audio_terminal_failed")
-				slog.Warn("yt_audio_terminal_failed",
+				slog.Warn(
+					"yt_audio_terminal_failed",
 					"event_type", "yt_audio_terminal_failed",
 					"row_id", rowID,
 				)
@@ -755,7 +774,8 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 	}
 subtitleReady:
 
-	slog.Info("score_youtube: extracted",
+	slog.Info(
+		"score_youtube: extracted",
 		"event_type", "yt_transcript_extracted",
 		"row_id", rowID,
 		"url", videoURL,
@@ -767,12 +787,12 @@ subtitleReady:
 	)
 	if events != nil {
 		_ = events.Emit("yt_transcript_extracted", map[string]interface{}{
-			"row_id":        rowID,
-			"url":           videoURL,
-			"title":         meta.Title,
-			"video_id":      meta.ID,
-			"duration":      meta.Duration,
-			"subtitle_type": meta.SubtitleType,
+			"row_id":         rowID,
+			"url":            videoURL,
+			"title":          meta.Title,
+			"video_id":       meta.ID,
+			"duration":       meta.Duration,
+			"subtitle_type":  meta.SubtitleType,
 			"transcript_len": len(transcript),
 		})
 	}
@@ -788,7 +808,8 @@ subtitleReady:
 		if strings.Contains(videoURL, "/shorts/") {
 			detectionMethod = "url_pattern"
 		}
-		slog.Info("score_youtube: shorts detected",
+		slog.Info(
+			"score_youtube: shorts detected",
 			"event_type", "shorts_detected",
 			"row_id", rowID,
 			"url", videoURL,
@@ -809,7 +830,8 @@ subtitleReady:
 		slog.Warn("score_youtube: save transcript failed", "row_id", rowID, "error", err)
 		// Non-fatal — continue to scoring.
 	} else {
-		slog.Info("score_youtube: transcript saved",
+		slog.Info(
+			"score_youtube: transcript saved",
 			"event_type", "score_youtube_transcript_saved",
 			"row_id", rowID,
 			"path", txPath,
@@ -833,7 +855,8 @@ subtitleReady:
 				rubricSource = "shorts_template"
 			} else {
 				rubricSource = "default"
-				slog.Info("score_youtube: shorts rubric missing",
+				slog.Info(
+					"score_youtube: shorts rubric missing",
 					"event_type", "shorts_rubric_missing",
 					"row_id", rowID,
 					"profile", profile,
@@ -865,7 +888,8 @@ subtitleReady:
 	if ytVerdict == "eval_failed" || ytVerdict == "template_missing" {
 		_ = q.UpdateFailedVerdict(rowID, ytVerdict)
 		_ = q.MarkFailedWithReason(rowID, ytVerdict)
-		slog.Warn("score_youtube: eval failed, row marked failed",
+		slog.Warn(
+			"score_youtube: eval failed, row marked failed",
 			"event_type", "score_youtube_eval_failed",
 			"row_id", rowID,
 			"verdict", ytVerdict,
@@ -899,7 +923,8 @@ subtitleReady:
 
 	// EPIC-012 M11: Shorts scoring complete log.
 	if meta.IsShorts {
-		slog.Info("score_youtube: shorts scoring complete",
+		slog.Info(
+			"score_youtube: shorts scoring complete",
 			"event_type", "shorts_scoring_complete",
 			"row_id", rowID,
 			"rubric_source", rubricSource,
@@ -907,7 +932,8 @@ subtitleReady:
 		)
 	}
 
-	slog.Info("score_youtube: complete",
+	slog.Info(
+		"score_youtube: complete",
 		"event_type", "score_youtube_complete",
 		"row_id", rowID,
 		"score", ytScore,
@@ -938,7 +964,8 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 	videoURL := req.URL
 	profile := req.Profile
 
-	slog.Info("transcribe_youtube: start",
+	slog.Info(
+		"transcribe_youtube: start",
 		"event_type", "transcribe_youtube_start",
 		"row_id", rowID,
 		"url", videoURL,
@@ -968,7 +995,8 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 		default:
 			verdict = "yt_extraction_failed"
 		}
-		slog.Warn("transcribe_youtube: extraction failed",
+		slog.Warn(
+			"transcribe_youtube: extraction failed",
 			"event_type", "yt_transcript_failed",
 			"row_id", rowID,
 			"url", videoURL,
@@ -993,7 +1021,8 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 				if events != nil {
 					_ = events.Emit("yt_audio_queued_pending_semaphore", map[string]interface{}{"row_id": rowID})
 				}
-				slog.Info("yt_audio_fallback: waiting for semaphore",
+				slog.Info(
+					"yt_audio_fallback: waiting for semaphore",
 					"event_type", "yt_audio_queued_pending_semaphore",
 					"row_id", rowID,
 				)
@@ -1013,7 +1042,8 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 			if strings.HasPrefix(err.Error(), "yt_audio_timeout") {
 				verdict = "yt_audio_timeout"
 			}
-			slog.Warn("transcribe_youtube: audio fallback also failed",
+			slog.Warn(
+				"transcribe_youtube: audio fallback also failed",
 				"event_type", "transcribe_youtube_fallback_failed",
 				"row_id", rowID,
 				"url", videoURL,
@@ -1025,7 +1055,8 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 				if row, gErr := q.GetByID(rowID); gErr == nil && row != nil && row.RetryCount < ytAudioMaxRetries {
 					nextAttempt := row.RetryCount + 1
 					if rErr := q.EnqueueAudioRetry(rowID, nextAttempt); rErr == nil {
-						slog.Info("yt_audio_retry_enqueued",
+						slog.Info(
+							"yt_audio_retry_enqueued",
 							"event_type", "yt_audio_retry_enqueued",
 							"row_id", rowID,
 							"attempt", nextAttempt,
@@ -1040,7 +1071,8 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 					}
 				}
 				q.MarkFailedWithReason(rowID, "yt_audio_terminal_failed")
-				slog.Warn("yt_audio_terminal_failed",
+				slog.Warn(
+					"yt_audio_terminal_failed",
 					"event_type", "yt_audio_terminal_failed",
 					"row_id", rowID,
 				)
@@ -1059,7 +1091,8 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 	}
 txSubtitleReady:
 
-	slog.Info("transcribe_youtube: extracted",
+	slog.Info(
+		"transcribe_youtube: extracted",
 		"event_type", "yt_transcript_extracted",
 		"row_id", rowID,
 		"url", videoURL,
@@ -1085,7 +1118,8 @@ txSubtitleReady:
 	// FDD §5: "F3 reads transcript_text only after a *_ok event; never processes
 	// a partial/empty transcript." EPIC-110 M2.
 	if strings.TrimSpace(transcript) == "" {
-		slog.Warn("transcribe_youtube: empty transcript — guard triggered",
+		slog.Warn(
+			"transcribe_youtube: empty transcript — guard triggered",
 			"event_type", "yt_transcript_empty_guard",
 			"row_id", rowID,
 		)
@@ -1104,7 +1138,8 @@ txSubtitleReady:
 		slog.Warn("transcribe_youtube: save transcript failed", "row_id", rowID, "error", err)
 		// Non-fatal — still send FCM so the user knows the transcript is done.
 	} else {
-		slog.Info("transcribe_youtube: transcript saved",
+		slog.Info(
+			"transcribe_youtube: transcript saved",
 			"event_type", "transcribe_youtube_transcript_saved",
 			"row_id", rowID,
 			"path", txPath,
@@ -1121,7 +1156,8 @@ txSubtitleReady:
 			verdict = meta.Title
 		}
 		if pushErr := enqueueTranscriptPushFn(q, profile, slug, verdict, videoURL); pushErr != nil {
-			slog.Warn("transcribe_youtube: EnqueueTranscriptPush failed",
+			slog.Warn(
+				"transcribe_youtube: EnqueueTranscriptPush failed",
 				"event_type", "fcm_push_failed",
 				"row_id", rowID,
 				"error", pushErr,
@@ -1144,7 +1180,8 @@ txSubtitleReady:
 		}
 	}
 
-	slog.Info("transcribe_youtube: complete",
+	slog.Info(
+		"transcribe_youtube: complete",
 		"event_type", "transcribe_youtube_complete",
 		"row_id", rowID,
 		"profile", profile,

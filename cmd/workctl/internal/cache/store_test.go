@@ -298,7 +298,7 @@ func TestCorruptionRecovery(t *testing.T) {
 	dbPath := filepath.Join(dir, "corrupt.db")
 
 	// Write garbage to the file.
-	os.WriteFile(dbPath, []byte("not a database"), 0600)
+	os.WriteFile(dbPath, []byte("not a database"), 0o600)
 
 	// Open should return nil (graceful degradation).
 	s := Open(dbPath)

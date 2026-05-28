@@ -289,11 +289,11 @@ func TestScoreYouTubeAsync_FallbackStepFailures(t *testing.T) {
 	t.Cleanup(func() { ytAudioMaxRetries = prevRetries })
 
 	cases := []struct {
-		name          string
-		audioErr      error
-		ffmpegErr     error
-		whisperTx     string
-		whisperErr    error
+		name       string
+		audioErr   error
+		ffmpegErr  error
+		whisperTx  string
+		whisperErr error
 	}{
 		{
 			name:     "audio_download_fails",

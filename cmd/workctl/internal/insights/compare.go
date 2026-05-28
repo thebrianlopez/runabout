@@ -97,7 +97,8 @@ func RenderComparison(w io.Writer, report *DeltaReport) {
 			pctStr = formatSigned(item.PctDelta, "%")
 		}
 		trend := trendIcon(item.Delta)
-		fmt.Fprintf(w, "| %s | %.0f | %.0f | %s | %s | %s |\n",
+		fmt.Fprintf(
+			w, "| %s | %.0f | %.0f | %s | %s | %s |\n",
 			item.Metric,
 			item.Previous,
 			item.Current,

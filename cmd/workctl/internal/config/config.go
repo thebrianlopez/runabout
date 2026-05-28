@@ -323,11 +323,11 @@ func LogDebug(format string, v ...interface{}) {
 	// Initialize logger if needed
 	if DebugLogger == nil {
 		logPath := DefaultDebugLog()
-		if err := os.MkdirAll(filepath.Dir(logPath), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 			log.Printf("Failed to create debug log directory: %v", err)
 			return
 		}
-		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			log.Printf("Failed to open debug log file: %v", err)
 			return

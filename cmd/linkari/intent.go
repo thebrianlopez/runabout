@@ -95,7 +95,8 @@ func backfillIntentFromProfile(db *sql.DB) (rowsUpdated int, err error) {
 	defer func() {
 		if err != nil {
 			tx.Rollback()
-			slog.Error("intent_migration_failed",
+			slog.Error(
+				"intent_migration_failed",
 				"error_class", "intent_migration_failed",
 				"rows_updated", rowsUpdated,
 				"error", err,
@@ -130,7 +131,8 @@ func backfillIntentFromProfile(db *sql.DB) (rowsUpdated int, err error) {
 		return rowsUpdated, err
 	}
 
-	slog.Info("intent_migration_complete",
+	slog.Info(
+		"intent_migration_complete",
 		"rows_updated", rowsUpdated,
 		"duration_ms", time.Since(start).Milliseconds(),
 	)

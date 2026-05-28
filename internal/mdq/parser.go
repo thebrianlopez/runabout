@@ -37,8 +37,10 @@ type TableRow struct {
 	Cells map[string]string
 }
 
-var headingRe = regexp.MustCompile(`^(#{1,6})\s+(.+)$`)
-var separatorRe = regexp.MustCompile(`^\|[-\s:]+\|[-\s:|]+$`)
+var (
+	headingRe   = regexp.MustCompile(`^(#{1,6})\s+(.+)$`)
+	separatorRe = regexp.MustCompile(`^\|[-\s:]+\|[-\s:|]+$`)
+)
 
 type flatSection struct {
 	level int
@@ -111,7 +113,7 @@ func Parse(r io.Reader) (*Document, error) {
 		sawSeparator = false
 	}
 
-	for _, line := range lines[startIdx:]  {
+	for _, line := range lines[startIdx:] {
 
 		// Track fenced code block state (``` or ~~~).
 		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {

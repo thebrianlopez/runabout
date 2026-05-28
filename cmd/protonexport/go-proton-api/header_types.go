@@ -3,6 +3,7 @@ package proton
 import (
 	"encoding/json"
 	"errors"
+
 	"gitlab.com/c0b/go-ordered-json"
 )
 

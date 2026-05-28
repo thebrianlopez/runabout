@@ -318,7 +318,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				if err != nil {
 					return fmt.Errorf("reading firebase service account: %w", err)
 				}
-				creds, err := google.CredentialsFromJSON(context.Background(), saJSON,
+				creds, err := google.CredentialsFromJSON(
+					context.Background(), saJSON,
 					"https://www.googleapis.com/auth/firebase.messaging",
 				)
 				if err != nil {
@@ -338,7 +339,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				home, _ := os.UserHomeDir()
 				queueDB = home + "/.config/linkari/queue.db"
 			}
-			if err := os.MkdirAll(filepath.Dir(queueDB), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(queueDB), 0o755); err != nil {
 				return fmt.Errorf("creating queue db directory: %w", err)
 			}
 
@@ -413,7 +414,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 			tsnetStateDir, _, _ = resolveStringField(tsnetStateDir, os.Getenv("LINKARI_TSNET_STATE_DIR"), yamlTsnetStateDir, filepath.Join(configDir, "tsnet"))
 			if tsnetEnabled {
-				if err := os.MkdirAll(tsnetStateDir, 0700); err != nil {
+				if err := os.MkdirAll(tsnetStateDir, 0o700); err != nil {
 					return fmt.Errorf("creating tsnet state dir: %w", err)
 				}
 			}
@@ -457,10 +458,10 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			logFilePath, _, _ := resolveStringField("", os.Getenv("LINKARI_LOG_FILE"), yamlLogFile, "")
 			var logFile *os.File
 			if logFilePath != "" {
-				if err := os.MkdirAll(filepath.Dir(logFilePath), 0755); err != nil {
+				if err := os.MkdirAll(filepath.Dir(logFilePath), 0o755); err != nil {
 					return fmt.Errorf("creating log file directory: %w", err)
 				}
-				f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+				f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 				if err != nil {
 					return fmt.Errorf("opening log file: %w", err)
 				}
@@ -507,7 +508,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			flushProvenance(provenance)
 			if debug {
 				log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-				slog.Debug("startup config",
+				slog.Debug(
+					"startup config",
 					"event_type", "startup_config",
 					"port", port,
 					"firebase_sa", firebaseSA,
@@ -556,7 +558,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 			// Validate debug fault-injection env var before binding; fatal on bad value.
 			if code := ValidateRegisterFaultEnv(); code != 0 {
-				slog.Warn("register fault injection active (debug only)",
+				slog.Warn(
+					"register fault injection active (debug only)",
 					"var", registerFaultEnv, "status_code", code,
 				)
 			}
@@ -816,7 +819,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// detach-ready to the parent process (EPIC-049 M3) after the port
 			// is bound, before entering the accept loop.
 			if tlsEnabled {
-				slog.Info("linkari listening",
+				slog.Info(
+					"linkari listening",
 					"event_type", "listener_up",
 					"port", port, "mode", "local", "tls", true,
 					"build_version", version, "build_commit", commit,
@@ -832,7 +836,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				if lnErr != nil {
 					return fmt.Errorf("listen %s: %w", listenAddr, lnErr)
 				}
-				slog.Info("linkari listening",
+				slog.Info(
+					"linkari listening",
 					"event_type", "listener_up",
 					"port", port, "mode", "local", "tls", false,
 					"build_version", version, "build_commit", commit,
@@ -931,7 +936,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 							"duration_ms", dur.Milliseconds(),
 						}
 						if shield != nil {
-							logAttrs = append(logAttrs,
+							logAttrs = append(
+								logAttrs,
 								"shield_mode", newShieldMode,
 								"shield_changed", newShieldMode != prevShieldMode,
 								"shield_prev", prevShieldMode,
@@ -940,7 +946,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 						if pushCfg != nil {
 							logAttrs = append(logAttrs, "push_notify_min_score", pushCfg.NotifyMinScore)
 						}
-						logAttrs = append(logAttrs,
+						logAttrs = append(
+							logAttrs,
 							"watchdog_interval", wdCfg.Interval,
 							"watchdog_max_age", wdCfg.MaxAge,
 						)

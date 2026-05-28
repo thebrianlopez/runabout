@@ -27,8 +27,8 @@ import (
 
 // stubBridge is a test double for ControlModeBridge.
 type stubBridge struct {
-	mu          sync.Mutex
-	subs        map[string][]chan []byte
+	mu            sync.Mutex
+	subs          map[string][]chan []byte
 	sendKeysCalls []sendKeysCall
 	// paneNotFound causes Subscribe to return an error for the given pane.
 	paneNotFound map[string]bool
@@ -98,8 +98,8 @@ func (b *stubBridge) SubCount(paneID string) int {
 
 // stubMirror is a test double for MirrorManager.
 type stubMirror struct {
-	mu       sync.Mutex
-	data     map[string][]byte
+	mu   sync.Mutex
+	data map[string][]byte
 }
 
 func newStubMirror() *stubMirror {
@@ -721,9 +721,9 @@ func TestBT2_Reconnect_FreshSnapshot(t *testing.T) {
 	sendJSON(t, conn, map[string]interface{}{
 		"type": "pane-attach", "pane_id": paneID, "cols": 80, "rows": 24,
 	})
-	readJSONMsg(t, conn)                   // snapshot-start
-	_, frame1 := readBinaryFrame(t, conn)  // first snapshot frame
-	readJSONMsg(t, conn)                   // snapshot-end
+	readJSONMsg(t, conn)                  // snapshot-start
+	_, frame1 := readBinaryFrame(t, conn) // first snapshot frame
+	readJSONMsg(t, conn)                  // snapshot-end
 
 	// Detach then update snapshot.
 	sendJSON(t, conn, map[string]interface{}{"type": "pane-detach", "pane_id": paneID})
@@ -734,9 +734,9 @@ func TestBT2_Reconnect_FreshSnapshot(t *testing.T) {
 	sendJSON(t, conn, map[string]interface{}{
 		"type": "pane-attach", "pane_id": paneID, "cols": 80, "rows": 24,
 	})
-	readJSONMsg(t, conn)                   // snapshot-start
-	_, frame2 := readBinaryFrame(t, conn)  // second snapshot frame
-	readJSONMsg(t, conn)                   // snapshot-end
+	readJSONMsg(t, conn)                  // snapshot-start
+	_, frame2 := readBinaryFrame(t, conn) // second snapshot frame
+	readJSONMsg(t, conn)                  // snapshot-end
 
 	payload1 := frame1[16:]
 	payload2 := frame2[16:]
@@ -862,6 +862,8 @@ func TestRG2_OneClientDisconnect_OthersUnaffected(t *testing.T) {
 }
 
 // Ensure json import is used.
-var _ = json.Marshal
-var _ = io.Reader(bytes.NewReader(nil))
-var _ = fmt.Sprintf
+var (
+	_ = json.Marshal
+	_ = io.Reader(bytes.NewReader(nil))
+	_ = fmt.Sprintf
+)

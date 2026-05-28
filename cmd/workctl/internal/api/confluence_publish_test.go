@@ -3,13 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
-	confluenceSDK "github.com/ctreminiom/go-atlassian/v2/confluence"
-	jiraSDK "github.com/ctreminiom/go-atlassian/v2/jira/v3"
-	"golang.org/x/time/rate"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	confluenceSDK "github.com/ctreminiom/go-atlassian/v2/confluence"
+	jiraSDK "github.com/ctreminiom/go-atlassian/v2/jira/v3"
+	"golang.org/x/time/rate"
 )
 
 // newPublishTestClients builds an AtlassianClients pointed at srv and stores

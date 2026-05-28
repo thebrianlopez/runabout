@@ -36,11 +36,11 @@ type HeadlessMirrorManager interface {
 
 // Error codes for HeadlessMirrorManager operations.
 const (
-	ErrCodeNodeNotFound          = "node_not_found"
-	ErrCodeSubprocessCrashed     = "mirror_subprocess_crashed"
-	ErrCodeSnapshotTimeout       = "snapshot_timeout"
-	ErrCodeWriteQueueOverflow    = "write_queue_overflow"
-	ErrCodeIPCParseError         = "ipc_parse_error"
+	ErrCodeNodeNotFound       = "node_not_found"
+	ErrCodeSubprocessCrashed  = "mirror_subprocess_crashed"
+	ErrCodeSnapshotTimeout    = "snapshot_timeout"
+	ErrCodeWriteQueueOverflow = "write_queue_overflow"
+	ErrCodeIPCParseError      = "ipc_parse_error"
 )
 
 // MirrorError is a typed error from mirror operations.

@@ -6,7 +6,8 @@
 // `go test ./...` stays hermetic.
 //
 // Run with:
-//   LINKARI_QUEUE_DB=/path/to/queue.db go test -tags=integration ./cmd/linkari/... -run TestTriageVerdictSchema
+//
+//	LINKARI_QUEUE_DB=/path/to/queue.db go test -tags=integration ./cmd/linkari/... -run TestTriageVerdictSchema
 //
 // If LINKARI_QUEUE_DB is unset, the test skips. This is eval-harness
 // observability for a non-deterministic scorer, not a pass/fail gate.

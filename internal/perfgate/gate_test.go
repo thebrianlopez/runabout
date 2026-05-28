@@ -132,7 +132,7 @@ func TestSaveResultBadPath(t *testing.T) {
 func TestLoadResultInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.json")
-	os.WriteFile(path, []byte("{invalid"), 0644)
+	os.WriteFile(path, []byte("{invalid"), 0o644)
 
 	_, err := LoadResult(path)
 	if err == nil {

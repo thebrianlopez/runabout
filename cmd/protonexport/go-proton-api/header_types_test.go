@@ -2,8 +2,9 @@ package proton
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestHeaders_MarshalInOrder(t *testing.T) {

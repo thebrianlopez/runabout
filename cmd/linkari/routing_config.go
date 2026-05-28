@@ -50,7 +50,8 @@ func ValidateRoutingConfig(cfg RoutingConfig) error {
 // Gate 2: block if score < per-route threshold
 func computeActionRouteWithConfig(score int, profile string, cfg RoutingConfig, extractionConfidence *float64) string {
 	if extractionConfidence != nil && *extractionConfidence < cfg.ExtractionConfidenceGate {
-		slog.Info("routing_blocked_low_confidence",
+		slog.Info(
+			"routing_blocked_low_confidence",
 			"extraction_confidence", *extractionConfidence,
 			"confidence_gate", cfg.ExtractionConfidenceGate,
 		)
@@ -66,7 +67,8 @@ func computeActionRouteWithConfig(score int, profile string, cfg RoutingConfig, 
 	}
 	threshold := cfg.routeThreshold(route)
 	if score < threshold {
-		slog.Info("routing_blocked_below_threshold",
+		slog.Info(
+			"routing_blocked_below_threshold",
 			"score", score,
 			"threshold", threshold,
 			"route", route,

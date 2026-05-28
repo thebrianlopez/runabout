@@ -160,7 +160,8 @@ func run() error {
 	defer server.Shutdown(context.Background()) //nolint:errcheck
 
 	// ── Run poller until SIGTERM/SIGINT ───────────────────────────────────────
-	logger.Info("poller started",
+	logger.Info(
+		"poller started",
 		"projects", cfg.JiraProjects,
 		"poll_interval", cfg.PollInterval,
 		"lookback_window", cfg.LookbackWindow,

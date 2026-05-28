@@ -157,7 +157,7 @@ func writeEvent(e event) error {
 
 // buildEmitCmd constructs a beads emit shell command string for the given
 // invocation parameters. The returned string is safe for eval in a POSIX shell
-// — all single-quoted arguments use '\'' escaping for embedded single quotes.
+// — all single-quoted arguments use '\” escaping for embedded single quotes.
 func buildEmitCmd(cliName, subcmd string, durationMs int64, exitCode int, flags map[string]string) (string, error) {
 	metaJSON, err := json.Marshal(map[string]interface{}{"flags": scrubFlags(flags)})
 	if err != nil {

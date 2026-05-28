@@ -1,12 +1,13 @@
 package backend
 
 import (
+	"strconv"
+	"sync/atomic"
+
 	"github.com/ProtonMail/go-proton-api"
 	"github.com/ProtonMail/gopenpgp/v2/crypto"
 	"github.com/bradenaw/juniper/xslices"
 	"github.com/emersion/go-vcard"
-	"strconv"
-	"sync/atomic"
 )
 
 var globalContactID int32

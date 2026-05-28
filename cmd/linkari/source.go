@@ -206,7 +206,8 @@ func (r *SourceRegistry) Start(ctx context.Context, q *Queue, emit func(*ShareRe
 				if rec := recover(); rec != nil {
 					h.errorCount.Add(1)
 					h.setStatus("error")
-					slog.Error("source_start_panic",
+					slog.Error(
+						"source_start_panic",
 						"source", src.Name(),
 						"panic", rec,
 						"stack", string(debug.Stack()),

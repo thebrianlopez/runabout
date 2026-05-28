@@ -268,4 +268,3 @@ func openRawSQLite(t *testing.T, path string) *sql.DB {
 	}
 	return db
 }
-

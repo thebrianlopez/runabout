@@ -11,7 +11,8 @@ import (
 
 func (s *Server) handleGetContacts() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		total, contacts, err := s.b.GetUserContacts(c.GetString("UserID"),
+		total, contacts, err := s.b.GetUserContacts(
+			c.GetString("UserID"),
 			mustParseInt(c.DefaultQuery("Page", strconv.Itoa(defaultPage))),
 			mustParseInt(c.DefaultQuery("PageSize", strconv.Itoa(defaultPageSize))),
 		)
@@ -30,7 +31,8 @@ func (s *Server) handleGetContacts() gin.HandlerFunc {
 
 func (s *Server) handleGetContactsEmails() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		total, contacts, err := s.b.GetUserContactEmails(c.GetString("UserID"), c.Query("Email"),
+		total, contacts, err := s.b.GetUserContactEmails(
+			c.GetString("UserID"), c.Query("Email"),
 			mustParseInt(c.DefaultQuery("Page", strconv.Itoa(defaultPage))),
 			mustParseInt(c.DefaultQuery("PageSize", strconv.Itoa(defaultPageSize))),
 		)

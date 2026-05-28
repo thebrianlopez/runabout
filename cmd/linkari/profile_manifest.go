@@ -32,21 +32,21 @@ import (
 
 // ProfileManifest is the v1 schema for docs/prompts/profiles/*.yaml.
 type ProfileManifest struct {
-	ID             string         `yaml:"id"`
-	Version        int            `yaml:"version"`
-	SchemaVersion  string         `yaml:"schema_version"`
-	ContentModes   []string       `yaml:"content_modes,omitempty"`
-	PersonaIntro   string         `yaml:"persona_intro"`
-	VisionPersonaIntro string     `yaml:"vision_persona_intro,omitempty"`
-	NoiseGate      NoiseGate      `yaml:"noise_gate"`
-	PersonaBody    string         `yaml:"persona_body"`
-	VerdictPrompt  string         `yaml:"verdict_prompt"`
-	Rubric         []RubricAxis   `yaml:"rubric"`
-	VisionRubric   []RubricAxis   `yaml:"vision_rubric,omitempty"`
-	AudioRubric    []RubricAxis   `yaml:"audio_rubric,omitempty"`
-	ActionItems    ActionItems    `yaml:"action_items"`
-	KeyFacts       KeyFacts       `yaml:"key_facts"`
-	History        *HistoryBlock  `yaml:"history,omitempty"`
+	ID                 string        `yaml:"id"`
+	Version            int           `yaml:"version"`
+	SchemaVersion      string        `yaml:"schema_version"`
+	ContentModes       []string      `yaml:"content_modes,omitempty"`
+	PersonaIntro       string        `yaml:"persona_intro"`
+	VisionPersonaIntro string        `yaml:"vision_persona_intro,omitempty"`
+	NoiseGate          NoiseGate     `yaml:"noise_gate"`
+	PersonaBody        string        `yaml:"persona_body"`
+	VerdictPrompt      string        `yaml:"verdict_prompt"`
+	Rubric             []RubricAxis  `yaml:"rubric"`
+	VisionRubric       []RubricAxis  `yaml:"vision_rubric,omitempty"`
+	AudioRubric        []RubricAxis  `yaml:"audio_rubric,omitempty"`
+	ActionItems        ActionItems   `yaml:"action_items"`
+	KeyFacts           KeyFacts      `yaml:"key_facts"`
+	History            *HistoryBlock `yaml:"history,omitempty"`
 	// ForJSON gates out markdown-only sections (Output Format table, Key Facts)
 	// when rendering for the JSON scoring path. Not loaded from YAML.
 	ForJSON bool `yaml:"-"`

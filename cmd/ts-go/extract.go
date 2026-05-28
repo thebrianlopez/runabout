@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	"github.com/spf13/cobra"
+	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 // ExtractResult holds the extracted function body and metadata.

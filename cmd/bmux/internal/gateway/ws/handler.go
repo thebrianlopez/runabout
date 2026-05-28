@@ -12,19 +12,19 @@ import (
 )
 
 const (
-	paneIDPrefixLen  = 16
-	writeTimeout     = 5 * time.Second
-	writeChanBuf     = 128
+	paneIDPrefixLen = 16
+	writeTimeout    = 5 * time.Second
+	writeChanBuf    = 128
 )
 
 // clientMsg is the inbound JSON message from a mobile client.
 type clientMsg struct {
-	Type   string `json:"type"`
-	PaneID string `json:"pane_id"`
-	Keys   string `json:"keys"`
+	Type    string `json:"type"`
+	PaneID  string `json:"pane_id"`
+	Keys    string `json:"keys"`
 	Literal bool   `json:"literal"`
-	Cols   int    `json:"cols"`
-	Rows   int    `json:"rows"`
+	Cols    int    `json:"cols"`
+	Rows    int    `json:"rows"`
 }
 
 // serverMsg is an outbound JSON control message to a client.

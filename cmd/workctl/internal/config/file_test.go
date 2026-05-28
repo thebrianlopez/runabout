@@ -294,7 +294,7 @@ func TestDiscoverConfigFile(t *testing.T) {
 	t.Run("local .workctl.yaml", func(t *testing.T) {
 		dir := t.TempDir()
 		cfgPath := filepath.Join(dir, ".workctl.yaml")
-		if err := os.WriteFile(cfgPath, []byte("defaults: {}"), 0644); err != nil {
+		if err := os.WriteFile(cfgPath, []byte("defaults: {}"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
@@ -464,7 +464,7 @@ func TestCheckPlaintextTokens(t *testing.T) {
 func writeTemp(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path

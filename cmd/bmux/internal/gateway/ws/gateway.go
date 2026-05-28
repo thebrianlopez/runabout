@@ -104,10 +104,10 @@ type gateway struct {
 	translator KeyTranslator
 
 	// standalone server (used when Start is called directly, not via httptest)
-	mu      sync.Mutex
-	server  *http.Server
-	addr    string
-	connWG  sync.WaitGroup
+	mu     sync.Mutex
+	server *http.Server
+	addr   string
+	connWG sync.WaitGroup
 
 	// stopCtx is cancelled by Stop() to tear down all connection goroutines.
 	stopCtx    context.Context

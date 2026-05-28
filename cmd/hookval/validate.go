@@ -5,8 +5,8 @@ import (
 	"os"
 	"sort"
 
-	"github.com/thebrianlopez/runabout/internal/hookval"
 	"github.com/spf13/cobra"
+	"github.com/thebrianlopez/runabout/internal/hookval"
 )
 
 func validateCmd() *cobra.Command {

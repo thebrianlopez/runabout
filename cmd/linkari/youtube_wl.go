@@ -116,7 +116,8 @@ func syncWatchLaterAsync(profile string, slot string, q *Queue, events *EventLog
 	ts, err := youtubeTokenSourceForSlot(ctx, slot, 1, q, clientID, clientSecret)
 	if err != nil {
 		if isSQLErrNoRows(err) {
-			slog.Warn("syncWatchLaterAsync: slot has no token",
+			slog.Warn(
+				"syncWatchLaterAsync: slot has no token",
 				"event_type", "source_disabled",
 				"source", "yt_watch_later",
 				"slot", slot,
@@ -131,7 +132,8 @@ func syncWatchLaterAsync(profile string, slot string, q *Queue, events *EventLog
 			}
 			return
 		}
-		slog.Warn("syncWatchLaterAsync: auth error",
+		slog.Warn(
+			"syncWatchLaterAsync: auth error",
 			"event_type", "watchlater_api_error",
 			"source", "yt_watch_later",
 			"profile", profile,
@@ -165,7 +167,8 @@ func syncWatchLaterAsync(profile string, slot string, q *Queue, events *EventLog
 			errClass, remediation := classifyYouTubeAPIError(err)
 			lastErrClass = errClass
 			if errClass == "quota_exhausted" {
-				slog.Warn("syncWatchLaterAsync: quota exhausted",
+				slog.Warn(
+					"syncWatchLaterAsync: quota exhausted",
 					"event_type", "watchlater_quota_exhausted",
 					"source", "yt_watch_later",
 					"profile", profile,
@@ -182,7 +185,8 @@ func syncWatchLaterAsync(profile string, slot string, q *Queue, events *EventLog
 					})
 				}
 			} else {
-				slog.Warn("syncWatchLaterAsync: API error",
+				slog.Warn(
+					"syncWatchLaterAsync: API error",
 					"event_type", "watchlater_api_error",
 					"source", "yt_watch_later",
 					"profile", profile,
@@ -291,7 +295,8 @@ func syncWatchLaterAsync(profile string, slot string, q *Queue, events *EventLog
 	}
 
 	durMS := time.Since(start).Milliseconds()
-	slog.Info("syncWatchLaterAsync: complete",
+	slog.Info(
+		"syncWatchLaterAsync: complete",
 		"event_type", "source_complete",
 		"source", "yt_watch_later",
 		"profile", profile,

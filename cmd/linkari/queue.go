@@ -514,7 +514,8 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 				tx.Rollback()
 				slog.Error("seen_content_migration_failed", "error", commitErr, "step", "commit")
 			} else {
-				slog.Info("seen_content_migration_complete",
+				slog.Info(
+					"seen_content_migration_complete",
 					"rows_copied", rowsCopied,
 					"tables_dropped", 3,
 				)
@@ -636,7 +637,8 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 		return 0, fmt.Errorf("enqueue: %w", err)
 	}
 	id, _ := res.LastInsertId()
-	slog.Debug("queue enqueued",
+	slog.Debug(
+		"queue enqueued",
 		"event_type", "queue_enqueue",
 		"id", id,
 		"type", req.Type,
@@ -663,7 +665,8 @@ func (q *Queue) EnqueuePrefiltered(req *ShareRequest, reason string) (int64, err
 		return 0, fmt.Errorf("enqueue prefiltered: %w", err)
 	}
 	id, _ := res.LastInsertId()
-	slog.Debug("queue enqueued (prefiltered)",
+	slog.Debug(
+		"queue enqueued (prefiltered)",
 		"event_type", "queue_enqueue_prefiltered",
 		"id", id,
 		"reason", reason,
@@ -689,7 +692,8 @@ func (q *Queue) EnqueueScored(req *ShareRequest, verdict string) (int64, error) 
 		return 0, fmt.Errorf("enqueue scored: %w", err)
 	}
 	id, _ := res.LastInsertId()
-	slog.Debug("queue enqueued (auto-scored)",
+	slog.Debug(
+		"queue enqueued (auto-scored)",
 		"event_type", "queue_enqueue_scored",
 		"id", id,
 		"type", req.Type,
@@ -1107,8 +1111,8 @@ type ProfileStat struct {
 	AvgScore7d                *float64           `json:"avg_score_7d,omitempty"`               // EPIC-082 M3
 	AvgScore30d               *float64           `json:"avg_score_30d,omitempty"`              // EPIC-082 M3
 	FeedbackCalibrationScore  *float64           `json:"feedback_calibration_score,omitempty"` // EPIC-082 M3: (TooHigh-TooLow)/FeedbackCount
-	WikiEnrichedCount         int                `json:"wiki_enriched_count,omitempty"`         // EPIC-180 M4: items scored with wiki context
-	WikiEnrichedThumbsUp      int                `json:"wiki_enriched_thumbs_up,omitempty"`     // EPIC-180 M4: wiki-enriched items with outcome=acted
+	WikiEnrichedCount         int                `json:"wiki_enriched_count,omitempty"`        // EPIC-180 M4: items scored with wiki context
+	WikiEnrichedThumbsUp      int                `json:"wiki_enriched_thumbs_up,omitempty"`    // EPIC-180 M4: wiki-enriched items with outcome=acted
 }
 
 // ProfileStats returns aggregate scoring and feedback stats, optionally filtered by profile.
@@ -1729,7 +1733,8 @@ func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score in
 	defer tx.Rollback()
 
 	var last sql.NullInt64
-	if err := tx.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(
+		ctx,
 		`SELECT MAX(created_at) FROM push_outbox WHERE kind='digest' AND profile=?`,
 		profile,
 	).Scan(&last); err != nil {
@@ -1767,7 +1772,8 @@ func (q *Queue) EnqueueDigestIfDue(ctx context.Context, profile string, score in
 	if len(gapSummary) > 3 {
 		cw = gapSummary[3] // EPIC-102: optional content_warning
 	}
-	res, err := tx.ExecContext(ctx,
+	res, err := tx.ExecContext(
+		ctx,
 		`INSERT INTO push_outbox (score, slug, verdict, url, kind, profile, gap_summary, content_type, classify_source, content_warning, status, attempts, next_attempt, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, 'digest', ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
 		score, slug, verdict, url, profile, gs, ct, cs, cw, now, now, now,
@@ -2356,7 +2362,8 @@ func (q *Queue) CountScoredMonitoredVideosToday(profile string) (worthWatching i
 	now := time.Now().UTC()
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Unix()
 
-	rows, err := q.db.Query(`
+	rows, err := q.db.Query(
+		`
 		SELECT q.score
 		FROM seen_content sc
 		JOIN queue q ON q.id = sc.queue_id

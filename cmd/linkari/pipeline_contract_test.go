@@ -608,7 +608,7 @@ func TestHandleShare_YouTubeURL_EmptyType(t *testing.T) {
 	mux := srv.Mux()
 
 	payload := map[string]string{
-		"type":   "",  // Missing type — the invariant under test at handler.go:520.
+		"type":   "", // Missing type — the invariant under test at handler.go:520.
 		"url":    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
 		"action": "uinit_auto",
 	}

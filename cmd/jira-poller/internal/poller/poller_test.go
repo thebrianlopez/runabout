@@ -27,7 +27,7 @@ type mockJiraClient struct {
 	idx     int
 	calls   []jiraclient.SearchRequest
 	// block causes SearchTransitions to wait for release before returning.
-	block   chan struct{}
+	block chan struct{}
 }
 
 func (m *mockJiraClient) SearchTransitions(_ context.Context, req jiraclient.SearchRequest) (*jiraclient.SearchResult, error) {
@@ -50,10 +50,10 @@ func (m *mockJiraClient) SearchTransitions(_ context.Context, req jiraclient.Sea
 
 // mockDedupeStore implements dedupe.DedupeStore for tests.
 type mockDedupeStore struct {
-	mu     sync.Mutex
-	isNew  bool
-	err    error
-	calls  []string // event IDs passed to Mark
+	mu    sync.Mutex
+	isNew bool
+	err   error
+	calls []string // event IDs passed to Mark
 }
 
 func (m *mockDedupeStore) Mark(_ context.Context, eventID string, _ time.Duration) (bool, error) {
@@ -65,10 +65,10 @@ func (m *mockDedupeStore) Mark(_ context.Context, eventID string, _ time.Duratio
 
 // mockPublisher implements publisher.Publisher for tests.
 type mockPublisher struct {
-	mu       sync.Mutex
-	result   publisher.PublishResult
-	err      error
-	calls    [][]types.TransitionEvent
+	mu     sync.Mutex
+	result publisher.PublishResult
+	err    error
+	calls  [][]types.TransitionEvent
 }
 
 func (m *mockPublisher) Publish(_ context.Context, events []types.TransitionEvent) (publisher.PublishResult, error) {
@@ -391,7 +391,7 @@ func TestRun_CT12_GracefulShutdown(t *testing.T) {
 	release := make(chan struct{})
 	completed := false
 	jira := &mockJiraClient{
-		block: release,
+		block:   release,
 		results: []jiraclient.SearchResult{{Issues: []jiraclient.Issue{}}},
 	}
 
@@ -571,4 +571,3 @@ func TestPollOnce_BT5_MultipleProjects(t *testing.T) {
 		t.Errorf("Projects = %v, want [INFRA PLAT]", req.Projects)
 	}
 }
-

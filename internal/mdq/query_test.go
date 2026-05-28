@@ -9,7 +9,7 @@ import (
 func writeTestFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -186,7 +186,7 @@ func TestExecuteWithExclude(t *testing.T) {
 	// Create subdirectories with markdown files.
 	for _, sub := range []string{"epics", "standups", "ideas"} {
 		subDir := filepath.Join(dir, sub)
-		if err := os.MkdirAll(subDir, 0755); err != nil {
+		if err := os.MkdirAll(subDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		writeTestFile(t, subDir, "doc.md", "# "+sub+" Doc\n")
@@ -221,12 +221,12 @@ func TestExecuteWithExclude(t *testing.T) {
 func TestExecuteGitAlwaysExcluded(t *testing.T) {
 	dir := t.TempDir()
 	gitDir := filepath.Join(dir, ".git")
-	if err := os.MkdirAll(gitDir, 0755); err != nil {
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeTestFile(t, gitDir, "config.md", "# Git Config\n")
 	okDir := filepath.Join(dir, "docs")
-	if err := os.MkdirAll(okDir, 0755); err != nil {
+	if err := os.MkdirAll(okDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeTestFile(t, okDir, "readme.md", "# Readme\n")

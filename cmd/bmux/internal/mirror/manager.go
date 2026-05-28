@@ -34,11 +34,11 @@ type manager struct {
 	stdin         io.WriteCloser
 	cancelRestart context.CancelFunc
 
-	pending      map[string]chan ipcResponse
-	pendingMu    sync.Mutex
+	pending   map[string]chan ipcResponse
+	pendingMu sync.Mutex
 
-	panes   map[string]*paneState
-	closed  bool
+	panes        map[string]*paneState
+	closed       bool
 	restartCount int
 }
 
@@ -47,8 +47,10 @@ type paneState struct {
 	lastWrite time.Time
 }
 
-const maxPendingWrites = 1000
-const snapshotTimeout = 500 * time.Millisecond
+const (
+	maxPendingWrites = 1000
+	snapshotTimeout  = 500 * time.Millisecond
+)
 
 // NewHeadlessMirrorManager creates and starts a new HeadlessMirrorManager.
 // Returns E01 node_not_found if node is absent from PATH.
@@ -110,7 +112,8 @@ func (m *manager) start() error {
 	m.cancelRestart = cancel
 	m.mu.Unlock()
 
-	slog.Info("mirror_subprocess_started",
+	slog.Info(
+		"mirror_subprocess_started",
 		"pid", cmd.Process.Pid,
 	)
 
@@ -416,4 +419,3 @@ func newID() string {
 	}
 	return id.String()
 }
-

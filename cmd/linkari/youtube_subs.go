@@ -24,9 +24,11 @@ type ytSubscription struct {
 }
 
 // Injectable API seams — replaced in tests.
-var execYouTubeSubscriptionsList = execYouTubeSubscriptionsListReal
-var execYouTubeChannelsList = execYouTubeChannelsListReal
-var execYouTubePlaylistItemsList = execYouTubePlaylistItemsListReal
+var (
+	execYouTubeSubscriptionsList = execYouTubeSubscriptionsListReal
+	execYouTubeChannelsList      = execYouTubeChannelsListReal
+	execYouTubePlaylistItemsList = execYouTubePlaylistItemsListReal
+)
 
 // execYouTubeSubscriptionsListReal fetches all subscription channels for the
 // authenticated user via subscriptions.list(mine=true).
@@ -156,7 +158,8 @@ func (s *YouTubeSubsSource) Start(ctx context.Context, q *Queue, emit func(*Shar
 		// EPIC-098 F3: pass autoEnqueue flag to control queue writes
 		if err := watchSubscriptionsAsync("default", q, s.events, s.clientID, s.clientSecret, s.autoEnqueue); err != nil {
 			consecutive++
-			slog.Warn("yt_monitored source error",
+			slog.Warn(
+				"yt_monitored source error",
 				"consecutive_failures", consecutive,
 				"error", err,
 			)
@@ -192,7 +195,8 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 
 	ts, err := youtubeTokenSource(ctx, profile, q, clientID, clientSecret)
 	if err != nil {
-		slog.Warn("watchSubscriptionsAsync: auth error",
+		slog.Warn(
+			"watchSubscriptionsAsync: auth error",
 			"event_type", "subscriptions_api_error",
 			"profile", profile,
 			"error_class", "auth_error",
@@ -217,7 +221,8 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 		if errClass == "quota_exhausted" {
 			evType = "subscriptions_quota_exceeded"
 		}
-		slog.Warn("watchSubscriptionsAsync: subscriptions.list failed",
+		slog.Warn(
+			"watchSubscriptionsAsync: subscriptions.list failed",
 			"event_type", evType,
 			"profile", profile,
 			"error_class", errClass,
@@ -253,7 +258,8 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 	}
 	uploadsPlaylists, err := execYouTubeChannelsList(ctx, ts, channelIDs)
 	if err != nil {
-		slog.Warn("watchSubscriptionsAsync: channels.list failed",
+		slog.Warn(
+			"watchSubscriptionsAsync: channels.list failed",
 			"event_type", "subscriptions_api_error",
 			"profile", profile,
 			"error_class", "channels_list_error",
@@ -282,7 +288,8 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 
 		items, err := execYouTubePlaylistItemsList(ctx, ts, uploadsID)
 		if err != nil {
-			slog.Warn("watchSubscriptionsAsync: playlistItems.list failed",
+			slog.Warn(
+				"watchSubscriptionsAsync: playlistItems.list failed",
 				"event_type", "subscriptions_api_error",
 				"profile", profile,
 				"channel_id", sub.ChannelID,
@@ -381,7 +388,8 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 	}
 
 	durMS := time.Since(start).Milliseconds()
-	slog.Info("watchSubscriptionsAsync: complete",
+	slog.Info(
+		"watchSubscriptionsAsync: complete",
 		"event_type", "source_complete",
 		"source", "yt_monitored",
 		"profile", profile,

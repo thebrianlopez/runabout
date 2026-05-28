@@ -7,19 +7,19 @@
 //
 // Flow:
 //
-//  Parent (--detach set):
-//    1. Check stale PID file; error if process is live.
-//    2. Create os.Pipe — parent reads, child writes "READY\n" when listener binds.
-//    3. Re-exec binary without --detach; pass write-end as fd 3 via ExtraFiles.
-//       Env LINKARI_DETACH_PIPE_FD=3 tells child to signal on that fd.
-//    4. Close write-end in parent; read from pipe.
-//    5. On "READY\n": write PID file, print message, os.Exit(0).
-//    6. On pipe error/EOF without data: propagate child failure, exit 1.
+//	Parent (--detach set):
+//	  1. Check stale PID file; error if process is live.
+//	  2. Create os.Pipe — parent reads, child writes "READY\n" when listener binds.
+//	  3. Re-exec binary without --detach; pass write-end as fd 3 via ExtraFiles.
+//	     Env LINKARI_DETACH_PIPE_FD=3 tells child to signal on that fd.
+//	  4. Close write-end in parent; read from pipe.
+//	  5. On "READY\n": write PID file, print message, os.Exit(0).
+//	  6. On pipe error/EOF without data: propagate child failure, exit 1.
 //
-//  Child (LINKARI_DETACH_PIPE_FD set, --detach absent):
-//    - Runs normal serve path.
-//    - After net.Listen succeeds: calls signalDetachReady() to write "READY\n".
-//    - Closes pipe fd so parent unblocks.
+//	Child (LINKARI_DETACH_PIPE_FD set, --detach absent):
+//	  - Runs normal serve path.
+//	  - After net.Listen succeeds: calls signalDetachReady() to write "READY\n".
+//	  - Closes pipe fd so parent unblocks.
 package main
 
 import (

@@ -32,7 +32,7 @@ type BlueskyRefreshCallback func(data BlueskySessionData) error
 
 // BlueskyClient wraps an active AT Protocol session.
 type BlueskyClient struct {
-	Session  BlueskySessionData
+	Session   BlueskySessionData
 	onRefresh BlueskyRefreshCallback
 }
 
@@ -125,7 +125,8 @@ func (s *Server) requireBskyClient(caller string) (*BlueskyClient, bool) {
 	if s.bskyClient != nil {
 		return s.bskyClient, true
 	}
-	slog.Warn("bluesky session missing",
+	slog.Warn(
+		"bluesky session missing",
 		"event_type", "bluesky_session_missing",
 		"caller", caller,
 	)
@@ -137,7 +138,8 @@ func (s *Server) requireBskyClient(caller string) (*BlueskyClient, bool) {
 func resumeBlueskySessionsOnStartup(ctx context.Context, q *Queue, s *Server) {
 	data, err := q.LoadBlueskySession(1)
 	if err != nil {
-		slog.Warn("bluesky session load failed on startup",
+		slog.Warn(
+			"bluesky session load failed on startup",
 			"event_type", "bluesky_session_corrupt",
 			"user_id", 1,
 			"error", err,
@@ -151,7 +153,8 @@ func resumeBlueskySessionsOnStartup(ctx context.Context, q *Queue, s *Server) {
 		return q.UpdateBlueskySession(1, updated)
 	}
 	s.bskyClient = ResumeBlueskySession(*data, refreshCb)
-	slog.Info("bluesky session resumed",
+	slog.Info(
+		"bluesky session resumed",
 		"event_type", "bluesky_session_resumed",
 		"user_id", 1,
 		"account_did", data.DID,

@@ -126,7 +126,8 @@ func queryErrors24h(db *sql.DB) int {
 
 // writeHealthMetric writes one snapshot row per item per tick.
 func writeHealthMetric(db *sql.DB, itemID, lastSyncAt string, txCount24h, errors24h int) error {
-	_, err := db.Exec(`
+	_, err := db.Exec(
+		`
 		INSERT INTO health_metrics (sampled_at, item_id, last_sync_at, tx_count_24h, errors_24h)
 		VALUES (?, ?, ?, ?, ?)`,
 		nowUTC(), itemID, lastSyncAt, txCount24h, errors24h,

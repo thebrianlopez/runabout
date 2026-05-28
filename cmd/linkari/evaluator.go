@@ -39,7 +39,7 @@ type TokenUsage struct {
 type Scorecard struct {
 	Score          int            `json:"score"`
 	Verdict        string         `json:"verdict"`
-	Gaps           []string       `json:"gaps,omitempty"`           // specific missing elements needed to reach threshold
+	Gaps           []string       `json:"gaps,omitempty"` // specific missing elements needed to reach threshold
 	Tags           string         `json:"tags,omitempty"`
 	TopicTags      []string       `json:"topic_tags,omitempty"`
 	ActionRoute    string         `json:"action_route,omitempty"`
@@ -47,13 +47,13 @@ type Scorecard struct {
 	RawMarkdown    string         `json:"raw_markdown,omitempty"`
 	Profile        string         `json:"profile,omitempty"`
 	ProfileVersion int            `json:"profile_version,omitempty"`
-	Backend        string         `json:"backend,omitempty"`        // e.g. "claude-haiku"
+	Backend        string         `json:"backend,omitempty"` // e.g. "claude-haiku"
 	LatencyMs      int64          `json:"latency_ms,omitempty"`
 	PromptVersion  string         `json:"prompt_version,omitempty"` // git SHA of template file
 	PromptHash     string         `json:"prompt_hash,omitempty"`    // EPIC-082 M1: sha256 prefix of rendered prompt
 	SourceType     string         `json:"source_type,omitempty"`    // "cli-triage", "cli-score", "eval-refresh", "eval-fixture"
 	CostUSD        float64        `json:"cost_usd,omitempty"`       // EPIC-062 M2: per-call cost from JSON envelope
-	Usage          *TokenUsage    `json:"usage,omitempty"`           // EPIC-062 M2: per-call token usage
+	Usage          *TokenUsage    `json:"usage,omitempty"`          // EPIC-062 M2: per-call token usage
 	RepairTurn     bool           `json:"repair_turn,omitempty"`    // EPIC-084 M4: true when verdict required a repair turn
 }
 
@@ -126,7 +126,8 @@ func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate 
 		sc.CostUSD = meta.CostUSD
 		sc.Usage = meta.Usage
 		sc.RepairTurn = meta.RepairTurn
-		slog.Info("evaluator: token usage",
+		slog.Info(
+			"evaluator: token usage",
 			"backend", "claude-haiku-json",
 			"cost_usd", meta.CostUSD,
 			"input_tokens", tokenCount(meta.Usage, true),
@@ -154,7 +155,8 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		// EPIC-080 M3: fall back to JSON evaluator with synthesized metadata.
-		slog.Warn("haiku-vision: exec failed, falling back to JSON evaluator",
+		slog.Warn(
+			"haiku-vision: exec failed, falling back to JSON evaluator",
 			"event_type", "score_async_vision_fallback",
 			"image_path", e.ImagePath,
 			"vision_error", err.Error(),
@@ -165,7 +167,8 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 			// (scoreAsync) can mark the row failed via MarkFailedWithReason. The
 			// former "metadata-only scorecard" return swallowed the failure and left
 			// the row scored=0 without signalling the pipeline error.
-			slog.Error("haiku-vision: all evaluators failed",
+			slog.Error(
+				"haiku-vision: all evaluators failed",
 				"event_type", "score_async_all_evaluators_failed",
 				"image_path", e.ImagePath,
 				"vision_error", err.Error(),
@@ -179,7 +182,8 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 	v, meta, parseErr := parseHaikuEnvelope(raw)
 	if parseErr != nil {
 		// EPIC-080 M3: parse failure also triggers fallback.
-		slog.Warn("haiku-vision: parse failed, falling back to JSON evaluator",
+		slog.Warn(
+			"haiku-vision: parse failed, falling back to JSON evaluator",
 			"event_type", "score_async_vision_fallback",
 			"image_path", e.ImagePath,
 			"parse_error", parseErr.Error(),
@@ -187,7 +191,8 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 		fallbackSc, fbErr := HaikuJSONEvaluator{}.Evaluate(ctx, content, promptTemplate)
 		if fbErr != nil {
 			// EPIC-001 M2: both paths failed after parse error — propagate error.
-			slog.Error("haiku-vision: all evaluators failed after parse error",
+			slog.Error(
+				"haiku-vision: all evaluators failed after parse error",
 				"event_type", "score_async_all_evaluators_failed",
 				"image_path", e.ImagePath,
 				"parse_error", parseErr.Error(),

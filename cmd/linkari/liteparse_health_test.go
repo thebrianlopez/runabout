@@ -167,7 +167,8 @@ func TestCT6_FCMIncludesContentWarning(t *testing.T) {
 	q := srv.queue
 
 	// Enqueue a push row that already has content_warning set.
-	id, err := q.EnqueueDigestIfDue(context.Background(),
+	id, err := q.EnqueueDigestIfDue(
+		context.Background(),
 		"eng", 80, "test-slug", "Good read", "https://example.com/ct6",
 		"", "", "", "lit_parse_failed",
 	)

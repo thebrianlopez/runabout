@@ -69,7 +69,8 @@ func syncLikedVideosAsync(profile string, slot string, q *Queue, events *EventLo
 	ts, err := youtubeTokenSourceForSlot(ctx, slot, 1, q, clientID, clientSecret)
 	if err != nil {
 		if isSQLErrNoRows(err) {
-			slog.Warn("syncLikedVideosAsync: slot has no token",
+			slog.Warn(
+				"syncLikedVideosAsync: slot has no token",
 				"event_type", "source_disabled",
 				"source", "yt_liked",
 				"slot", slot,
@@ -84,7 +85,8 @@ func syncLikedVideosAsync(profile string, slot string, q *Queue, events *EventLo
 			}
 			return
 		}
-		slog.Warn("syncLikedVideosAsync: auth error",
+		slog.Warn(
+			"syncLikedVideosAsync: auth error",
 			"event_type", "likedvideos_api_error",
 			"source", "yt_liked",
 			"profile", profile,
@@ -114,7 +116,8 @@ func syncLikedVideosAsync(profile string, slot string, q *Queue, events *EventLo
 		if err != nil {
 			errClass, remediation := classifyYouTubeAPIError(err)
 			if errClass == "quota_exhausted" {
-				slog.Warn("syncLikedVideosAsync: quota exhausted",
+				slog.Warn(
+					"syncLikedVideosAsync: quota exhausted",
 					"event_type", "likedvideos_quota_exhausted",
 					"source", "yt_liked",
 					"profile", profile,
@@ -131,7 +134,8 @@ func syncLikedVideosAsync(profile string, slot string, q *Queue, events *EventLo
 					})
 				}
 			} else {
-				slog.Warn("syncLikedVideosAsync: API error",
+				slog.Warn(
+					"syncLikedVideosAsync: API error",
 					"event_type", "likedvideos_api_error",
 					"source", "yt_liked",
 					"profile", profile,
@@ -240,7 +244,8 @@ func syncLikedVideosAsync(profile string, slot string, q *Queue, events *EventLo
 	}
 
 	durMS := time.Since(start).Milliseconds()
-	slog.Info("syncLikedVideosAsync: complete",
+	slog.Info(
+		"syncLikedVideosAsync: complete",
 		"event_type", "source_complete",
 		"source", "yt_liked",
 		"profile", profile,

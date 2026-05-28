@@ -45,7 +45,6 @@ func (a *AtlassianClients) GetAllConfluenceArticles(accountID string, cfg *local
 		result, response, err = a.Confluence.Search.Content(ctx, cql, options)
 		return err
 	})
-
 	if err != nil {
 		if response != nil && config.Debug {
 			config.LogDebug("API returned status %d: %s", response.Code, response.Endpoint)
@@ -155,7 +154,6 @@ func (a *AtlassianClients) GetAllPagesBySpaces(cfg *localModels.QueryConfig) ([]
 		result, response, err = a.Confluence.Search.Content(ctx, cql, options)
 		return err
 	})
-
 	if err != nil {
 		if response != nil && config.Debug {
 			config.LogDebug("API returned status %d: %s", response.Code, response.Endpoint)
@@ -305,7 +303,6 @@ func (a *AtlassianClients) HydratePageMetadata(ctx context.Context, pageID strin
 		content, response, err = a.Confluence.Content.Get(ctx, pageID, expand, 0)
 		return err
 	})
-
 	if err != nil {
 		if response != nil && config.Debug {
 			config.LogDebug("Hydration API returned status %d: %s", response.Code, response.Endpoint)

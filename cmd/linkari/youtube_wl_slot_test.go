@@ -249,6 +249,6 @@ func TestWLSlot_RG9_SlotNoTokenNoPanic(t *testing.T) {
 	}
 	assert.True(t, hasDisabled, "source_disabled with reason=slot_no_token must be emitted")
 
-	_ = sql.ErrNoRows  // verify sql import used
+	_ = sql.ErrNoRows // verify sql import used
 	_ = errors.New    // verify errors import used
 }

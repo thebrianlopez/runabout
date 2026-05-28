@@ -21,14 +21,16 @@ func resolveFirehoseProfile(profile string) string {
 	case "eng":
 		return "eng"
 	case "default":
-		slog.Warn("firehose profile fallback",
+		slog.Warn(
+			"firehose profile fallback",
 			"event_type", "firehose_profile_fallback",
 			"original_profile", profile,
 			"resolved_profile", "eng",
 		)
 		return "eng"
 	default:
-		slog.Warn("firehose profile fallback",
+		slog.Warn(
+			"firehose profile fallback",
 			"event_type", "firehose_profile_fallback",
 			"original_profile", profile,
 			"resolved_profile", "eng",
@@ -46,7 +48,8 @@ func firehoseActionForProfile(profile string) string {
 		return "uinit_eng"
 	default:
 		if profile == "" {
-			slog.Warn("firehose action derivation failed",
+			slog.Warn(
+				"firehose action derivation failed",
 				"event_type", "firehose_action_derivation_failed",
 				"error_class", "firehose_action_derivation_failed",
 				"profile", profile,

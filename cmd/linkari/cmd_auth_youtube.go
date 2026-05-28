@@ -170,7 +170,8 @@ func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbac
 	}()
 	defer srv.Shutdown(context.Background())
 
-	authURL := cfg.AuthCodeURL(state,
+	authURL := cfg.AuthCodeURL(
+		state,
 		oauth2.AccessTypeOffline,
 		oauth2.SetAuthURLParam("prompt", "consent"),
 	)

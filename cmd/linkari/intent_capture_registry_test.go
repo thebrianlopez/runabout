@@ -13,7 +13,7 @@ import (
 type mockWorkflow struct{ name string }
 
 func (m *mockWorkflow) Execute(ctx context.Context, item QueueItem) error { return nil }
-func (m *mockWorkflow) Name() string                                       { return m.name }
+func (m *mockWorkflow) Name() string                                      { return m.name }
 
 // newRegistryServer creates a fresh Server with no existing registrations.
 func newRegistryServer(t *testing.T) *Server {

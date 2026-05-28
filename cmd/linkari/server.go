@@ -377,7 +377,8 @@ func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug 
 // in the process environment. EPIC-109 M2.
 func (s *Server) CacheLitProbe(tessDataPrefix string) {
 	s.litProbe = probeHealth(exec.LookPath, tessDataPrefix)
-	slog.Info("lit health probe",
+	slog.Info(
+		"lit health probe",
 		"event_type", "lit_health_probe",
 		"status", s.litProbe.Status,
 		"lit_present", s.litProbe.LitPresent,
@@ -593,7 +594,8 @@ func traceMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(sr, r)
 		dur := time.Since(start)
 
-		slog.InfoContext(ctx, "http_request",
+		slog.InfoContext(
+			ctx, "http_request",
 			"event_type", "http_request",
 			"method", r.Method,
 			"path", r.URL.Path,
@@ -1166,7 +1168,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		// (e.g. Samsung Gallery) never set is_screenshot=true on the queue row.
 		detectScreenshot(&req)
 
-		slog.DebugContext(ctx, "share parsed (multipart)",
+		slog.DebugContext(
+			ctx, "share parsed (multipart)",
 			"type", req.Type, "action", req.Action, "audio_size", audioWritten,
 			"temp_path", req.AudioPath, "mime_type", req.MimeType,
 			"calling_package", req.CallingPackage, "profile", req.Profile,
@@ -1186,7 +1189,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
 			return
 		}
-		slog.DebugContext(ctx, "share parsed",
+		slog.DebugContext(
+			ctx, "share parsed",
 			"type", req.Type, "action", req.Action, "profile", req.Profile,
 			"target", req.Target, "enter", req.Enter,
 			"text_len", len(req.Text), "url_len", len(req.URL), "title", req.Title,
@@ -1251,7 +1255,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	// intent wins over action (F4 CT-7): when intent is set, it takes priority.
 	if req.Intent != "" {
 		if !validIntents[req.Intent] {
-			slog.WarnContext(ctx, "intent_unknown",
+			slog.WarnContext(
+				ctx, "intent_unknown",
 				"event_type", "intent_unknown",
 				"received_value", req.Intent,
 			)
@@ -1266,7 +1271,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		derived, _, _ := deriveIntentFromAction(req.Action)
 		req.Intent = derived
 		actionCompatUsedTotal.Add(1)
-		slog.InfoContext(ctx, "action_compat_used",
+		slog.InfoContext(
+			ctx, "action_compat_used",
 			"event_type", "action_compat_used",
 			"action", req.Action,
 			"derived_intent", derived,
@@ -1282,7 +1288,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	// resolveDomainRoute mutates req.Action when a domain rule matches.
 	// Error means override_action not in cfgIndex (misconfigured actions.yaml).
 	if err := s.router.ResolveDomainRoute(&req, s.domainRoutes); err != nil {
-		slog.ErrorContext(ctx, "share rejected: domain route misconfigured",
+		slog.ErrorContext(
+			ctx, "share rejected: domain route misconfigured",
 			"event_type", "domain_route_error",
 			"error", err,
 			"url", req.URL,
@@ -1398,7 +1405,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		if existing, err := s.queue.FindRecentFile(req.Filename, req.FileSize, fileDedupWindow); err != nil {
 			slog.WarnContext(ctx, "share: FindRecentFile error (dedup skipped)", "error", err)
 		} else if existing != nil {
-			slog.InfoContext(ctx, "share: duplicate file share suppressed",
+			slog.InfoContext(
+				ctx, "share: duplicate file share suppressed",
 				"event_type", "share_file_dedup",
 				"existing_id", existing.ID,
 				"filename", req.Filename,
@@ -1419,7 +1427,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	// handleShare so login-walled URLs are rejected before enqueue  -  no orphaned
 	// queue rows, honest HTTP response to the client.
 	if req.Type == "url" && isLoginWallDomain(req.URL) {
-		slog.InfoContext(ctx, "share: login-wall domain pre-filtered",
+		slog.InfoContext(
+			ctx, "share: login-wall domain pre-filtered",
 			"event_type", "share_prefilter_login_wall",
 			"url", req.URL,
 		)
@@ -1456,7 +1465,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	// that Jina can score their text content. isYouTubePostURL is checked here so
 	// the pre-filter never gates on them.
 	if req.Type == "url" && !isYouTubeURL(req.URL) && !isYouTubePostURL(req.URL) && unsupportedPipelineRE.MatchString(req.URL) {
-		slog.InfoContext(ctx, "share: unsupported pipeline pre-filtered",
+		slog.InfoContext(
+			ctx, "share: unsupported pipeline pre-filtered",
 			"event_type", "share_prefilter_unsupported_pipeline",
 			"url", req.URL,
 		)
@@ -1584,7 +1594,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		// for replay so old Android clients (which may send legacy action names like
 		// uinit_eng) are not hard-rejected - backward compat RG-1.
 		if errors.Is(err, ErrActionNotFound) && s.queue == nil {
-			slog.WarnContext(ctx, "share rejected: action not configured",
+			slog.WarnContext(
+				ctx, "share rejected: action not configured",
 				"event_type", "share_action_not_found",
 				"action", req.Action,
 				"type", req.Type,
@@ -1594,7 +1605,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, ErrActionNotFound) {
-			slog.WarnContext(ctx, "share queued: action not configured, queueing for compat",
+			slog.WarnContext(
+				ctx, "share queued: action not configured, queueing for compat",
 				"event_type", "share_action_not_found_queued",
 				"action", req.Action,
 				"type", req.Type,
@@ -1602,7 +1614,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		}
 		// Transient failure (e.g. tmux unavailable): queue for replay.
 		if s.queue != nil {
-			slog.InfoContext(ctx, "share queued: routing failed",
+			slog.InfoContext(
+				ctx, "share queued: routing failed",
 				"event_type", "share_queued",
 				"type", req.Type,
 				"profile", req.Profile,
@@ -1619,7 +1632,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		slog.ErrorContext(ctx, "share routing failed",
+		slog.ErrorContext(
+			ctx, "share routing failed",
 			"event_type", "share_error",
 			"type", req.Type,
 			"error", err.Error(),
@@ -1639,7 +1653,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 
 	s.emitShareEvent(&req, "success", shareStart, req.URL)
 
-	slog.InfoContext(ctx, "share handled",
+	slog.InfoContext(
+		ctx, "share handled",
 		"event_type", "share_handled",
 		"type", req.Type,
 		"profile", req.Profile,
@@ -1831,7 +1846,8 @@ func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
 	if threshold >= 0 && req.Score >= threshold {
 		s.queue.Archive(id)
 		item.Status = "archived"
-		slog.InfoContext(r.Context(), "archive",
+		slog.InfoContext(
+			r.Context(), "archive",
 			"event_type", "archive",
 			"id", id,
 			"score", req.Score,
@@ -1839,7 +1855,8 @@ func (s *Server) handleQueueScore(w http.ResponseWriter, r *http.Request) {
 			"tags", req.Tags,
 		)
 	} else {
-		slog.InfoContext(r.Context(), "scored",
+		slog.InfoContext(
+			r.Context(), "scored",
 			"event_type", "scored",
 			"id", id,
 			"score", req.Score,
@@ -1901,7 +1918,8 @@ func (s *Server) handleQueueOutcome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.InfoContext(r.Context(), "outcome",
+	slog.InfoContext(
+		r.Context(), "outcome",
 		"event_type", "outcome_recorded",
 		"id", id,
 		"outcome", req.Outcome,
@@ -1961,7 +1979,8 @@ func (s *Server) handleQueueFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.InfoContext(r.Context(), "feedback",
+	slog.InfoContext(
+		r.Context(), "feedback",
 		"event_type", "feedback_recorded",
 		"id", id,
 		"feedback", req.Feedback,
@@ -2032,7 +2051,8 @@ func (s *Server) handleQueueFeedbackBySlug(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	slog.InfoContext(r.Context(), "feedback",
+	slog.InfoContext(
+		r.Context(), "feedback",
 		"event_type", "feedback_recorded",
 		"id", id,
 		"feedback", req.Feedback,
@@ -2075,7 +2095,8 @@ func (s *Server) handleQueueOutcomeBySlug(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	slog.InfoContext(r.Context(), "outcome",
+	slog.InfoContext(
+		r.Context(), "outcome",
 		"event_type", "outcome_recorded",
 		"id", id,
 		"outcome", req.Outcome,
@@ -2204,7 +2225,8 @@ func (s *Server) enqueueDigestPush(ctx context.Context, profile string, score in
 			"id": res.ID, "profile": profile, "score": score, "slug": slug,
 			"throttle_remaining_ms": res.ThrottleRemainingMs,
 		})
-		slog.DebugContext(ctx, "digest push enqueued",
+		slog.DebugContext(
+			ctx, "digest push enqueued",
 			"event_type", "digest_push_enqueued",
 			"id", res.ID, "profile", profile, "score", score, "slug", slug,
 		)
@@ -2213,13 +2235,15 @@ func (s *Server) enqueueDigestPush(ctx context.Context, profile string, score in
 			"profile": profile, "score": score, "slug": slug,
 			"seconds_until_next_allowed": res.SecondsUntilAllowed,
 		})
-		slog.DebugContext(ctx, "digest push throttled",
+		slog.DebugContext(
+			ctx, "digest push throttled",
 			"event_type", "digest_push_throttled",
 			"profile", profile, "score", score, "slug", slug,
 			"seconds_until_next_allowed", res.SecondsUntilAllowed,
 		)
 	case res.Reason == "below_min_score":
-		slog.DebugContext(ctx, "digest push suppressed: below min score",
+		slog.DebugContext(
+			ctx, "digest push suppressed: below min score",
 			"event_type", "digest_push_below_min_score",
 			"profile", profile, "score", score, "slug", slug,
 		)
@@ -2417,7 +2441,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	slog.InfoContext(ctx, "FCM token registered",
+	slog.InfoContext(
+		ctx, "FCM token registered",
 		"event_type", "fcm_register",
 		"token_len", len(req.FCMToken),
 	)
@@ -2555,7 +2580,8 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Always log the notification as a structured event.
-	slog.InfoContext(ctx, "notify",
+	slog.InfoContext(
+		ctx, "notify",
 		"event_type", "notify",
 		"score", req.Score,
 		"profile", req.Profile,
@@ -2573,7 +2599,8 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 			at := archiveThreshold(req.Profile)
 			if at >= 0 && item.Score != nil && *item.Score >= at {
 				if archErr := s.queue.Archive(item.ID); archErr == nil {
-					slog.DebugContext(ctx, "auto-archived item",
+					slog.DebugContext(
+						ctx, "auto-archived item",
 						"id", item.ID, "score", *item.Score, "threshold", at,
 					)
 				}
@@ -2765,12 +2792,16 @@ func (rl *rateLimiter) allow(key string) bool {
 }
 
 // watchLaterSyncMu guards the watchLaterSyncing flag.
-var watchLaterSyncMu sync.Mutex
-var watchLaterSyncing bool
+var (
+	watchLaterSyncMu  sync.Mutex
+	watchLaterSyncing bool
+)
 
 // likedVideosSyncMu guards the likedVideosSyncing flag.
-var likedVideosSyncMu sync.Mutex
-var likedVideosSyncing bool
+var (
+	likedVideosSyncMu  sync.Mutex
+	likedVideosSyncing bool
+)
 
 // handleSyncWatchLater triggers a Watch Later playlist sync in a background
 // goroutine. Returns 409 if a sync is already running, 202 otherwise.

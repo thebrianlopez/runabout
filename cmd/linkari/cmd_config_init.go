@@ -178,9 +178,9 @@ func configCmd() *cobra.Command {
 
 func configInitCmd() *cobra.Command {
 	var (
-		force   bool
-		dryRun  bool
-		path    string
+		force  bool
+		dryRun bool
+		path   string
 	)
 
 	cmd := &cobra.Command{

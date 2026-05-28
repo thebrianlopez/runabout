@@ -37,7 +37,7 @@ func NewReadyzHandler(
 		age := now.Sub(last)
 		if age < threshold {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"status":               "ok",
+				"status":                "ok",
 				"last_poll_ago_seconds": int(age.Seconds()),
 			})
 			return

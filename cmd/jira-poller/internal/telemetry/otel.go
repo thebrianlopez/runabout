@@ -29,7 +29,8 @@ func InitTracerProvider(ctx context.Context, endpoint string) (func(context.Cont
 		return func(context.Context) error { return nil }, nil
 	}
 
-	exp, err := otlptracegrpc.New(ctx,
+	exp, err := otlptracegrpc.New(
+		ctx,
 		otlptracegrpc.WithEndpoint(endpoint),
 		otlptracegrpc.WithInsecure(),
 	)
@@ -41,7 +42,8 @@ func InitTracerProvider(ctx context.Context, endpoint string) (func(context.Cont
 			fmt.Errorf("%w: %s", ErrTracerInit, err)
 	}
 
-	res, _ := resource.New(ctx,
+	res, _ := resource.New(
+		ctx,
 		resource.WithAttributes(semconv.ServiceName("jira-poller")),
 	)
 

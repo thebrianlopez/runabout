@@ -78,7 +78,7 @@ func rootCmd() *cobra.Command {
 			}
 
 			// Ensure XDG state directory exists for output files
-			if err := os.MkdirAll(config.WorkctlStateDir(), 0700); err != nil {
+			if err := os.MkdirAll(config.WorkctlStateDir(), 0o700); err != nil {
 				return fmt.Errorf("creating state directory: %w", err)
 			}
 
@@ -191,7 +191,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	// Initialize debug logging to XDG state dir
 	if rc.Debug {
 		logPath := config.DefaultDebugLog()
-		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			return fmt.Errorf("opening debug log at %s: %w", logPath, err)
 		}

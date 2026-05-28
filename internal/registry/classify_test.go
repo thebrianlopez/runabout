@@ -49,7 +49,7 @@ func TestF5_CT1_BehavioralEquivalence(t *testing.T) {
 		providerType string
 	}
 	cases := map[string]expected{
-		"coder-agent":      {"agentic_coder", "balanced", "cloud_anthropic"},
+		"coder-agent":       {"agentic_coder", "balanced", "cloud_anthropic"},
 		"orchestrate-agent": {"orchestrator", "frontier", "cloud_anthropic"},
 	}
 
@@ -121,14 +121,14 @@ func TestF5_CT5_LocalOverrideMerge(t *testing.T) {
 	dir := t.TempDir()
 
 	orgPath := filepath.Join(dir, "org.yaml")
-	os.WriteFile(orgPath, []byte(classifyOrgYAML), 0644)
+	os.WriteFile(orgPath, []byte(classifyOrgYAML), 0o644)
 
 	localPath := filepath.Join(dir, "taxonomy.local.yaml")
 	os.WriteFile(localPath, []byte(`
 agents:
   - id: coder-agent
     archetype: tool_runner
-`), 0644)
+`), 0o644)
 
 	r, err := registry.LoadWithOverrides(orgPath, localPath)
 	if err != nil {
@@ -159,7 +159,7 @@ func TestF5_CT6_UnknownAgentHandling(t *testing.T) {
 func TestF5_CT7_MissingLocalFileOK(t *testing.T) {
 	dir := t.TempDir()
 	orgPath := filepath.Join(dir, "org.yaml")
-	os.WriteFile(orgPath, []byte(classifyOrgYAML), 0644)
+	os.WriteFile(orgPath, []byte(classifyOrgYAML), 0o644)
 
 	r, err := registry.LoadWithOverrides(orgPath, filepath.Join(dir, "nonexistent.local.yaml"))
 	if err != nil {

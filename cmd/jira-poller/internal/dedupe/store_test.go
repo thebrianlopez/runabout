@@ -90,7 +90,8 @@ func TestMark_CT4_RowExpiry(t *testing.T) {
 
 	var gotEventID string
 	var gotExpiresAt int64
-	err := db.QueryRowContext(context.Background(),
+	err := db.QueryRowContext(
+		context.Background(),
 		`SELECT event_id, expires_at FROM seen_events WHERE event_id = ?`,
 		"INFRA-1:10",
 	).Scan(&gotEventID, &gotExpiresAt)
@@ -119,7 +120,8 @@ func TestMark_CT5_NowFnInjection(t *testing.T) {
 	}
 
 	var expiresAt int64
-	db.QueryRowContext(context.Background(),
+	db.QueryRowContext(
+		context.Background(),
 		`SELECT expires_at FROM seen_events WHERE event_id = ?`, "X:2",
 	).Scan(&expiresAt)
 

@@ -70,7 +70,8 @@ func (s *sqliteStore) Mark(ctx context.Context, eventID string, ttl time.Duratio
 	now := s.nowFn().Unix()
 	expiresAt := now + int64(ttl.Seconds())
 
-	result, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(
+		ctx,
 		`INSERT OR IGNORE INTO seen_events (event_id, seen_at, expires_at) VALUES (?, ?, ?)`,
 		eventID, now, expiresAt,
 	)
@@ -89,7 +90,8 @@ func (s *sqliteStore) Mark(ctx context.Context, eventID string, ttl time.Duratio
 // CleanupExpired deletes rows whose TTL has elapsed. Intended for use in a
 // periodic cleanup goroutine. nowFn is the clock source.
 func CleanupExpired(ctx context.Context, db *sql.DB, nowFn func() time.Time) error {
-	_, err := db.ExecContext(ctx,
+	_, err := db.ExecContext(
+		ctx,
 		`DELETE FROM seen_events WHERE expires_at < ?`,
 		nowFn().Unix(),
 	)

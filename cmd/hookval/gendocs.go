@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/thebrianlopez/runabout/internal/hookval"
 	"github.com/spf13/cobra"
+	"github.com/thebrianlopez/runabout/internal/hookval"
 )
 
 func genDocsCmd() *cobra.Command {

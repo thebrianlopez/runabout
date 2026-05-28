@@ -31,7 +31,8 @@ func (w *SnapshotWorker) Run(ctx context.Context) {
 		slog.Info("snapshot worker disabled", "event_type", "snapshot_worker_disabled")
 		return
 	}
-	slog.Info("snapshot worker started",
+	slog.Info(
+		"snapshot worker started",
 		"event_type", "snapshot_worker_started",
 		"interval_secs", int(w.interval.Seconds()),
 		"dest", w.destPath,
@@ -50,14 +51,16 @@ func (w *SnapshotWorker) Run(ctx context.Context) {
 
 func (w *SnapshotWorker) snapshotOnce() {
 	if err := w.queue.Snapshot(w.destPath); err != nil {
-		slog.Error("snapshot failed",
+		slog.Error(
+			"snapshot failed",
 			"event_type", "snapshot_error",
 			"dest", w.destPath,
 			"error", err,
 		)
 		return
 	}
-	slog.Info("snapshot written",
+	slog.Info(
+		"snapshot written",
 		"event_type", "snapshot_written",
 		"dest", w.destPath,
 	)

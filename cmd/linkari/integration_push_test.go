@@ -63,7 +63,8 @@ func TestPushChainEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "go", "run", "./cmd/linkari",
+	cmd := exec.CommandContext(
+		ctx, "go", "run", "./cmd/linkari",
 		"score",
 		"--url", "https://example.com/post-1",
 		"--score", "90",
@@ -72,7 +73,8 @@ func TestPushChainEndToEnd(t *testing.T) {
 		"--slug", "post-1",
 		"--tags", "ai,ml",
 	)
-	cmd.Env = append(cmd.Environ(),
+	cmd.Env = append(
+		cmd.Environ(),
 		"LINKARI_QUEUE_DB="+dbPath,
 	)
 	// Run from repo root so `./cmd/linkari` resolves.
@@ -188,7 +190,7 @@ func TestTranscriptKindDoesNotConsumeDigestThrottle(t *testing.T) {
 
 	// Configure push so score floor and throttle are reachable.
 	q.SetPushConfig(&PushConfig{
-		NotifyMinScore: 0,
+		NotifyMinScore:        0,
 		DigestThrottleDefault: 1 * time.Hour,
 	})
 
@@ -221,7 +223,7 @@ func TestScoreYouTubePushAfterTranscript(t *testing.T) {
 	defer q.Close()
 
 	q.SetPushConfig(&PushConfig{
-		NotifyMinScore: 0,
+		NotifyMinScore:        0,
 		DigestThrottleDefault: 1 * time.Hour,
 	})
 

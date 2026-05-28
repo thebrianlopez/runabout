@@ -33,7 +33,6 @@ func (a *AtlassianClients) GetIssueByKey(key string) (*JiraIssueInfo, error) {
 		issue, response, err = a.Jira.Issue.Get(ctx, key, []string{"summary", "status", "issuetype", "description"}, []string{"renderedFields"})
 		return err
 	})
-
 	if err != nil {
 		if response != nil && config.Debug {
 			config.LogDebug("API returned status %d: %s", response.Code, response.Endpoint)
@@ -104,7 +103,6 @@ func (a *AtlassianClients) GetAllAssignedIssues(accountID string, cfg *localMode
 		)
 		return err
 	})
-
 	if err != nil {
 		if response != nil && config.Debug {
 			config.LogDebug("API returned status %d: %s", response.Code, response.Endpoint)
@@ -202,7 +200,6 @@ func (a *AtlassianClients) GetAllIssuesByProjects(cfg *localModels.QueryConfig) 
 		)
 		return err
 	})
-
 	if err != nil {
 		if response != nil && config.Debug {
 			config.LogDebug("API returned status %d: %s", response.Code, response.Endpoint)

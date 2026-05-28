@@ -17,7 +17,7 @@ func validEngManifest() *ProfileManifest {
 			MinChars:  200,
 			SkipLabel: "no extractable technical content",
 		},
-		PersonaBody: "## My Context\n\n**Role:** AI/ML Architect.\n",
+		PersonaBody:   "## My Context\n\n**Role:** AI/ML Architect.\n",
 		VerdictPrompt: "what is this, and does it move the needle for an ML Architect at this stage?",
 		Rubric: []RubricAxis{
 			{Name: "Novelty", Weight: 20, Rationale: "How unexplored is this?"},
@@ -370,7 +370,7 @@ action_items:
 key_facts:
   count: "3-5"
 `
-	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	m, err := LoadProfileManifest(path)
@@ -384,4 +384,3 @@ key_facts:
 		t.Errorf("render: %v", err)
 	}
 }
-

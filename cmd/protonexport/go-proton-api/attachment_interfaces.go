@@ -87,5 +87,4 @@ func (p ParallelScheduler) Schedule(ctx context.Context, attachmentIDs []string,
 
 		return buffer, nil
 	})
-
 }

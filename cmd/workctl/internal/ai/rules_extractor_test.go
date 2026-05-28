@@ -35,10 +35,14 @@ func TestRulesExtractor_ShellCmdEvents(t *testing.T) {
 	now := time.Now()
 
 	events := []pipeline.Event{
-		{Source: "fish_history", Timestamp: now, Kind: "shell_cmd",
-			Payload: models.ShellCommand{Binary: "kubectl", IsInfra: true}},
-		{Source: "fish_history", Timestamp: now, Kind: "shell_cmd",
-			Payload: models.ShellCommand{Binary: "git", IsInfra: false}},
+		{
+			Source: "fish_history", Timestamp: now, Kind: "shell_cmd",
+			Payload: models.ShellCommand{Binary: "kubectl", IsInfra: true},
+		},
+		{
+			Source: "fish_history", Timestamp: now, Kind: "shell_cmd",
+			Payload: models.ShellCommand{Binary: "git", IsInfra: false},
+		},
 	}
 
 	s, err := e.Extract(context.Background(), events)
@@ -55,8 +59,10 @@ func TestRulesExtractor_AIActivityEvents(t *testing.T) {
 	now := time.Now()
 
 	events := []pipeline.Event{
-		{Source: "claude_stats", Timestamp: now, Kind: "ai_activity",
-			Payload: models.AIActivity{SessionCount: 3, MessageCount: 12, TokensUsed: 5000}},
+		{
+			Source: "claude_stats", Timestamp: now, Kind: "ai_activity",
+			Payload: models.AIActivity{SessionCount: 3, MessageCount: 12, TokensUsed: 5000},
+		},
 	}
 
 	s, err := e.Extract(context.Background(), events)
@@ -74,10 +80,14 @@ func TestRulesExtractor_AuditEventSetsAgentCommands(t *testing.T) {
 	now := time.Now()
 
 	events := []pipeline.Event{
-		{Source: "audit_log", Timestamp: now, Kind: "audit_event",
-			Payload: models.AuditEvent{Source: "claude_code", Cwd: "/code/myproj"}},
-		{Source: "audit_log", Timestamp: now, Kind: "audit_event",
-			Payload: models.AuditEvent{Source: "interactive_shell", Cwd: "/code/myproj"}},
+		{
+			Source: "audit_log", Timestamp: now, Kind: "audit_event",
+			Payload: models.AuditEvent{Source: "claude_code", Cwd: "/code/myproj"},
+		},
+		{
+			Source: "audit_log", Timestamp: now, Kind: "audit_event",
+			Payload: models.AuditEvent{Source: "interactive_shell", Cwd: "/code/myproj"},
+		},
 	}
 
 	s, err := e.Extract(context.Background(), events)

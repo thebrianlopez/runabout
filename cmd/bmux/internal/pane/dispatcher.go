@@ -46,7 +46,7 @@ type dispatcher struct {
 	lifeCh chan ssh.PaneEvent
 }
 
-func (d *dispatcher) Output() <-chan ssh.PaneEvent   { return d.outCh }
+func (d *dispatcher) Output() <-chan ssh.PaneEvent    { return d.outCh }
 func (d *dispatcher) Lifecycle() <-chan ssh.PaneEvent { return d.lifeCh }
 
 func (d *dispatcher) Run(ctx context.Context, src <-chan ssh.PaneEvent) error {

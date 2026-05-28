@@ -23,7 +23,7 @@ func TestLoadOrCreateIdentity_Creates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("key file not created: %v", err)
 	}
-	if mode := info.Mode().Perm(); mode != 0600 {
+	if mode := info.Mode().Perm(); mode != 0o600 {
 		t.Errorf("key file permissions = %o, want 0600", mode)
 	}
 }
@@ -70,7 +70,7 @@ func TestLoadOrCreateIdentity_CorruptKeyFile(t *testing.T) {
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, keyFileName)
 
-	if err := os.WriteFile(keyPath, []byte("not-age-encrypted-garbage"), 0600); err != nil {
+	if err := os.WriteFile(keyPath, []byte("not-age-encrypted-garbage"), 0o600); err != nil {
 		t.Fatalf("write corrupt key: %v", err)
 	}
 

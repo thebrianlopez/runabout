@@ -472,4 +472,3 @@ func TestF7RG1_TextOnlyFirehoseNoVisionCost(t *testing.T) {
 		t.Fatalf("F7-RG-1: vision_token_correction emitted for firehose text-only post  -  cost overrun regression detected")
 	}
 }
-

@@ -423,7 +423,7 @@ func TestLoadStandupNotes_Valid(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "notes.yaml")
 	yaml := "learnings:\n  - learned A\n  - learned B\nnext_week_plan:\n  - plan C\n"
-	if err := os.WriteFile(path, []byte(yaml), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -452,7 +452,7 @@ func TestLoadStandupNotes_MissingFile(t *testing.T) {
 func TestLoadStandupNotes_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.yaml")
-	if err := os.WriteFile(path, []byte("learnings: [unclosed"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("learnings: [unclosed"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	_, err := loadStandupNotes(path)

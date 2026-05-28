@@ -12,13 +12,13 @@ func TestProcessEndToEnd(t *testing.T) {
 	confPath := filepath.Join(dir, "confluence.json")
 	ghPath := filepath.Join(dir, "github.json")
 
-	if err := os.WriteFile(jiraPath, []byte(jiraFixture), 0644); err != nil {
+	if err := os.WriteFile(jiraPath, []byte(jiraFixture), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(confPath, []byte(confluenceFixture), 0644); err != nil {
+	if err := os.WriteFile(confPath, []byte(confluenceFixture), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ghPath, []byte(githubFixture), 0644); err != nil {
+	if err := os.WriteFile(ghPath, []byte(githubFixture), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -67,7 +67,7 @@ func TestProcessEndToEnd(t *testing.T) {
 func TestProcessSingleSource(t *testing.T) {
 	dir := t.TempDir()
 	jiraPath := filepath.Join(dir, "jira.json")
-	if err := os.WriteFile(jiraPath, []byte(jiraFixture), 0644); err != nil {
+	if err := os.WriteFile(jiraPath, []byte(jiraFixture), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,7 +102,7 @@ func TestProcessNoSources(t *testing.T) {
 func TestProcessMissingFilesSkipped(t *testing.T) {
 	dir := t.TempDir()
 	jiraPath := filepath.Join(dir, "jira.json")
-	if err := os.WriteFile(jiraPath, []byte(jiraFixture), 0644); err != nil {
+	if err := os.WriteFile(jiraPath, []byte(jiraFixture), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -127,7 +127,7 @@ func TestProcessMissingFilesSkipped(t *testing.T) {
 func TestProcessIdentityFromOptions(t *testing.T) {
 	dir := t.TempDir()
 	jiraPath := filepath.Join(dir, "jira.json")
-	if err := os.WriteFile(jiraPath, []byte(jiraFixture), 0644); err != nil {
+	if err := os.WriteFile(jiraPath, []byte(jiraFixture), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -153,7 +153,7 @@ func TestProcessIdentityFromOptions(t *testing.T) {
 func TestProcessInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	badPath := filepath.Join(dir, "bad.json")
-	if err := os.WriteFile(badPath, []byte("{invalid}"), 0644); err != nil {
+	if err := os.WriteFile(badPath, []byte("{invalid}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

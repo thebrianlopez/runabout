@@ -39,8 +39,10 @@ func (f *fakeFormatter) Format(ev event.Event) error {
 }
 
 // Ensure interfaces are satisfied at compile time.
-var _ EventPoller = (*fakePoller)(nil)
-var _ formatter.Formatter = (*fakeFormatter)(nil)
+var (
+	_ EventPoller         = (*fakePoller)(nil)
+	_ formatter.Formatter = (*fakeFormatter)(nil)
+)
 
 func TestNewDispatcher(t *testing.T) {
 	dedup := event.NewDeduplicator(time.Hour)

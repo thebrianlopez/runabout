@@ -250,7 +250,7 @@ func TestWriteScoreSidecar(t *testing.T) {
 func TestAppendTriageToReadme(t *testing.T) {
 	ws := t.TempDir()
 	readme := filepath.Join(ws, "README.md")
-	if err := os.WriteFile(readme, []byte("# Title\n\nbody"), 0644); err != nil {
+	if err := os.WriteFile(readme, []byte("# Title\n\nbody"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := appendTriageToReadme(ws, "## Score: 50/100"); err != nil {
@@ -438,4 +438,3 @@ func TestBuildClaudeArgs(t *testing.T) {
 		})
 	}
 }
-

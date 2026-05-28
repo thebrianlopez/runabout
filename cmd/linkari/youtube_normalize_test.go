@@ -33,7 +33,7 @@ func (c *logCapture) Handle(_ context.Context, r slog.Record) error {
 }
 
 func (c *logCapture) WithAttrs(_ []slog.Attr) slog.Handler { return c }
-func (c *logCapture) WithGroup(_ string) slog.Handler       { return c }
+func (c *logCapture) WithGroup(_ string) slog.Handler      { return c }
 
 // installLogCapture replaces the slog default handler for the test duration.
 func installLogCapture(t *testing.T) *logCapture {

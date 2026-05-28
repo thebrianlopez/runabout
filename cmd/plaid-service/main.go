@@ -37,10 +37,14 @@ type tsnetLike interface {
 // tsnetAdapter adapts *tsnet.Server (whose Up returns (*netip.AddrPort, error)) to tsnetLike.
 type tsnetAdapter struct{ s *tsnet.Server }
 
-func (a *tsnetAdapter) Up(ctx context.Context) error                        { _, err := a.s.Up(ctx); return err }
-func (a *tsnetAdapter) HTTPClient() *http.Client                            { return a.s.HTTPClient() }
-func (a *tsnetAdapter) Listen(network, addr string) (net.Listener, error)   { return a.s.Listen(network, addr) }
-func (a *tsnetAdapter) Close() error                                         { return a.s.Close() }
+func (a *tsnetAdapter) Up(ctx context.Context) error { _, err := a.s.Up(ctx); return err }
+
+func (a *tsnetAdapter) HTTPClient() *http.Client { return a.s.HTTPClient() }
+
+func (a *tsnetAdapter) Listen(network, addr string) (net.Listener, error) {
+	return a.s.Listen(network, addr)
+}
+func (a *tsnetAdapter) Close() error { return a.s.Close() }
 
 func newTsnetServer() tsnetLike {
 	s := &tsnet.Server{

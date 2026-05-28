@@ -151,7 +151,7 @@ func Greet(name string) string {
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "greet.go")
-	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

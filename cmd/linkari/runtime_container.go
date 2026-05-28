@@ -67,7 +67,8 @@ func (r *ContainerRuntime) containerRun(ctx context.Context, image string, args 
 
 	// Pull image if not present in the local content store.
 	slog.Debug("container_runtime: pulling image", "image", image)
-	img, err := client.Pull(ctrdCtx, image,
+	img, err := client.Pull(
+		ctrdCtx, image,
 		containerd.WithPullUnpack,
 	)
 	if err != nil {
@@ -95,7 +96,8 @@ func (r *ContainerRuntime) containerRun(ctx context.Context, image string, args 
 		specOpts = append(specOpts, oci.WithCPUCFS(quota, period))
 	}
 
-	container, err := client.NewContainer(ctrdCtx, containerID,
+	container, err := client.NewContainer(
+		ctrdCtx, containerID,
 		containerd.WithNewSnapshot(containerID, img),
 		containerd.WithNewSpec(specOpts...),
 		containerd.WithRuntime(gvisorRuntime, nil),
@@ -131,7 +133,8 @@ func (r *ContainerRuntime) containerRun(ctx context.Context, image string, args 
 		return nil, fmt.Errorf("container start %s: %w", containerID, err)
 	}
 
-	slog.Info("container_runtime: task started",
+	slog.Info(
+		"container_runtime: task started",
 		"event_type", "container_start",
 		"container_id", containerID,
 		"image", image,
@@ -148,7 +151,8 @@ func (r *ContainerRuntime) containerRun(ctx context.Context, image string, args 
 			Stderr:   stderr.String(),
 			ExitCode: status.ExitCode(),
 		}
-		slog.Info("container_runtime: task exited",
+		slog.Info(
+			"container_runtime: task exited",
 			"event_type", "container_exit",
 			"container_id", containerID,
 			"exit_code", result.ExitCode,

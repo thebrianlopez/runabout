@@ -134,6 +134,7 @@ func (tb *testBridge) RemoveSession(name string) error {
 func (tb *testBridge) EnsurePane(host, paneID string) error {
 	return exec.Command("tmux", "-L", tb.socketName, "new-window", "-t", host+":", "-n", paneID, "-d").Run()
 }
+
 func (tb *testBridge) RemovePane(host, paneID string) error {
 	return exec.Command("tmux", "-L", tb.socketName, "kill-window", "-t", host+":"+paneID).Run()
 }

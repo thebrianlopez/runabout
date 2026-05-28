@@ -9,8 +9,8 @@ import (
 
 // Schema is the top-level structure of hook-signal-schema.yaml.
 type Schema struct {
-	Version string                `yaml:"version"`
-	Signals map[string]SignalDef  `yaml:"signals"`
+	Version string               `yaml:"version"`
+	Signals map[string]SignalDef `yaml:"signals"`
 }
 
 // SignalDef describes a single hook context signal.

@@ -244,7 +244,8 @@ func TestSessionTokenShareAuth(t *testing.T) {
 	}
 
 	// Verify session token authenticates requests.
-	if !srv.authenticateRequest(httptest.NewRequest(http.MethodGet, "/queue",
+	if !srv.authenticateRequest(httptest.NewRequest(
+		http.MethodGet, "/queue",
 		nil, // no body for GET
 	)) {
 		// No auth header — should fail.

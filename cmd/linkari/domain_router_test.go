@@ -339,7 +339,7 @@ func TestDomain_BT2_MultipleClientsCorrectRouting(t *testing.T) {
 	}}
 
 	r := NewDomainRouter(map[string]DomainClient{
-		"github.com":   githubClient,
+		"github.com":    githubClient,
 		"atlassian.net": atlasClient,
 	}, jinaOK)
 

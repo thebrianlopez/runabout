@@ -297,7 +297,8 @@ func initImageTranscriptionConfig(cfg *ServerConfig) {
 	} else if cfg.ImageShortCircuitBypassMinChars == 0 {
 		// Absent/zero config key — log WARNING once per process lifetime.
 		imageShortCircuitBypassMinCharsOnce.Do(func() {
-			slog.Warn("image_short_circuit_bypass_min_chars not configured — using default 20",
+			slog.Warn(
+				"image_short_circuit_bypass_min_chars not configured — using default 20",
 				"event_type", "image_short_circuit_bypass_default",
 				"default", 20,
 			)

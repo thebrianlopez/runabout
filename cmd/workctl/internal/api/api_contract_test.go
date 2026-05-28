@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/google/go-github/v81/github"
-	"golang.org/x/time/rate"
 	"github.com/thebrianlopez/runabout/cmd/workctl/internal/config"
 	"github.com/thebrianlopez/runabout/cmd/workctl/internal/models"
+	"golang.org/x/time/rate"
 )
 
 // testClient returns a GitHubClient suitable for pure-logic tests.
@@ -718,7 +718,6 @@ func TestWithRetry_SuccessAfterOneFailure(t *testing.T) {
 		}
 		return nil // second attempt succeeds
 	})
-
 	if err != nil {
 		t.Errorf("withRetry should succeed after transient error, got: %v", err)
 	}
@@ -753,7 +752,6 @@ func TestWithRetry_RateLimitError_PastReset(t *testing.T) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		t.Errorf("expected success after rate-limit retry, got: %v", err)
 	}
@@ -783,7 +781,6 @@ func TestWithRetry_AbuseRateLimitError_NoSleep(t *testing.T) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		t.Errorf("expected success after abuse-rate-limit retry, got: %v", err)
 	}
@@ -819,7 +816,6 @@ func TestWithRetry_DebugMode_RateLimitThenSuccess(t *testing.T) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		t.Errorf("expected success after rate-limit retry (debug mode), got: %v", err)
 	}
@@ -848,7 +844,6 @@ func TestWithRetry_DebugMode_AbuseRateLimitThenSuccess(t *testing.T) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		t.Errorf("expected success after abuse-limit retry (debug mode), got: %v", err)
 	}
@@ -871,7 +866,6 @@ func TestWithRetry_DebugMode_GenericErrorBackoff(t *testing.T) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		t.Errorf("expected success after transient error (debug mode), got: %v", err)
 	}
@@ -901,7 +895,6 @@ func TestWithRateLimitAndRetry_Success(t *testing.T) {
 		called = true
 		return nil
 	})
-
 	if err != nil {
 		t.Errorf("withRateLimitAndRetry success should return nil, got %v", err)
 	}
@@ -923,7 +916,6 @@ func TestWithRateLimitAndRetry_OneFailureThenSuccess(t *testing.T) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		t.Errorf("expected success after transient error, got %v", err)
 	}
@@ -948,7 +940,6 @@ func TestWithRateLimitAndRetry_DebugMode(t *testing.T) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		t.Errorf("expected success in debug mode, got %v", err)
 	}

@@ -205,10 +205,10 @@ func TestRetryPolicyRG1_NoSilentRowLoss(t *testing.T) {
 		seedCount  int // retry_count before the call
 		wantStatus string
 	}{
-		{"extraction", 0, "pending"},  // first extraction failure → retry
-		{"extraction", 2, "failed"},   // third extraction failure → terminal
-		{"scoring", 0, "pending"},     // first scoring failure → retry
-		{"scoring", 1, "failed"},      // second scoring failure → terminal
+		{"extraction", 0, "pending"}, // first extraction failure → retry
+		{"extraction", 2, "failed"},  // third extraction failure → terminal
+		{"scoring", 0, "pending"},    // first scoring failure → retry
+		{"scoring", 1, "failed"},     // second scoring failure → terminal
 	} {
 		id, err := q.Enqueue(&ShareRequest{URL: "https://rg1-" + tc.stage + ".example.com", Type: "link", Profile: "default"})
 		if err != nil {

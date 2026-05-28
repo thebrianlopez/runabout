@@ -6,14 +6,14 @@ import (
 	"os"
 	"text/tabwriter"
 
-	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	"github.com/spf13/cobra"
+	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 // TypeInfo describes a type declaration.
 type TypeInfo struct {
 	Name       string `json:"name"`
-	Kind       string `json:"kind"`                  // "struct" | "interface" | "alias"
+	Kind       string `json:"kind"` // "struct" | "interface" | "alias"
 	StartLine  uint   `json:"start_line"`
 	EndLine    uint   `json:"end_line"`
 	StartByte  uint   `json:"start_byte,omitempty"`

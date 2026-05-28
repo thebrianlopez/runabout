@@ -61,7 +61,8 @@ func ReloadArchiveThresholdConfig() error {
 	archiveThresholdMu.Lock()
 	archiveThresholdCfg = loaded
 	archiveThresholdMu.Unlock()
-	slog.Info("archive threshold config reloaded",
+	slog.Info(
+		"archive threshold config reloaded",
 		"event_type", "archive_threshold_reloaded",
 		"action_count", len(loaded.Actions),
 	)
@@ -86,11 +87,11 @@ type Router struct {
 	debug        bool
 	mu           sync.RWMutex
 	queue        *Queue
-	bskyClient   *BlueskyClient // EPIC-094: threaded for scoreAsync verdict replies
-	whisperModel string         // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
-	ytdlpPath    string         // EPIC-009: path to yt-dlp binary for YouTube transcription
-	events       *EventLogger   // EPIC-076: classification telemetry; nil when event logging not configured
-	serverConfig *ServerConfig  // EPIC-098 F3: server config for YouTube sub-behavior toggles
+	bskyClient   *BlueskyClient     // EPIC-094: threaded for scoreAsync verdict replies
+	whisperModel string             // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
+	ytdlpPath    string             // EPIC-009: path to yt-dlp binary for YouTube transcription
+	events       *EventLogger       // EPIC-076: classification telemetry; nil when event logging not configured
+	serverConfig *ServerConfig      // EPIC-098 F3: server config for YouTube sub-behavior toggles
 	wikiResolver *WikiTopicResolver // EPIC-180 M2: nil when wiki is disabled or vault missing
 }
 
@@ -208,7 +209,8 @@ func (r *Router) loadConfig(cfg *Config) {
 // Reload replaces the router's config from a new Config. Used for SIGHUP hot-reload.
 func (r *Router) Reload(cfg *Config) {
 	r.loadConfig(cfg)
-	slog.Debug("router reloaded",
+	slog.Debug(
+		"router reloaded",
 		"event_type", "router_reload",
 		"action_count", len(r.actions),
 	)
@@ -316,7 +318,7 @@ var domainProfileMap = []struct {
 	profile string
 }{
 	// eng
-	{"atlassian.net", "eng"},   // Jira issues + Confluence pages
+	{"atlassian.net", "eng"}, // Jira issues + Confluence pages
 	{"github.com", "eng"},
 	{"gitlab.com", "eng"},
 	{"stackoverflow.com", "eng"},
@@ -524,7 +526,8 @@ func (r *Router) Route(req *ShareRequest) (string, error) {
 		return "", fmt.Errorf("no action for %q: %w", actionID, ErrActionNotFound)
 	}
 
-	slog.Debug("route decision",
+	slog.Debug(
+		"route decision",
 		"event_type", "route_decision",
 		"action", actionID,
 		"kind", string(ac.Kind),
@@ -591,7 +594,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	}
 
 	// EPIC-077 M5: audio shares route to processVoiceNoteAsync (renamed from
-	// scoreAudioAsync). Architecturally incompatible with scoreAsync  - 
+	// scoreAudioAsync). Architecturally incompatible with scoreAsync  -
 	// hardcoded score=100, execHaiku directly, 1800s timeout, transcript management.
 	if ac.ServerScore && req.Type == "audio" {
 		go processVoiceNoteAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel, req.ExtraText, req, r.events, HaikuJSONEvaluator{})
@@ -645,7 +648,8 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 func (r *Router) handleInlineTriage(ac *ActionConfig, command string) (string, error) {
 	shell := r.tmux.shell()
 	shellArg := r.tmux.shellArgs()
-	slog.Debug("inline triage",
+	slog.Debug(
+		"inline triage",
 		"event_type", "inline_triage",
 		"action", ac.ID,
 		"shell", shell,

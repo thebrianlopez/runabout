@@ -9,9 +9,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/spf13/cobra"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
-	"github.com/spf13/cobra"
 )
 
 // SearchResult holds a single pattern match with capture information.

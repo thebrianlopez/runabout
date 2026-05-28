@@ -219,7 +219,8 @@ func (s *Scheduler) handleSyncError(ctx context.Context, runID, itemID string, e
 
 	var retries int
 	s.db.QueryRow(
-		`SELECT retries FROM plaid_sync_state WHERE item_id = ?`, itemID).Scan(&retries)
+		`SELECT retries FROM plaid_sync_state WHERE item_id = ?`, itemID,
+	).Scan(&retries)
 
 	retries++
 	if retries >= maxRetries {

@@ -44,8 +44,8 @@ func TestComputeSignals_CacheHitRate(t *testing.T) {
 
 func TestComputeSignals_CacheReuseFactor(t *testing.T) {
 	tests := []struct {
-		name     string
-		raw      RawMetrics
+		name       string
+		raw        RawMetrics
 		wantFactor float64
 	}{
 		{

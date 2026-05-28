@@ -96,7 +96,7 @@ func WriteToJSON(data interface{}, filePath string, cfg *models.QueryConfig) err
 	}
 
 	// Create output file with owner-only permissions (contains PII)
-	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("failed to create JSON file: %w", err)
 	}

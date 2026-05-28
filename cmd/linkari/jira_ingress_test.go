@@ -19,15 +19,15 @@ func TestJiraKeyRegex(t *testing.T) {
 		{"LONGPROJECT-99999", true},
 		{"A1B-42", true},
 		{"PROJ_SUB-7", true},
-		{"", false},            // empty
-		{"proj-123", false},    // lowercase
-		{"PROJ123", false},     // no dash
-		{"PROJ-", false},       // no digits after dash
-		{"PROJ-abc", false},    // non-digits after dash
-		{"-123", false},        // leading dash
-		{"PROJ-123 ", false},   // trailing space
-		{"PROJ-123\n", false},  // newline
-		{"$(echo)", false},     // shell injection
+		{"", false},           // empty
+		{"proj-123", false},   // lowercase
+		{"PROJ123", false},    // no dash
+		{"PROJ-", false},      // no digits after dash
+		{"PROJ-abc", false},   // non-digits after dash
+		{"-123", false},       // leading dash
+		{"PROJ-123 ", false},  // trailing space
+		{"PROJ-123\n", false}, // newline
+		{"$(echo)", false},    // shell injection
 	}
 	for _, c := range cases {
 		got := jiraKeyRegex.MatchString(c.input)
@@ -43,9 +43,9 @@ func TestScopedAuthMatrix(t *testing.T) {
 		jiraToken: "jira-secret",
 	}
 	cases := []struct {
-		bearer  string
-		action  string
-		wantOK  bool
+		bearer   string
+		action   string
+		wantOK   bool
 		wantKind string
 	}{
 		{"mobile-secret", "uinit_auto", true, "mobile"},

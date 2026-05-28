@@ -130,7 +130,8 @@ func carExtractPostText(blocks []byte, ops []firehoseOp) map[string]string {
 	// Read CAR v1 header: [varint header_len][header CBOR]
 	headerLen, hSize := binary.Uvarint(blocks)
 	if hSize <= 0 {
-		slog.Warn("firehose car decode error",
+		slog.Warn(
+			"firehose car decode error",
 			"event_type", "firehose_car_decode_error",
 			"error_class", "firehose_car_decode_error",
 			"error", "bad header varint",
@@ -139,7 +140,8 @@ func carExtractPostText(blocks []byte, ops []firehoseOp) map[string]string {
 	}
 	n := hSize + int(headerLen)
 	if n > len(blocks) {
-		slog.Warn("firehose car decode error",
+		slog.Warn(
+			"firehose car decode error",
 			"event_type", "firehose_car_decode_error",
 			"error_class", "firehose_car_decode_error",
 			"error", "header exceeds block data",
@@ -151,7 +153,8 @@ func carExtractPostText(blocks []byte, ops []firehoseOp) map[string]string {
 	for n < len(blocks) {
 		blockLen, bSize := binary.Uvarint(blocks[n:])
 		if bSize <= 0 {
-			slog.Warn("firehose car decode error",
+			slog.Warn(
+				"firehose car decode error",
 				"event_type", "firehose_car_decode_error",
 				"error_class", "firehose_car_decode_error",
 				"error", "bad block length varint",
@@ -161,7 +164,8 @@ func carExtractPostText(blocks []byte, ops []firehoseOp) map[string]string {
 		n += bSize
 		end := n + int(blockLen)
 		if end > len(blocks) {
-			slog.Warn("firehose car decode error",
+			slog.Warn(
+				"firehose car decode error",
 				"event_type", "firehose_car_decode_error",
 				"error_class", "firehose_car_decode_error",
 				"error", "block truncated",
@@ -172,7 +176,8 @@ func carExtractPostText(blocks []byte, ops []firehoseOp) map[string]string {
 		n = end
 		cidLen, err := parseCIDLen(blockData)
 		if err != nil || cidLen >= len(blockData) {
-			slog.Warn("firehose car decode error",
+			slog.Warn(
+				"firehose car decode error",
 				"event_type", "firehose_car_decode_error",
 				"error_class", "firehose_car_decode_error",
 				"error", err,
@@ -189,7 +194,8 @@ func carExtractPostText(blocks []byte, ops []firehoseOp) map[string]string {
 		}
 		cidBytes, err := extractCIDFromTag42(op.Cid)
 		if err != nil {
-			slog.Debug("firehose cid mismatch",
+			slog.Debug(
+				"firehose cid mismatch",
 				"event_type", "firehose_cid_mismatch",
 				"at_uri", op.Path,
 				"ops_count", len(ops),
@@ -199,7 +205,8 @@ func carExtractPostText(blocks []byte, ops []firehoseOp) map[string]string {
 		}
 		recordCBOR, ok := blocksByCID[string(cidBytes)]
 		if !ok {
-			slog.Debug("firehose cid mismatch",
+			slog.Debug(
+				"firehose cid mismatch",
 				"event_type", "firehose_cid_mismatch",
 				"at_uri", op.Path,
 				"ops_count", len(ops),
@@ -209,7 +216,8 @@ func carExtractPostText(blocks []byte, ops []firehoseOp) map[string]string {
 		}
 		var post atProtoPost
 		if err := cbor.Unmarshal(recordCBOR, &post); err != nil {
-			slog.Warn("firehose post decode error",
+			slog.Warn(
+				"firehose post decode error",
 				"event_type", "firehose_post_decode_error",
 				"error_class", "firehose_post_decode_error",
 				"error", err,
@@ -238,7 +246,8 @@ func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg 
 
 	var header firehoseHeader
 	if err := dec.Decode(&header); err != nil {
-		slog.Warn("firehose decode error",
+		slog.Warn(
+			"firehose decode error",
 			"event_type", "firehose_decode_error",
 			"error_class", "header_decode",
 		)
@@ -252,7 +261,8 @@ func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg 
 			Message string `cbor:"message"`
 		}
 		_ = dec.Decode(&relayErr)
-		slog.Warn("firehose relay error frame",
+		slog.Warn(
+			"firehose relay error frame",
 			"event_type", "firehose_relay_error",
 			"relay_error", relayErr.Error,
 			"relay_message", relayErr.Message,
@@ -260,7 +270,8 @@ func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg 
 		return errCursorExpired
 	}
 	if header.T != "#commit" {
-		slog.Debug("firehose frame skipped",
+		slog.Debug(
+			"firehose frame skipped",
 			"event_type", "firehose_frame_skipped",
 			"frame_type", header.T,
 		)
@@ -269,7 +280,8 @@ func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg 
 
 	var body firehoseBody
 	if err := dec.Decode(&body); err != nil {
-		slog.Warn("firehose decode error",
+		slog.Warn(
+			"firehose decode error",
 			"event_type", "firehose_decode_error",
 			"error_class", "body_decode",
 		)
@@ -284,14 +296,16 @@ func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg 
 	var rawBlocks []byte
 	if len(body.Blocks) > 0 {
 		if err := cbor.Unmarshal(body.Blocks, &rawBlocks); err != nil {
-			slog.Warn("firehose car decode error",
+			slog.Warn(
+				"firehose car decode error",
 				"event_type", "firehose_car_decode_error",
 				"error_class", "firehose_car_decode_error",
 				"error", err,
 			)
 		}
 	} else {
-		slog.Debug("firehose blocks absent",
+		slog.Debug(
+			"firehose blocks absent",
 			"event_type", "firehose_blocks_absent",
 			"seq", body.Seq,
 		)
@@ -308,7 +322,8 @@ func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg 
 			text = textByPath[op.Path]
 		}
 		if text != "" {
-			slog.Debug("firehose car text extracted",
+			slog.Debug(
+				"firehose car text extracted",
 				"event_type", "firehose_car_text_extracted",
 				"at_uri", atURI,
 				"text_len", len(text),
@@ -322,7 +337,8 @@ func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg 
 			Seq:   body.Seq,
 		}
 		if err := handleFirehosePost(ctx, fsc, post); err != nil {
-			slog.Warn("firehose post handle error",
+			slog.Warn(
+				"firehose post handle error",
 				"seq", body.Seq,
 				"error", err,
 			)
@@ -386,7 +402,8 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 		}
 		req.QueueRowID = rowID
 
-		slog.Info("firehose commit matched",
+		slog.Info(
+			"firehose commit matched",
 			"event_type", "firehose_commit_matched",
 			"seq", post.Seq,
 			"at_uri", post.AtURI,
@@ -400,7 +417,8 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 			go func(req *ShareRequest, keyword, profile string) {
 				defer func() {
 					if r := recover(); r != nil {
-						slog.Error("firehose scoring goroutine panicked",
+						slog.Error(
+							"firehose scoring goroutine panicked",
 							"event_type", "firehose_scoring_panic",
 							"queue_id", req.QueueRowID,
 							"panic", r,
@@ -413,7 +431,8 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 
 				// Log semaphore_wait if all 3 slots are busy (channel at capacity).
 				if len(fsc.ScoreSem) == cap(fsc.ScoreSem) {
-					slog.Warn("firehose scoring semaphore wait",
+					slog.Warn(
+						"firehose scoring semaphore wait",
 						"event_type", "firehose_semaphore_wait",
 						"queue_id", req.QueueRowID,
 						"active_goroutines", cap(fsc.ScoreSem),
@@ -423,7 +442,8 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 				defer func() { <-fsc.ScoreSem }()
 
 				start := time.Now()
-				slog.Info("firehose scoring started",
+				slog.Info(
+					"firehose scoring started",
 					"event_type", "firehose_scoring_started",
 					"queue_id", req.QueueRowID,
 					"at_uri", req.URL,
@@ -431,7 +451,8 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 					"keyword", keyword,
 				)
 				scoreAsync(req, q, fsc.Eval, fsc.Events, fsc.BskyClient, nil)
-				slog.Info("firehose scoring goroutine done",
+				slog.Info(
+					"firehose scoring goroutine done",
 					"event_type", "firehose_scoring_done",
 					"queue_id", req.QueueRowID,
 					"latency_ms", time.Since(start).Milliseconds(),
@@ -486,7 +507,8 @@ func connectAndRead(ctx context.Context, fsc *firehoseScoreContext, url string) 
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	slog.Info("firehose connected",
+	slog.Info(
+		"firehose connected",
 		"event_type", "firehose_connected",
 		"relay_url", url,
 	)
@@ -502,7 +524,8 @@ func connectAndRead(ctx context.Context, fsc *firehoseScoreContext, url string) 
 		for {
 			select {
 			case <-ticker.C:
-				slog.Info("firehose throughput",
+				slog.Info(
+					"firehose throughput",
 					"event_type", "firehose_frames_decoded",
 					"frames_last_60s", framesDecoded.Swap(0),
 				)
@@ -543,7 +566,8 @@ func runFirehoseWorker(ctx context.Context, fsc *firehoseScoreContext, logger *s
 	if lastSeq > 0 {
 		connectURL = fmt.Sprintf("%s?cursor=%d", relayURL, lastSeq)
 	}
-	slog.Info("firehose worker started",
+	slog.Info(
+		"firehose worker started",
 		"event_type", "source_start",
 		"source", "bsky_firehose",
 		"relay_url", connectURL,
@@ -567,7 +591,8 @@ func runFirehoseWorker(ctx context.Context, fsc *firehoseScoreContext, logger *s
 			if errors.Is(err, errCursorExpired) {
 				errorClass = "cursor_expired"
 			}
-			slog.Warn("firehose disconnected",
+			slog.Warn(
+				"firehose disconnected",
 				"event_type", "firehose_disconnected",
 				"error_class", errorClass,
 				"backoff_secs", int(backoff.Seconds()),
@@ -585,7 +610,8 @@ func runFirehoseWorker(ctx context.Context, fsc *firehoseScoreContext, logger *s
 		// Update cursor for reconnect. On cursor expiry reset to live tail (0)
 		// so the relay doesn't reject the connection again with the same stale seq.
 		if errors.Is(err, errCursorExpired) {
-			slog.Info("firehose cursor reset to live tail",
+			slog.Info(
+				"firehose cursor reset to live tail",
 				"event_type", "firehose_cursor_reset",
 				"old_cursor", lastSeq,
 			)

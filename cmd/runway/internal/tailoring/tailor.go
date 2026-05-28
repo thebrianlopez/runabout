@@ -28,10 +28,10 @@ type TailorOpts struct {
 
 // TailoredResume is the output of TailorResume.
 type TailoredResume struct {
-	Slug         string     // e.g. "stripe-staff-engineer-20260508"
-	SourceSHA    string     // git SHA of resume.yaml base (populated by caller)
-	YAMLPath     string     // absolute path to validated tailored YAML
-	UsedFallback bool       // true when validation failed; YAMLPath points to original
+	Slug         string // e.g. "stripe-staff-engineer-20260508"
+	SourceSHA    string // git SHA of resume.yaml base (populated by caller)
+	YAMLPath     string // absolute path to validated tailored YAML
+	UsedFallback bool   // true when validation failed; YAMLPath points to original
 	Diff         ResumeDiff
 }
 
@@ -111,7 +111,8 @@ func (t *Tailorer) TailorResume(ctx context.Context, opts TailorOpts) (*Tailored
 
 	// CT-7: strong_fit > 95 short-circuit
 	if opts.Result.Verdict == scoring.VerdictStrongFit && opts.Result.OverallScore > 95 {
-		t.log(ctx, slog.LevelInfo, "tailor.nothing_changed",
+		t.log(
+			ctx, slog.LevelInfo, "tailor.nothing_changed",
 			slog.String("slug", slug),
 			slog.Int("overall_score", opts.Result.OverallScore),
 		)
@@ -127,7 +128,8 @@ func (t *Tailorer) TailorResume(ctx context.Context, opts TailorOpts) (*Tailored
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	t.log(ctx, slog.LevelInfo, "tailor.started",
+	t.log(
+		ctx, slog.LevelInfo, "tailor.started",
 		slog.String("slug", slug),
 		slog.String("verdict", string(opts.Result.Verdict)),
 	)
@@ -155,7 +157,8 @@ func (t *Tailorer) TailorResume(ctx context.Context, opts TailorOpts) (*Tailored
 
 	fallback := func(code *TailorError) *TailoredResume {
 		os.Remove(tmpPath)
-		t.log(ctx, slog.LevelWarn, "tailor.fallback",
+		t.log(
+			ctx, slog.LevelWarn, "tailor.fallback",
 			slog.String("reason", code.Code),
 			slog.String("slug", slug),
 		)
@@ -192,7 +195,8 @@ func (t *Tailorer) TailorResume(ctx context.Context, opts TailorOpts) (*Tailored
 	}
 
 	diff := computeDiff(opts.Resume, &tailored)
-	t.log(ctx, slog.LevelInfo, "tailor.completed",
+	t.log(
+		ctx, slog.LevelInfo, "tailor.completed",
 		slog.String("slug", slug),
 		slog.Bool("skills_reordered", diff.SkillsReordered),
 		slog.Bool("summary_changed", diff.SummaryChanged),

@@ -208,7 +208,10 @@ func TestValidateSignals_NaValues(t *testing.T) {
 
 func TestCheckSignal_IntegerOrLiteral(t *testing.T) {
 	def := SignalDef{Type: "integer_or_literal", Pattern: "^[0-9]+$", Literals: []string{"n/a"}}
-	cases := []struct{ val string; want bool }{
+	cases := []struct {
+		val  string
+		want bool
+	}{
 		{"0", true}, {"42", true}, {"n/a", true}, {"abc", false}, {"", false},
 	}
 	for _, c := range cases {
@@ -221,7 +224,10 @@ func TestCheckSignal_IntegerOrLiteral(t *testing.T) {
 
 func TestCheckSignal_Enum(t *testing.T) {
 	def := SignalDef{Type: "enum", Values: []string{"a", "b", "c"}}
-	cases := []struct{ val string; want bool }{
+	cases := []struct {
+		val  string
+		want bool
+	}{
 		{"a", true}, {"b", true}, {"d", false}, {"", false},
 	}
 	for _, c := range cases {
@@ -234,7 +240,10 @@ func TestCheckSignal_Enum(t *testing.T) {
 
 func TestCheckSignal_Iso8601UTC(t *testing.T) {
 	def := SignalDef{Type: "iso8601_utc", Pattern: "^[0-9]{8}T[0-9]{6}Z$"}
-	cases := []struct{ val string; want bool }{
+	cases := []struct {
+		val  string
+		want bool
+	}{
 		{"20260319T182245Z", true}, {"2026-03-19", false}, {"", false},
 	}
 	for _, c := range cases {
@@ -247,7 +256,10 @@ func TestCheckSignal_Iso8601UTC(t *testing.T) {
 
 func TestCheckSignal_Path(t *testing.T) {
 	def := SignalDef{Type: "path"}
-	cases := []struct{ val string; want bool }{
+	cases := []struct {
+		val  string
+		want bool
+	}{
 		{"/home/user", true}, {"/tmp", true}, {"relative", false}, {"", false},
 	}
 	for _, c := range cases {
