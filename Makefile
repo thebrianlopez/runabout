@@ -53,7 +53,10 @@ test-fish:
 	@echo "Running Fish contract tests..."
 	@fish fish/tests/ct-f001.fish; \
 	 fish fish/tests/ct-f002.fish; \
-	 fish fish/tests/ct-f003.fish
+	 fish fish/tests/ct-f003.fish; \
+	 fish fish/tests/ct-f004.fish; \
+	 fish fish/tests/ct-f005.fish; \
+	 fish fish/tests/ct-f006.fish
 
 manifest-audit:
 	@echo "Running manifest audit (F-003 static checks)..."
