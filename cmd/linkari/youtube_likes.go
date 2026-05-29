@@ -198,13 +198,14 @@ func syncLikedVideosAsync(profile string, slot string, q *Queue, events *EventLo
 			}
 
 			videoURL := "https://www.youtube.com/watch?v=" + item.VideoID
+			itemProfile := routableYouTubeSourceProfile(profile)
 
 			// EPIC-098 F3: dedup write happens BEFORE the enqueue gate
 			if autoEnqueue {
 				req := &ShareRequest{
 					URL:     videoURL,
 					Type:    "url",
-					Profile: profile,
+					Profile: itemProfile,
 					Title:   item.Title,
 					Action:  "uinit_auto",
 				}
@@ -264,4 +265,16 @@ func syncLikedVideosAsync(profile string, slot string, q *Queue, events *EventLo
 			"duration_ms": durMS,
 		})
 	}
+}
+
+// routableYouTubeSourceProfile prevents source-ingested YouTube rows from
+// reaching scoring with profile="default", which has no rubric template.
+// Unknown/default source profiles intentionally fall back to the broad
+// engineering/research scoring rubric rather than silently relying on a
+// non-existent default.yaml.
+func routableYouTubeSourceProfile(profile string) string {
+	if profile == "" || profile == "default" {
+		return "eng"
+	}
+	return profile
 }

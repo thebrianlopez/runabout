@@ -384,6 +384,44 @@ func TestLikedVideosRG3_ActionIsUinitAuto(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// RG-4: yt_liked profile must be scoring-routable.
+// Regression guard for POMO yt-liked-default-profile-template-missing:
+// source-ingested liked videos must not reach scoring with profile="default",
+// because there is no default.yaml rubric template.
+// ---------------------------------------------------------------------------
+
+func TestLikedVideosRG4_DefaultProfileFallsBackToEng(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+
+	if err := q.SetYouTubeRefreshToken("default", "fake-tok", time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := execYouTubePlaylistItems
+	defer func() { execYouTubePlaylistItems = orig }()
+	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+		return []ytPlaylistItem{{VideoID: "rg4-vid", Title: "RG-4 Video"}}, "", nil
+	}
+
+	syncLikedVideosAsync("default", "default", q, nil, "", "", true)
+
+	items, err := q.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(items) == 0 {
+		t.Fatal("expected 1 pending queue item")
+	}
+	if items[0].Profile == "default" {
+		t.Fatal("expected yt_liked item to use a scoring-routable profile, got default")
+	}
+	if items[0].Profile != "eng" {
+		t.Fatalf("expected default yt_liked profile to fall back to eng, got %q", items[0].Profile)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Integration: end-to-end stub → enqueue → score
 // ---------------------------------------------------------------------------
 
