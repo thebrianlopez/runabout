@@ -385,18 +385,6 @@ nfpms:
     scripts:
       postinstall: fish/scripts/postinstall.fish
 
-# dockers: disabled - requires Docker/buildx in CI runner (not available on current runner)
-# Re-enable when docker/setup-buildx-action is added to .github/workflows/release.yml
-# dockers:
-#   - image_templates:
-#       - "ghcr.io/thebrianlopez/chaintools:{{ .Tag }}"
-#       - "ghcr.io/thebrianlopez/chaintools:latest"
-#     dockerfile: Dockerfile.release
-#     use: buildx
-#     ids:
-#       - mdq
-#       - chain-eval
-#     build_flag_templates:
-#       - "--platform=linux/amd64"
+dockers: []  # disabled: requires docker/setup-buildx-action in CI runner (not yet configured)
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .Commit }}"
