@@ -202,6 +202,15 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 									fmt.Sprintf("slot '%s' token error (%s) - run: linkari auth youtube --slot %s", slot, errClass, slot)))
 							} else {
 								addCheck(okCheck(checkName, fmt.Sprintf("slot '%s' refreshes successfully", slot)))
+								// EPIC-184 F4: report how the slot token was obtained.
+								var src string
+								q.db.QueryRow(`SELECT COALESCE(source,'cli') FROM youtube_oauth_slots WHERE user_id=1 AND slot_name=?`, slot).Scan(&src)
+								if src != "" {
+									addCheck(okCheck(
+										fmt.Sprintf("youtube_delegation_source[slot=%s]", slot),
+										fmt.Sprintf("slot '%s' token source: %s", slot, src),
+									))
+								}
 							}
 						}
 						_ = q.Close()

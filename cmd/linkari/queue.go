@@ -542,6 +542,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		slot_name        TEXT    NOT NULL,
 		refresh_token    TEXT    NOT NULL DEFAULT '',
 		token_expires_at INTEGER NOT NULL DEFAULT 0,
+		source           TEXT    NOT NULL DEFAULT 'cli',
 		created_at       INTEGER NOT NULL,
 		updated_at       INTEGER NOT NULL,
 		UNIQUE(user_id, slot_name)
@@ -2193,13 +2194,20 @@ func (q *Queue) GetYouTubeSlotToken(userID int64, slot string) (refreshToken str
 
 // SetYouTubeSlotToken upserts a refresh token for a named OAuth slot.
 // Creates the row if absent; replaces in place if present.
+// source is set to "cli" (default for backwards compat with existing callers).
 func (q *Queue) SetYouTubeSlotToken(userID int64, slot string, refreshToken string, expiresAt int64) error {
+	return q.SetYouTubeSlotTokenWithSource(userID, slot, refreshToken, expiresAt, "cli")
+}
+
+// SetYouTubeSlotTokenWithSource is like SetYouTubeSlotToken but records the auth source.
+// source is "cli" for linkari auth youtube --slot, "android" for POST /auth/youtube. EPIC-184 M1.
+func (q *Queue) SetYouTubeSlotTokenWithSource(userID int64, slot string, refreshToken string, expiresAt int64, source string) error {
 	now := time.Now().Unix()
 	_, err := q.db.Exec(
 		`INSERT OR REPLACE INTO youtube_oauth_slots
-			(user_id, slot_name, refresh_token, token_expires_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		userID, slot, refreshToken, expiresAt, now, now,
+			(user_id, slot_name, refresh_token, token_expires_at, source, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		userID, slot, refreshToken, expiresAt, source, now, now,
 	)
 	return err
 }

@@ -283,6 +283,7 @@ type Server struct {
 	googleVerifier     *GoogleTokenVerifier // nil when Google Sign-In is not configured
 	googleClientID     string               // resolved at startup; used for YouTube token refresh
 	googleClientSecret string               // resolved at startup; used for YouTube token refresh
+	authCodeExchanger  serverAuthCodeExchanger // EPIC-184: injectable for testing; nil = use googleAuthCodeExchanger
 	sessionTTLDays     int                  // session token TTL; 0 = use default (90 days)
 
 	// EPIC-013 M3: Bluesky AT Protocol session. nil until POST /auth/bluesky succeeds.
