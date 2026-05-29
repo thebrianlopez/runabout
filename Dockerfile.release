@@ -1,0 +1,18 @@
+FROM ubuntu:22.04
+
+RUN apt-get update \
+    && apt-get install -y software-properties-common \
+    && add-apt-repository ppa:fish-shell/release-3 \
+    && apt-get update \
+    && apt-get install -y fish python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY dist/bin/mdq /usr/local/bin/mdq
+COPY dist/bin/chain-eval /usr/local/bin/chain-eval
+COPY fish/functions/ /usr/local/share/chaintools/fish/functions/
+COPY fish/conf.d/ /etc/fish/conf.d/
+
+ENV AUTOMATION_METRICS_SINK=stdout
+ENV CHAIN_INSTALL_PREFIX=/usr/local/share/chaintools
+
+SHELL ["/usr/bin/fish", "-c"]

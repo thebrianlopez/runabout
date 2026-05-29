@@ -1,0 +1,47 @@
+name: Release Verification Matrix
+on:
+  release:
+    types: [published]
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-homebrew
+            os: macos-latest
+            check: mdq --version && fish -c 'type emit_jsonl'
+          - name: ubuntu-dpkg
+            os: ubuntu-latest
+            check: mdq --version && fish -c 'type emit_jsonl'
+          - name: container-amd64
+            os: ubuntu-latest
+            container: ghcr.io/thebrianlopez/chaintools:${{ github.ref_name }}
+            check: mdq --version && fish -c 'emit_jsonl --layer fish --event-type ci_check --command verify'
+          - name: container-arm64
+            os: ubuntu-latest
+            check: mdq --version
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Download release assets
+        if: matrix.name == 'ubuntu-dpkg'
+        run: |
+          gh release download ${{ github.ref_name }} --pattern '*.deb' --dir dist/
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Install dpkg package
+        if: matrix.name == 'ubuntu-dpkg'
+        run: |
+          apt-get install -y fish
+          dpkg -i dist/*.deb
+
+      - name: Install Homebrew formula
+        if: matrix.name == 'macos-homebrew'
+        run: brew install thebrianlopez/runabout/runabout
+
+      - name: Verify install
+        run: ${{ matrix.check }}
