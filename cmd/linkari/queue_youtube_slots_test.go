@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -175,4 +176,38 @@ func TestYouTubeSlots_RG3_MigrationNoOverwrite(t *testing.T) {
 	token, _, err := q.GetYouTubeSlotToken(1, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "pre_existing_X", token, "migration must not overwrite pre-existing slot")
+}
+
+// RG-4: Existing F-019 databases created youtube_oauth_slots before the
+// source column existed. NewQueue must add source so doctor can report
+// youtube_delegation_source instead of silently omitting the check.
+func TestYouTubeSlots_RG4_SourceColumnMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "queue.db")
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE youtube_oauth_slots (
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id          INTEGER NOT NULL,
+		slot_name        TEXT    NOT NULL,
+		refresh_token    TEXT    NOT NULL DEFAULT '',
+		token_expires_at INTEGER NOT NULL DEFAULT 0,
+		created_at       INTEGER NOT NULL,
+		updated_at       INTEGER NOT NULL,
+		UNIQUE(user_id, slot_name)
+	)`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	q, err := NewQueue(dbPath, false)
+	require.NoError(t, err)
+	defer q.db.Close()
+
+	var source string
+	err = q.db.QueryRow(`SELECT source FROM youtube_oauth_slots LIMIT 1`).Scan(&source)
+	assert.True(t, errors.Is(err, sql.ErrNoRows), "source column should exist even when table has no rows; got %v", err)
+
+	require.NoError(t, q.SetYouTubeSlotToken(1, "personal", "tok", 123))
+	err = q.db.QueryRow(`SELECT source FROM youtube_oauth_slots WHERE slot_name='personal'`).Scan(&source)
+	require.NoError(t, err)
+	assert.Equal(t, "cli", source)
 }

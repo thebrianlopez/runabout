@@ -547,6 +547,10 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		updated_at       INTEGER NOT NULL,
 		UNIQUE(user_id, slot_name)
 	)`)
+	// EPIC-184 F4: existing F-019 databases created youtube_oauth_slots before
+	// the source column existed. CREATE TABLE IF NOT EXISTS will not add columns,
+	// so keep this additive migration explicit for doctor delegation checks.
+	db.Exec("ALTER TABLE youtube_oauth_slots ADD COLUMN source TEXT NOT NULL DEFAULT 'cli'")
 	// Migration: copy existing youtube_refresh_token rows to slot "default" (idempotent via INSERT OR IGNORE).
 	db.Exec(`INSERT OR IGNORE INTO youtube_oauth_slots
 		(user_id, slot_name, refresh_token, token_expires_at, created_at, updated_at)
