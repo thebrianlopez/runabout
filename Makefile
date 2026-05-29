@@ -386,24 +386,28 @@ integration-test: lima-test
 
 # -----------------------------------------------------------------------------
 # docs-core S3 publish
-# Pushes the local docs-core tree to the git-remote-s3 bundle repo at
-# s3://REDACTED/repos/docs-core so CI can clone it via git-remote-s3.
+# Pushes the local docs-core tree to the git-remote-s3 bundle repo on S3
+# so CI can clone it via git-remote-s3.
 #
 # Usage:
-#   make push-docs-artifact                   # push from ~/code/personal/docs
-#   DOCS_CORE_PATH=/other/path make push-docs-artifact
+#   DOCS_CORE_S3=s3://your-bucket/repos/docs-core make push-docs-artifact
+#   DOCS_CORE_PATH=/other/path DOCS_CORE_S3=s3://your-bucket/... make push-docs-artifact
 #
 # Requires:
+#   - DOCS_CORE_S3 env var set to the S3 URI of the bundle repo
 #   - git-remote-s3 installed (pipx install git-remote-s3)
-#   - AWS_PROFILE=brianonpoint (or default credentials with s3:PutObject on REDACTED-BUCKET)
+#   - AWS credentials with s3:PutObject on the target bucket
 # -----------------------------------------------------------------------------
 
 DOCS_CORE_PATH  ?= $(HOME)/code/personal/docs
-DOCS_CORE_S3    := s3://REDACTED/repos/docs-core
+DOCS_CORE_S3    ?=
 DOCS_PUSH_TMPDIR := /tmp/docs-core-push-$(shell date +%s)
 
 .PHONY: push-docs-artifact
 push-docs-artifact:
+	@if [ -z "$(DOCS_CORE_S3)" ]; then \
+		echo "ERROR: DOCS_CORE_S3 is not set. Export it before running: export DOCS_CORE_S3=s3://your-bucket/repos/docs-core"; exit 1; \
+	fi
 	@echo "→ Pushing docs-core to $(DOCS_CORE_S3)"
 	@echo "  Source: $(DOCS_CORE_PATH)"
 	@if [ ! -d "$(DOCS_CORE_PATH)/.git" ]; then \
