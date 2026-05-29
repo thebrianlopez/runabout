@@ -19,7 +19,7 @@ LIMA_VM        ?= lima-gvisor
 # containerd socket at {{.Dir}}/containerd.sock → ~/.lima/<name>/containerd.sock.
 LIMA_SOCKET    ?= $(HOME)/.lima/$(LIMA_VM)/containerd.sock
 
-.PHONY: all core build clean install test fmt fmt-check test-fish manifest-audit test-ts-go test-jira-poller linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage linkari-labeler install-linkari-labeler \
+.PHONY: all core build clean install test fmt fmt-check imports imports-check vet staticcheck vulncheck lint test-fish manifest-audit test-ts-go test-jira-poller linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage linkari-labeler install-linkari-labeler \
 	container-build container-push lima-start lima-test \
 	install-bmux-completions install-linkari-completions \
 	jira-poller install-jira-poller run-jira-poller lint-jira-poller \
@@ -43,11 +43,36 @@ test:
 	go test ./...
 	cd cmd/jira-poller && go test ./...
 
+GOIMPORTS_FILES := $(shell find . \
+	-path './.git' -prune -o \
+	-path './.claude' -prune -o \
+	-path './cmd/protonexport/go-proton-api/server/proto' -prune -o \
+	-name '*.go' -print)
+
 fmt:
 	go tool gofumpt -w .
 
 fmt-check:
 	@test -z "$$(go tool gofumpt -l .)" || (go tool gofumpt -l . && exit 1)
+
+imports:
+	go tool goimports -w $(GOIMPORTS_FILES)
+
+imports-check:
+	@test -z "$$(go tool goimports -l $(GOIMPORTS_FILES))" || (go tool goimports -l $(GOIMPORTS_FILES) && exit 1)
+
+vet:
+	go vet ./...
+
+staticcheck:
+	go tool staticcheck ./...
+
+# Vulnerability scanning is useful but depends on the public vuln DB/network.
+# Keep it as an explicit operator target rather than a default PR blocker.
+vulncheck:
+	go tool govulncheck ./...
+
+lint: fmt-check imports-check vet staticcheck
 
 test-fish:
 	@echo "Running Fish contract tests..."
