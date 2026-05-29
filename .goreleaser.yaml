@@ -386,5 +386,3 @@ nfpms:
       postinstall: fish/scripts/postinstall.fish
 
 dockers: []  # disabled: requires docker/setup-buildx-action in CI runner (not yet configured)
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.revision={{ .Commit }}"
