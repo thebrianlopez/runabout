@@ -92,6 +92,19 @@ builds:
       - -X main.commit={{.Commit}}
       - -X main.date={{.Date}}
 
+  - id: chain-eval
+    binary: chain-eval
+    main: ./cmd/chain-eval
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
   # ── Separate-module tools ────────────────────────────────────────────────────
 
   - id: bmux
@@ -265,6 +278,7 @@ archives:
       - hookval
       - effiscore
       - castex
+      - chain-eval
       - bmux
       - protonexport
       - linkari
@@ -314,6 +328,7 @@ brews:
       bin.install "hookval"
       bin.install "effiscore"
       bin.install "castex"
+      bin.install "chain-eval"
       bin.install "bmux"
       bin.install "protonexport"
       bin.install "linkari"
@@ -345,3 +360,27 @@ brews:
       bin.install "ts-go"
     test: |
       system "#{bin}/ts-go", "--version"
+
+nfpms:
+  - id: chaintools-deb
+    package_name: chaintools
+    vendor: thebrianlopez
+    homepage: "https://github.com/thebrianlopez/runabout"
+    maintainer: brian
+    description: "Chain orchestration tools - Go binaries and Fish functions"
+    license: MIT
+    formats:
+      - deb
+    ids:
+      - mdq
+      - chain-eval
+    contents:
+      - src: fish/functions/
+        dst: /usr/local/share/chaintools/fish/functions/
+        type: dir
+      - src: fish/conf.d/00-chain-paths.fish
+        dst: /etc/fish/conf.d/00-chain-paths.fish
+      - src: fish/scripts/postinstall.fish
+        dst: /usr/local/share/chaintools/scripts/postinstall.fish
+    scripts:
+      postinstall: fish/scripts/postinstall.fish

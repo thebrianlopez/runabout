@@ -1,0 +1,44 @@
+# nfpm.yaml - standalone packaging config for chaintools Debian package
+# Typically invoked via GoReleaser (nfpms: section in .goreleaser.yaml).
+# For manual builds: nfpm package --packager deb --target dist/
+#
+# Requires dist/ binaries built first:
+#   goreleaser build --snapshot --clean
+#   or: GOOS=linux GOARCH=amd64 go build -o dist/bin/mdq ./cmd/mdq
+#                                go build -o dist/bin/chain-eval ./cmd/chain-eval
+
+name: chaintools
+version: ${VERSION}
+arch: amd64
+maintainer: brian
+description: Chain orchestration tools - Go binaries and Fish functions
+homepage: https://github.com/thebrianlopez/runabout
+license: MIT
+
+contents:
+  - src: dist/bin/mdq
+    dst: /usr/local/bin/mdq
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/chain-eval
+    dst: /usr/local/bin/chain-eval
+    file_info:
+      mode: 0755
+
+  - src: fish/functions/
+    dst: /usr/local/share/chaintools/fish/functions/
+    type: dir
+
+  - src: fish/conf.d/00-chain-paths.fish
+    dst: /etc/fish/conf.d/00-chain-paths.fish
+    file_info:
+      mode: 0644
+
+  - src: fish/scripts/postinstall.fish
+    dst: /usr/local/share/chaintools/scripts/postinstall.fish
+    file_info:
+      mode: 0755
+
+scripts:
+  postinstall: fish/scripts/postinstall.fish
