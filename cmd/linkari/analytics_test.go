@@ -99,6 +99,25 @@ func TestShareTagAnalyticsAggregationContracts(t *testing.T) {
 	}
 }
 
+func TestShareTagAnalyticsSkipsNullTags(t *testing.T) {
+	q := newTestQueue(t)
+	ctx := context.Background()
+	score := 64.0
+	if err := q.AppendAnalyticsEvent(ctx, AnalyticsEvent{EventID: "null-tag-event", EventType: AnalyticsEventShareScored, ShareID: 1, CreatedAt: time.Now().UTC(), UserTags: []string{"valid"}, URLDomain: "example.com", SourceApp: "android", Score: &score}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := q.db.ExecContext(ctx, `UPDATE share_analytics_events SET user_tags_json = ? WHERE event_id = ?`, `[null,"valid",""]`, "null-tag-event"); err != nil {
+		t.Fatalf("inject null tag: %v", err)
+	}
+	report, err := q.ShareTagAnalytics(ctx, "all")
+	if err != nil {
+		t.Fatalf("report with null tag: %v", err)
+	}
+	if len(report.TopTags) != 1 || report.TopTags[0].Tag != "valid" {
+		t.Fatalf("top_tags=%+v, want only valid tag", report.TopTags)
+	}
+}
+
 func TestHandleShareTagAnalyticsContracts(t *testing.T) {
 	q := newTestQueue(t)
 	score := 91.0

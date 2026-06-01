@@ -179,9 +179,15 @@ func (q *Queue) ShareTagAnalytics(ctx context.Context, window string) (ShareTagA
 	}
 	report.InsufficientData = report.EventCount < 3
 
-	if rows, err := q.db.QueryContext(ctx, `SELECT json_each.value AS tag, COUNT(*) AS c, COALESCE(AVG(score),0) AS avg_score,
+	tagWhere := where
+	if tagWhere == "" {
+		tagWhere = "WHERE json_each.value IS NOT NULL AND CAST(json_each.value AS TEXT) != ''"
+	} else {
+		tagWhere += " AND json_each.value IS NOT NULL AND CAST(json_each.value AS TEXT) != ''"
+	}
+	if rows, err := q.db.QueryContext(ctx, `SELECT CAST(json_each.value AS TEXT) AS tag, COUNT(*) AS c, COALESCE(AVG(score),0) AS avg_score,
 		COALESCE(AVG(CASE WHEN feedback='up' THEN 1.0 WHEN feedback IN ('down','neutral') THEN 0.0 END),0) AS thumbs_up_rate
-		FROM share_analytics_events, json_each(COALESCE(NULLIF(user_tags_json,''),'[]')) `+where+`
+		FROM share_analytics_events, json_each(COALESCE(NULLIF(user_tags_json,''),'[]')) `+tagWhere+`
 		GROUP BY tag ORDER BY c DESC, tag ASC LIMIT 10`, args...); err != nil {
 		return report, fmt.Errorf("analytics_query_failed: top_tags: %w", err)
 	} else {
