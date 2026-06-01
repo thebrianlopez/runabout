@@ -39,4 +39,15 @@ func TestFunnelMuxMobileContractRoutes(t *testing.T) {
 			t.Fatalf("POST /devices/register on FunnelMux returned 404; mobile contract route missing")
 		}
 	})
+
+	t.Run("insight report route is exposed over funnel", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/analytics/share-tags/report?window=7d", nil)
+		req.Header.Set("Authorization", "Bearer test-token")
+		req.Header.Set("X-Linkari-Client", "android/1.0.0/cloud")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code == http.StatusNotFound {
+			t.Fatalf("GET /analytics/share-tags/report on FunnelMux returned 404; mobile contract route missing")
+		}
+	})
 }

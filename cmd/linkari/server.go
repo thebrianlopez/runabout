@@ -676,6 +676,8 @@ func (s *Server) registerFunnelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /telemetry", s.handleTelemetry)
 	// EPIC-150: tag inventory.
 	mux.HandleFunc("GET /tags", s.handleGetTags)
+	// F11 mobile Insight Report contract: Android reaches runabout via Funnel/tsnet.
+	mux.HandleFunc("GET /analytics/share-tags/report", s.handleShareTagAnalyticsReport)
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
