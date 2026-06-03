@@ -28,8 +28,8 @@ func Scan(docsRoot string, _ func() time.Time) ([]ArtifactRecord, error) {
 	var records []ArtifactRecord
 
 	type dirSpec struct {
-		dir     string
-		typeFn  func(name string) (ArtifactType, bool)
+		dir    string
+		typeFn func(name string) (ArtifactType, bool)
 	}
 	dirs := []dirSpec{
 		{"prds", func(n string) (ArtifactType, bool) { return ArtifactPRD, strings.HasSuffix(n, ".md") }},
