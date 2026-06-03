@@ -1,0 +1,14 @@
+{
+  "command": "/chain status",
+  "source": "hand_crafted",
+  "difficulty": "standard",
+  "expected": {
+    "violations": ["index: 20260603T090000Z"],
+    "icon_map": {
+      "PRD": "✅",
+      "FDD": "✅",
+      "TDD": "✅",
+      "Epic": "✅"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "command": "/chain status",
+  "source": "hand_crafted",
+  "difficulty": "hard",
+  "expected": {
+    "violations": ["index: 20260603T090000Z"]
+  }
+}
