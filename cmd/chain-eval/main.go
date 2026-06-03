@@ -61,6 +61,7 @@ func rootCmd() *cobra.Command {
 
 	cmd.AddCommand(dumpFixturesCmd())
 	cmd.AddCommand(pushFixturesCmd())
+	cmd.AddCommand(indexCmd())
 
 	return cmd
 }
@@ -393,27 +394,27 @@ func hardcodedFixtures() []EvalCase {
 		}},
 		{Input: ChainInput{
 			Command: "/chain next", Fixture: "pomo_pending",
-			// /chain next does not render a tree — icon_map omitted (n/a, scores 1.0)
+			// /chain next does not render a tree  -  icon_map omitted (n/a, scores 1.0)
 			Expected: ChainExpected{PriorityStep: 1},
 		}},
 		{Input: ChainInput{
 			Command: "/chain validate", Fixture: "release_gate_violation",
-			// validate output: gate table only, no chain tree — drop icon_map
+			// validate output: gate table only, no chain tree  -  drop icon_map
 			Expected: ChainExpected{Violations: []string{"release gate", "missing"}},
 		}},
 		{Input: ChainInput{
 			Command: "/chain next", Fixture: "design_check_blocked",
-			// /chain next does not render a tree — icon_map omitted (n/a, scores 1.0)
+			// /chain next does not render a tree  -  icon_map omitted (n/a, scores 1.0)
 			Expected: ChainExpected{PriorityStep: 4},
 		}},
 		{Input: ChainInput{
 			Command: "/chain next", Fixture: "design_check_clear",
-			// /chain next does not render a tree — icon_map omitted (n/a, scores 1.0)
+			// /chain next does not render a tree  -  icon_map omitted (n/a, scores 1.0)
 			Expected: ChainExpected{PriorityStep: 5},
 		}},
 		{Input: ChainInput{
 			Command: "/chain next", Fixture: "batch_dispatch_ready",
-			// /chain next does not render a tree — icon_map omitted (n/a, scores 1.0)
+			// /chain next does not render a tree  -  icon_map omitted (n/a, scores 1.0)
 			Expected: ChainExpected{PriorityStep: 7},
 		}},
 		{Input: ChainInput{
