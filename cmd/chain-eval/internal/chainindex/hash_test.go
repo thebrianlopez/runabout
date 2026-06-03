@@ -147,6 +147,22 @@ func TestVerifyContentHash_NoChange(t *testing.T) {
 	}
 }
 
+// CT-5: Staleness check completes in <100ms on a corpus of 300 artifacts.
+func TestComputeContentHash_Performance(t *testing.T) {
+	dir := t.TempDir()
+	makeCorpus(t, dir, 300)
+
+	start := time.Now()
+	_, err := ComputeContentHash(dir)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("CT-5: unexpected error: %v", err)
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("CT-5: expected <100ms, took %v", elapsed)
+	}
+}
+
 // CT-6: Stale index returns (false, nil) - not an error.
 func TestVerifyContentHash_Stale(t *testing.T) {
 	dir := t.TempDir()
