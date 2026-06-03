@@ -1,10 +1,15 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thebrianlopez/runabout/cmd/chain-eval/internal/chainindex"
 )
 
 // renameFunc is injectable for tests to simulate atomic write failures.
@@ -54,8 +59,88 @@ type indexRunConfig struct {
 	quiet         bool
 }
 
-func runIndex(cmd *cobra.Command, cfg indexRunConfig) int {
-	panic("not implemented")
+func runIndex(_ *cobra.Command, cfg indexRunConfig) int {
+	docsRoot := resolveDocsRoot(cfg.docsRoot)
+
+	// Validate docs root exists.
+	if _, err := os.Stat(docsRoot); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "chain-eval index: docs root not found at %s\n", docsRoot)
+		return 1
+	}
+
+	// Resolve output path.
+	outputPath := cfg.output
+	if outputPath == "" {
+		outputPath = filepath.Join(docsRoot, ".chain-index.json")
+	}
+
+	// Resolve schema dir.
+	schemaDir := cfg.schemaDir
+	if schemaDir == "" {
+		schemaDir = filepath.Join(docsRoot, "core/schemas")
+	}
+
+	fmt.Fprintf(os.Stderr, "chain-eval index: scanning %s\n", docsRoot)
+
+	// Scan artifacts.
+	records, err := chainindex.Scan(docsRoot, time.Now)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "chain-eval index: scan failed: %v\n", err)
+		return 1
+	}
+
+	// Build chain index.
+	idx := chainindex.Build(records, docsRoot, cfg.includeLegacy)
+	idx.IndexedAt = time.Now().UTC().Format(time.RFC3339)
+
+	// Compute content hash.
+	hash, err := chainindex.ComputeContentHash(docsRoot)
+	if err != nil {
+		if !cfg.quiet {
+			fmt.Fprintf(os.Stderr, "chain-eval index: WARN: content hash failed: %v\n", err)
+		}
+	} else {
+		idx.ContentHash = hash
+	}
+
+	// F2 validation: validate gate records and workspace links before write.
+	if valErr := chainindex.ValidateGateRecords(idx.GateRecords, schemaDir); valErr != nil {
+		if errors.Is(valErr, chainindex.ErrCUENotFound) {
+			if !cfg.quiet {
+				fmt.Fprintf(os.Stderr, "chain-eval index: WARN: cue not in PATH - skipping output validation (index written unvalidated)\n")
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "chain-eval index: gate record CUE validation failed: %v\n", valErr)
+			return 2
+		}
+	}
+	if valErr := chainindex.ValidateWorkspaceLinks(idx.WorkspaceLinks, schemaDir); valErr != nil {
+		if errors.Is(valErr, chainindex.ErrCUENotFound) {
+			if !cfg.quiet {
+				fmt.Fprintf(os.Stderr, "chain-eval index: WARN: cue not in PATH - skipping workspace link validation\n")
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "chain-eval index: workspace link CUE validation failed: %v\n", valErr)
+			return 2
+		}
+	}
+
+	// Serialize.
+	data, err := json.MarshalIndent(idx, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "chain-eval index: marshal failed: %v\n", err)
+		return 1
+	}
+
+	// Atomic write.
+	if err := writeIndexAtomic(outputPath, data); err != nil {
+		fmt.Fprintf(os.Stderr, "chain-eval index: failed to write index to %s: %v\n", outputPath, err)
+		return 1
+	}
+
+	fmt.Fprintf(os.Stderr, "chain-eval index: wrote %d artifacts, %d chains, %d orphans → %s\n",
+		len(idx.Artifacts), len(idx.Chains), len(idx.Orphans), outputPath)
+	return 0
 }
 
 // resolveDocsRoot returns the docs root using the priority order from the TDD:
