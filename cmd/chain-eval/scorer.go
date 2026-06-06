@@ -27,12 +27,18 @@ type ChainExpected struct {
 	// IconMap maps artifact names to expected icon strings in Claude's output.
 	// Empty means this dimension is n/a (scorer returns 1.0).
 	IconMap map[string]string `json:"icon_map,omitempty"`
+
+	// MaxInputTokens is an upper bound on input tokens consumed by this fixture.
+	// Zero means this dimension is n/a (scorer returns 1.0). Used by CT-6 to
+	// verify that chain-index-backed runs stay under a token budget ceiling.
+	MaxInputTokens int `json:"max_input_tokens,omitempty"`
 }
 
-// TaskResult pairs a fixture input with Claude's raw output text.
+// TaskResult pairs a fixture input with Claude's raw output text and token usage.
 type TaskResult struct {
-	Input  ChainInput
-	Output string
+	Input       ChainInput
+	Output      string
+	InputTokens int // actual input tokens from the API response; 0 if unavailable
 }
 
 // scoreNextAction uses a two-tier approach: deterministic string match first (zero cost),
@@ -111,4 +117,20 @@ func countCorrectIcons(output string, iconMap map[string]string) int {
 		}
 	}
 	return count
+}
+
+// scoreTokenBudget checks that actual input tokens stayed within the fixture's ceiling.
+// Returns 1.0 when n/a (MaxInputTokens == 0). Scores 0.0 conservatively when token
+// tracking was unavailable (InputTokens == 0) and a bound is declared.
+func scoreTokenBudget(_ context.Context, r TaskResult) (float64, bool) {
+	if r.Input.Expected.MaxInputTokens == 0 {
+		return 1.0, false // n/a for this fixture
+	}
+	if r.InputTokens == 0 {
+		return 0.0, false // token tracking unavailable - fail conservatively
+	}
+	if r.InputTokens <= r.Input.Expected.MaxInputTokens {
+		return 1.0, false
+	}
+	return 0.0, false
 }

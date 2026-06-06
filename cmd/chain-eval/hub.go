@@ -20,6 +20,7 @@ type ResultRow struct {
 	NextAction     float64 `json:"next_action"`
 	ValidateRecall float64 `json:"validate_recall"`
 	IconAccuracy   float64 `json:"icon_accuracy"`
+	TokenBudget    float64 `json:"token_budget,omitempty"`
 	JudgeInvoked   bool    `json:"judge_invoked"`
 	PassThreshold  bool    `json:"pass_threshold"`
 	ScoredAt       string  `json:"scored_at"`
@@ -93,7 +94,7 @@ func hubPushBatch(ctx context.Context, rows []ResultRow) error {
 
 // hubPushBucket writes all scored rows to an HF Bucket using the `hf` CLI.
 // Target path: hf://buckets/{bucket}/{runID}/results.jsonl
-// One write per run at a unique timestamped path — no commit rate limit,
+// One write per run at a unique timestamped path  -  no commit rate limit,
 // historical runs accumulate. Requires `hf` CLI on PATH and HUGGINGFACE_API_KEY
 // (or prior `hf auth login`). Non-fatal: errors logged by caller.
 func hubPushBucket(ctx context.Context, rows []ResultRow, bucket string) error {

@@ -3,6 +3,7 @@
   "source": "hand_crafted",
   "difficulty": "hard",
   "expected": {
-    "violations": ["index: 20260603T090000Z"]
+    "violations": ["index: 20260603T090000Z"],
+    "max_input_tokens": 6000
   }
 }

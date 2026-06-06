@@ -144,11 +144,12 @@ func run(ctx context.Context, cfg runConfig) int {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			output, taskErr := runTask(ctx, &client, prompt, fixturesDir, cas.Input)
+			output, inputTokens, taskErr := runTask(ctx, &client, prompt, fixturesDir, cas.Input)
 			if taskErr != nil {
 				coll.record("next_action", 0)
 				coll.record("validate_recall", 0)
 				coll.record("icon_accuracy", 0)
+				coll.record("token_budget", 0)
 				rows[idx] = ResultRow{
 					RunID: runID, Fixture: cas.Input.Fixture, Command: cas.Input.Command,
 					ScoredAt: time.Now().UTC().Format(time.RFC3339),
@@ -156,14 +157,16 @@ func run(ctx context.Context, cfg runConfig) int {
 				return
 			}
 
-			tr := TaskResult{Input: cas.Input, Output: output}
+			tr := TaskResult{Input: cas.Input, Output: output, InputTokens: inputTokens}
 			na, naJ := scoreNextAction(ctx, tr)
 			vr, vrJ := scoreValidateRecall(ctx, tr)
 			ia, _ := scoreIconAccuracy(ctx, tr)
+			tb, _ := scoreTokenBudget(ctx, tr)
 
 			coll.record("next_action", na)
 			coll.record("validate_recall", vr)
 			coll.record("icon_accuracy", ia)
+			coll.record("token_budget", tb)
 
 			rows[idx] = ResultRow{
 				RunID:          runID,
@@ -172,6 +175,7 @@ func run(ctx context.Context, cfg runConfig) int {
 				NextAction:     na,
 				ValidateRecall: vr,
 				IconAccuracy:   ia,
+				TokenBudget:    tb,
 				JudgeInvoked:   naJ || vrJ,
 				ScoredAt:       time.Now().UTC().Format(time.RFC3339),
 			}
@@ -219,12 +223,12 @@ type EvalCase struct {
 	Input ChainInput
 }
 
-func runTask(ctx context.Context, client *anthropic.Client, prompt, fixturesDir string, input ChainInput) (string, error) {
+func runTask(ctx context.Context, client *anthropic.Client, prompt, fixturesDir string, input ChainInput) (string, int, error) {
 	fixtureDir := filepath.Join(fixturesDir, input.Fixture)
 	fixtureContent, err := loadFixture(fixtureDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "chain-eval: fixture '%s' not found - skipped\n", input.Fixture)
-		return "", fmt.Errorf("fixture '%s': %w", input.Fixture, err)
+		return "", 0, fmt.Errorf("fixture '%s': %w", input.Fixture, err)
 	}
 
 	userMsg := fmt.Sprintf("Command: %s\n\nDocs state:\n\n%s", input.Command, fixtureContent)
@@ -236,12 +240,12 @@ func runTask(ctx context.Context, client *anthropic.Client, prompt, fixturesDir 
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "chain-eval: fixture '%s': API error: %v - scored 0\n", input.Fixture, err)
-		return "", err
+		return "", 0, err
 	}
 	if len(msg.Content) == 0 {
-		return "", fmt.Errorf("fixture '%s': empty response", input.Fixture)
+		return "", 0, fmt.Errorf("fixture '%s': empty response", input.Fixture)
 	}
-	return msg.Content[0].Text, nil
+	return msg.Content[0].Text, int(msg.Usage.InputTokens), nil
 }
 
 func loadFixture(dir string) (string, error) {
@@ -490,7 +494,7 @@ func dryRun(cfg runConfig) int {
 	return 0
 }
 
-var dimensions = []string{"next_action", "validate_recall", "icon_accuracy"}
+var dimensions = []string{"next_action", "validate_recall", "icon_accuracy", "token_budget"}
 
 func allPass(coll *scoreCollector, threshold float64) bool {
 	for _, dim := range dimensions {

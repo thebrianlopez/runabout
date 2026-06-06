@@ -103,6 +103,35 @@ func TestScoreNextAction_DeterministicPassSkipsJudge(t *testing.T) {
 	}
 }
 
+// CT-6: token_budget scorer returns 1.0 when within ceiling, 0.0 when exceeded.
+func TestScoreTokenBudget(t *testing.T) {
+	ctx := context.Background()
+
+	// n/a when MaxInputTokens == 0
+	na := TaskResult{Input: ChainInput{Expected: ChainExpected{MaxInputTokens: 0}}, InputTokens: 5000}
+	if s, _ := scoreTokenBudget(ctx, na); s != 1.0 {
+		t.Errorf("CT-6 n/a: want 1.0, got %f", s)
+	}
+
+	// pass when within ceiling
+	pass := TaskResult{Input: ChainInput{Expected: ChainExpected{MaxInputTokens: 6000}}, InputTokens: 3500}
+	if s, _ := scoreTokenBudget(ctx, pass); s != 1.0 {
+		t.Errorf("CT-6 pass: want 1.0, got %f", s)
+	}
+
+	// fail when over ceiling
+	fail := TaskResult{Input: ChainInput{Expected: ChainExpected{MaxInputTokens: 6000}}, InputTokens: 8000}
+	if s, _ := scoreTokenBudget(ctx, fail); s != 0.0 {
+		t.Errorf("CT-6 fail: want 0.0, got %f", s)
+	}
+
+	// fail conservatively when token tracking unavailable
+	unavail := TaskResult{Input: ChainInput{Expected: ChainExpected{MaxInputTokens: 6000}}, InputTokens: 0}
+	if s, _ := scoreTokenBudget(ctx, unavail); s != 0.0 {
+		t.Errorf("CT-6 unavail: want 0.0, got %f", s)
+	}
+}
+
 // CT-15: missing HUGGINGFACE_API_KEY → judge disabled, score 0.0 on miss (never silent pass).
 func TestScoreNextAction_NoKeyNeverSilentPass(t *testing.T) {
 	r := TaskResult{
