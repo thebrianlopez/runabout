@@ -13,7 +13,6 @@ import (
 // scannerStderr receives warning messages; overridden in tests.
 var scannerStderr io.Writer = os.Stderr
 
-
 // Scan walks docsRoot and returns ArtifactRecords for all discovered pipeline
 // artifacts. A single artifact parse failure emits a warning and does not abort
 // the scan. Fatal errors (docs root not found) return a non-nil error.
