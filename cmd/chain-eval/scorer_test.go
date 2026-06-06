@@ -104,6 +104,18 @@ func TestScoreNextAction_DeterministicPassSkipsJudge(t *testing.T) {
 	}
 }
 
+// RG-5: token_budget n/a returns 1.0 so callers can gate recording on MaxInputTokens != 0.
+func TestScoreTokenBudget_NA(t *testing.T) {
+	r := TaskResult{Input: ChainInput{Expected: ChainExpected{MaxInputTokens: 0}}, InputTokens: 9999}
+	score, judgeInvoked := scoreTokenBudget(context.Background(), r)
+	if score != 1.0 {
+		t.Errorf("RG-5: n/a must return 1.0 (caller skips recording), got %f", score)
+	}
+	if judgeInvoked {
+		t.Error("RG-5: judge must not be invoked for n/a token_budget")
+	}
+}
+
 // CT-6: token_budget scorer returns 1.0 when within ceiling, 0.0 when exceeded.
 func TestScoreTokenBudget(t *testing.T) {
 	ctx := context.Background()
