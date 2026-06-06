@@ -13,9 +13,6 @@ import (
 // scannerStderr receives warning messages; overridden in tests.
 var scannerStderr io.Writer = os.Stderr
 
-// timestampPrefixRe matches the org+timestamp prefix in artifact filenames:
-// e.g. "PERSONAL_20260101T000000Z_" or "POMO_" variants.
-var timestampPrefixRe = regexp.MustCompile(`^[A-Z]+_\d{8}T\d{6}Z_`)
 
 // Scan walks docsRoot and returns ArtifactRecords for all discovered pipeline
 // artifacts. A single artifact parse failure emits a warning and does not abort
