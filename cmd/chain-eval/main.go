@@ -149,12 +149,16 @@ func run(ctx context.Context, cfg runConfig) int {
 				coll.record("next_action", 0)
 				coll.record("validate_recall", 0)
 				coll.record("icon_accuracy", 0)
+				var tbPtr *float64
 				if cas.Input.Expected.MaxInputTokens != 0 {
 					coll.record("token_budget", 0)
+					zero := 0.0
+					tbPtr = &zero
 				}
 				rows[idx] = ResultRow{
 					RunID: runID, Fixture: cas.Input.Fixture, Command: cas.Input.Command,
-					ScoredAt: time.Now().UTC().Format(time.RFC3339),
+					TokenBudget: tbPtr,
+					ScoredAt:    time.Now().UTC().Format(time.RFC3339),
 				}
 				return
 			}
@@ -165,14 +169,18 @@ func run(ctx context.Context, cfg runConfig) int {
 			ia, _ := scoreIconAccuracy(ctx, tr)
 			tb, _ := scoreTokenBudget(ctx, tr)
 
+			// Only record token_budget when the fixture declares a ceiling  -  n/a fixtures
+			// return 1.0 and would dilute a real failure below the pass threshold.
+			var tbPtr *float64
+			if tr.Input.Expected.MaxInputTokens != 0 {
+				coll.record("token_budget", tb)
+				tbCopy := tb
+				tbPtr = &tbCopy
+			}
+
 			coll.record("next_action", na)
 			coll.record("validate_recall", vr)
 			coll.record("icon_accuracy", ia)
-			// Only record token_budget when the fixture declares a ceiling  -  n/a fixtures
-			// return 1.0 and would dilute a real failure below the pass threshold.
-			if tr.Input.Expected.MaxInputTokens != 0 {
-				coll.record("token_budget", tb)
-			}
 
 			rows[idx] = ResultRow{
 				RunID:          runID,
@@ -181,7 +189,7 @@ func run(ctx context.Context, cfg runConfig) int {
 				NextAction:     na,
 				ValidateRecall: vr,
 				IconAccuracy:   ia,
-				TokenBudget:    tb,
+				TokenBudget:    tbPtr,
 				JudgeInvoked:   naJ || vrJ,
 				ScoredAt:       time.Now().UTC().Format(time.RFC3339),
 			}
