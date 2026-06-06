@@ -20,16 +20,16 @@ func TestScoreNextAction_Hit(t *testing.T) {
 	}
 }
 
-// CT-2: next_action returns 0.0 when expected step absent (no judge key set).
+// CT-2: next_action returns 0.0 when expected step absent and judge is disabled.
 func TestScoreNextAction_Miss(t *testing.T) {
+	t.Setenv("HUGGINGFACE_API_KEY", "") // force judge disabled so score is deterministic
 	r := TaskResult{
 		Input:  ChainInput{Expected: ChainExpected{PriorityStep: 6}},
 		Output: "Everything looks complete, no pending actions found.",
 	}
-	// HUGGINGFACE_API_KEY not set in test env - judge disabled, falls back to 0.0
 	score, judgeInvoked := scoreNextAction(context.Background(), r)
 	if score != 0.0 {
-		t.Errorf("CT-2: want 0.0 (no judge key), got %f", score)
+		t.Errorf("CT-2: want 0.0 (judge disabled), got %f", score)
 	}
 	if !judgeInvoked {
 		t.Error("CT-2: judgeInvoked should be true even on error (judge was attempted)")
@@ -38,13 +38,14 @@ func TestScoreNextAction_Miss(t *testing.T) {
 
 // CT-3: validate_recall returns ratio of caught violations (2 expected, 1 caught).
 func TestScoreValidateRecall_Partial(t *testing.T) {
+	t.Setenv("HUGGINGFACE_API_KEY", "") // force judge disabled so ratio is deterministic
 	r := TaskResult{
 		Input: ChainInput{Expected: ChainExpected{
 			Violations: []string{"missing tdd", "no epic created"},
 		}},
 		Output: "Gate blocked: missing TDD detected. The design phase is incomplete.",
 	}
-	// 1/2 caught deterministically; judge disabled in test → returns deterministic ratio
+	// 1/2 caught deterministically; judge disabled → returns deterministic ratio 0.5
 	score, _ := scoreValidateRecall(context.Background(), r)
 	if score != 0.5 {
 		t.Errorf("CT-3: want 0.5, got %f", score)
@@ -103,13 +104,54 @@ func TestScoreNextAction_DeterministicPassSkipsJudge(t *testing.T) {
 	}
 }
 
-// CT-15: missing HUGGINGFACE_API_KEY → judge disabled, score 0.0 on miss (never silent pass).
+// RG-5: token_budget n/a returns 1.0 so callers can gate recording on MaxInputTokens != 0.
+func TestScoreTokenBudget_NA(t *testing.T) {
+	r := TaskResult{Input: ChainInput{Expected: ChainExpected{MaxInputTokens: 0}}, InputTokens: 9999}
+	score, judgeInvoked := scoreTokenBudget(context.Background(), r)
+	if score != 1.0 {
+		t.Errorf("RG-5: n/a must return 1.0 (caller skips recording), got %f", score)
+	}
+	if judgeInvoked {
+		t.Error("RG-5: judge must not be invoked for n/a token_budget")
+	}
+}
+
+// CT-6: token_budget scorer returns 1.0 when within ceiling, 0.0 when exceeded.
+func TestScoreTokenBudget(t *testing.T) {
+	ctx := context.Background()
+
+	// n/a when MaxInputTokens == 0
+	na := TaskResult{Input: ChainInput{Expected: ChainExpected{MaxInputTokens: 0}}, InputTokens: 5000}
+	if s, _ := scoreTokenBudget(ctx, na); s != 1.0 {
+		t.Errorf("CT-6 n/a: want 1.0, got %f", s)
+	}
+
+	// pass when within ceiling
+	pass := TaskResult{Input: ChainInput{Expected: ChainExpected{MaxInputTokens: 6000}}, InputTokens: 3500}
+	if s, _ := scoreTokenBudget(ctx, pass); s != 1.0 {
+		t.Errorf("CT-6 pass: want 1.0, got %f", s)
+	}
+
+	// fail when over ceiling
+	fail := TaskResult{Input: ChainInput{Expected: ChainExpected{MaxInputTokens: 6000}}, InputTokens: 8000}
+	if s, _ := scoreTokenBudget(ctx, fail); s != 0.0 {
+		t.Errorf("CT-6 fail: want 0.0, got %f", s)
+	}
+
+	// fail conservatively when token tracking unavailable
+	unavail := TaskResult{Input: ChainInput{Expected: ChainExpected{MaxInputTokens: 6000}}, InputTokens: 0}
+	if s, _ := scoreTokenBudget(ctx, unavail); s != 0.0 {
+		t.Errorf("CT-6 unavail: want 0.0, got %f", s)
+	}
+}
+
+// CT-15: missing HUGGINGFACE_API_KEY → judge disabled, score < 1.0 on miss (never silent pass).
 func TestScoreNextAction_NoKeyNeverSilentPass(t *testing.T) {
+	t.Setenv("HUGGINGFACE_API_KEY", "") // ensure judge is disabled for this test
 	r := TaskResult{
 		Input:  ChainInput{Expected: ChainExpected{PriorityStep: 3}},
 		Output: "The next step is to review the PR.", // no "step 3" → deterministic miss
 	}
-	// No API key in test env
 	score, _ := scoreNextAction(context.Background(), r)
 	if score >= 1.0 {
 		t.Errorf("CT-15 (RG-4): missing key must never produce silent pass, got %f", score)

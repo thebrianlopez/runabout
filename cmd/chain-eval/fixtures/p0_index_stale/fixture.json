@@ -1,0 +1,8 @@
+{
+  "command": "/chain status",
+  "source": "hand_crafted",
+  "difficulty": "standard",
+  "expected": {
+    "violations": ["index stale - full scan"]
+  }
+}

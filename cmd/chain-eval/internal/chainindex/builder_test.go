@@ -7,7 +7,7 @@ import (
 // CT-3: Empty docs root produces a valid, non-panicking empty index.
 func TestBuild_EmptyCorpus(t *testing.T) {
 	idx := Build(nil, t.TempDir(), false)
-	if idx.Artifacts != nil && len(idx.Artifacts) != 0 {
+	if len(idx.Artifacts) != 0 {
 		t.Errorf("CT-3: expected empty artifacts, got %d", len(idx.Artifacts))
 	}
 	if len(idx.Chains) != 0 {
