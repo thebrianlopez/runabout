@@ -37,6 +37,9 @@ func newRootCmd() *cobra.Command {
 
 	root.Flags().BoolVar(&showVersion, "version", false, "print version and exit")
 	root.AddCommand(newReportCmd())
+	root.AddCommand(newInitCmd())
+	root.AddCommand(newDirectiveCmd())
+	root.AddCommand(newSyncCmd())
 
 	return root
 }

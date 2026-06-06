@@ -1,0 +1,5 @@
+{"schema_version":"1","event_type":"session_event","agent_tool":"claude-code","agent_type":"claude-code","session_type":"agentic","cost_usd":0.25,"model":"claude-sonnet-4-6","timestamp":"20260115T100000Z"}
+{"schema_version":"1","event_type":"session_event","agent_tool":"claude-code","agent_type":"claude-code","session_type":"human","cost_usd":0.10,"model":"claude-sonnet-4-6","timestamp":"20260115T110000Z"}
+{"schema_version":"1","event_type":"session_event","agent_tool":"pi","agent_type":"pi","session_type":"agentic","cost_usd":0.05,"model":"claude-haiku-4-5","timestamp":"20260115T120000Z"}
+{"schema_version":"1","event_type":"graduation_candidate","agent_tool":"claude-code","pattern":"ls_antipattern","timestamp":"20260115T130000Z"}
+{"schema_version":"1","event_type":"regression_candidate","agent_tool":"pi","pattern":"grep_antipattern","timestamp":"20260115T140000Z"}
