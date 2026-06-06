@@ -20,16 +20,16 @@ func TestScoreNextAction_Hit(t *testing.T) {
 	}
 }
 
-// CT-2: next_action returns 0.0 when expected step absent (no judge key set).
+// CT-2: next_action returns 0.0 when expected step absent and judge is disabled.
 func TestScoreNextAction_Miss(t *testing.T) {
+	t.Setenv("HUGGINGFACE_API_KEY", "") // force judge disabled so score is deterministic
 	r := TaskResult{
 		Input:  ChainInput{Expected: ChainExpected{PriorityStep: 6}},
 		Output: "Everything looks complete, no pending actions found.",
 	}
-	// HUGGINGFACE_API_KEY not set in test env - judge disabled, falls back to 0.0
 	score, judgeInvoked := scoreNextAction(context.Background(), r)
 	if score != 0.0 {
-		t.Errorf("CT-2: want 0.0 (no judge key), got %f", score)
+		t.Errorf("CT-2: want 0.0 (judge disabled), got %f", score)
 	}
 	if !judgeInvoked {
 		t.Error("CT-2: judgeInvoked should be true even on error (judge was attempted)")
@@ -38,13 +38,14 @@ func TestScoreNextAction_Miss(t *testing.T) {
 
 // CT-3: validate_recall returns ratio of caught violations (2 expected, 1 caught).
 func TestScoreValidateRecall_Partial(t *testing.T) {
+	t.Setenv("HUGGINGFACE_API_KEY", "") // force judge disabled so ratio is deterministic
 	r := TaskResult{
 		Input: ChainInput{Expected: ChainExpected{
 			Violations: []string{"missing tdd", "no epic created"},
 		}},
 		Output: "Gate blocked: missing TDD detected. The design phase is incomplete.",
 	}
-	// 1/2 caught deterministically; judge disabled in test → returns deterministic ratio
+	// 1/2 caught deterministically; judge disabled → returns deterministic ratio 0.5
 	score, _ := scoreValidateRecall(context.Background(), r)
 	if score != 0.5 {
 		t.Errorf("CT-3: want 0.5, got %f", score)
@@ -132,13 +133,13 @@ func TestScoreTokenBudget(t *testing.T) {
 	}
 }
 
-// CT-15: missing HUGGINGFACE_API_KEY → judge disabled, score 0.0 on miss (never silent pass).
+// CT-15: missing HUGGINGFACE_API_KEY → judge disabled, score < 1.0 on miss (never silent pass).
 func TestScoreNextAction_NoKeyNeverSilentPass(t *testing.T) {
+	t.Setenv("HUGGINGFACE_API_KEY", "") // ensure judge is disabled for this test
 	r := TaskResult{
 		Input:  ChainInput{Expected: ChainExpected{PriorityStep: 3}},
 		Output: "The next step is to review the PR.", // no "step 3" → deterministic miss
 	}
-	// No API key in test env
 	score, _ := scoreNextAction(context.Background(), r)
 	if score >= 1.0 {
 		t.Errorf("CT-15 (RG-4): missing key must never produce silent pass, got %f", score)
