@@ -40,6 +40,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newDirectiveCmd())
 	root.AddCommand(newSyncCmd())
+	root.AddCommand(newDoctorCmd())
 
 	return root
 }
