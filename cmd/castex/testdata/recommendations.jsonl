@@ -1,0 +1,2 @@
+{"signal_id":"rec-003","pattern":"ls_antipattern","occurrences":123,"severity":"high","current_value":5,"baseline":10}
+{"signal_id":"rec-014","pattern":"bash_only_session","occurrences":8,"severity":"medium","current_value":0,"baseline":1}
