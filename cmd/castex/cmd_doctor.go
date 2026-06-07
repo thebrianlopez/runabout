@@ -14,9 +14,11 @@ import (
 
 // DoctorConfig holds flags for the doctor command.
 type DoctorConfig struct {
-	OrgYAML    string
-	AgentsFile string
-	Verbose    bool
+	OrgYAML     string
+	AgentsFile  string
+	Verbose     bool
+	StateFile   string // ~/.castex/registry-state.json
+	EventBusDir string // ~/.automation-metrics/events
 }
 
 // DoctorIssue is one finding from a doctor check.
@@ -29,10 +31,12 @@ type DoctorIssue struct {
 
 // DoctorReport is the output of a doctor run.
 type DoctorReport struct {
-	RegistryPath string
-	AgentCount   int
-	Errors       []DoctorIssue
-	Warnings     []DoctorIssue
+	RegistryPath   string
+	AgentCount     int
+	Errors         []DoctorIssue
+	Warnings       []DoctorIssue
+	MutationEvents []RegistryMutationEvent // non-empty when org.yaml changed since last run
+	NewState       *RegistryState          // updated state to persist; nil when no change detected
 }
 
 func newDoctorCmd() *cobra.Command {
@@ -54,9 +58,20 @@ func newDoctorCmd() *cobra.Command {
 			if cfg.AgentsFile == "" {
 				cfg.AgentsFile = filepath.Join(home, ".castex", "agents.jsonl")
 			}
+			if cfg.StateFile == "" {
+				cfg.StateFile = filepath.Join(home, ".castex", "registry-state.json")
+			}
+			if cfg.EventBusDir == "" {
+				cfg.EventBusDir = filepath.Join(home, ".automation-metrics", "events")
+			}
 			report, err := RunDoctor(cfg)
 			if err != nil {
 				return err
+			}
+			// Persist updated registry state and emit mutation events.
+			if report.NewState != nil {
+				_ = saveRegistryState(cfg.StateFile, *report.NewState)
+				_ = writeMutationEvents(cfg.EventBusDir, report.MutationEvents)
 			}
 			return renderDoctorReport(cmd, cfg, report)
 		},
@@ -151,6 +166,29 @@ func RunDoctor(cfg DoctorConfig) (DoctorReport, error) {
 			Agent:   id,
 			Message: "in ~/.castex/agents.jsonl but not found in registry; re-run castex init",
 		})
+	}
+
+	// Check 4: registry mutation detection via SHA256 diff.
+	if cfg.StateFile != "" {
+		currSHA, shaErr := computeFileSHA256(cfg.OrgYAML)
+		if shaErr == nil {
+			prev, _ := loadRegistryState(cfg.StateFile)
+			if prev.SHA256 != currSHA {
+				currIDs := make([]string, 0, len(reg.Agents()))
+				archetypeOf := make(map[string]string, len(reg.Agents()))
+				for _, a := range reg.Agents() {
+					currIDs = append(currIDs, a.ID)
+					archetypeOf[a.ID] = a.Archetype
+				}
+				currIDs = sortedStringSlice(currIDs)
+				prevIDs := sortedStringSlice(prev.AgentIDs)
+				// Only emit events when prev state exists (first run just seeds state).
+				if prev.SHA256 != "" {
+					report.MutationEvents = diffRegistryAgents(prevIDs, currIDs, currSHA, archetypeOf)
+				}
+				report.NewState = &RegistryState{SHA256: currSHA, AgentIDs: currIDs}
+			}
+		}
 	}
 
 	return report, nil
