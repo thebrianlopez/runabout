@@ -6,6 +6,19 @@ import (
 	"time"
 )
 
+func replayShareRequest(it QueueItem) *ShareRequest {
+	return &ShareRequest{
+		Type:       it.Type,
+		Action:     it.Action,
+		Text:       it.Text,
+		URL:        it.URL,
+		Profile:    it.Profile,
+		Intent:     it.Intent,
+		QueueRowID: it.ID,
+		Enter:      true,
+	}
+}
+
 // StartReplay runs a background goroutine that replays pending queue items
 // through the router when the tmux session becomes available.
 func StartReplay(q *Queue, router *Router, srv *Server, tmux *TmuxRunner, interval time.Duration, debug bool) {
@@ -39,14 +52,7 @@ func StartReplay(q *Queue, router *Router, srv *Server, tmux *TmuxRunner, interv
 					go srv.captureAsync(context.Background(), it.ID, ac)
 					continue
 				}
-				req := &ShareRequest{
-					Type:    it.Type,
-					Action:  it.Action,
-					Text:    it.Text,
-					URL:     it.URL,
-					Profile: it.Profile,
-					Enter:   true,
-				}
+				req := replayShareRequest(it)
 				result, err := router.Route(req)
 				if err != nil {
 					slog.Error(
