@@ -85,6 +85,11 @@ func detectDesignType(name string) (ArtifactType, bool) {
 func parseArtifact(rel string, typ ArtifactType, content string) ArtifactRecord {
 	result := ExtractStatus(content)
 
+	upstreamField := extractUpstreamField(content)
+	if typ == ArtifactEpic {
+		upstreamField = extractEpicFDD(content)
+	}
+
 	record := ArtifactRecord{
 		Path:               rel,
 		Type:               typ,
@@ -92,7 +97,7 @@ func parseArtifact(rel string, typ ArtifactType, content string) ArtifactRecord 
 		StatusSurfaceDrift: result.SurfaceDrift,
 		CreatedAt:          extractCreatedAt(content, rel),
 		FeatureID:          extractTableField(content, "Feature ID"),
-		UpstreamField:      extractUpstreamField(content),
+		UpstreamField:      upstreamField,
 		IsProtocol:         extractIsProtocol(content),
 	}
 	if result.SurfaceDrift {
@@ -130,6 +135,7 @@ func extractTableField(content, field string) string {
 
 // extractUpstreamField returns the most specific upstream reference:
 // Source TDD > Source FDD > Source PRD.
+// For epics, use extractEpicFDD instead (epics link to chains via FDD, not TDD).
 func extractUpstreamField(content string) string {
 	if v := extractTableField(content, "Source TDD"); v != "" {
 		return v
@@ -139,6 +145,21 @@ func extractUpstreamField(content string) string {
 	}
 	if v := extractTableField(content, "Source PRD"); v != "" {
 		return v
+	}
+	return ""
+}
+
+// extractEpicFDD returns the FDD path for an epic artifact, used for chain
+// linking. Tries Source FDD table field first; falls back to ## Document Chain
+// section which may contain the FDD reference in tree or list form.
+func extractEpicFDD(content string) string {
+	if v := extractTableField(content, "Source FDD"); v != "" {
+		return strings.TrimSpace(strings.Trim(v, "`"))
+	}
+	// ## Document Chain section: match "FDD: <path>_FDD.md" in any list/tree line.
+	re := regexp.MustCompile(`(?m)FDD:\s+` + "`?" + `(\S+_FDD\.md)`)
+	if m := re.FindStringSubmatch(content); len(m) > 1 {
+		return filepath.Base(strings.TrimRight(m[1], "`[]"))
 	}
 	return ""
 }
