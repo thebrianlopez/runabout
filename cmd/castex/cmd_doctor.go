@@ -248,10 +248,6 @@ func renderDoctorReport(cmd *cobra.Command, cfg DoctorConfig, report DoctorRepor
 	fmt.Fprintf(w, "registry: %s\n", report.RegistryPath)
 	fmt.Fprintf(w, "agents loaded: %d\n\n", report.AgentCount)
 
-	if cfg.Verbose {
-		// TODO: print all agents with resolution state when --verbose
-	}
-
 	if len(report.Errors) == 0 && len(report.Warnings) == 0 {
 		fmt.Fprintln(w, "  no issues found")
 		return nil
