@@ -45,30 +45,6 @@ func runDoctorCmd(t *testing.T, cfg DoctorConfig) (string, error) {
 	return buf.String(), nil
 }
 
-// minimal valid org.yaml with one static agent and one workspace-scoped agent
-const minimalOrgYAML = `schema_version: "2.0"
-org: personal
-agents:
-  - id: docs-agent
-    cwd: %s
-    archetype: agentic_coder
-    default_model: claude-sonnet-4-6
-    provider: anthropic
-    languages: [markdown]
-  - id: runabout-agent
-    cwd: null
-    archetype: agentic_coder
-    default_model: claude-sonnet-4-6
-    provider: anthropic
-    languages: [go]
-vocabulary:
-  archetypes: [agentic_coder, shell_assistant, orchestrator, tool_runner]
-  model_tiers:
-    balanced: [claude-sonnet-4-6]
-  provider_types:
-    cloud_anthropic: [anthropic]
-`
-
 // CT-1: healthy registry with all CWDs present → no issues.
 func TestDoctor_Healthy(t *testing.T) {
 	dir := t.TempDir()

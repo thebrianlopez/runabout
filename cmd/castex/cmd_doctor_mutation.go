@@ -53,7 +53,7 @@ func loadRegistryState(path string) (RegistryState, error) {
 
 // saveRegistryState writes state to disk, creating parent directories as needed.
 func saveRegistryState(path string, state RegistryState) error {
-	if err := os.MkdirAll(fmt.Sprintf("%s", fileDirOf(path)), 0o755); err != nil {
+	if err := os.MkdirAll(fileDirOf(path), 0o755); err != nil {
 		return err
 	}
 	b, err := json.Marshal(state)

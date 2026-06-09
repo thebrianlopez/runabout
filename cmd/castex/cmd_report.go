@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -396,20 +395,6 @@ func staleAgentsWarning(cmd *cobra.Command, agentsFile string, knownIDs map[stri
 	}
 }
 
-// dedupGradCandidates removes duplicate entries from a slice of GradCandidate.
-func dedupGradCandidates(in []GradCandidate) []GradCandidate {
-	seen := map[string]bool{}
-	var out []GradCandidate
-	for _, g := range in {
-		key := g.AgentType + ":" + g.Pattern + ":" + g.EventType
-		if !seen[key] {
-			seen[key] = true
-			out = append(out, g)
-		}
-	}
-	return out
-}
-
 // totalCost returns the sum of cost_usd across all agent summaries.
 func totalCost(agents []AgentSummary) float64 {
 	var sum float64
@@ -419,7 +404,3 @@ func totalCost(agents []AgentSummary) float64 {
 	return sum
 }
 
-// containsField checks if a JSON-encoded string contains a given key.
-func containsField(s, key string) bool {
-	return strings.Contains(s, `"`+key+`"`)
-}
