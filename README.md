@@ -539,10 +539,10 @@ container/            # Dockerfiles for gVisor sandbox runtime (ffmpeg, whisper,
 
 ## Status
 
-Active development. Fourteen tools building and passing tests. `plaid-service` Phase 1 + 2 shipped and live.
+Active development. 15+ tools building and passing tests. Goreleaser + Homebrew distribution live as of v0.2.14.
 
-- `plaid-service` running on personal Tailnet - hourly Plaid sync, 390+ transactions in SQLite, `GET /health` at `http://plaid-service/health`
-- tsnet outbound client injected (F5) - all Plaid API traffic routes through Tailnet node `plaid-service`
-- jira-poller added as satellite module alongside plaid-service
+- `castex` CLI shipped: `init`, `report`, `directive`, `sync`, `doctor` subcommands (agent observability + registry health)
+- `chain-eval v0.2.14`: `index` subcommand live, epic-to-chain linkage fixed (310 → 124 orphans), CI all green
+- `plaid-service` stable on personal Tailnet; hourly sync, 390+ transactions in SQLite
 
-**Last Updated:** 2026-05-22
+**Last Updated:** 2026-06-09
