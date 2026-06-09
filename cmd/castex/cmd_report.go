@@ -403,4 +403,3 @@ func totalCost(agents []AgentSummary) float64 {
 	}
 	return sum
 }
-
