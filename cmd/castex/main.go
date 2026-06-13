@@ -41,6 +41,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newDirectiveCmd())
 	root.AddCommand(newSyncCmd())
 	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newConsensusCmd())
 
 	return root
 }
