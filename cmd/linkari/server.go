@@ -2733,6 +2733,9 @@ func (s *Server) emitShareEvent(req *ShareRequest, status string, start time.Tim
 		"intent":        req.Intent,
 		"user_tags":     req.UserTags,
 		"inferred_tags": req.InferredTagsJSON,
+		// EPIC-131: annotation query telemetry.
+		"user_rationale_present":     req.UserRationaleText != "",
+		"user_rationale_is_question": isRationaleQuestion(req.UserRationaleText),
 	}
 	if err := s.events.Emit("linkari_share", meta); err != nil {
 		slog.Warn("event emit linkari_share failed", "error", err)
