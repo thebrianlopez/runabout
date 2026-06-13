@@ -1445,6 +1445,13 @@ func (q *Queue) RecentScored(since time.Time, limit int) ([]QueueItem, error) {
 	return q.query("SELECT "+queueCols+" FROM queue WHERE status IN ('scored','archived') AND scored_at >= ? ORDER BY score DESC LIMIT ?", since.UTC().Format(time.RFC3339), limit)
 }
 
+// CountRecentScored returns the total number of items scored since the given time.
+func (q *Queue) CountRecentScored(since time.Time) (int, error) {
+	var count int
+	err := q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE status IN ('scored','archived') AND scored_at >= ?", since.UTC().Format(time.RFC3339)).Scan(&count)
+	return count, err
+}
+
 // GetByID returns a single queue item by ID.
 func (q *Queue) GetByID(id int64) (*QueueItem, error) {
 	items, err := q.query("SELECT "+queueCols+" FROM queue WHERE id=?", id)
