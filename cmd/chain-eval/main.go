@@ -235,6 +235,12 @@ func run(ctx context.Context, cfg runConfig) int {
 
 	printScoreTable(coll, cfg.minScore)
 
+	// Consensus gate check: runs after scoring; fails if any fixture artifact
+	// declares consensus_gates.promotion but has no approved gate result in the bus.
+	if !runConsensusGateChecks(fixturesDir, cfg.fixture, consensusEventBusDir()) {
+		pass = false
+	}
+
 	// Push results: prefer HF Bucket (no commit rate limit, accumulates history)
 	// over dataset commit. Falls back to hubPushBatch when bucket not configured.
 	if bucket := os.Getenv("HF_RESULTS_BUCKET"); bucket != "" {
@@ -532,6 +538,9 @@ func dryRun(cfg runConfig) int {
 		return 1
 	}
 	fmt.Printf(" - ready to eval\n")
+	if !runConsensusGateChecks(fixturesDir, cfg.fixture, consensusEventBusDir()) {
+		return 1
+	}
 	return 0
 }
 
