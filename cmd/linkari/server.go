@@ -2311,11 +2311,23 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Count all items scored today (unbounded) for the DigestThresholdFooter.
+	var totalScoredToday *int
+	if total, cerr := s.queue.CountRecentScored(since); cerr == nil {
+		totalScoredToday = &total
+	}
+
 	// Determine dominant profile from digest items.
 	profile := r.URL.Query().Get("profile")
 	s.emitDigestEvent(profile, len(items), digestStart)
 
 	w.Header().Set("Content-Type", "application/json")
+
+	type DigestResponse struct {
+		Items          []QueueItem    `json:"items"`
+		Clusters       []ClusterGroup `json:"clusters,omitempty"`
+		TotalScoredToday *int         `json:"total_scored_today,omitempty"`
+	}
 
 	// EPIC-072 M7: cluster-aware digest response gated by ?clusters=1.
 	if r.URL.Query().Get("clusters") == "1" {
@@ -2339,15 +2351,11 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 			}
 			enriched = append(enriched, c)
 		}
-		type DigestResponse struct {
-			Items    []QueueItem    `json:"items"`
-			Clusters []ClusterGroup `json:"clusters,omitempty"`
-		}
-		json.NewEncoder(w).Encode(DigestResponse{Items: items, Clusters: enriched})
+		json.NewEncoder(w).Encode(DigestResponse{Items: items, Clusters: enriched, TotalScoredToday: totalScoredToday})
 		return
 	}
 
-	json.NewEncoder(w).Encode(items)
+	json.NewEncoder(w).Encode(DigestResponse{Items: items, TotalScoredToday: totalScoredToday})
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
