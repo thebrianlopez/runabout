@@ -10,6 +10,9 @@ type AgentRecord struct {
 	DefaultModel string   `yaml:"default_model"`
 	Provider     string   `yaml:"provider"`
 	Languages    []string `yaml:"languages"`
+	// Secret is the per-agent HMAC signing key for consensus vote verification.
+	// Never log or include in dispatch files.
+	Secret *string `yaml:"secret,omitempty"`
 }
 
 // IsWorkspaceScoped returns true when CWD is nil (agent has no static directory).
@@ -53,7 +56,7 @@ func applyDefaults(a *AgentRecord) {
 	if a.Languages == nil {
 		a.Languages = []string{}
 	}
-	// CWD: nil means workspace-scoped — zero value is already nil for *string
+	// CWD: nil means workspace-scoped  -  zero value is already nil for *string
 }
 
 // validateAgent checks per-agent field constraints and vocabulary membership.
@@ -64,7 +67,7 @@ func validateAgent(a *AgentRecord, index int, vocab *Vocabulary) []ValidationErr
 	if a.ID == "" {
 		return append(errs, ValidationError{
 			Code:    "E010",
-			Message: fmt.Sprintf("Agent entry at index %d has no id — skipped", index),
+			Message: fmt.Sprintf("Agent entry at index %d has no id  -  skipped", index),
 			Fatal:   true,
 		})
 	}
@@ -72,14 +75,14 @@ func validateAgent(a *AgentRecord, index int, vocab *Vocabulary) []ValidationErr
 	if !kebabCaseRE.MatchString(a.ID) {
 		errs = append(errs, ValidationError{
 			Code:    "E011",
-			Message: fmt.Sprintf("Agent ID '%s' is not valid kebab-case — entry loaded with warning", a.ID),
+			Message: fmt.Sprintf("Agent ID '%s' is not valid kebab-case  -  entry loaded with warning", a.ID),
 		})
 	}
 
 	if vocab == nil {
 		errs = append(errs, ValidationError{
 			Code:    "W003",
-			Message: "vocabulary block absent — classification validation skipped for all agents",
+			Message: "vocabulary block absent  -  classification validation skipped for all agents",
 		})
 		return errs
 	}
@@ -87,7 +90,7 @@ func validateAgent(a *AgentRecord, index int, vocab *Vocabulary) []ValidationErr
 	if !stringInSlice(a.Archetype, vocab.Archetypes) {
 		errs = append(errs, ValidationError{
 			Code:    "W010",
-			Message: fmt.Sprintf("Agent '%s' archetype '%s' not in vocabulary — using default '%s'", a.ID, a.Archetype, DefaultArchetype),
+			Message: fmt.Sprintf("Agent '%s' archetype '%s' not in vocabulary  -  using default '%s'", a.ID, a.Archetype, DefaultArchetype),
 		})
 		a.Archetype = DefaultArchetype
 	}
@@ -95,7 +98,7 @@ func validateAgent(a *AgentRecord, index int, vocab *Vocabulary) []ValidationErr
 	if !modelInTiers(a.DefaultModel, vocab.ModelTiers) {
 		errs = append(errs, ValidationError{
 			Code:    "W011",
-			Message: fmt.Sprintf("Agent '%s' default_model '%s' not in vocabulary — using default '%s'", a.ID, a.DefaultModel, DefaultModel),
+			Message: fmt.Sprintf("Agent '%s' default_model '%s' not in vocabulary  -  using default '%s'", a.ID, a.DefaultModel, DefaultModel),
 		})
 		a.DefaultModel = DefaultModel
 	}
@@ -103,7 +106,7 @@ func validateAgent(a *AgentRecord, index int, vocab *Vocabulary) []ValidationErr
 	if !providerInTypes(a.Provider, vocab.ProviderTypes) {
 		errs = append(errs, ValidationError{
 			Code:    "W012",
-			Message: fmt.Sprintf("Agent '%s' provider '%s' not in vocabulary — using default '%s'", a.ID, a.Provider, DefaultProvider),
+			Message: fmt.Sprintf("Agent '%s' provider '%s' not in vocabulary  -  using default '%s'", a.ID, a.Provider, DefaultProvider),
 		})
 		a.Provider = DefaultProvider
 	}
