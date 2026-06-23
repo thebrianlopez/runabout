@@ -2324,9 +2324,9 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	type DigestResponse struct {
-		Items          []QueueItem    `json:"items"`
-		Clusters       []ClusterGroup `json:"clusters,omitempty"`
-		TotalScoredToday *int         `json:"total_scored_today,omitempty"`
+		Items            []QueueItem    `json:"items"`
+		Clusters         []ClusterGroup `json:"clusters,omitempty"`
+		TotalScoredToday *int           `json:"total_scored_today,omitempty"`
 	}
 
 	// EPIC-072 M7: cluster-aware digest response gated by ?clusters=1.
