@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -136,8 +137,12 @@ pwd
 		t.Fatal("RG-1: pwd returned empty")
 	}
 	// Must equal os.TempDir() - not the workspace root.
-	if got != os.TempDir() {
-		t.Fatalf("RG-1: cmd.Dir should be %q, stub reported %q", os.TempDir(), got)
+	// Normalize both sides: macOS resolves /var -> /private/var in the subprocess.
+	wantReal, _ := filepath.EvalSymlinks(os.TempDir())
+	gotReal, _ := filepath.EvalSymlinks(got)
+	if gotReal != wantReal {
+		t.Fatalf("RG-1: cmd.Dir should be %q, stub reported %q (resolved: %q vs %q)",
+			os.TempDir(), got, wantReal, gotReal)
 	}
 }
 
