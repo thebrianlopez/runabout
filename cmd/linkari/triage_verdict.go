@@ -1,6 +1,6 @@
 package main
 
-// EPIC-044 M1 — Layer 2: typed JSON contract for Haiku triage output.
+// EPIC-044 M1  -  Layer 2: typed JSON contract for Haiku triage output.
 //
 // This file owns the post-EPIC-043 successor to parseTriageMarkdown's regex
 // path. The flow is:
@@ -129,7 +129,7 @@ func (v TriageVerdict) validate() error {
 }
 
 // RenderMarkdown emits the README-append form for `appendTriageToReadme`.
-// Snapshot-tested in triage_verdict_test.go — change with care.
+// Snapshot-tested in triage_verdict_test.go  -  change with care.
 func (v TriageVerdict) RenderMarkdown() string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Verdict %s\n\n", strings.TrimSpace(v.Verdict))
@@ -157,10 +157,12 @@ func (v TriageVerdict) RenderMarkdown() string {
 	return sb.String()
 }
 
-// execHaikuJSON is the indirection point tests stub. Production calls
-// runClaudeHaikuJSON; tests can swap in a deterministic fake that returns
-// raw envelope bytes.
-var execHaikuJSON = runClaudeHaikuJSON
+// execHaikuJSON is the indirection point tests stub. Production path routes
+// through activeScoringBackend.CompleteJSON; tests can swap in a deterministic
+// fake by replacing either this var or activeScoringBackend. EPIC-217 M1.
+var execHaikuJSON = func(ctx context.Context, sp, content, schema string) ([]byte, error) {
+	return activeScoringBackend.CompleteJSON(ctx, sp, content, schema)
+}
 
 // execHaikuSynopsisJSON is the JSON-mode synopsis execution path for voice note
 // summarization. Separate from execHaikuJSON so tests can stub them independently
@@ -182,7 +184,7 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 	systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching the provided schema." +
 		" This applies to ALL cases including noise-gated/skip content." +
 		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
-		" Never output markdown formatting like **Score:** — always use the JSON schema."
+		" Never output markdown formatting like **Score:**  -  always use the JSON schema."
 	spFile, _, err := writeSystemPromptFile(systemPrompt)
 	if err != nil {
 		return nil, err
@@ -218,7 +220,7 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 // can read a local image file for multimodal scoring. The prompt instructs the
 // model to read the image at imagePath and score it. EPIC-079 M3.
 var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
-	// EPIC-083 M2-1: score-first instruction — short-circuit personal photos to
+	// EPIC-083 M2-1: score-first instruction  -  short-circuit personal photos to
 	// avoid filling the full rubric when the image has no engineered content.
 	systemPrompt += "\n\nIf the image is a personal photo (DCIM, camera roll, selfie, food, pet, scenery)" +
 		" with no text, code, document, diagram, or engineered content visible," +
@@ -227,7 +229,7 @@ var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, 
 	systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching the provided schema." +
 		" This applies to ALL cases including noise-gated/skip content." +
 		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
-		" Never output markdown formatting like **Score:** — always use the JSON schema."
+		" Never output markdown formatting like **Score:**  -  always use the JSON schema."
 	spFile, _, err := writeSystemPromptFile(systemPrompt)
 	if err != nil {
 		return nil, err

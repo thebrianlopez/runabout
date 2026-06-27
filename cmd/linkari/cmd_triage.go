@@ -1,6 +1,6 @@
 package main
 
-// EPIC-043 M2: `linkari triage` — Go port of _uinit_profile_prompt.fish.
+// EPIC-043 M2: `linkari triage`  -  Go port of _uinit_profile_prompt.fish.
 //
 // This subcommand owns the link-triage scoring loop. It loads a profile
 // prompt template, assembles the system+user prompt the same way fish does,
@@ -46,13 +46,16 @@ type TriageResult struct {
 const claudeModel = "claude-haiku-4-5-20251001"
 
 // contentTruncationRunes caps content sent to the LLM evaluator. Raised from
-// 2000 to 8000 (EPIC-093 M1) — the prior cap was too narrow for rich articles,
+// 2000 to 8000 (EPIC-093 M1)  -  the prior cap was too narrow for rich articles,
 // causing sections beyond the intro to never be scored.
 const contentTruncationRunes = 8000
 
-// execHaiku is the indirection point that tests stub. Production path is
-// runClaudeHaiku; tests can swap in a deterministic fake.
-var execHaiku = runClaudeHaiku
+// execHaiku is the indirection point that tests stub. Production path routes
+// through activeScoringBackend.Complete; tests can swap in a deterministic
+// fake by replacing either this var or activeScoringBackend. EPIC-217 M1.
+var execHaiku = func(ctx context.Context, sp, content string) (string, error) {
+	return activeScoringBackend.Complete(ctx, sp, content)
+}
 
 // triageCmd wires `linkari triage` into the root command.
 func triageCmd() *cobra.Command {
@@ -151,11 +154,11 @@ the eval harness path).`,
 			sc.PromptVersion = promptVersionFromPath(tmplPath)
 			sc.PromptHash = promptHash(sysPrompt)
 
-			// EPIC-058 M3: confidence gate — check if score meets threshold
+			// EPIC-058 M3: confidence gate  -  check if score meets threshold
 			// for auto-launch. M4 wires the actual ginit launch.
 			if actionCfg := lookupGinitAction(profile); actionCfg != nil && CheckGate(sc, *actionCfg) {
 				if dryRun {
-					fmt.Fprintf(os.Stderr, "triage: gate passed (score=%d >= %d) — dry-run, skipping\n",
+					fmt.Fprintf(os.Stderr, "triage: gate passed (score=%d >= %d)  -  dry-run, skipping\n",
 						sc.Score, actionCfg.ConfidenceThreshold)
 				} else {
 					// EPIC-058 M4: auto-launch ginit when confidence gate passes.
@@ -390,7 +393,7 @@ var visionModelName = claudeModel
 //
 // Architecture note (EPIC-008 M5): CLI exec is the permanent integration
 // pattern. The claude CLI authenticates via OAuth2 device flow, storing tokens
-// in ~/.claude/. Linkari is designed for self-hosted deployment — each user
+// in ~/.claude/. Linkari is designed for self-hosted deployment  -  each user
 // installs and runs it on their own laptop using their own Claude Code
 // subscription. There are no plans to support Anthropic API keys, SDK client
 // libraries, or direct HTTP calls to the Anthropic API. All scoring paths
@@ -485,12 +488,12 @@ func initClaudeConfig(cfg *ServerConfig) {
 		"image_short_circuit_bypass_min_chars", imageShortCircuitBypassMinChars,
 	)
 
-	// EPIC-008 M5: startup smoke test — validate the claude binary is
+	// EPIC-008 M5: startup smoke test  -  validate the claude binary is
 	// accessible and responds to --version. Fail fast with an actionable
 	// error rather than discovering the problem on the first scoring request.
 	if err := validateClaudeCLI(); err != nil {
 		slog.Error(
-			"claude CLI validation failed — scoring will not work",
+			"claude CLI validation failed  -  scoring will not work",
 			"event_type", "claude_cli_validation_failed",
 			"claude_path", claudeBinaryPath,
 			"error", err,
@@ -533,7 +536,7 @@ func validateClaudeCLI() error {
 // haikuEnv returns os.Environ with scoring-unsafe variables stripped.
 // CLAUDECODE is removed so the claude CLI behaves as a standalone subprocess
 // rather than a nested Claude Code session. ANTHROPIC_API_KEY and CLAUDE_API_KEY
-// are stripped to enforce the CLI-only auth invariant — Linkari authenticates
+// are stripped to enforce the CLI-only auth invariant  -  Linkari authenticates
 // exclusively via the claude CLI's OAuth2 session, not API keys. EPIC-089 M5.
 func haikuEnv() []string {
 	env := os.Environ()
@@ -552,7 +555,7 @@ func haikuEnv() []string {
 }
 
 // logHaikuEnvKeys logs the presence (not values) of LLM-related environment
-// variables at startup. These are diagnostic only — Linkari authenticates
+// variables at startup. These are diagnostic only  -  Linkari authenticates
 // exclusively via the claude CLI's OAuth2 session, NOT via API keys.
 // The keys are logged to help debug subprocess behavior, not because they
 // are expected to be set. EPIC-080 M3.
@@ -574,9 +577,9 @@ type claudeExecOpts struct {
 }
 
 // buildClaudeArgs returns the args slice for exec.CommandContext. The binary
-// path is NOT included — it's the first arg to CommandContext, not part of args.
+// path is NOT included  -  it's the first arg to CommandContext, not part of args.
 // When adding or removing flags, update allBuildClaudeArgsFlags() in
-// claude_contract_test.go — the contract test validates flags against the
+// claude_contract_test.go  -  the contract test validates flags against the
 // installed claude binary.
 func buildClaudeArgs(opts claudeExecOpts) []string {
 	args := []string{
@@ -612,7 +615,7 @@ func buildClaudeArgs(opts claudeExecOpts) []string {
 // EPIC-062 M1: --system-prompt-file is used instead of inline --system-prompt.
 // EPIC-082 M1: returns prompt hash alongside path for traceability.
 func writeSystemPromptFile(prompt string) (string, string, error) {
-	// EPIC-008 M6: explicit 0600 permissions — system prompts may contain
+	// EPIC-008 M6: explicit 0600 permissions  -  system prompts may contain
 	// scoring rubrics and profile-specific instructions.
 	tmpDir := os.TempDir()
 	f, err := os.CreateTemp(tmpDir, "linkari-sysprompt-*.txt")
@@ -747,7 +750,7 @@ func extractTagsLine(md string) string {
 
 // normalizeTriageMarkdown is a Go port of the python normalizer in
 // _uinit_profile_prompt.fish lines 62-114. It only kicks in if the raw
-// parser failed — Haiku usually emits clean markdown, but occasionally
+// parser failed  -  Haiku usually emits clean markdown, but occasionally
 // returns everything on one line.
 func normalizeTriageMarkdown(text string) string {
 	// 1. Newlines before ## headings.
@@ -785,7 +788,7 @@ func truncateRunes(s string, n int) string {
 // sidecarExtras carries the EPIC-044 M1 additive fields. Pass nil from the
 // legacy markdown path; pass a populated value from the JSON path. Every
 // field is omitempty so the v1 sidecar shape (the six fields below) stays
-// byte-stable when extras is nil — see TestWriteScoreSidecar / the
+// byte-stable when extras is nil  -  see TestWriteScoreSidecar / the
 // `_score.json` additive-only invariant in cmd_eval.go captureFromWorkspace.
 type sidecarExtras struct {
 	SchemaVersion  string         `json:"schema_version,omitempty"`
@@ -876,9 +879,9 @@ func (triageScorer) Score(fix Fixture) (Golden, error) {
 		// Return a Skip so the runner reports it and moves on.
 		return Golden{Skip: true, SkipReason: "parse_failed", RawMarkdown: ""}, nil
 	}
-	// M6b: noise-gate skip. When Haiku emits a `Score: 0/100 — Skip (...)`
+	// M6b: noise-gate skip. When Haiku emits a `Score: 0/100  -  Skip (...)`
 	// response against a fixture whose golden is non-zero, that's not a
-	// regression — it's the profile's noise gate firing on stale or
+	// regression  -  it's the profile's noise gate firing on stale or
 	// JavaScript-stripped content. Treat as skip, not fail.
 	if sc.Score == 0 && fix.Golden.Score > 0 && isNoiseGateOutput(sc.RawMarkdown) {
 		return Golden{Skip: true, SkipReason: "noise_gate", RawMarkdown: sc.RawMarkdown}, nil
