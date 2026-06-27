@@ -163,6 +163,15 @@ type WhisperConfig struct {
 	MaxRetries     int `toml:"max_retries"`     // dead-letter retry limit for audio fallback (default 3)
 }
 
+// ScoringConfig controls which LLM executor is used for the scoring pipeline.
+// Nested under [server.scoring] in config.toml. EPIC-217 F4.
+type ScoringConfig struct {
+	Backend  string `toml:"backend"`  // "claude_cli" (default) or "pi"
+	PiPath   string `toml:"pi_path"`  // path to pi binary (default: "pi" on PATH)
+	Provider string `toml:"provider"` // provider for pi backend (default: "anthropic")
+	Model    string `toml:"model"`    // model override for pi backend (default: claudeModel)
+}
+
 // WikiConfigWarning is returned by WikiConfig.Validate when the vault root is
 // absent. It is non-fatal: scoring continues without wiki context injection.
 type WikiConfigWarning struct{ Msg string }
@@ -560,6 +569,10 @@ type ServerConfig struct {
 	// EPIC-180 M1: optional Obsidian vault context-injection.
 	// Absent block or Enabled=false is a no-op; scoring path unchanged.
 	Wiki WikiConfig `toml:"wiki"`
+
+	// EPIC-217 F4: pluggable scoring backend selection.
+	// Absent block or Backend="" uses "claude_cli" (default behavior).
+	Scoring ScoringConfig `toml:"scoring"`
 }
 
 // ShareConfig controls how share requests map their received action/profile to
