@@ -388,6 +388,55 @@ var claudeBinaryPath = "claude"
 // Set at startup from ServerConfig.VisionModel; defaults to claudeModel.
 var visionModelName = claudeModel
 
+// orDefault returns val if non-empty, otherwise def.
+func orDefault(val, def string) string {
+	if val != "" {
+		return val
+	}
+	return def
+}
+
+// initScoringBackend sets activeScoringBackend based on cfg.Backend.
+// Called at server startup after initClaudeConfig. EPIC-217 F4.
+// Default (empty or "claude_cli"): ClaudeCLIScoringBackend - zero behavioral change.
+// "pi": PiScoringBackend using piBinaryPath, cfg.Provider, cfg.Model.
+func initScoringBackend(cfg ScoringConfig) {
+	switch cfg.Backend {
+	case "pi":
+		if cfg.PiPath != "" {
+			piBinaryPath = cfg.PiPath
+		}
+		activeScoringBackend = PiScoringBackend{
+			provider: orDefault(cfg.Provider, "anthropic"),
+			model:    orDefault(cfg.Model, claudeModel),
+		}
+		slog.Info(
+			"scoring backend set",
+			"event_type", "scoring_backend_init",
+			"backend", "pi",
+			"pi_path", piBinaryPath,
+			"provider", orDefault(cfg.Provider, "anthropic"),
+			"model", orDefault(cfg.Model, claudeModel),
+		)
+		// F5: validate pi binary at startup (non-fatal; mirrors claude_cli check).
+		if err := validatePiCLI(); err != nil {
+			slog.Warn(
+				"pi CLI validation failed - scoring will not work with backend=pi",
+				"event_type", "pi_cli_validation_failed",
+				"pi_path", piBinaryPath,
+				"error", err,
+			)
+		}
+	default: // "claude_cli" or empty
+		activeScoringBackend = ClaudeCLIScoringBackend{}
+		slog.Info(
+			"scoring backend set",
+			"event_type", "scoring_backend_init",
+			"backend", "claude_cli",
+		)
+	}
+}
+
 // initClaudeConfig resolves ClaudePath and VisionModel from ServerConfig and
 // logs the resolved values at startup. EPIC-080 M6.
 //
@@ -528,6 +577,30 @@ func validateClaudeCLI() error {
 		"claude CLI validated",
 		"event_type", "claude_cli_validated",
 		"claude_path", claudeBinaryPath,
+		"version", version,
+	)
+	return nil
+}
+
+// validatePiCLI runs `pi --version` as a lightweight smoke test to confirm
+// the binary is accessible and executable when backend="pi". Non-fatal:
+// emits pi_cli_validation_failed warning but does not abort startup.
+// Mirrors the validateClaudeCLI pattern exactly. EPIC-217 F5.
+func validatePiCLI() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, piBinaryPath, "--version")
+	cmd.Env = piEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("pi --version failed: %w (is %q in PATH?)", err, piBinaryPath)
+	}
+	version := strings.TrimSpace(string(out))
+	slog.Info(
+		"pi CLI validated",
+		"event_type", "pi_cli_validated",
+		"pi_path", piBinaryPath,
 		"version", version,
 	)
 	return nil

@@ -790,6 +790,11 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// EPIC-080 M6: resolve claude binary path and vision model from config.
 			initClaudeConfig(serverFileCfg)
 
+			// EPIC-217 F4: select scoring backend from config (default: claude_cli).
+			if serverFileCfg != nil {
+				initScoringBackend(serverFileCfg.Scoring)
+			}
+
 			// EPIC-009 M2: wire yt-dlp path for YouTube transcription.
 			if router != nil {
 				router.SetYtdlpPath(serverFileCfg.YtdlpPath)
