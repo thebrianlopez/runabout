@@ -30,8 +30,11 @@ jobs:
       # Generate a short-lived installation token (1h TTL) scoped to
       # homebrew-runabout only. Replaces the long-lived PAT approach.
       # App requires Contents:write on thebrianlopez/homebrew-runabout.
+      # If vars.HOMEBREW_TAP_APP_ID is not configured, this step is skipped
+      # and goreleaser runs with --skip homebrew so the binary release still lands.
       - name: Generate tap push token
         id: tap-token
+        if: vars.HOMEBREW_TAP_APP_ID != ''
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ vars.HOMEBREW_TAP_APP_ID }}
@@ -39,13 +42,24 @@ jobs:
           owner: thebrianlopez
           repositories: homebrew-runabout
 
-      - uses: goreleaser/goreleaser-action@v6
+      - name: Run goreleaser (with homebrew tap)
+        if: vars.HOMEBREW_TAP_APP_ID != ''
+        uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
           args: release --clean --skip docker
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
+
+      - name: Run goreleaser (skip homebrew - tap app not configured)
+        if: vars.HOMEBREW_TAP_APP_ID == ''
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean --skip docker --skip homebrew
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Runs on ubuntu-latest where Docker is available. Downloads the pre-built
   # linux/arm64 binary from the GitHub release created above, then builds and
