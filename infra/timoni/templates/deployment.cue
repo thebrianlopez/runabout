@@ -90,16 +90,17 @@ import (
 						},
 					]
 
-					// TCP probes avoid the shield header requirement.
-					// shield.mode:enforce rejects HTTP requests without X-Linkari-Client.
+					// exec probe: when tsnetEnabled the server binds 127.0.0.1:8080 only;
+					// tcpSocket probes in hostNetwork mode check the host IP, which misses
+					// the loopback-only listener. nc -z 127.0.0.1 8080 checks explicitly.
 					livenessProbe: {
-						tcpSocket: port: "http"
+						exec: command: ["sh", "-c", "nc -z 127.0.0.1 8080 < /dev/null"]
 						initialDelaySeconds: 20
 						periodSeconds:       30
 						failureThreshold:    3
 					}
 					readinessProbe: {
-						tcpSocket: port: "http"
+						exec: command: ["sh", "-c", "nc -z 127.0.0.1 8080 < /dev/null"]
 						initialDelaySeconds: 10
 						periodSeconds:       10
 						failureThreshold:    3
