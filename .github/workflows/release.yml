@@ -7,17 +7,16 @@ on:
 
 permissions:
   contents: write
-  id-token: write  # required for OIDC / Workload Identity Federation (AWS ECR push)
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # macos-latest required for ts-go (CGo + tree-sitter). All other binaries
+  # are CGO_ENABLED=0 and cross-compile to linux from macOS via goreleaser.
+  # Docker is NOT available on macOS runners  -  ECR push runs in the docker job.
   release:
-    # macOS required for ts-go (CGo + tree-sitter). CGO_ENABLED=0 tools
-    # cross-compile to linux from macOS via goreleaser's cross-compilation.
     runs-on: macos-latest
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,8 +27,52 @@ jobs:
           go-version-file: go.work
           cache: true
 
+      # Generate a short-lived installation token (1h TTL) scoped to
+      # homebrew-runabout only. Replaces the long-lived PAT approach.
+      # App requires Contents:write on thebrianlopez/homebrew-runabout.
+      - name: Generate tap push token
+        id: tap-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.HOMEBREW_TAP_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: thebrianlopez
+          repositories: homebrew-runabout
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean --skip docker
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
+
+  # Runs on ubuntu-latest where Docker is available. Downloads the pre-built
+  # linux/arm64 binary from the GitHub release created above, then builds and
+  # pushes the ECR image. Authenticates via OIDC (Workload Identity Federation)
+  #  -  no stored AWS credentials. Role configured in terraform/github-oidc.tf.
+  docker:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # required for OIDC / Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Download linux/arm64 binary from release
+        run: |
+          mkdir -p /tmp/linkari-bin
+          gh release download "${GITHUB_REF_NAME}" \
+            --pattern "runabout_*_linux_arm64.tar.gz" \
+            --dir /tmp/linkari-bin
+          tar -xzf /tmp/linkari-bin/runabout_*_linux_arm64.tar.gz \
+            -C /tmp/linkari-bin linkari
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Authenticates via OIDC (Workload Identity Federation) - no stored AWS credentials.
       # Role: github-actions-runabout (thebrianlopez/runabout repo trust, ecr-push policy).
@@ -44,24 +87,13 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Generate a short-lived installation token (1h TTL) scoped to
-      # homebrew-runabout only. Replaces the long-lived PAT approach.
-      # App requires Contents:write on thebrianlopez/homebrew-runabout.
-      # Setup: github.com/settings/apps → new app → store app ID in
-      # vars.HOMEBREW_TAP_APP_ID and private key in secrets.HOMEBREW_TAP_APP_PRIVATE_KEY.
-      - name: Generate tap push token
-        id: tap-token
-        uses: actions/create-github-app-token@v2
+      - name: Build and push to ECR
+        uses: docker/build-push-action@v6
         with:
-          app-id: ${{ vars.HOMEBREW_TAP_APP_ID }}
-          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
-          owner: thebrianlopez
-          repositories: homebrew-runabout
-
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          version: latest
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
+          context: /tmp/linkari-bin
+          file: cmd/linkari/Dockerfile.release
+          platforms: linux/arm64
+          push: true
+          tags: |
+            082515828319.dkr.ecr.us-east-1.amazonaws.com/linkari:${{ github.ref_name }}
+            082515828319.dkr.ecr.us-east-1.amazonaws.com/linkari:latest
