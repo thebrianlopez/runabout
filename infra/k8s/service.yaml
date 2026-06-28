@@ -1,0 +1,26 @@
+# Service for the linkari server on K3S.
+#
+# With hostNetwork: true, port 8080 is already bound on the node IP.
+# This ClusterIP service lets other in-cluster services reach linkari
+# at linkari.linkari.svc.cluster.local:8080 (e.g. for health checks or
+# future in-cluster consumers like the firehose poller).
+#
+# External access: Tailscale Funnel (tsnet) handles HTTPS exposure to Android
+# and Chrome. No LoadBalancer or Ingress is needed for the primary share path.
+apiVersion: v1
+kind: Service
+metadata:
+  name: linkari
+  namespace: linkari
+  labels:
+    app: linkari
+    app.kubernetes.io/part-of: linkari
+spec:
+  selector:
+    app: linkari
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP

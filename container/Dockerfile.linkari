@@ -1,0 +1,40 @@
+# container/Dockerfile.linkari
+#
+# Minimal runtime image for the linkari HTTP server (K3S / arm64).
+#
+# Build:
+#   make linkari                        # outputs bin/linkari
+#   make k8s-build                      # builds binary + container image via nerdctl
+#
+# Claude CLI and credentials are NOT bundled here. They are mounted at runtime
+# via hostPath volumes (see infra/k8s/deployment.yaml). This mirrors the
+# Dockerfile.claude-sandbox ARCHIVED decision: the claude CLI must run as a
+# local subprocess with its existing ~/.claude/ credential store.
+
+FROM alpine:3.21
+
+# HTTPS to: AWS Secrets Manager, Firebase FCM, Tailscale coordination, Anthropic API
+# tzdata: scheduler / time zone handling in digest throttles
+RUN apk add --no-cache ca-certificates tzdata
+
+# Static CGO_ENABLED=0 binary  -  no glibc needed on Alpine
+COPY bin/linkari /usr/local/bin/linkari
+RUN chmod 755 /usr/local/bin/linkari
+
+# XDG dirs:
+#   /root/.config/linkari   -  server.yaml mounted here (ConfigMap subPath)
+#   /root/.cache/linkari    -  firebase-sa.json materialized from AWS SM at startup
+#   /root/.local/state/linkari  -  XDG state; used by some subsystems
+#   /var/lib/linkari        -  durable data mount point (PVC: queue.db, tsnet state)
+RUN mkdir -p \
+    /root/.config/linkari \
+    /root/.cache/linkari \
+    /root/.local/state/linkari \
+    /var/lib/linkari
+
+EXPOSE 8080
+
+# Config read from ~/.config/linkari/server.yaml (ConfigMap-mounted).
+# Secrets resolved via AWS Secrets Manager using EC2 instance role IMDS.
+# Durable data written to /var/lib/linkari/ (PVC).
+ENTRYPOINT ["/usr/local/bin/linkari", "serve"]

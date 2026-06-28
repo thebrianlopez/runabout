@@ -348,6 +348,82 @@ install-runway:
 	@echo "Installing runway -> $(INSTALL_DIR)/runway"
 	@cd cmd/runway && go install $(LDFLAGS) .
 
+# --- K3S deployment targets --------------------------------------------------
+
+K3S_CONTAINERD_SOCK ?= /run/k3s/containerd/containerd.sock
+K3S_NAMESPACE       ?= linkari
+K3S_KUBECONFIG      ?= /etc/rancher/k3s/k3s.yaml
+export KUBECONFIG   := $(K3S_KUBECONFIG)
+
+# One-time host setup: configure and start buildkitd backed by K3S containerd.
+#
+# nerdctl build delegates to BuildKit (buildkitd). By default buildkitd uses the
+# OCI worker, which cannot write built images into containerd. We need the
+# containerd worker pointing at K3S's socket so that built images land in the
+# k8s.io namespace and are visible to Kubernetes with imagePullPolicy: Never.
+#
+# Run once after `apk add nerdctl buildkit`:
+#   make k8s-buildkit
+#
+# Verify buildkitd is up:
+#   pgrep -x buildkitd && echo "running"
+k8s-buildkit:
+	@echo "Configuring buildkitd for K3S containerd ($(K3S_CONTAINERD_SOCK))..."
+	@mkdir -p /etc/buildkit
+	@printf '[worker.oci]\n  enabled = false\n\n[worker.containerd]\n  enabled = true\n  address = "%s"\n  namespace = "k8s.io"\n' \
+		"$(K3S_CONTAINERD_SOCK)" > /etc/buildkit/buildkitd.toml
+	@pgrep -x buildkitd >/dev/null 2>&1 \
+		&& echo "buildkitd already running (skipping start)" \
+		|| { nohup buildkitd --config /etc/buildkit/buildkitd.toml >/tmp/buildkitd.log 2>&1 & sleep 1; echo "OK: buildkitd started"; }
+
+# Build the linkari binary and load the server image into K3S containerd.
+# Prerequisites: apk add nerdctl buildkit && make k8s-buildkit
+#
+# nerdctl --address points to K3S's containerd socket (not /run/containerd/containerd.sock).
+# nerdctl --namespace k8s.io puts the image where Kubernetes looks for it.
+# Built images land directly in K3S containerd via the buildkitd containerd worker.
+# Usage: make k8s-build
+k8s-build: linkari
+	@echo "Building linkari server container image (native arm64)..."
+	@apk info nerdctl >/dev/null 2>&1 || { \
+		echo "ERROR: nerdctl not installed - run: apk add nerdctl buildkit && make k8s-buildkit"; exit 1; }
+	@pgrep -x buildkitd >/dev/null 2>&1 || { \
+		echo "ERROR: buildkitd not running - run: make k8s-buildkit"; exit 1; }
+	@nerdctl --address $(K3S_CONTAINERD_SOCK) --namespace k8s.io \
+		build -f container/Dockerfile.linkari -t linkari:latest .
+	@echo "OK: linkari:latest loaded into K3S containerd (namespace k8s.io)"
+
+# Apply the Timoni module to K3S. Creates the namespace if absent.
+# Usage: make k8s-deploy
+k8s-deploy:
+	@echo "Deploying linkari to K3S via Timoni (namespace=$(K3S_NAMESPACE))..."
+	@kubectl get namespace $(K3S_NAMESPACE) >/dev/null 2>&1 || \
+		kubectl create namespace $(K3S_NAMESPACE)
+	@timoni -n $(K3S_NAMESPACE) apply linkari ./infra/timoni
+	@kubectl --namespace $(K3S_NAMESPACE) rollout status deployment/linkari --timeout=120s
+	@echo "OK: linkari deployed"
+
+# Preview the manifests Timoni would apply without touching the cluster.
+k8s-diff:
+	@timoni -n $(K3S_NAMESPACE) apply linkari ./infra/timoni --dry-run
+
+# Tail K3S pod logs.
+k8s-logs:
+	@kubectl --namespace $(K3S_NAMESPACE) logs -f deployment/linkari
+
+# Upgrade the module in-place (re-applies if already installed).
+k8s-upgrade:
+	@timoni -n $(K3S_NAMESPACE) apply linkari ./infra/timoni
+	@kubectl --namespace $(K3S_NAMESPACE) rollout status deployment/linkari --timeout=120s
+
+# Remove all K3S resources managed by Timoni (keeps PVC to preserve queue.db).
+# To also delete the PVC: kubectl -n linkari delete pvc linkari-data
+k8s-undeploy:
+	@timoni -n $(K3S_NAMESPACE) delete linkari --wait
+	@echo "NOTE: PVC linkari-data preserved. Delete manually to wipe queue.db."
+
+.PHONY: k8s-buildkit k8s-build k8s-deploy k8s-diff k8s-logs k8s-upgrade k8s-undeploy
+
 # --- Container image targets (EPIC-038 M9) ----------------------------------
 
 # Build container images for the local native platform only (fast, for dev iteration).

@@ -1,0 +1,45 @@
+# K3S-adapted linkari server config.
+#
+# Differences from the host ~/.config/linkari/server.yaml:
+#   queue_db:       /var/lib/linkari/queue.db   (PVC-backed, not XDG default)
+#   tsnet_state_dir: /var/lib/linkari/tsnet      (PVC-backed for persist across restarts)
+#   log_file:       ""                           (stdout only  -  let K3S aggregate logs)
+#
+# All secretsmanager:// URIs are resolved at startup via AWS SDK v2.
+# The pod uses hostNetwork:true so IMDS at 169.254.169.254 is reachable
+# without requiring IMDSv2 hop-limit >= 2.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: linkari-config
+  namespace: linkari
+  labels:
+    app.kubernetes.io/part-of: linkari
+data:
+  server.yaml: |
+    server:
+      google_client_id: secretsmanager://linkari/google-client-id
+      google_client_secret: secretsmanager://linkari/google-client-secret
+      invite_codes:
+        - 8182980568
+        - 7734260323
+      token: secretsmanager://linkari/bearer-token
+      tsnet: true
+      tsnet_authkey: secretsmanager://linkari/tsnet-authkey
+      tsnet_hostname: linkari
+      tsnet_state_dir: /var/lib/linkari/tsnet
+      firebase_sa: secretsmanager://linkari/firebase-sa
+      notify_min_score: 0
+      notify_on_prefilter_skip: true
+      atlassian_email: secretsmanager://linkari/jira-webhook#ATLASSIAN_EMAIL
+      atlassian_api_token: secretsmanager://linkari/jira-webhook#ATLASSIAN_API_TOKEN
+      atlassian_confluence_token: secretsmanager://linkari/jira-webhook#ATLASSIAN_API_TOKEN
+      jira_domain: secretsmanager://linkari/jira-webhook#JIRA_DOMAIN
+      pagerduty_token: secretsmanager://linkari/jira-webhook#PAGERDUTY_API_TOKEN
+      port: 8080
+      server_url: ""
+      queue_db: /var/lib/linkari/queue.db
+      log_file: ""
+      debug: false
+      shield:
+        mode: enforce

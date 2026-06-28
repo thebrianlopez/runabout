@@ -1,0 +1,141 @@
+# Linkari server deployment for single-node K3S.
+#
+# hostNetwork: true   -  pod shares the host network namespace so:
+#   1. IMDS at 169.254.169.254 is reachable without IMDSv2 hop-limit >= 2
+#   2. tsnet (Tailscale) Funnel outbound connections use the host's routing table
+#   3. Port 8080 binds directly on the node IP (reachable from the LAN/VPN)
+#
+# Claude CLI access (scoring pipeline):
+#   - /usr/bin/claude (hostPath) → /usr/local/bin/claude in container
+#   - /root/.claude  (hostPath) → /root/.claude in container (OAuth2 session tokens)
+#   This mirrors the Dockerfile.claude-sandbox ARCHIVED decision: claude runs as
+#   a host-access subprocess, not inside a sandboxed container.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: linkari
+  namespace: linkari
+  labels:
+    app: linkari
+    app.kubernetes.io/part-of: linkari
+    app.kubernetes.io/managed-by: runabout-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: linkari
+  template:
+    metadata:
+      labels:
+        app: linkari
+    spec:
+      # Share host network namespace: IMDS + tsnet outbound work without extra config.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+
+      containers:
+        - name: linkari
+          image: linkari:latest
+          # Never pull: image is loaded locally via nerdctl or k3s ctr images import.
+          imagePullPolicy: Never
+
+          ports:
+            - containerPort: 8080
+              name: http
+              hostPort: 8080
+
+          env:
+            # AWS SDK v2 auto-detects region from IMDS when this is unset,
+            # but an explicit value avoids the IMDS round-trip at startup.
+            - name: AWS_DEFAULT_REGION
+              value: us-east-2
+
+          volumeMounts:
+            # Claude CLI binary  -  mounted from host so scoring subprocess works.
+            # hostPath points to the /usr/bin directory; subPath selects the binary.
+            - name: claude-bin
+              mountPath: /usr/local/bin/claude
+              subPath: claude
+              readOnly: true
+
+            # Claude OAuth2 session tokens  -  required for `claude` subprocess auth.
+            # The CLI may write refreshed tokens, so readOnly: false.
+            - name: claude-creds
+              mountPath: /root/.claude
+              readOnly: false
+
+            # server.yaml from ConfigMap (subPath so parent dir stays writable).
+            - name: linkari-config
+              mountPath: /root/.config/linkari/server.yaml
+              subPath: server.yaml
+              readOnly: true
+
+            # Durable data: queue.db (SQLite) + tsnet/ state (Tailscale node identity).
+            - name: linkari-data
+              mountPath: /var/lib/linkari
+
+            # Firebase SA JSON is materialized from AWS SM at startup; emptyDir
+            # is reset on each pod restart (server re-fetches from SM on boot).
+            - name: linkari-cache
+              mountPath: /root/.cache/linkari
+
+            # XDG state dir  -  currently used by some startup checks; emptyDir is fine.
+            - name: linkari-state
+              mountPath: /root/.local/state/linkari
+
+          # TCP liveness avoids the shield header requirement that HTTP probes
+          # would trigger (shield.mode: enforce rejects headerless requests).
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
+
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              # Uncapped CPU: scoring subprocess (claude CLI) runs in bursts.
+              # Memory limit: 1Gi accommodates SQLite WAL + whisper subprocess.
+              cpu: "2"
+              memory: 1Gi
+
+      volumes:
+        # Host claude binary directory (subPath selects individual file in mounts above).
+        - name: claude-bin
+          hostPath:
+            path: /usr/bin
+            type: Directory
+
+        # Host claude OAuth2 credential store.
+        - name: claude-creds
+          hostPath:
+            path: /root/.claude
+            type: Directory
+
+        # K3S-adapted server.yaml (differs from host config in queue_db/tsnet_state_dir/log_file).
+        - name: linkari-config
+          configMap:
+            name: linkari-config
+
+        # Durable PVC: queue.db + tsnet state persist across pod restarts.
+        - name: linkari-data
+          persistentVolumeClaim:
+            claimName: linkari-data
+
+        # Ephemeral cache: Firebase SA JSON re-fetched from AWS SM on each start.
+        - name: linkari-cache
+          emptyDir: {}
+
+        # Ephemeral XDG state: recreated on each start.
+        - name: linkari-state
+          emptyDir: {}
