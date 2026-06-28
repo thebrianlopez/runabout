@@ -32,7 +32,7 @@ import (
 		tsnet_authkey        = "${secretsmanager:\(#config.server.smPrefix)/tsnet-authkey}"
 		tsnet_hostname       = "\(#config.server.tsnetHostname)"
 		tsnet_state_dir      = "/var/lib/linkari/tsnet"
-		firebase_sa          = "${secretsmanager:\(#config.server.smPrefix)/firebase-sa}"
+		firebase_sa          = "secretsmanager://\(#config.server.smPrefix)/firebase-sa"
 		notify_min_score     = \(#config.server.notifyMinScore)
 		notify_on_prefilter_skip = true
 		atlassian_email           = "${secretsmanager:\(#config.server.smPrefix)/jira-webhook#ATLASSIAN_EMAIL}"
