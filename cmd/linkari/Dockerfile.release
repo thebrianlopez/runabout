@@ -1,0 +1,4 @@
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY linkari /linkari
+EXPOSE 8080 443
+ENTRYPOINT ["/linkari", "serve"]
