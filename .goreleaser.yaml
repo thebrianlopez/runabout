@@ -385,4 +385,15 @@ nfpms:
     scripts:
       postinstall: fish/scripts/postinstall.fish
 
-dockers: []  # disabled: requires docker/setup-buildx-action in CI runner (not yet configured)
+dockers:
+  - id: linkari
+    ids: [linkari]
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "082515828319.dkr.ecr.us-east-1.amazonaws.com/linkari:v{{.Version}}"
+      - "082515828319.dkr.ecr.us-east-1.amazonaws.com/linkari:latest"
+    dockerfile: cmd/linkari/Dockerfile.release
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"

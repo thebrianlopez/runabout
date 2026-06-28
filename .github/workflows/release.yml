@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write  # required for OIDC / Workload Identity Federation (AWS ECR push)
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -26,6 +27,22 @@ jobs:
         with:
           go-version-file: go.work
           cache: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Authenticates via OIDC (Workload Identity Federation) - no stored AWS credentials.
+      # Role: github-actions-runabout (thebrianlopez/runabout repo trust, ecr-push policy).
+      # Configured in terraform/github-oidc.tf + terraform/ecr.tf.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::082515828319:role/github-actions-runabout
+          role-session-name: runabout-release-${{ github.ref_name }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
 
       # Generate a short-lived installation token (1h TTL) scoped to
       # homebrew-runabout only. Replaces the long-lived PAT approach.
