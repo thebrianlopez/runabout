@@ -99,7 +99,66 @@ func TestManifest_PDBRenders(t *testing.T) {
 	}
 }
 
-// CT-3: Backup volume wired into Deployment
+// CT-3: Init container wires restore logic and mounts
+func TestManifest_InitContainerWired(t *testing.T) {
+	objs := renderModule(t)
+	deploy := getObject(objs, "Deployment", "linkari")
+	if deploy == nil {
+		t.Fatalf("Deployment not found in rendered manifests")
+	}
+
+	spec := deploy["spec"].(map[string]interface{})
+	template := spec["template"].(map[string]interface{})
+	podSpec := template["spec"].(map[string]interface{})
+
+	initContainers, ok := podSpec["initContainers"].([]interface{})
+	if !ok || len(initContainers) == 0 {
+		t.Fatalf("initContainers not found in Deployment")
+	}
+
+	ic := initContainers[0].(map[string]interface{})
+	if name, ok := ic["name"].(string); !ok || name != "linkari-db-restore" {
+		t.Fatalf("init container name: got %v, want linkari-db-restore", ic["name"])
+	}
+
+	mounts := ic["volumeMounts"].([]interface{})
+	wantMounts := map[string]string{"linkari-data": "/var/lib/linkari", "linkari-backup": "/var/lib/linkari-backup"}
+	for wantName, wantPath := range wantMounts {
+		found := false
+		for _, mount := range mounts {
+			m := mount.(map[string]interface{})
+			if name, ok := m["name"].(string); ok && name == wantName {
+				if path, ok := m["mountPath"].(string); !ok || path != wantPath {
+					t.Errorf("%s mountPath: got %v, want %s", wantName, path, wantPath)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s mount not found in init container", wantName)
+		}
+	}
+
+	command := ic["command"].([]interface{})
+	if len(command) < 3 {
+		t.Fatalf("init container command too short: %v", command)
+	}
+	if flag, ok := command[1].(string); !ok || flag != "-ceu" {
+		t.Errorf("shell flags: got %v, want -ceu", command[1])
+	}
+	script, ok := command[2].(string)
+	if !ok {
+		t.Fatalf("script arg missing: %v", command[2])
+	}
+	for _, want := range []string{"skipping restore", "IR-002 k8s_backup_mount_missing", "IR-003 restore_seed_absent", "IR-001 seed complete"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("init script missing %q", want)
+		}
+	}
+}
+
+// CT-4: Backup volume wired into Deployment
 func TestManifest_BackupVolumeWired(t *testing.T) {
 	objs := renderModule(t)
 	deploy := getObject(objs, "Deployment", "linkari")
@@ -130,7 +189,7 @@ func TestManifest_BackupVolumeWired(t *testing.T) {
 	}
 }
 
-// CT-4: Live deployment unchanged (regression guard RG-1)
+// CT-5: Live deployment unchanged (regression guard RG-1)
 func TestManifest_LiveDeploymentUnchanged(t *testing.T) {
 	objs := renderModule(t)
 	deploy := getObject(objs, "Deployment", "linkari")

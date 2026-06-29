@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -601,6 +602,11 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
+			// --- Check 13: k8s volume health (EPIC-228) ---
+			for _, c := range checkK8sVolume(resolveDataDir(serverCfg)) {
+				addCheck(c)
+			}
+
 			// --- Output ---
 			if jsonOutput {
 				type output struct {
@@ -684,4 +690,59 @@ func strOrEmpty(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func k8sModeEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("LINKARI_K8S_MODE"))
+	return v == "true" || v == "1" || strings.EqualFold(v, "yes")
+}
+
+func resolveDataDir(cfg *ServerConfig) string {
+	if cfg != nil && cfg.QueueDB != "" {
+		return filepath.Dir(cfg.QueueDB)
+	}
+	return filepath.Dir(resolveQueueDB(""))
+}
+
+func checkK8sVolume(dir string) []doctorCheck {
+	if !k8sModeEnabled() {
+		return nil
+	}
+
+	st, err := os.Stat(dir)
+	if err != nil {
+		return []doctorCheck{failCheck("k8s_volume_mount", fmt.Sprintf("data dir %s unavailable: %v", dir, err))}
+	}
+	if !st.IsDir() {
+		return []doctorCheck{failCheck("k8s_volume_mount", fmt.Sprintf("data dir %s is not a directory", dir))}
+	}
+	if wErr := probeWritable(dir); wErr != nil {
+		return []doctorCheck{failCheck("k8s_volume_mount", fmt.Sprintf("data dir %s not writable: %v", dir, wErr))}
+	}
+
+	var freePct int
+	var varfs syscall.Statfs_t
+	if syscall.Statfs(dir, &varfs) == nil && varfs.Blocks > 0 {
+		freePct = int((varfs.Bavail * 100) / varfs.Blocks)
+	}
+	if freePct > 0 && freePct < 5 {
+		return []doctorCheck{failCheck("k8s_volume_capacity", fmt.Sprintf("%s free space critically low (%d%% free)", dir, freePct))}
+	}
+	if freePct > 0 && freePct < 20 {
+		return []doctorCheck{warnCheck("k8s_volume_capacity", fmt.Sprintf("%s free space low (%d%% free)", dir, freePct))}
+	}
+	checks := []doctorCheck{okCheck("k8s_volume_capacity", fmt.Sprintf("%s capacity ok", dir))}
+
+	lockPath := filepath.Join(dir, ".linkari-single-writer.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return []doctorCheck{failCheck("k8s_single_writer", fmt.Sprintf("open lock file: %v", err))}
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return []doctorCheck{failCheck("k8s_single_writer", fmt.Sprintf("another writer appears active in %s", dir))}
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	checks = append(checks, okCheck("k8s_single_writer", fmt.Sprintf("%s single-writer lock available", dir)))
+	return checks
 }

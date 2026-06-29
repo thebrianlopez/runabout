@@ -793,3 +793,34 @@ func TestBackupFreshness_RG1_NoFalsePositive(t *testing.T) {
 		t.Errorf("RG-1: name = %q, want backup_freshness", c.Name)
 	}
 }
+
+func TestK8sVolumeChecks_ModeDisabled(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LINKARI_K8S_MODE", "")
+	if got := checkK8sVolume(dir); got != nil {
+		t.Fatalf("expected nil checks when mode disabled, got %#v", got)
+	}
+}
+
+func TestK8sVolumeChecks_AllOk(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LINKARI_K8S_MODE", "true")
+	checks := checkK8sVolume(dir)
+	if len(checks) != 2 {
+		t.Fatalf("expected 2 checks, got %#v", checks)
+	}
+	if checks[0].Name != "k8s_volume_capacity" || checks[0].Status != statusOK {
+		t.Fatalf("unexpected capacity check: %#v", checks[0])
+	}
+	if checks[1].Name != "k8s_single_writer" || checks[1].Status != statusOK {
+		t.Fatalf("unexpected single writer check: %#v", checks[1])
+	}
+}
+
+func TestResolveDataDir_ConfigFirst(t *testing.T) {
+	t.Setenv("LINKARI_QUEUE_DB", filepath.Join("/tmp", "env", "queue.db"))
+	cfg := &ServerConfig{QueueDB: filepath.Join("/tmp", "configured", "queue.db")}
+	if got := resolveDataDir(cfg); got != filepath.Join("/tmp", "configured") {
+		t.Fatalf("expected config dir, got %q", got)
+	}
+}
