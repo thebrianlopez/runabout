@@ -385,6 +385,40 @@ nfpms:
     scripts:
       postinstall: fish/scripts/postinstall.fish
 
+  - id: runabout-apk
+    package_name: runabout
+    vendor: thebrianlopez
+    homepage: "https://github.com/thebrianlopez/runabout"
+    maintainer: "Brian Lopez <noreply@thebrianlopez.dev>"
+    description: "Personal developer tools - mdq, bmux, workctl, linkari, runway, and more"
+    license: MIT
+    formats:
+      - apk
+    ids:
+      - mdq
+      - perfgate
+      - shellprof
+      - hookval
+      - effiscore
+      - castex
+      - chain-eval
+      - bmux
+      - protonexport
+      - linkari
+      - linkari-labeler
+      - plaid-service
+      - wasend
+      - workctl
+      - ghwatch
+      - jira-poller
+      - runway
+    contents:
+      - src: "{{ .ArtifactPath }}"
+        dst: "/usr/local/bin/{{ .ArtifactName }}"
+    apk:
+      signature:
+        key_file: /tmp/apk-signing.key
+
 dockers:
   - id: linkari
     ids: [linkari]
