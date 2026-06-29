@@ -133,8 +133,8 @@ jobs:
           aws secretsmanager get-secret-value \
             --secret-id runabout/apk-signing-key \
             --query SecretString \
-            --output text > /tmp/apk-signing.key
-          chmod 600 /tmp/apk-signing.key
+            --output text > "/tmp/runabout@blo.la.rsa"
+          chmod 600 "/tmp/runabout@blo.la.rsa"
 
       - name: Download release APK artifacts
         run: |
@@ -149,12 +149,12 @@ jobs:
         run: |
           docker run --rm \
             -v /tmp/apk-repo:/repo \
-            -v /tmp/apk-signing.key:/signing.key:ro \
+            -v "/tmp/runabout@blo.la.rsa:/runabout@blo.la.rsa:ro" \
             alpine:latest sh -c "
               apk add --quiet abuild &&
               cd /repo &&
               apk index -o APKINDEX.unsigned.tar.gz *.apk &&
-              abuild-sign -k /signing.key APKINDEX.unsigned.tar.gz &&
+              'abuild-sign' -k '/runabout@blo.la.rsa' APKINDEX.unsigned.tar.gz &&
               mv APKINDEX.unsigned.tar.gz.signed APKINDEX.tar.gz
             "
 
