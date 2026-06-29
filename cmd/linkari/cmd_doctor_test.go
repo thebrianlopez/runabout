@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newDoctorCmdForTest builds a doctorCmd with output captured and HOME
@@ -557,5 +558,238 @@ func TestDoctorPathIsolation_RoutingConfigDoesNotLoadDefaultConfig(t *testing.T)
 		if c.Name == "routing_config" && c.Status != statusOK {
 			t.Fatalf("CT-9: routing_config status=%q detail=%q", c.Status, c.Message)
 		}
+	}
+}
+
+// EPIC-223 Contract Tests: Backup Freshness Check
+
+// CT-1: Fresh backup → ok
+func TestBackupFreshness_FreshBackup(t *testing.T) {
+	dir := t.TempDir()
+	backupPath := filepath.Join(dir, "queue.db")
+	sidecarPath := backupPath + ".backup-meta.json"
+
+	now := time.Now().UTC()
+	completedAt := now.Add(-1 * time.Hour).Format("20060102T150405Z")
+	sidecarContent := fmt.Sprintf(`{"completed_at": "%s", "source_path": "%s", "bytes": 1024, "duration_ms": 100}`, completedAt, backupPath)
+
+	if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+
+	checks := checkBackupFreshness(backupPath, now)
+	if len(checks) == 0 {
+		t.Fatal("expected non-empty checks")
+	}
+
+	c := checks[0]
+	if c.Status != statusOK {
+		t.Errorf("CT-1: status = %q, want %q (message: %s)", c.Status, statusOK, c.Message)
+	}
+	if c.Name != "backup_freshness" {
+		t.Errorf("CT-1: name = %q, want backup_freshness", c.Name)
+	}
+}
+
+// CT-2: Stale 25h → warn
+func TestBackupFreshness_Stale25h(t *testing.T) {
+	dir := t.TempDir()
+	backupPath := filepath.Join(dir, "queue.db")
+	sidecarPath := backupPath + ".backup-meta.json"
+
+	now := time.Now().UTC()
+	completedAt := now.Add(-25 * time.Hour).Format("20060102T150405Z")
+	sidecarContent := fmt.Sprintf(`{"completed_at": "%s", "source_path": "%s", "bytes": 1024, "duration_ms": 100}`, completedAt, backupPath)
+
+	if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+
+	checks := checkBackupFreshness(backupPath, now)
+	if len(checks) == 0 {
+		t.Fatal("expected non-empty checks")
+	}
+
+	c := checks[0]
+	if c.Status != statusWarn {
+		t.Errorf("CT-2: status = %q, want %q (message: %s)", c.Status, statusWarn, c.Message)
+	}
+	if c.Name != "backup_freshness" {
+		t.Errorf("CT-2: name = %q, want backup_freshness", c.Name)
+	}
+}
+
+// CT-3: Stale 73h → fail
+func TestBackupFreshness_Stale73h(t *testing.T) {
+	dir := t.TempDir()
+	backupPath := filepath.Join(dir, "queue.db")
+	sidecarPath := backupPath + ".backup-meta.json"
+
+	now := time.Now().UTC()
+	completedAt := now.Add(-73 * time.Hour).Format("20060102T150405Z")
+	sidecarContent := fmt.Sprintf(`{"completed_at": "%s", "source_path": "%s", "bytes": 1024, "duration_ms": 100}`, completedAt, backupPath)
+
+	if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+
+	checks := checkBackupFreshness(backupPath, now)
+	if len(checks) == 0 {
+		t.Fatal("expected non-empty checks")
+	}
+
+	c := checks[0]
+	if c.Status != statusFail {
+		t.Errorf("CT-3: status = %q, want %q (message: %s)", c.Status, statusFail, c.Message)
+	}
+	if c.Name != "backup_freshness" {
+		t.Errorf("CT-3: name = %q, want backup_freshness", c.Name)
+	}
+}
+
+// CT-4: Missing sidecar → warn (when backup path configured but backup not yet run)
+func TestBackupFreshness_MissingSidecar(t *testing.T) {
+	dir := t.TempDir()
+	backupPath := filepath.Join(dir, "queue.db")
+
+	now := time.Now().UTC()
+	checks := checkBackupFreshness(backupPath, now)
+
+	if len(checks) == 0 {
+		t.Fatal("expected non-empty checks")
+	}
+
+	c := checks[0]
+	// When backup_path is explicitly configured but sidecar doesn't exist,
+	// emit a warn (not a fail) since the operator may not have run a backup yet.
+	if c.Status != statusWarn {
+		t.Errorf("CT-4: status = %q, want %q (warn when backup not yet run; message: %s)", c.Status, statusWarn, c.Message)
+	}
+	if c.Name != "backup_freshness" {
+		t.Errorf("CT-4: name = %q, want backup_freshness", c.Name)
+	}
+}
+
+// CT-5: Config-authority test (config set + env absent → reads config)
+func TestResolveBackupPath_ConfigAuthority(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "queue.db")
+
+	// Ensure LINKARI_BACKUP_PATH is unset
+	t.Setenv("LINKARI_BACKUP_PATH", "")
+
+	cfg := &ServerConfig{
+		DB: DBConfig{
+			BackupPath: configPath,
+		},
+	}
+
+	resolved, err := resolveBackupPath(cfg)
+	if err != nil {
+		t.Fatalf("CT-5: resolveBackupPath: %v", err)
+	}
+
+	if resolved != configPath {
+		t.Errorf("CT-5: resolved = %q, want %q (config must win over env)", resolved, configPath)
+	}
+}
+
+// CT-6: Default fallback (empty config → XDG default)
+func TestResolveBackupPath_DefaultFallback(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	cfg := &ServerConfig{
+		DB: DBConfig{
+			BackupPath: "",
+		},
+	}
+
+	resolved, err := resolveBackupPath(cfg)
+	if err != nil {
+		t.Fatalf("CT-6: resolveBackupPath: %v", err)
+	}
+
+	expectedDefault := filepath.Join(dir, ".local", "state", "linkari", "backups", "latest.db")
+	if resolved != expectedDefault {
+		t.Errorf("CT-6: resolved = %q, want %q", resolved, expectedDefault)
+	}
+}
+
+// CT-7: Malformed sidecar → fail (conservative)
+func TestBackupFreshness_MalformedSidecar(t *testing.T) {
+	dir := t.TempDir()
+	backupPath := filepath.Join(dir, "queue.db")
+	sidecarPath := backupPath + ".backup-meta.json"
+
+	// Write malformed JSON with unparseable completed_at
+	sidecarContent := `{"completed_at": "invalid-date", "source_path": "/path", "bytes": 1024, "duration_ms": 100}`
+
+	if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+
+	now := time.Now().UTC()
+	checks := checkBackupFreshness(backupPath, now)
+
+	if len(checks) == 0 {
+		t.Fatal("expected non-empty checks")
+	}
+
+	c := checks[0]
+	if c.Status != statusFail {
+		t.Errorf("CT-7: status = %q, want %q (conservative on malformed; message: %s)", c.Status, statusFail, c.Message)
+	}
+	if c.Name != "backup_missing" {
+		t.Errorf("CT-7: name = %q, want backup_missing (conservative)", c.Name)
+	}
+}
+
+// RG-1: Config-set + env-absent must not false-positive
+// Regression guard against the tessdata-class authority bug.
+func TestBackupFreshness_RG1_NoFalsePositive(t *testing.T) {
+	dir := t.TempDir()
+	configBackupPath := filepath.Join(dir, "configured.db")
+	sidecarPath := configBackupPath + ".backup-meta.json"
+
+	// Config is set, env is unset
+	t.Setenv("LINKARI_BACKUP_PATH", "")
+
+	now := time.Now().UTC()
+	completedAt := now.Add(-30 * time.Minute).Format("20060102T150405Z")
+	sidecarContent := fmt.Sprintf(`{"completed_at": "%s", "source_path": "%s", "bytes": 1024, "duration_ms": 100}`, completedAt, configBackupPath)
+
+	if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+
+	cfg := &ServerConfig{
+		DB: DBConfig{
+			BackupPath: configBackupPath,
+		},
+	}
+
+	resolved, err := resolveBackupPath(cfg)
+	if err != nil {
+		t.Fatalf("RG-1: resolveBackupPath: %v", err)
+	}
+
+	// Verify config path was used
+	if resolved != configBackupPath {
+		t.Errorf("RG-1: resolveBackupPath returned %q, want %q", resolved, configBackupPath)
+	}
+
+	// Verify the check reports ok (not backup_missing)
+	checks := checkBackupFreshness(resolved, now)
+	if len(checks) == 0 {
+		t.Fatal("RG-1: expected non-empty checks")
+	}
+
+	c := checks[0]
+	if c.Status != statusOK {
+		t.Errorf("RG-1: status = %q, want %q (should not false-positive as missing when config is set)", c.Status, statusOK)
+	}
+	if c.Name != "backup_freshness" {
+		t.Errorf("RG-1: name = %q, want backup_freshness", c.Name)
 	}
 }

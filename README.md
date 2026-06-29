@@ -220,6 +220,12 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 
 Note: `transcribe=false` only skips the Whisper stage - yt-dlp subtitle extraction still runs, and scoring proceeds normally if subtitles are found.
 
+**Database durability config (`[server.db]`):** EPIC-223 F3.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `backup_path` | string | `~/.local/state/linkari/backups/latest.db` | Absolute path to the backup database file. `linkari doctor` checks backup freshness (ok ≤24h, warn ≤72h, fail >72h). When configured, the `linkari db backup` command writes a `.backup-meta.json` sidecar that tracks `completed_at`, `bytes`, and `duration_ms`. The check is optional - omitting this field skips the backup freshness check in doctor. |
+
 **Endpoints:**
 
 | Endpoint | Method | Description |

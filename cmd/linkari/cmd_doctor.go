@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +53,68 @@ var probeYouTubeSlotFn = func(ctx context.Context, slot string, userID int64, q 
 	}
 	_, err = ts.Token()
 	return err
+}
+
+// EPIC-223 M3: resolveBackupPath returns the expected backup file path.
+// Config struct is the source of truth; XDG default is fallback ONLY.
+func resolveBackupPath(cfg *ServerConfig) (string, error) {
+	if cfg.DB.BackupPath != "" {
+		return cfg.DB.BackupPath, nil
+	}
+
+	// Fallback to XDG state dir default
+	stateDir, err := xdgpath.StateDir()
+	if err != nil {
+		return "", fmt.Errorf("xdg state dir: %w", err)
+	}
+
+	return filepath.Join(stateDir, "backups", "latest.db"), nil
+}
+
+// EPIC-223 M4: checkBackupFreshness reads <path>.backup-meta.json and returns doctorChecks.
+// Bands: ok ≤24h, warn ≤72h, fail >72h / missing.
+func checkBackupFreshness(backupPath string, now time.Time) []doctorCheck {
+	sidecarPath := backupPath + ".backup-meta.json"
+
+	raw, err := os.ReadFile(sidecarPath)
+	if err != nil {
+		slog.Warn("doctor_backup_freshness", "status", "warn", "backup_path", backupPath)
+		return []doctorCheck{warnCheck("backup_freshness", fmt.Sprintf("no backup found at %s (run: linkari db backup %s to enable durability)", backupPath, backupPath))}
+	}
+
+	var sidecar struct {
+		CompletedAt string `json:"completed_at"`
+		SourcePath  string `json:"source_path"`
+		Bytes       int64  `json:"bytes"`
+		DurationMs  int64  `json:"duration_ms"`
+	}
+
+	if err := json.Unmarshal(raw, &sidecar); err != nil {
+		slog.Error("doctor_backup_freshness", "status", "fail", "backup_path", backupPath, "error", err.Error())
+		return []doctorCheck{failCheck("backup_missing", fmt.Sprintf("malformed backup metadata at %s: %v", sidecarPath, err))}
+	}
+
+	completedAt, err := time.Parse("20060102T150405Z", sidecar.CompletedAt)
+	if err != nil {
+		slog.Error("doctor_backup_freshness", "status", "fail", "backup_path", backupPath, "error", err.Error())
+		return []doctorCheck{failCheck("backup_missing", fmt.Sprintf("unparseable completed_at in backup metadata: %v", err))}
+	}
+
+	age := now.Sub(completedAt)
+	ageHours := int(age.Hours())
+
+	if age <= 24*time.Hour {
+		slog.Info("doctor_backup_freshness", "status", "ok", "age_hours", ageHours, "backup_path", backupPath)
+		return []doctorCheck{okCheck("backup_freshness", fmt.Sprintf("last backup %dh ago", ageHours))}
+	}
+
+	if age <= 72*time.Hour {
+		slog.Warn("doctor_backup_freshness", "status", "warn", "age_hours", ageHours, "backup_path", backupPath)
+		return []doctorCheck{warnCheck("backup_freshness", fmt.Sprintf("last backup %dh ago (>24h); run: linkari db backup %s", ageHours, backupPath))}
+	}
+
+	slog.Error("doctor_backup_freshness", "status", "fail", "age_hours", ageHours, "backup_path", backupPath)
+	return []doctorCheck{failCheck("backup_freshness", fmt.Sprintf("last backup %dh ago (>72h); backups are stale  -  run: linkari db backup %s", ageHours, backupPath))}
 }
 
 func doctorCmd() *cobra.Command {
@@ -526,6 +589,15 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				} else {
 					addCheck(okCheck("log_file",
 						fmt.Sprintf("%s (parent dir writable)", serverCfg.LogFile)))
+				}
+			}
+
+			// --- Check 12: backup_freshness (EPIC-223) ---
+			// Only run if backup_path is explicitly configured (optional check).
+			if serverCfg != nil && serverCfg.DB.BackupPath != "" {
+				freshChecks := checkBackupFreshness(serverCfg.DB.BackupPath, time.Now().UTC())
+				for _, c := range freshChecks {
+					addCheck(c)
 				}
 			}
 

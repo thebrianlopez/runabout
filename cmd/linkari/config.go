@@ -69,7 +69,14 @@ func (s ServerConfig) IsZero() bool {
 		!s.Sandbox.Enabled &&
 		s.ImageNoiseGateMaxBytes == 0 && s.MaxScoringCostUSD == 0 &&
 		s.LiteParseePath == "" &&
-		s.Whisper.MaxConcurrency == 0 && s.Whisper.TimeoutSecs == 0 && s.Whisper.MaxRetries == 0
+		s.Whisper.MaxConcurrency == 0 && s.Whisper.TimeoutSecs == 0 && s.Whisper.MaxRetries == 0 &&
+		s.DB.BackupPath == ""
+}
+
+// DBConfig holds database-related knobs for linkari.
+// EPIC-223: backup_path is the location of the backup database file.
+type DBConfig struct {
+	BackupPath string `toml:"backup_path"` // absolute path to backup .db; sidecar is <path>.backup-meta.json
 }
 
 // YouTubeConfig holds per-field tuning for yt-dlp extraction. EPIC-090 M5.
@@ -438,6 +445,7 @@ type ServerConfig struct {
 	GoogleOAuthToken         string `toml:"google_oauth_token"`          // ${secretsmanager:linkari/google-oauth-token} or serialized oauth2.Token JSON
 	QueueDB                  string `toml:"queue_db"`
 	FirebaseSA               string `toml:"firebase_sa"`
+	DB                       DBConfig `toml:"db"` // EPIC-223: backup database config
 	LogFile                  string `toml:"log_file"`
 	Shell                    string `toml:"shell"`
 	ShellArgs                string `toml:"shell_args"`
