@@ -432,26 +432,26 @@ type Config struct {
 //
 // All fields are optional; an empty value means "fall back to env/default".
 type ServerConfig struct {
-	Port                     int    `toml:"port"`
-	Token                    string `toml:"token"`                       // discouraged: prefer LINKARI_TOKEN env
-	JiraToken                string `toml:"jira_token"`                  // EPIC-057: scoped bearer for ginit_* actions; ${secretsmanager:name#field} or literal
-	JiraAPIUsername          string `toml:"atlassian_email"`             // ${secretsmanager:linkari/jira-webhook#ATLASSIAN_EMAIL} or literal
-	JiraAPIPassword          string `toml:"atlassian_api_token"`         // ${secretsmanager:linkari/jira-webhook#ATLASSIAN_API_TOKEN} or literal
-	JiraDomain               string `toml:"jira_domain"`                 // ${secretsmanager:linkari/jira-webhook#JIRA_DOMAIN} or literal
-	PagerDutyToken           string `toml:"pagerduty_token"`             // ${secretsmanager:linkari/jira-webhook#PAGERDUTY_API_TOKEN} or literal
-	GitHubToken              string `toml:"github_token"`                // ${secretsmanager:linkari/github-pat} or literal PAT
-	GoogleServiceAccountPath string `toml:"google_service_account_path"` // path to service account JSON; ${secretsmanager:...} writes to cache dir
-	AtlassianConfluenceToken string `toml:"atlassian_confluence_token"`  // ${secretsmanager:linkari/confluence-token} or literal
-	GoogleOAuthToken         string `toml:"google_oauth_token"`          // ${secretsmanager:linkari/google-oauth-token} or serialized oauth2.Token JSON
-	QueueDB                  string `toml:"queue_db"`
-	FirebaseSA               string `toml:"firebase_sa"`
+	Port                     int      `toml:"port"`
+	Token                    string   `toml:"token"`                       // discouraged: prefer LINKARI_TOKEN env
+	JiraToken                string   `toml:"jira_token"`                  // EPIC-057: scoped bearer for ginit_* actions; ${secretsmanager:name#field} or literal
+	JiraAPIUsername          string   `toml:"atlassian_email"`             // ${secretsmanager:linkari/jira-webhook#ATLASSIAN_EMAIL} or literal
+	JiraAPIPassword          string   `toml:"atlassian_api_token"`         // ${secretsmanager:linkari/jira-webhook#ATLASSIAN_API_TOKEN} or literal
+	JiraDomain               string   `toml:"jira_domain"`                 // ${secretsmanager:linkari/jira-webhook#JIRA_DOMAIN} or literal
+	PagerDutyToken           string   `toml:"pagerduty_token"`             // ${secretsmanager:linkari/jira-webhook#PAGERDUTY_API_TOKEN} or literal
+	GitHubToken              string   `toml:"github_token"`                // ${secretsmanager:linkari/github-pat} or literal PAT
+	GoogleServiceAccountPath string   `toml:"google_service_account_path"` // path to service account JSON; ${secretsmanager:...} writes to cache dir
+	AtlassianConfluenceToken string   `toml:"atlassian_confluence_token"`  // ${secretsmanager:linkari/confluence-token} or literal
+	GoogleOAuthToken         string   `toml:"google_oauth_token"`          // ${secretsmanager:linkari/google-oauth-token} or serialized oauth2.Token JSON
+	QueueDB                  string   `toml:"queue_db"`
+	FirebaseSA               string   `toml:"firebase_sa"`
 	DB                       DBConfig `toml:"db"` // EPIC-223: backup database config
-	LogFile                  string `toml:"log_file"`
-	Shell                    string `toml:"shell"`
-	ShellArgs                string `toml:"shell_args"`
-	NotifyMinScore           int    `toml:"notify_min_score"`
-	ServerURL                string `toml:"server_url"`    // base URL fish callbacks should use
-	TSNetAuthKey             string `toml:"tsnet_authkey"` // EPIC-047: ${secretsmanager:...} or literal
+	LogFile                  string   `toml:"log_file"`
+	Shell                    string   `toml:"shell"`
+	ShellArgs                string   `toml:"shell_args"`
+	NotifyMinScore           int      `toml:"notify_min_score"`
+	ServerURL                string   `toml:"server_url"`    // base URL fish callbacks should use
+	TSNetAuthKey             string   `toml:"tsnet_authkey"` // EPIC-047: ${secretsmanager:...} or literal
 
 	// EPIC-048: new fields for zero-flag boot.
 	// Tsnet uses *bool so nil encodes "absent" (→ default true) vs explicit false.
