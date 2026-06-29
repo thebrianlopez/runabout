@@ -203,9 +203,7 @@ func emitPushEvent(eventType string, meta map[string]interface{}) {
 		ExitCode:      0,
 		Metadata:      meta,
 	}
-	if err := writeEvent(e); err != nil {
-		slog.Warn("telemetry emit failed", "event", eventType, "error", err)
-	}
+	emitServerEvent(e)
 }
 
 // emitShareActionResolved writes a share_action_resolved event to the

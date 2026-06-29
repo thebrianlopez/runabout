@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"golang.org/x/exp/slog"
 )
 
 // maxEventFileSize is the rotation threshold (50MB, matching emit_jsonl.fish).
@@ -176,7 +178,10 @@ func eventsDir() string {
 
 // writeEvent marshals and appends an event to the daily JSONL file.
 func writeEvent(e event) error {
-	dir := eventsDir()
+	return writeEventToDir(eventsDir(), e)
+}
+
+func writeEventToDir(dir string, e event) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create events dir: %w", err)
 	}
@@ -211,6 +216,43 @@ func writeEvent(e event) error {
 
 	_, err = f.Write(data)
 	return err
+}
+
+func serverEventsDir(cfg TelemetryConfig) string {
+	if !cfg.emitsToAutomationMetrics() {
+		return filepath.Join(eventsDir(), "linkari")
+	}
+	return eventsDir()
+}
+
+func loadTelemetryConfig() TelemetryConfig {
+	path := os.Getenv("LINKARI_CONFIG")
+	if path == "" {
+		path = defaultConfigPath()
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return TelemetryConfig{}
+	}
+	var cfg struct {
+		Server struct {
+			Telemetry TelemetryConfig `toml:"telemetry"`
+		} `toml:"server"`
+	}
+	if _, err := toml.Decode(string(data), &cfg); err != nil {
+		return TelemetryConfig{}
+	}
+	return cfg.Server.Telemetry
+}
+
+func emitServerEvent(e event) {
+	cfg := loadTelemetryConfig()
+	if !cfg.isEnabled() {
+		return
+	}
+	if err := writeEventToDir(serverEventsDir(cfg), e); err != nil {
+		slog.Warn("telemetry emit failed", "event", e.EventType, "error", err)
+	}
 }
 
 // sensitivePatterns lists flag name substrings whose values must be redacted.
