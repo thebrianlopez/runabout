@@ -111,3 +111,54 @@ jobs:
           tags: |
             082515828319.dkr.ecr.us-east-1.amazonaws.com/linkari:${{ github.ref_name }}
             082515828319.dkr.ecr.us-east-1.amazonaws.com/linkari:latest
+
+  apk-repo:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::082515828319:role/github-actions-runabout
+          role-session-name: runabout-apk-${{ github.ref_name }}
+          aws-region: us-east-1
+
+      - name: Fetch APK signing key
+        run: |
+          aws secretsmanager get-secret-value \
+            --secret-id runabout/apk-signing-key \
+            --query SecretString \
+            --output text > /tmp/apk-signing.key
+          chmod 600 /tmp/apk-signing.key
+
+      - name: Download release APK artifacts
+        run: |
+          mkdir -p /tmp/apk-repo
+          gh release download "${GITHUB_REF_NAME}" \
+            --pattern "runabout_*.apk" \
+            --dir /tmp/apk-repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate APKINDEX and sign
+        run: |
+          docker run --rm \
+            -v /tmp/apk-repo:/repo \
+            -v /tmp/apk-signing.key:/signing.key:ro \
+            alpine:latest sh -c "
+              apk add --quiet abuild &&
+              cd /repo &&
+              apk index -o APKINDEX.unsigned.tar.gz *.apk &&
+              abuild-sign -k /signing.key APKINDEX.unsigned.tar.gz &&
+              mv APKINDEX.unsigned.tar.gz.signed APKINDEX.tar.gz
+            "
+
+      - name: Upload APK repo to S3
+        run: |
+          aws s3 sync /tmp/apk-repo/ s3://runabout-apk-082515828319/alpine/ \
+            --exclude "*.unsigned.tar.gz"
