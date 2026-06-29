@@ -81,6 +81,7 @@ func main() {
 	rootCmd.AddCommand(backfillCmd())
 	rootCmd.AddCommand(tagBackfillCmd())
 	rootCmd.AddCommand(digestCmd())
+	rootCmd.AddCommand(dbCmd())
 	rootCmd.AddCommand(evalCmd())
 	rootCmd.AddCommand(triageCmd())
 	rootCmd.AddCommand(profileCmd())
