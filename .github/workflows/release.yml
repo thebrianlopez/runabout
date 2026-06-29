@@ -181,7 +181,7 @@ jobs:
               cd /repo &&
               apk index -o APKINDEX.unsigned.tar.gz *.apk &&
               abuild-sign -k '/${{ secrets.APK_KEY_NAME }}' APKINDEX.unsigned.tar.gz &&
-              mv APKINDEX.unsigned.tar.gz.signed APKINDEX.tar.gz
+              mv APKINDEX.unsigned.tar.gz APKINDEX.tar.gz
             "
 
       - name: Upload APK repo to S3
