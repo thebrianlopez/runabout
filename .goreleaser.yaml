@@ -425,8 +425,8 @@ dockers:
     goos: linux
     goarch: arm64
     image_templates:
-      - '{{ env "AWS_ACCOUNT_ID" }}.dkr.ecr.us-east-1.amazonaws.com/linkari:v{{.Version}}'
-      - '{{ env "AWS_ACCOUNT_ID" }}.dkr.ecr.us-east-1.amazonaws.com/linkari:latest'
+      - '{{ env "ECR_REGISTRY" }}/linkari:v{{.Version}}'
+      - '{{ env "ECR_REGISTRY" }}/linkari:latest'
     dockerfile: cmd/linkari/Dockerfile.release
     use: buildx
     build_flag_templates:
