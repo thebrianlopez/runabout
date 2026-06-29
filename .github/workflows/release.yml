@@ -169,13 +169,15 @@ jobs:
 
       - name: Generate APKINDEX and sign
         run: |
+          # Extract public key on host so it can be mounted into /etc/apk/keys/
+          openssl rsa -in "/tmp/${{ secrets.APK_KEY_NAME }}" -pubout \
+            -out "/tmp/${{ secrets.APK_KEY_NAME }}.pub"
           docker run --rm \
             -v /tmp/apk-repo:/repo \
             -v "/tmp/${{ secrets.APK_KEY_NAME }}:/${{ secrets.APK_KEY_NAME }}:ro" \
+            -v "/tmp/${{ secrets.APK_KEY_NAME }}.pub:/etc/apk/keys/${{ secrets.APK_KEY_NAME }}.pub:ro" \
             alpine:latest sh -c "
-              apk add --quiet abuild openssl &&
-              openssl rsa -in '/${{ secrets.APK_KEY_NAME }}' -pubout \
-                -out '/etc/apk/keys/${{ secrets.APK_KEY_NAME }}.pub' &&
+              apk add --quiet abuild &&
               cd /repo &&
               apk index -o APKINDEX.unsigned.tar.gz *.apk &&
               abuild-sign -k '/${{ secrets.APK_KEY_NAME }}' APKINDEX.unsigned.tar.gz &&
