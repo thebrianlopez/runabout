@@ -48,7 +48,7 @@ jobs:
       - name: Configure AWS credentials for APK signing key
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::082515828319:role/github-actions-runabout
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-runabout
           role-session-name: runabout-release-${{ github.ref_name }}
           aws-region: us-east-1
 
@@ -57,8 +57,8 @@ jobs:
           aws secretsmanager get-secret-value \
             --secret-id runabout/apk-signing-key \
             --query SecretString \
-            --output text > "/tmp/runabout@blo.la.rsa"
-          chmod 600 "/tmp/runabout@blo.la.rsa"
+            --output text > "/tmp/${{ vars.APK_KEY_NAME }}"
+          chmod 600 "/tmp/${{ vars.APK_KEY_NAME }}"
 
       - name: Run goreleaser (with homebrew tap)
         if: vars.HOMEBREW_TAP_APP_ID != ''
@@ -69,6 +69,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          APK_KEY_NAME: ${{ vars.APK_KEY_NAME }}
 
       - name: Run goreleaser (skip homebrew - tap app not configured)
         if: vars.HOMEBREW_TAP_APP_ID == ''
@@ -78,6 +80,8 @@ jobs:
           args: release --clean --skip docker --skip homebrew
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          APK_KEY_NAME: ${{ vars.APK_KEY_NAME }}
 
   # Runs on ubuntu-latest where Docker is available. Downloads the pre-built
   # linux/arm64 binary from the GitHub release created above, then builds and
@@ -112,7 +116,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::082515828319:role/github-actions-runabout
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-runabout
           role-session-name: runabout-release-${{ github.ref_name }}
           aws-region: us-east-1
 
@@ -127,8 +131,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            082515828319.dkr.ecr.us-east-1.amazonaws.com/linkari:${{ github.ref_name }}
-            082515828319.dkr.ecr.us-east-1.amazonaws.com/linkari:latest
+            ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/linkari:${{ github.ref_name }}
+            ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/linkari:latest
 
   apk-repo:
     needs: release
@@ -142,7 +146,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::082515828319:role/github-actions-runabout
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-runabout
           role-session-name: runabout-apk-${{ github.ref_name }}
           aws-region: us-east-1
 
@@ -151,8 +155,8 @@ jobs:
           aws secretsmanager get-secret-value \
             --secret-id runabout/apk-signing-key \
             --query SecretString \
-            --output text > "/tmp/runabout@blo.la.rsa"
-          chmod 600 "/tmp/runabout@blo.la.rsa"
+            --output text > "/tmp/${{ vars.APK_KEY_NAME }}"
+          chmod 600 "/tmp/${{ vars.APK_KEY_NAME }}"
 
       - name: Download release APK artifacts
         run: |
@@ -167,16 +171,16 @@ jobs:
         run: |
           docker run --rm \
             -v /tmp/apk-repo:/repo \
-            -v "/tmp/runabout@blo.la.rsa:/runabout@blo.la.rsa:ro" \
+            -v "/tmp/${{ vars.APK_KEY_NAME }}:/${{ vars.APK_KEY_NAME }}:ro" \
             alpine:latest sh -c "
               apk add --quiet abuild &&
               cd /repo &&
               apk index -o APKINDEX.unsigned.tar.gz *.apk &&
-              'abuild-sign' -k '/runabout@blo.la.rsa' APKINDEX.unsigned.tar.gz &&
+              'abuild-sign' -k '/${{ vars.APK_KEY_NAME }}' APKINDEX.unsigned.tar.gz &&
               mv APKINDEX.unsigned.tar.gz.signed APKINDEX.tar.gz
             "
 
       - name: Upload APK repo to S3
         run: |
-          aws s3 sync /tmp/apk-repo/ s3://runabout-apk-082515828319/alpine/ \
+          aws s3 sync /tmp/apk-repo/ s3://${{ vars.APK_S3_BUCKET }}/alpine/ \
             --exclude "*.unsigned.tar.gz"
