@@ -299,7 +299,47 @@ func TestScoreAudioAsync_HappyPath(t *testing.T) {
 	}
 }
 
-// 2. Whisper failure — queue row is retried (EPIC-111 M2: extraction retry).
+// 2. Nil req — audio scoring should not panic and should fall back to digest push.
+func TestScoreAudioAsync_NilReqFallback(t *testing.T) {
+	isolateEventsDir(t)
+	installFfmpegStub(t)
+	installWhisperStub(t, "This is a source-generated voice note.", nil)
+	done := installHaikuSynopsisStub(t, "Source-generated voice note synopsis.")
+
+	q := newTestQueue(t)
+	audioFile := filepath.Join(t.TempDir(), "test.m4a")
+	os.WriteFile(audioFile, []byte("fake-audio-data"), 0o644)
+
+	id, err := q.Enqueue(&ShareRequest{Type: "audio", Action: "vnote_auto"})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	q.MarkRelayed(id)
+
+	runScoreAudioSync(t, audioFile, "eng", q, id, done)
+
+	items, err := q.List("", 20)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, it := range items {
+		if it.ID == id {
+			if it.Status != "scored" && it.Status != "archived" {
+				t.Errorf("status = %q, want scored or archived", it.Status)
+			}
+			if it.Score == nil || *it.Score != 75 {
+				t.Errorf("score = %v, want 75 (rubric-scored)", it.Score)
+			}
+			if it.Text == "" {
+				t.Errorf("text not backfilled")
+			}
+			return
+		}
+	}
+	t.Errorf("queue row %d not found", id)
+}
+
+// 3. Whisper failure — queue row is retried (EPIC-111 M2: extraction retry).
 // First failure sets status='pending' with retry_count=1 and retry_after=now+30s.
 func TestScoreAudioAsync_WhisperFailure(t *testing.T) {
 	isolateEventsDir(t)

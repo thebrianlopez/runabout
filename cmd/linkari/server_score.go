@@ -2652,7 +2652,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	// EPIC-081 M4: uses rubric score instead of hardcoded 100.
 	// EPIC-077 M6: classify_source included in push payload for provenance.
 	resolvePushConfigOnce(q)
-	if req.SubmittedByDeviceID != "" {
+	if req != nil && req.SubmittedByDeviceID != "" {
 		_, _ = q.EnqueueDevicePush(profile, audioScore, slug, synopsis, "", req.SubmittedByUserID, req.SubmittedByDeviceID)
 	} else {
 		_, _ = q.EnqueueDigestIfDue(context.Background(),
