@@ -418,6 +418,7 @@ nfpms:
     apk:
       signature:
         key_file: /tmp/{{ .Env.APK_KEY_NAME }}
+        key_name: "{{ .Env.APK_KEY_NAME }}.pub"
 
 dockers:
   - id: linkari
