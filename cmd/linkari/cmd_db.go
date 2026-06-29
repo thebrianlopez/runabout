@@ -33,12 +33,16 @@ func dbBackupCmd() *cobra.Command {
 	var queueDB, dest, intervalStr string
 	var overwrite bool
 	cmd := &cobra.Command{
-		Use:   "backup",
+		Use:   "backup <path>",
 		Short: "Create a SQLite backup (once or recurring with --interval)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			queueDB = resolveQueueDB(queueDB)
+			if len(args) == 1 {
+				dest = args[0]
+			}
 			if dest == "" {
-				return fmt.Errorf("--dest is required")
+				return fmt.Errorf("backup path is required")
 			}
 
 			var interval time.Duration
@@ -113,12 +117,16 @@ func dbRestoreCmd() *cobra.Command {
 	var queueDB, src string
 	var force bool
 	cmd := &cobra.Command{
-		Use:   "restore",
+		Use:   "restore <path>",
 		Short: "Restore a SQLite backup",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			queueDB = resolveQueueDB(queueDB)
+			if len(args) == 1 {
+				src = args[0]
+			}
 			if src == "" {
-				return fmt.Errorf("--src is required")
+				return fmt.Errorf("restore path is required")
 			}
 			if _, err := os.Stat(src); err != nil {
 				return fmt.Errorf("stat source backup: %w", err)
