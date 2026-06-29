@@ -162,6 +162,10 @@ linkari serve
 linkari doctor                          # human-readable  (exit 1 on any fail)
 linkari doctor --json                   # structured JSON
 
+# SQLite durability tools
+linkari db backup --queue-db ~/.config/linkari/queue.db --dest /tmp/queue.db
+linkari db restore --queue-db ~/.config/linkari/queue.db --src /tmp/queue.db
+
 # Background daemon (POSIX: macOS, Linux, Termux)
 linkari serve --detach
 kill $(cat ~/.local/state/linkari/linkari.pid)
