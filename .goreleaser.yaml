@@ -417,7 +417,7 @@ nfpms:
         dst: "/usr/local/bin/{{ .ArtifactName }}"
     apk:
       signature:
-        key_file: /tmp/runabout@blo.la.rsa
+        key_file: /tmp/{{ env "APK_KEY_NAME" }}
 
 dockers:
   - id: linkari
@@ -425,8 +425,8 @@ dockers:
     goos: linux
     goarch: arm64
     image_templates:
-      - "082515828319.dkr.ecr.us-east-1.amazonaws.com/linkari:v{{.Version}}"
-      - "082515828319.dkr.ecr.us-east-1.amazonaws.com/linkari:latest"
+      - '{{ env "AWS_ACCOUNT_ID" }}.dkr.ecr.us-east-1.amazonaws.com/linkari:v{{.Version}}'
+      - '{{ env "AWS_ACCOUNT_ID" }}.dkr.ecr.us-east-1.amazonaws.com/linkari:latest'
     dockerfile: cmd/linkari/Dockerfile.release
     use: buildx
     build_flag_templates:
