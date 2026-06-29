@@ -173,10 +173,12 @@ jobs:
             -v /tmp/apk-repo:/repo \
             -v "/tmp/${{ secrets.APK_KEY_NAME }}:/${{ secrets.APK_KEY_NAME }}:ro" \
             alpine:latest sh -c "
-              apk add --quiet abuild &&
+              apk add --quiet abuild openssl &&
+              openssl rsa -in '/${{ secrets.APK_KEY_NAME }}' -pubout \
+                -out '/etc/apk/keys/${{ secrets.APK_KEY_NAME }}.pub' &&
               cd /repo &&
               apk index -o APKINDEX.unsigned.tar.gz *.apk &&
-              'abuild-sign' -k '/${{ secrets.APK_KEY_NAME }}' APKINDEX.unsigned.tar.gz &&
+              abuild-sign -k '/${{ secrets.APK_KEY_NAME }}' APKINDEX.unsigned.tar.gz &&
               mv APKINDEX.unsigned.tar.gz.signed APKINDEX.tar.gz
             "
 
