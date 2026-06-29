@@ -417,7 +417,7 @@ nfpms:
         dst: "/usr/local/bin/{{ .ArtifactName }}"
     apk:
       signature:
-        key_file: /tmp/apk-signing.key
+        key_file: /tmp/runabout@blo.la.rsa
 
 dockers:
   - id: linkari
