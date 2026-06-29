@@ -55,6 +55,12 @@ import (
 	// PVC size for the durable data volume (queue.db + tsnet state).
 	dataStorage: *"10Gi" | string
 
+	// Backup PVC storage size and class (for sidecar snapshots).
+	backupStorage:      *"10Gi" | string
+	backupStorageClass: *"local-path" | string
+	backupPath:         *"/var/lib/linkari-backup/queue.db" | string
+	backupInterval:     *"6h" | string
+
 	// Linkari server.yaml knobs  -  surfaced here so operators can override
 	// a single field without replacing the entire ConfigMap content.
 	server: {
@@ -75,6 +81,8 @@ import (
 
 	objects: {
 		pvc:      #DataPVC & {#config: config}
+		backupPvc: #BackupPVC & {#config: config}
+		pdb:      #PodDisruptionBudget & {#config: config}
 		cfgmap:   #ServerConfigMap & {#config: config}
 		deploy:   #Deployment & {#config: config}
 		service:  #Service & {#config: config}

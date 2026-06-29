@@ -148,6 +148,11 @@ import (
 						name:     "linkari-state"
 						emptyDir: {}
 					},
+					// Backup PVC: sidecar (F6) writes snapshots here.
+					{
+						name: "linkari-backup"
+						persistentVolumeClaim: claimName: #config.metadata.name + "-backup"
+					},
 				]
 			}
 		}
