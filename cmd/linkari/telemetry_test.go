@@ -152,6 +152,115 @@ func TestCT12_UserIntentAlwaysWritten(t *testing.T) {
 
 func i64p(v int64) *int64 { return &v }
 
+func TestServerEventsDir_MainBus(t *testing.T) {
+	if got := serverEventsDir(TelemetryConfig{}); got != eventsDir() {
+		t.Fatalf("main bus dir = %q, want %q", got, eventsDir())
+	}
+}
+
+func TestServerEventsDir_MainBus_Explicit(t *testing.T) {
+	cfg := TelemetryConfig{EmitToAutomationMetrics: bptr(true)}
+	if got := serverEventsDir(cfg); got != eventsDir() {
+		t.Fatalf("explicit main bus dir = %q, want %q", got, eventsDir())
+	}
+}
+
+func TestServerEventsDir_Linkari(t *testing.T) {
+	cfg := TelemetryConfig{EmitToAutomationMetrics: bptr(false)}
+	want := filepath.Join(eventsDir(), "linkari")
+	if got := serverEventsDir(cfg); got != want {
+		t.Fatalf("linkari dir = %q, want %q", got, want)
+	}
+}
+
+func TestTelemetryConfig_AllNil(t *testing.T) {
+	var cfg TelemetryConfig
+	if !cfg.isEnabled() || !cfg.emitsToAutomationMetrics() {
+		t.Fatal("nil config should default to enabled + main bus")
+	}
+}
+
+func TestTelemetryConfig_ExplicitFalse(t *testing.T) {
+	cfg := TelemetryConfig{Enabled: bptr(false), EmitToAutomationMetrics: bptr(false)}
+	if cfg.isEnabled() || cfg.emitsToAutomationMetrics() {
+		t.Fatal("explicit false values should be false")
+	}
+}
+
+func TestTelemetryConfig_ExplicitTrue(t *testing.T) {
+	cfg := TelemetryConfig{Enabled: bptr(true), EmitToAutomationMetrics: bptr(true)}
+	if !cfg.isEnabled() || !cfg.emitsToAutomationMetrics() {
+		t.Fatal("explicit true values should be true")
+	}
+}
+
+func TestWriteEvent_StillWritesToMainBus(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AUTOMATION_METRICS_DIR", dir)
+	if err := writeEvent(event{Timestamp: time.Now().UTC().Format("20060102T150405Z")}); err != nil {
+		t.Fatal(err)
+	}
+	dateStr := time.Now().Format("2006-01-02")
+	if _, err := os.Stat(filepath.Join(dir, "events", dateStr+".jsonl")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEmitServerEvent_DefaultEnabled(t *testing.T) {
+	withTelemetryConfig(t, "[server.telemetry]\n")
+	dir := t.TempDir()
+	t.Setenv("AUTOMATION_METRICS_DIR", dir)
+	emitServerEvent(event{EventType: "push_outbox_sent", Timestamp: time.Now().UTC().Format("20060102T150405Z")})
+	assertEventWritten(t, dir, "events")
+}
+
+func TestEmitServerEvent_ExplicitEnabled(t *testing.T) {
+	withTelemetryConfig(t, "[server.telemetry]\nenabled = true\n")
+	dir := t.TempDir()
+	t.Setenv("AUTOMATION_METRICS_DIR", dir)
+	emitServerEvent(event{EventType: "push_outbox_sent", Timestamp: time.Now().UTC().Format("20060102T150405Z")})
+	assertEventWritten(t, dir, "events")
+}
+
+func TestEmitServerEvent_Disabled(t *testing.T) {
+	withTelemetryConfig(t, "[server.telemetry]\nenabled = false\n")
+	dir := t.TempDir()
+	t.Setenv("AUTOMATION_METRICS_DIR", dir)
+	emitServerEvent(event{EventType: "push_outbox_sent", Timestamp: time.Now().UTC().Format("20060102T150405Z")})
+	dateStr := time.Now().Format("2006-01-02")
+	if _, err := os.Stat(filepath.Join(dir, "events", dateStr+".jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("expected no event file, got err=%v", err)
+	}
+}
+
+func TestEmitServerEvent_IsolatedStream(t *testing.T) {
+	withTelemetryConfig(t, "[server.telemetry]\nemit_to_automation_metrics = false\n")
+	dir := t.TempDir()
+	t.Setenv("AUTOMATION_METRICS_DIR", dir)
+	emitServerEvent(event{EventType: "push_outbox_sent", Timestamp: time.Now().UTC().Format("20060102T150405Z")})
+	assertEventWritten(t, dir, filepath.Join("events", "linkari"))
+}
+
+func withTelemetryConfig(t *testing.T, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LINKARI_CONFIG", path)
+}
+
+func assertEventWritten(t *testing.T, base, suffix string) {
+	t.Helper()
+	dateStr := time.Now().Format("2006-01-02")
+	if _, err := os.Stat(filepath.Join(base, suffix, dateStr+".jsonl")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func bptr(v bool) *bool { return &v }
+
 func countLFt(data []byte) int {
 	n := 0
 	for _, b := range data {

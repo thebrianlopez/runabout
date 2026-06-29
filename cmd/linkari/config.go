@@ -179,6 +179,22 @@ type ScoringConfig struct {
 	Model    string `toml:"model"`    // model override for pi backend (default: claudeModel)
 }
 
+// TelemetryConfig controls where and whether Linkari emits server-side JSONL events.
+// Pointer fields: nil = absent/unset (use safe default); false = explicitly disabled.
+type TelemetryConfig struct {
+	Enabled                 *bool `toml:"enabled"`
+	EmitToAutomationMetrics *bool `toml:"emit_to_automation_metrics"`
+	Verbose                 *bool `toml:"verbose"`
+}
+
+func (t TelemetryConfig) isEnabled() bool {
+	return t.Enabled == nil || *t.Enabled
+}
+
+func (t TelemetryConfig) emitsToAutomationMetrics() bool {
+	return t.EmitToAutomationMetrics == nil || *t.EmitToAutomationMetrics
+}
+
 // WikiConfigWarning is returned by WikiConfig.Validate when the vault root is
 // absent. It is non-fatal: scoring continues without wiki context injection.
 type WikiConfigWarning struct{ Msg string }
@@ -581,6 +597,9 @@ type ServerConfig struct {
 	// EPIC-217 F4: pluggable scoring backend selection.
 	// Absent block or Backend="" uses "claude_cli" (default behavior).
 	Scoring ScoringConfig `toml:"scoring"`
+
+	// EPIC-229 F1: telemetry routing config.
+	Telemetry TelemetryConfig `toml:"telemetry"`
 }
 
 // ShareConfig controls how share requests map their received action/profile to
