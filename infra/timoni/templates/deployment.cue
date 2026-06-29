@@ -22,12 +22,12 @@ import (
 	apiVersion: "apps/v1"
 	kind:       "Deployment"
 	metadata:   #config.metadata
-	spec: appsv1.#DeploymentSpec & {
+	spec:       appsv1.#DeploymentSpec & {
 		replicas: 1
 		// hostNetwork binds the HTTP port on the node, so rolling updates cannot
 		// create a surge pod before the old pod exits. Recreate guarantees at most
 		// one linkari pod is running/binding port 8080 at any time.
-		strategy: type: "Recreate"
+		strategy: type:        "Recreate"
 		selector: matchLabels: #config.selector.labels
 		template: {
 			metadata: labels: #config.selector.labels
@@ -36,6 +36,40 @@ import (
 				hostNetwork: true
 				dnsPolicy:   "ClusterFirstWithHostNet"
 
+				initContainers: [{
+					name:            #config.metadata.name + "-db-restore"
+					image:           #config.image.reference
+					imagePullPolicy: #config.image.pullPolicy
+					command: [
+						"sh",
+						"-ceu",
+						"if [ -f /var/lib/linkari/queue.db ]; then\n" +
+						"\techo \"skipping restore\"\n" +
+						"\texit 0\n" +
+						"fi\n" +
+						"if [ ! -d /var/lib/linkari-backup ]; then\n" +
+						"\techo \"IR-002 k8s_backup_mount_missing\"\n" +
+						"\texit 1\n" +
+						"fi\n" +
+						"if [ ! -f /var/lib/linkari-backup/queue.db ]; then\n" +
+						"\techo \"IR-003 restore_seed_absent\"\n" +
+						"\texit 0\n" +
+						"fi\n" +
+						"cp /var/lib/linkari-backup/queue.db /var/lib/linkari/queue.db\n" +
+						"echo \"IR-001 seed complete\"\n",
+					]
+					volumeMounts: [
+						{
+							name:      "linkari-data"
+							mountPath: "/var/lib/linkari"
+						},
+						{
+							name:      "linkari-backup"
+							mountPath: "/var/lib/linkari-backup"
+							readOnly:  true
+						},
+					]
+				}]
 				containers: [{
 					name:            #config.metadata.name
 					image:           #config.image.reference
@@ -110,42 +144,42 @@ import (
 						resources: #config.resources
 					}
 				},
-				// Backup sidecar: runs linkari db backup --interval in a loop.
-				// Opens queue.db read-only (WAL reader); writes to /var/lib/linkari-backup (RW).
-				// Separate process preserves single-writer invariant; failed cycles are non-fatal.
-				{
-					name:            #config.metadata.name + "-backup"
-					image:           #config.image.reference
-					imagePullPolicy: #config.image.pullPolicy
-					command: [
-						"/linkari",
-						"db",
-						"backup",
-						"--queue-db", "/var/lib/linkari/queue.db",
-						"--dest", #config.backupPath,
-						"--interval", #config.backupInterval,
-						"--overwrite",
-					]
-					env: [{
-						name:  "AWS_DEFAULT_REGION"
-						value: #config.awsRegion
+					// Backup sidecar: runs linkari db backup --interval in a loop.
+					// Opens queue.db read-only (WAL reader); writes to /var/lib/linkari-backup (RW).
+					// Separate process preserves single-writer invariant; failed cycles are non-fatal.
+					{
+						name:            #config.metadata.name + "-backup"
+						image:           #config.image.reference
+						imagePullPolicy: #config.image.pullPolicy
+						command: [
+							"/linkari",
+							"db",
+							"backup",
+							"--queue-db", "/var/lib/linkari/queue.db",
+							"--dest", #config.backupPath,
+							"--interval", #config.backupInterval,
+							"--overwrite",
+						]
+						env: [{
+							name:  "AWS_DEFAULT_REGION"
+							value: #config.awsRegion
+						}]
+						volumeMounts: [
+							// Read-only mount of the live DB directory
+							{
+								name:      "linkari-data"
+								mountPath: "/var/lib/linkari"
+								readOnly:  true
+							},
+							// Read-write mount of the backup PVC
+							{
+								name:      "linkari-backup"
+								mountPath: "/var/lib/linkari-backup"
+							},
+						]
+						// Restart on failure; logs go to pod/container logs
+						restartPolicy: "Always"
 					}]
-					volumeMounts: [
-						// Read-only mount of the live DB directory
-						{
-							name:      "linkari-data"
-							mountPath: "/var/lib/linkari"
-							readOnly:  true
-						},
-						// Read-write mount of the backup PVC
-						{
-							name:      "linkari-backup"
-							mountPath: "/var/lib/linkari-backup"
-						},
-					]
-					// Restart on failure; logs go to pod/container logs
-					restartPolicy: "Always"
-				}]
 
 				volumes: [
 					// Host claude binary directory. subPath in the mount above picks `claude`.
@@ -176,12 +210,12 @@ import (
 					},
 					// Ephemeral cache: Firebase SA JSON re-fetched from AWS SM on each start.
 					{
-						name:     "linkari-cache"
+						name: "linkari-cache"
 						emptyDir: {}
 					},
 					// Ephemeral XDG state dir.
 					{
-						name:     "linkari-state"
+						name: "linkari-state"
 						emptyDir: {}
 					},
 					// Backup PVC: sidecar (F6) writes snapshots here.

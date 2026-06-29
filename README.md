@@ -161,6 +161,7 @@ linkari serve
 # Validate secrets + dirs without booting
 linkari doctor                          # human-readable  (exit 1 on any fail)
 linkari doctor --json                   # structured JSON
+# In K3s pods, set LINKARI_K8S_MODE=true to include volume health checks
 
 # SQLite durability tools
 linkari db backup --queue-db ~/.config/linkari/queue.db --dest /tmp/queue.db
@@ -381,6 +382,8 @@ make k8s-deploy  # Apply to k3d
 ```
 
 **Backup sidecar:** An optional init container runs `linkari db backup --interval <dur> --overwrite --dest <path>` in a loop, producing snapshots to the `linkari-backup` PVC. The sidecar opens the database read-only (separate WAL reader) so it does not contend with the main process's single pooled connection or violate the single-writer invariant. Failed cycles are non-fatal - the prior good snapshot is retained and the loop continues. Off-node replication (e.g. rsync to S3) remains an infrastructure concern (CronJob outside the pod). SIGTERM gracefully exits after the in-flight snapshot completes, so pod termination does not interrupt backups mid-write.
+
+**Migration runbook:** For one-time Mac→K3s cutover, keep the Mac authoritative until the in-pod verification passes: (1) `linkari db backup`, (2) `PRAGMA integrity_check`, (3) rsync the backup into the `linkari-backup` PVC and verify `sha256sum`, (4) `make k8s-deploy`, (5) confirm `db-restore` logs show `seed complete`, (6) verify in-pod integrity plus per-table row-count parity before cutover.
 
 ## wasend
 
