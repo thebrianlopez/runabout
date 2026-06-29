@@ -10,6 +10,9 @@ import (
 
 // renderModule renders the Timoni CUE module to YAML using timoni.
 func renderModule(t *testing.T) []map[string]interface{} {
+	if _, err := exec.LookPath("timoni"); err != nil {
+		t.Skip("timoni not installed")
+	}
 	// Build command: timoni build [INSTANCE] [MODULE] [FLAGS]
 	cmd := exec.Command("timoni", "build", "linkari", "..", "-n", "test", "-o", "yaml")
 	out, err := cmd.CombinedOutput()
