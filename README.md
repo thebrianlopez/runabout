@@ -358,6 +358,30 @@ FCM push for prefiltered shares is controlled by `notify_on_prefilter_skip` in `
 
 **Observability:** JSONL event logging to `~/.config/linkari/linkari_events.jsonl`. Key event types: `linkari_share`, `linkari_digest`, `share_scoring_timeout`, `score_async_*` (server-side pipeline stages), `push_attempt`, `snapshot_written`, `shield_blocked`, `config_reloaded`. Structured logging via slog with configurable format (`text`/`json`) and level. SIGHUP hot-reloads config and emits `config_reloaded`.
 
+**K3s deployment (Timoni CUE):** Linkari can be deployed to a self-hosted K3s cluster with durable storage and automated backups. The Timoni module (`infra/timoni/templates/`) provisions two PersistentVolumeClaims (10Gi each, default `local-path` storage class):
+
+- `linkari-data`: Live database (`queue.db`, Tailscale state). `replicas: 1`, `Recreate` strategy, single-writer invariant enforced by `PodDisruptionBudget` (`maxUnavailable: 0`).
+- `linkari-backup`: Backup snapshots written by the sidecar (`linkari db backup --interval 6h`). Mounted read-only by the main pod's health checks, read-write by the optional backup sidecar.
+
+Operator overrides via `values.cue`:
+```cue
+values: {
+  backupStorage:      "50Gi"      // Custom backup PVC size
+  backupStorageClass: "nvme"      // Alternative storage class (e.g. different disk)
+  backupInterval:     "12h"       // Snapshot frequency
+  backupPath:         "/backup/linkari/queue.db"  // Snapshot dest (on backup PVC)
+}
+```
+
+Deploy:
+```bash
+timoni build linkari ./infra/timoni -n linkari -o yaml | kubectl apply -f -   # dry-run first
+make k8s-diff    # Preview (dry-run)
+make k8s-deploy  # Apply to k3d
+```
+
+**Backup sidecar:** An optional init container runs `linkari db backup --interval <dur> --overwrite --dest <path>` in a loop, producing snapshots to the `linkari-backup` PVC. The sidecar opens the database read-only (separate WAL reader) so it does not contend with the main process's single pooled connection or violate the single-writer invariant. Failed cycles are non-fatal - the prior good snapshot is retained and the loop continues. Off-node replication (e.g. rsync to S3) remains an infrastructure concern (CronJob outside the pod). SIGTERM gracefully exits after the in-flight snapshot completes, so pod termination does not interrupt backups mid-write.
+
 ## wasend
 
 Send WhatsApp messages from the command line. Supports two transports: **personal** (whatsmeow, QR login) and **cloud** (WhatsApp Business API, token-based - [EPIC-001 M4](docs/epics/PERSONAL_20260319T131921Z_WhatsApp_EPIC-001_whatsapp_business_api_account.md), planned).
