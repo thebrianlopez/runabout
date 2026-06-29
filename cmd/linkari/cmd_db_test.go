@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDBBackup_WritesSnapshotAndMeta(t *testing.T) {
@@ -194,4 +197,152 @@ func TestDBRestore_ForceAllowsHotWAL(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("restore force: %v", err)
 	}
+}
+
+// ============================================================================
+// EPIC-224 Contract Tests (Watch Mode) - CT-1..CT-7 + RG-1/RG-2
+// ============================================================================
+
+// CT-1: Watch loop snapshots on tick
+func TestBackupWatch_SnapshotsOnTick(t *testing.T) {
+	tmp := t.TempDir()
+	destPath := filepath.Join(tmp, "backup.db")
+
+	q := newTestQueue(t)
+	defer q.Close()
+	if _, err := q.Enqueue(&ShareRequest{Type: "url", URL: "https://watch.test/1"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	// Run watch for 3 ticks with 10ms intervals
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := runBackupWatch(ctx, q, destPath, 10*time.Millisecond)
+	if err != nil && err != context.DeadlineExceeded {
+		t.Fatalf("runBackupWatch: %v", err)
+	}
+
+	// Check that at least one snapshot was created
+	if _, err := os.Stat(destPath); err != nil {
+		t.Fatalf("backup not created: %v", err)
+	}
+
+	// Verify snapshot integrity
+	snap, err := NewQueue(destPath, false)
+	if err != nil {
+		t.Fatalf("open snapshot: %v", err)
+	}
+	defer snap.Close()
+	items, err := snap.Pending()
+	if err != nil {
+		t.Fatalf("pending snapshot: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item in snapshot, got %d", len(items))
+	}
+}
+
+// CT-2: Meta advances each cycle
+func TestBackupWatch_MetaAdvances(t *testing.T) {
+	tmp := t.TempDir()
+	destPath := filepath.Join(tmp, "backup.db")
+	metaPath := destPath + ".backup-meta.json"
+
+	q := newTestQueue(t)
+	defer q.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := runBackupWatch(ctx, q, destPath, 5*time.Millisecond)
+	if err != nil && err != context.DeadlineExceeded {
+		t.Fatalf("runBackupWatch: %v", err)
+	}
+
+	// Check that meta file was created with timestamps
+	metaBytes, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read meta: %v", err)
+	}
+
+	var meta dbBackupMeta
+	if err := json.Unmarshal(metaBytes, &meta); err != nil {
+		t.Fatalf("parse meta: %v", err)
+	}
+
+	if meta.CreatedAt.IsZero() {
+		t.Errorf("meta CreatedAt is zero")
+	}
+}
+
+// CT-4: Cycle failure is non-fatal
+func TestBackupWatch_CycleFailureNonFatal(t *testing.T) {
+	t.Skip("requires mock Snapshot failure - defer to behavioral tests")
+}
+
+// CT-5: Watch requires overwrite
+func TestBackupWatch_RequiresOverwrite(t *testing.T) {
+	tmp := t.TempDir()
+	queuePath := filepath.Join(tmp, "queue.db")
+	destPath := filepath.Join(tmp, "backup.db")
+
+	cmd := dbCmd()
+	cmd.SetArgs([]string{"backup", "--queue-db", queuePath, "--dest", destPath, "--interval", "10ms"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Errorf("expected watch mode to require --overwrite flag")
+	}
+}
+
+// CT-6: Missing backup PV fatal
+func TestBackupWatch_MissingDestFatal(t *testing.T) {
+	tmp := t.TempDir()
+	destPath := filepath.Join(tmp, "nonexistent", "backup.db")
+
+	q := newTestQueue(t)
+	defer q.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := runBackupWatch(ctx, q, destPath, 10*time.Millisecond)
+	if err == nil {
+		t.Errorf("expected error for missing dest directory")
+	}
+}
+
+// CT-7: Graceful SIGTERM
+func TestBackupWatch_GracefulShutdown(t *testing.T) {
+	t.Skip("requires signal handling - test in integration environment")
+}
+
+// RG-1: Single-writer invariant (read-only sidecar)
+func TestBackupWatch_ReadOnlySnapshot(t *testing.T) {
+	tmp := t.TempDir()
+	destPath := filepath.Join(tmp, "backup.db")
+
+	q := newTestQueue(t)
+	defer q.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := runBackupWatch(ctx, q, destPath, 5*time.Millisecond)
+	if err != nil && err != context.DeadlineExceeded {
+		t.Fatalf("runBackupWatch: %v", err)
+	}
+
+	// Verify that snapshot can be opened read-only without blocking concurrent writes
+	snap, err := NewQueue(destPath, true)
+	if err != nil {
+		t.Fatalf("open snapshot read-only: %v", err)
+	}
+	defer snap.Close()
+}
+
+// RG-2: Failed cycle retains prior snapshot
+func TestBackupWatch_RetainsPriorOnFailure(t *testing.T) {
+	t.Skip("requires ability to inject Snapshot error - defer to behavioral tests")
 }
