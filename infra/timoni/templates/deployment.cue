@@ -109,6 +109,42 @@ import (
 					if #config.resources != _|_ {
 						resources: #config.resources
 					}
+				},
+				// Backup sidecar: runs linkari db backup --interval in a loop.
+				// Opens queue.db read-only (WAL reader); writes to /var/lib/linkari-backup (RW).
+				// Separate process preserves single-writer invariant; failed cycles are non-fatal.
+				{
+					name:            #config.metadata.name + "-backup"
+					image:           #config.image.reference
+					imagePullPolicy: #config.image.pullPolicy
+					command: [
+						"/linkari",
+						"db",
+						"backup",
+						"--queue-db", "/var/lib/linkari/queue.db",
+						"--dest", #config.backupPath,
+						"--interval", #config.backupInterval,
+						"--overwrite",
+					]
+					env: [{
+						name:  "AWS_DEFAULT_REGION"
+						value: #config.awsRegion
+					}]
+					volumeMounts: [
+						// Read-only mount of the live DB directory
+						{
+							name:      "linkari-data"
+							mountPath: "/var/lib/linkari"
+							readOnly:  true
+						},
+						// Read-write mount of the backup PVC
+						{
+							name:      "linkari-backup"
+							mountPath: "/var/lib/linkari-backup"
+						},
+					]
+					// Restart on failure; logs go to pod/container logs
+					restartPolicy: "Always"
 				}]
 
 				volumes: [
