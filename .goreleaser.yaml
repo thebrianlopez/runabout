@@ -417,7 +417,7 @@ nfpms:
         dst: "/usr/local/bin/{{ .ArtifactName }}"
     apk:
       signature:
-        key_file: /tmp/{{ env "APK_KEY_NAME" }}
+        key_file: /tmp/{{ .Env.APK_KEY_NAME }}
 
 dockers:
   - id: linkari
@@ -425,8 +425,8 @@ dockers:
     goos: linux
     goarch: arm64
     image_templates:
-      - '{{ env "ECR_REGISTRY" }}/linkari:v{{.Version}}'
-      - '{{ env "ECR_REGISTRY" }}/linkari:latest'
+      - '{{ .Env.ECR_REGISTRY }}/linkari:v{{.Version}}'
+      - '{{ .Env.ECR_REGISTRY }}/linkari:latest'
     dockerfile: cmd/linkari/Dockerfile.release
     use: buildx
     build_flag_templates:
