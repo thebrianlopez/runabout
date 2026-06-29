@@ -127,6 +127,9 @@ func RunSync(cmd *cobra.Command, cfg SyncConfig, client S3Client) (SyncResult, e
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
+	if cfg.Timeout <= time.Microsecond {
+		return SyncResult{}, fmt.Errorf("[E402] sync_timeout: exceeded %s deadline; increase --timeout", cfg.Timeout)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 
