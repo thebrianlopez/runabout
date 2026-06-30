@@ -17,6 +17,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+
+	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
 // runYouTubeLoopbackAuthFn is the injectable seam for testing.
@@ -62,8 +64,20 @@ func authYouTubeCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
-			clientID := firstNonEmpty(os.Getenv("LINKARI_GOOGLE_CLIENT_ID"), cfg.Server.GoogleClientID)
-			clientSecret := firstNonEmpty(os.Getenv("LINKARI_GOOGLE_CLIENT_SECRET"), cfg.Server.GoogleClientSecret)
+
+			resolver := secrets.New(secrets.DefaultAWSFactory(secrets.AWSConfig(cfg.Server.AWS)))
+			resolveVal := func(env, configVal string) string {
+				if v := os.Getenv(env); v != "" {
+					return v
+				}
+				resolved, _, _, rerr := resolveServerField(ctx, resolver, "", "", configVal, "")
+				if rerr != nil {
+					return ""
+				}
+				return resolved
+			}
+			clientID := resolveVal("LINKARI_GOOGLE_CLIENT_ID", cfg.Server.GoogleClientID)
+			clientSecret := resolveVal("LINKARI_GOOGLE_CLIENT_SECRET", cfg.Server.GoogleClientSecret)
 			if clientID == "" || clientSecret == "" {
 				return errors.New("google_client_id and google_client_secret are required in config.toml or LINKARI_GOOGLE_CLIENT_ID/LINKARI_GOOGLE_CLIENT_SECRET")
 			}
