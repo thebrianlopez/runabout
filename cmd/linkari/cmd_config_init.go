@@ -24,22 +24,29 @@ const serverYAMLTemplate = `[server]
 # --- Authentication ---
 
 # Bearer token for the /share and /notify endpoints.
-# ${secretsmanager:name} refs are resolved at startup via expandConfigRefs.
+# secretsmanager:// URIs are resolved at startup via the post-load resolver,
+# which uses [server.aws] for credential/region config.
 # Break-glass alternatives:
 #   token = "literal-token-value"
-#   token = "${file:/home/user/.config/linkari/token.txt}"
-token = "${secretsmanager:linkari/bearer-token}"
+#   token = "file:///home/user/.config/linkari/token.txt"
+token = "secretsmanager://linkari/bearer-token"
+
+# Google OAuth client ID/secret for Android Google Sign-In and YouTube API.
+google_client_id     = "secretsmanager://linkari/google-client-id"
+google_client_secret = "secretsmanager://linkari/google-client-secret"
+
+# Static invite codes seeded into the DB at startup (INSERT OR IGNORE).
+invite_codes = []
 
 # --- Tailscale Funnel ---
 
 # true  = bind Tailscale Funnel (reachable from Android)
 # false = local-only (use --local flag for one-off overrides)
-# Absent = defaults to true; EPIC-048 fallback rule activates if no tsnet_authkey.
 tsnet = true
 
 # Tailscale auth key for tsnet bring-up.
 # Break-glass: tsnet_authkey = "tskey-auth-..."
-tsnet_authkey = "${secretsmanager:linkari/tsnet-authkey}"
+tsnet_authkey = "secretsmanager://linkari/tsnet-authkey"
 
 # Tailscale node hostname (visible in tailnet admin panel).
 tsnet_hostname = "linkari"
@@ -51,24 +58,18 @@ tsnet_state_dir = ""
 # --- Firebase Cloud Messaging ---
 
 # Path to the Firebase service-account JSON (materialized to ~/.cache/linkari/).
-# ${secretsmanager:...} value is fetched and written to the cache dir at startup.
-# Break-glass: firebase_sa = "${file:/home/user/.config/linkari/firebase-sa.json}"
-firebase_sa = "${secretsmanager:linkari/firebase-sa}"
+# secretsmanager:// value is fetched and written to the cache dir at startup.
+# Break-glass: firebase_sa = "file:///home/user/.config/linkari/firebase-sa.json"
+firebase_sa = "secretsmanager://linkari/firebase-sa"
 
-# Minimum score [0-100] for pushing an FCM notification. Honored as a
-# uniform floor across ALL writer paths (HTTP /queue/{id}/score, /notify,
-# and the linkari score CLI) since EPIC-051. Set to 0 to disable.
+# Minimum score [0-100] for pushing an FCM notification.
 notify_min_score = 10
 
-# Send FCM push notifications when a share is prefiltered (rejected before
-# scoring). When true, the user gets a push explaining why the share was
-# skipped (e.g. "Video platform — not yet supported"). Default false.
+# Push when a share is prefiltered (rejected before scoring).
 notify_on_prefilter_skip = true
 
-# --- EPIC-051: Push gating ---
-# Per-profile throttle for digest pushes. The unified EnqueueDigestIfDue
-# helper writes at most one digest row per throttle window per profile.
-# Missing profiles fall back to digest_throttle_default.
+# --- Push gating ---
+# Per-profile throttle for digest pushes. Missing profiles fall back to default.
 #
 # [server.push]
 # digest_throttle_default = "1h"
@@ -82,19 +83,21 @@ notify_on_prefilter_skip = true
 # --- Jira API (outbound) ---
 
 # Credentials for outbound Jira REST API calls.
-# All four fields below are sourced from the same SM secret with JSON key selectors.
+# All fields below are sourced from the same SM secret with JSON key selectors (#field).
 # Break-glass: use literal values or LINKARI_ATLASSIAN_EMAIL / LINKARI_ATLASSIAN_API_TOKEN /
 #              LINKARI_JIRA_DOMAIN / LINKARI_PAGERDUTY_TOKEN env vars.
-atlassian_email     = "${secretsmanager:linkari/jira-webhook#ATLASSIAN_EMAIL}"
-atlassian_api_token = "${secretsmanager:linkari/jira-webhook#ATLASSIAN_API_TOKEN}"
-jira_domain         = "${secretsmanager:linkari/jira-webhook#JIRA_DOMAIN}"
+atlassian_email     = "secretsmanager://linkari/jira-webhook#ATLASSIAN_EMAIL"
+atlassian_api_token = "secretsmanager://linkari/jira-webhook#ATLASSIAN_API_TOKEN"
+jira_domain         = "secretsmanager://linkari/jira-webhook#JIRA_DOMAIN"
 
 # --- PagerDuty ---
 
-# API token for PagerDuty integration.
-pagerduty_token = "${secretsmanager:linkari/jira-webhook#PAGERDUTY_API_TOKEN}"
+pagerduty_token = "secretsmanager://linkari/jira-webhook#PAGERDUTY_API_TOKEN"
 
-# Domain API clients — token fields support ${secretsmanager:...} refs (resolved at startup).
+# --- Domain API clients ---
+# These fields are read directly from the config struct (not through the
+# post-load resolver), so they use the ${secretsmanager:...} expansion format.
+# The expansion relies on the default AWS SDK credential chain.
 github_token               = "${secretsmanager:linkari/github-pat}"
 google_service_account_path = ""
 atlassian_confluence_token = "${secretsmanager:linkari/confluence-token}"
@@ -102,16 +105,14 @@ google_oauth_token         = "${secretsmanager:linkari/google-oauth-token}"
 
 # --- TLS (local-only mode) ---
 
-# When tsnet is enabled (default), Tailscale handles TLS automatically and
-# no local PEM files are needed. For local-only TLS (--local --tls), generate
-# cert.pem and key.pem with mkcert:
+# When tsnet is enabled (default), Tailscale handles TLS automatically.
+# For local-only TLS (--local --tls), generate cert/key with mkcert:
 #   mkcert -cert-file ~/.config/linkari/cert.pem \
 #          -key-file  ~/.config/linkari/key.pem  \
 #          localhost 127.0.0.1
 
 # --- Networking ---
 
-# HTTP listen port (also: LINKARI_PORT env var).
 port = 8080
 
 # Public base URL for fish callbacks (e.g. the Funnel URL).
@@ -125,46 +126,86 @@ queue_db = ""
 
 # --- Logging ---
 
-# Append log output to this file path in addition to stderr.
-# Empty = stderr only. Relative paths resolve against the working directory.
 log_file = ""
-
-# Verbose debug logging (also: --debug flag).
 debug = false
 
-# --- EPIC-009 / EPIC-003: YouTube transcription and audio fallback ---
+# --- Image text extraction ---
 
-# Directory where transcript markdown files are saved.
-# Default: ~/code/personal/docs/transcripts
-# transcripts_dir = ""
+# Vision pre-pass before image scoring (requires claude CLI on PATH).
+image_text_extraction_enabled = false
+
+# Minimum extracted-text length to suppress personal-photo short-circuit.
+# image_short_circuit_bypass_min_chars = 20
+
+# --- YouTube transcription and audio fallback ---
 
 # Path to the yt-dlp binary. Defaults to "yt-dlp" on PATH.
 # ytdlp_path = ""
 
 # Path to the ffmpeg binary. Defaults to "ffmpeg" on PATH.
-# Used for audio conversion (YouTube fallback, voice notes).
 # ffmpeg_path = ""
 
-# YouTube audio fallback: when yt-dlp finds no subtitles, download the audio
-# track and transcribe with whisper-cli. Enabled by default (EPIC-003 M5).
-# Set to false to revert to the pre-EPIC-003 behavior (fail with yt_no_subtitles).
 [server.youtube]
 fallback_to_audio = true
 
-# --- Prefilter: unsupported pipeline domains (EPIC-088 M4) ---
+# Per-source sub-behavior toggles.
+transcribe_subscriptions   = true
+transcribe_watch_later     = true
+auto_enqueue_subscriptions = true
+auto_enqueue_watch_later   = true
 
-# Override the built-in list of streaming/video domains that are blocked
-# before scoring (YouTube, Spotify, TikTok, etc.). When non-empty this list
-# REPLACES the compiled-in default — include all domains you want to block.
-# Each entry is treated as a case-insensitive substring of the URL.
-# Omit this field (or leave empty) to use the built-in list.
-#
-# [server]
-# unsupported_pipeline_domains = [
-#   "youtube.com", "youtu.be", "spotify.com", "twitch.tv",
-#   "soundcloud.com", "tiktok.com", "netflix.com", "vimeo.com",
-#   "rumble.com", "dailymotion.com",
-# ]
+# OAuth account slot routing. Maps named slots to YouTube sources.
+# Re-auth with: linkari auth youtube --slot <name>
+# [server.youtube.accounts.default]
+# slot    = "default"
+# sources = ["watch_later", "liked"]
+
+# --- Sources ---
+
+[server.sources]
+youtube_watch_later_enabled = true
+youtube_liked_enabled       = true
+youtube_monitored_enabled   = false
+bluesky_firehose_enabled    = false
+
+# --- AWS credential resolution ---
+
+# Controls SDK credential resolution for secretsmanager:// URIs.
+# On EC2 with an instance profile, region auto-detects from IMDS.
+# On non-EC2, set region explicitly.
+[server.aws]
+region = "us-east-2"
+# profile = ""
+# role_arn = ""
+
+# --- Database ---
+
+[server.db]
+# Absolute path to backup .db; sidecar metadata at <path>.backup-meta.json.
+# backup_path = ""
+
+# --- Shield middleware ---
+
+[server.shield]
+mode = "enforce"
+
+# --- Scoring backend ---
+
+[server.scoring]
+# "claude_cli" (default) or "pi" for pluggable scoring.
+# backend = "claude_cli"
+
+# --- Telemetry ---
+
+# [server.telemetry]
+# enabled = false
+# automation_metrics = false
+
+# --- LiteParse (PDF extraction) ---
+
+# [server.liteparse]
+# tessdata_prefix = ""
+# confidence_threshold = 0.5
 `
 
 func configCmd() *cobra.Command {
@@ -217,7 +258,7 @@ Flags:
 				return fmt.Errorf("config init: create directory %s: %w", parent, err)
 			}
 
-			// Idempotency check — no-op unless --force.
+			// Idempotency check  -  no-op unless --force.
 			if _, err := os.Stat(target); err == nil {
 				if !force {
 					fmt.Fprintf(cmd.OutOrStdout(),
