@@ -102,7 +102,7 @@ func run() error {
 	}
 
 	// ── Credentials (F2) ──────────────────────────────────────────────────────
-	resolver := secrets.New(secrets.DefaultAWSFactory())
+	resolver := secrets.New(secrets.DefaultAWSFactory(secrets.AWSConfig{}))
 	credCache := auth.NewCredentialCache(resolver, cfg.SecretARN, cfg.CredentialTTL, time.Now)
 	if err := credCache.ForceRefresh(ctx); err != nil {
 		return fmt.Errorf("credentials: %w", err)
