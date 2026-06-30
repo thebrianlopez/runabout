@@ -152,7 +152,7 @@ import (
 						image:           #config.image.reference
 						imagePullPolicy: #config.image.pullPolicy
 						command: [
-							"/linkari",
+							"/usr/local/bin/linkari",
 							"db",
 							"backup",
 							"--queue-db", "/var/lib/linkari/queue.db",
