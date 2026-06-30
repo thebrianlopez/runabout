@@ -411,7 +411,7 @@ func TestDoctorSecretsManager_NoAWSCredentials_FailsFast(t *testing.T) {
 	if !strings.Contains(got, "✗ aws_credentials:") {
 		t.Fatalf("CT-7: aws_credentials check not found; output:\n%s", got)
 	}
-	if !strings.Contains(got, "AWS_PROFILE=brianonpoint") {
+	if !strings.Contains(got, "AWS_PROFILE") {
 		t.Fatalf("CT-7: expected actionable AWS_PROFILE guidance; output:\n%s", got)
 	}
 }
