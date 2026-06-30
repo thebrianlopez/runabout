@@ -44,6 +44,12 @@ cmd/castex/castex
 /sharehook
 /chain-eval
 
+# SQLite runtime database files
+cmd/linkari/0s
+cmd/linkari/0s-shm
+cmd/linkari/0s-wal
+cmd/linkari/docs/
+
 # Internal agent coordination  -  never commit
 .claude-dispatch/
 **/.beads/
