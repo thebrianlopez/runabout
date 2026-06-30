@@ -158,31 +158,83 @@ jobs:
             --output text > "/tmp/${{ secrets.APK_KEY_NAME }}"
           chmod 600 "/tmp/${{ secrets.APK_KEY_NAME }}"
 
-      - name: Download release APK artifacts
+      - name: Download and organize APK artifacts
         run: |
-          mkdir -p /tmp/apk-repo
+          mkdir -p /tmp/apk-staging /tmp/apk-repo/aarch64 /tmp/apk-repo/x86_64
           gh release download "${GITHUB_REF_NAME}" \
             --pattern "runabout_*.apk" \
-            --dir /tmp/apk-repo
+            --dir /tmp/apk-staging
+
+          # Reorganize into Alpine layout: ${arch}/${name}-${version}.apk
+          # goreleaser names: runabout_0.2.24_linux_arm64.apk
+          # Alpine expects:  aarch64/runabout-0.2.24.apk
+          #
+          # APK files are concatenated gzip streams: [sig][control][data].
+          # .PKGINFO is in the control segment. Use `abuild-info` inside
+          # Alpine to extract metadata reliably, but since we're on Ubuntu
+          # here, parse the goreleaser filename for arch and use the Alpine
+          # container later to extract pkgname/pkgver from .PKGINFO.
+          for apk_file in /tmp/apk-staging/*.apk; do
+            filename=$(basename "$apk_file")
+            if echo "$filename" | grep -q '_linux_arm64\.apk$'; then
+              alpine_arch="aarch64"
+            elif echo "$filename" | grep -q '_linux_amd64\.apk$'; then
+              alpine_arch="x86_64"
+            else
+              echo "WARNING: skipping unknown arch: $filename"
+              continue
+            fi
+            cp "$apk_file" "/tmp/apk-repo/${alpine_arch}/${filename}"
+            echo "  staged: ${alpine_arch}/${filename}"
+          done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate APKINDEX and sign
+      - name: Rename APKs to Alpine convention and generate APKINDEX
         run: |
           # Extract public key on host so it can be mounted into /etc/apk/keys/
           openssl rsa -in "/tmp/${{ secrets.APK_KEY_NAME }}" -pubout \
             -out "/tmp/${{ secrets.APK_KEY_NAME }}.pub"
+          # Copy public key into repo root for client trust bootstrap
+          cp "/tmp/${{ secrets.APK_KEY_NAME }}.pub" /tmp/apk-repo/
+
+          # Inside Alpine container: rename APKs using .PKGINFO metadata,
+          # then generate and sign per-arch APKINDEX.
+          # Alpine's tar handles concatenated gzip streams natively.
           docker run --rm \
             -v /tmp/apk-repo:/repo \
             -v "/tmp/${{ secrets.APK_KEY_NAME }}:/${{ secrets.APK_KEY_NAME }}:ro" \
             -v "/tmp/${{ secrets.APK_KEY_NAME }}.pub:/etc/apk/keys/${{ secrets.APK_KEY_NAME }}.pub:ro" \
-            alpine:latest sh -c "
+            alpine:latest sh -c '
               apk add --quiet abuild &&
-              cd /repo &&
-              apk index -o APKINDEX.unsigned.tar.gz *.apk &&
-              abuild-sign -k '/${{ secrets.APK_KEY_NAME }}' APKINDEX.unsigned.tar.gz &&
-              mv APKINDEX.unsigned.tar.gz APKINDEX.tar.gz
-            "
+              for arch in aarch64 x86_64; do
+                archdir="/repo/${arch}"
+                [ -d "$archdir" ] || continue
+                ls "$archdir"/*.apk 1>/dev/null 2>&1 || continue
+
+                # Rename each APK from goreleaser naming to Alpine convention
+                for apk_file in "$archdir"/*.apk; do
+                  pkgname=$(tar -xzf "$apk_file" -O .PKGINFO 2>/dev/null | grep "^pkgname" | head -1 | cut -d= -f2 | tr -d " ")
+                  pkgver=$(tar -xzf "$apk_file" -O .PKGINFO 2>/dev/null | grep "^pkgver" | head -1 | cut -d= -f2 | tr -d " ")
+                  if [ -n "$pkgname" ] && [ -n "$pkgver" ]; then
+                    target="${pkgname}-${pkgver}.apk"
+                    if [ "$(basename "$apk_file")" != "$target" ]; then
+                      mv "$apk_file" "$archdir/$target"
+                      echo "  renamed: $(basename "$apk_file") -> ${arch}/${target}"
+                    fi
+                  else
+                    echo "  WARNING: could not extract metadata from $(basename "$apk_file")"
+                  fi
+                done
+
+                # Generate and sign APKINDEX for this arch
+                cd "$archdir" &&
+                apk index -o APKINDEX.unsigned.tar.gz *.apk &&
+                abuild-sign -k "/${{ secrets.APK_KEY_NAME }}" APKINDEX.unsigned.tar.gz &&
+                mv APKINDEX.unsigned.tar.gz APKINDEX.tar.gz &&
+                echo "  ${arch}: APKINDEX generated and signed"
+              done
+            '
 
       - name: Upload APK repo to S3
         run: |
