@@ -19,7 +19,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/spf13/cobra"
 
@@ -330,21 +332,18 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					fmt.Sprintf("resolved from %s fp=%s tier=%s", r.Src.String(), fp, r.Tier)))
 			}
 
-			// --- Check 5: AWS identity (only when SM URIs present) ---
+			// --- Check 5: AWS credential source + SM access (only when SM URIs present) ---
 			if hasSMURI {
-				awsCfg, err := config.LoadDefaultConfig(ctx)
-				if err != nil {
-					addCheck(failCheck("aws_identity", fmt.Sprintf("load AWS config: %v  -  set AWS_PROFILE or configure ~/.aws/credentials", err)))
-				} else {
-					stsClient := sts.NewFromConfig(awsCfg)
-					identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
-					if err != nil {
-						addCheck(failCheck("aws_identity", fmt.Sprintf("sts:GetCallerIdentity failed: %v  -  check credentials and region", err)))
-					} else {
-						addCheck(okCheck("aws_identity",
-							fmt.Sprintf("Account=%s ARN=%s", strOrEmpty(identity.Account), strOrEmpty(identity.Arn))))
+				var awsDocCfg secrets.AWSConfig
+				if serverCfg != nil {
+					awsDocCfg = secrets.AWSConfig{
+						Region:  serverCfg.AWS.Region,
+						Profile: serverCfg.AWS.Profile,
+						RoleARN: serverCfg.AWS.RoleARN,
 					}
 				}
+				result := awsDoctorProbeFn(ctx, awsDocCfg)
+				addCheck(formatAWSCheck(result))
 			}
 
 			// --- Checks 6-8: XDG directories ---
@@ -670,6 +669,91 @@ func hasExplicitAWSCredentials() bool {
 		os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE") != "" ||
 		os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") != "" ||
 		os.Getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") != ""
+}
+
+type awsDoctorResult struct {
+	Source  string // e.g. "shared-credentials-file", "ec2-instance-metadata"
+	ARN     string
+	Profile string
+	SMOK    bool
+	Err     error
+}
+
+var awsDoctorProbeFn = func(ctx context.Context, awsCfg secrets.AWSConfig) awsDoctorResult {
+	var opts []func(*config.LoadOptions) error
+	if awsCfg.Region != "" {
+		opts = append(opts, config.WithRegion(awsCfg.Region))
+	}
+	if awsCfg.Profile != "" {
+		opts = append(opts, config.WithSharedConfigProfile(awsCfg.Profile))
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	cfg, err := config.LoadDefaultConfig(probeCtx, opts...)
+	if err != nil {
+		return awsDoctorResult{Err: fmt.Errorf("load config: %w", err)}
+	}
+
+	stsClient := sts.NewFromConfig(cfg)
+	identity, err := stsClient.GetCallerIdentity(probeCtx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		return awsDoctorResult{Err: fmt.Errorf("no credentials: %w", err)}
+	}
+
+	source := detectCredentialSource(awsCfg)
+	result := awsDoctorResult{
+		Source:  source,
+		ARN:    aws.ToString(identity.Arn),
+		Profile: awsCfg.Profile,
+	}
+
+	smClient := secretsmanager.NewFromConfig(cfg)
+	_, smErr := smClient.ListSecrets(probeCtx, &secretsmanager.ListSecretsInput{
+		MaxResults: aws.Int32(1),
+	})
+	result.SMOK = smErr == nil
+	if smErr != nil {
+		result.Err = fmt.Errorf("sm access denied: %w", smErr)
+	}
+	return result
+}
+
+func detectCredentialSource(awsCfg secrets.AWSConfig) string {
+	if awsCfg.Profile != "" {
+		return "shared-credentials-file"
+	}
+	if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
+		return "environment-variables"
+	}
+	if os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE") != "" {
+		return "web-identity-token"
+	}
+	if os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") != "" || os.Getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") != "" {
+		return "ecs-container"
+	}
+	return "ec2-instance-metadata"
+}
+
+func formatAWSCheck(r awsDoctorResult) doctorCheck {
+	if r.Err != nil && r.ARN == "" {
+		return failCheck("aws_credentials",
+			"no credentials found - set [aws] profile, role_arn, or AWS_ACCESS_KEY_ID")
+	}
+
+	label := r.Source
+	if r.Profile != "" {
+		label = fmt.Sprintf("%s (profile: %s)", r.Source, r.Profile)
+	}
+
+	if !r.SMOK {
+		return failCheck("aws_credentials",
+			fmt.Sprintf("resolved via %s (%s), but Secrets Manager access denied - check IAM policy", label, r.ARN))
+	}
+
+	return okCheck("aws_credentials",
+		fmt.Sprintf("resolved via %s (%s)", label, r.ARN))
 }
 
 // hasTrainedData returns true if entries contains at least one .traineddata file.

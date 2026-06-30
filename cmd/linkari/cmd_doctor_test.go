@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
 // newDoctorCmdForTest builds a doctorCmd with output captured and HOME
@@ -822,5 +825,167 @@ func TestResolveDataDir_ConfigFirst(t *testing.T) {
 	cfg := &ServerConfig{QueueDB: filepath.Join("/tmp", "configured", "queue.db")}
 	if got := resolveDataDir(cfg); got != filepath.Join("/tmp", "configured") {
 		t.Fatalf("expected config dir, got %q", got)
+	}
+}
+
+// ============================================================
+// EPIC-231: AWS credential source + SM access doctor tests
+// ============================================================
+
+// CT-1: Doctor reports credential source type when profile configured.
+func TestAWSDoctorCT1_CredentialSourceLabel(t *testing.T) {
+	orig := awsDoctorProbeFn
+	defer func() { awsDoctorProbeFn = orig }()
+
+	awsDoctorProbeFn = func(_ context.Context, awsCfg secrets.AWSConfig) awsDoctorResult {
+		return awsDoctorResult{Source: awsCfg.Profile}
+	}
+
+	// Use formatAWSCheck directly with a hand-crafted result.
+	result := awsDoctorResult{
+		Source:  "shared-credentials-file",
+		ARN:     "arn:aws:iam::082515828319:user/brian",
+		Profile: "brianonpoint",
+		SMOK:    true,
+	}
+	check := formatAWSCheck(result)
+	if check.Status != statusOK {
+		t.Errorf("CT-1: status = %q, want ok", check.Status)
+	}
+	if !strings.Contains(check.Message, "shared-credentials-file") {
+		t.Errorf("CT-1: message %q does not contain source label", check.Message)
+	}
+	if !strings.Contains(check.Message, "profile: brianonpoint") {
+		t.Errorf("CT-1: message %q does not contain profile name", check.Message)
+	}
+}
+
+// CT-2: Doctor reports IAM ARN via GetCallerIdentity.
+func TestAWSDoctorCT2_ARNInOutput(t *testing.T) {
+	result := awsDoctorResult{
+		Source: "ec2-instance-metadata",
+		ARN:    "arn:aws:iam::082515828319:role/linkari-k3s",
+		SMOK:   true,
+	}
+	check := formatAWSCheck(result)
+	if !strings.Contains(check.Message, "arn:aws:iam::082515828319:role/linkari-k3s") {
+		t.Errorf("CT-2: message %q does not contain full ARN", check.Message)
+	}
+}
+
+// CT-3: Doctor reports aws_no_credentials error when no credentials available.
+func TestAWSDoctorCT3_NoCredentials(t *testing.T) {
+	result := awsDoctorResult{
+		Err: fmt.Errorf("no credentials: operation error STS: GetCallerIdentity: no credentials"),
+	}
+	check := formatAWSCheck(result)
+	if check.Status != statusFail {
+		t.Errorf("CT-3: status = %q, want fail", check.Status)
+	}
+	if !strings.Contains(check.Message, "no credentials found") {
+		t.Errorf("CT-3: message %q missing 'no credentials found'", check.Message)
+	}
+}
+
+// CT-4: Doctor reports aws_sm_access_denied when credentials lack SM permissions.
+func TestAWSDoctorCT4_SMAccessDenied(t *testing.T) {
+	result := awsDoctorResult{
+		Source: "shared-credentials-file",
+		ARN:    "arn:aws:iam::082515828319:user/brian",
+		Profile: "brianonpoint",
+		SMOK:   false,
+		Err:    fmt.Errorf("sm access denied: AccessDeniedException"),
+	}
+	check := formatAWSCheck(result)
+	if check.Status != statusFail {
+		t.Errorf("CT-4: status = %q, want fail", check.Status)
+	}
+	if !strings.Contains(check.Message, "Secrets Manager access denied") {
+		t.Errorf("CT-4: message %q missing 'Secrets Manager access denied'", check.Message)
+	}
+}
+
+// CT-5: Remediation hint includes [aws] profile and role_arn config options.
+func TestAWSDoctorCT5_RemediationHint(t *testing.T) {
+	result := awsDoctorResult{
+		Err: fmt.Errorf("no credentials"),
+	}
+	check := formatAWSCheck(result)
+	if !strings.Contains(check.Message, "[aws] profile") {
+		t.Errorf("CT-5: message %q missing '[aws] profile'", check.Message)
+	}
+	if !strings.Contains(check.Message, "role_arn") {
+		t.Errorf("CT-5: message %q missing 'role_arn'", check.Message)
+	}
+}
+
+// CT-6: detectCredentialSource returns expected labels for each source type.
+func TestAWSDoctorCT6_CredentialSourceDetection(t *testing.T) {
+	t.Run("profile", func(t *testing.T) {
+		src := detectCredentialSource(secrets.AWSConfig{Profile: "brianonpoint"})
+		if src != "shared-credentials-file" {
+			t.Errorf("CT-6/profile: got %q, want shared-credentials-file", src)
+		}
+	})
+	t.Run("env-vars", func(t *testing.T) {
+		t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
+		src := detectCredentialSource(secrets.AWSConfig{})
+		if src != "environment-variables" {
+			t.Errorf("CT-6/env-vars: got %q, want environment-variables", src)
+		}
+	})
+	t.Run("web-identity", func(t *testing.T) {
+		t.Setenv("AWS_ACCESS_KEY_ID", "")
+		t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "/var/run/secrets/token")
+		src := detectCredentialSource(secrets.AWSConfig{})
+		if src != "web-identity-token" {
+			t.Errorf("CT-6/web-identity: got %q, want web-identity-token", src)
+		}
+	})
+	t.Run("imds", func(t *testing.T) {
+		t.Setenv("AWS_ACCESS_KEY_ID", "")
+		t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "")
+		t.Setenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "")
+		t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "")
+		src := detectCredentialSource(secrets.AWSConfig{})
+		if src != "ec2-instance-metadata" {
+			t.Errorf("CT-6/imds: got %q, want ec2-instance-metadata", src)
+		}
+	})
+}
+
+// RG-1: Doctor output never contains AWS secret key material.
+func TestAWSDoctorRG1_NoSecretKeyLeakage(t *testing.T) {
+	// Simulate a result where ARN is present but no key material.
+	result := awsDoctorResult{
+		Source: "environment-variables",
+		ARN:    "arn:aws:iam::082515828319:assumed-role/dev/session",
+		SMOK:   true,
+	}
+	check := formatAWSCheck(result)
+	sensitivePatterns := []string{"ASIA", "AKIA", "AWS_SECRET_ACCESS_KEY"}
+	for _, pat := range sensitivePatterns {
+		if strings.Contains(check.Message, pat) {
+			t.Errorf("RG-1: output contains sensitive pattern %q: %s", pat, check.Message)
+		}
+	}
+}
+
+// RG-2: Zero-value AWSConfig preserves existing behavior (no panic, no error injection).
+func TestAWSDoctorRG2_ZeroValueConfig(t *testing.T) {
+	// Zero-value config must not cause formatAWSCheck to panic.
+	// Simulate success with empty profile.
+	result := awsDoctorResult{
+		Source: "ec2-instance-metadata",
+		ARN:    "arn:aws:iam::082515828319:role/linkari-k3s",
+		SMOK:   true,
+	}
+	check := formatAWSCheck(result)
+	if check.Status != statusOK {
+		t.Errorf("RG-2: zero-value AWSConfig with valid creds should produce ok check, got %q", check.Status)
+	}
+	// Message must not contain "(profile: )" when profile is empty.
+	if strings.Contains(check.Message, "profile: )") {
+		t.Errorf("RG-2: message %q contains empty profile annotation", check.Message)
 	}
 }
