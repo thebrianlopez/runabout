@@ -809,14 +809,17 @@ func TestK8sVolumeChecks_AllOk(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("LINKARI_K8S_MODE", "true")
 	checks := checkK8sVolume(dir)
-	if len(checks) != 2 {
-		t.Fatalf("expected 2 checks, got %#v", checks)
+	if len(checks) != 3 {
+		t.Fatalf("expected 3 checks, got %#v", checks)
 	}
-	if checks[0].Name != "k8s_volume_capacity" || checks[0].Status != statusOK {
-		t.Fatalf("unexpected capacity check: %#v", checks[0])
+	if checks[0].Name != "k8s_volume_mount" || checks[0].Status != statusOK {
+		t.Fatalf("unexpected mount check: %#v", checks[0])
 	}
-	if checks[1].Name != "k8s_single_writer" || checks[1].Status != statusOK {
-		t.Fatalf("unexpected single writer check: %#v", checks[1])
+	if checks[1].Name != "k8s_volume_capacity" || checks[1].Status != statusOK {
+		t.Fatalf("unexpected capacity check: %#v", checks[1])
+	}
+	if checks[2].Name != "k8s_single_writer" || checks[2].Status != statusOK {
+		t.Fatalf("unexpected single writer check: %#v", checks[2])
 	}
 }
 
