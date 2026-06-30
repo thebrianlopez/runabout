@@ -11,14 +11,16 @@ import (
 )
 
 // referenceServerConfig pins the expected field values in the generated template.
-// Secret fields hold the raw ${secretsmanager:...} ref strings (not resolved values).
+// Fields wired through resolveField use secretsmanager:// URIs (post-load resolution).
+// Fields read directly from config use ${secretsmanager:...} (expansion-time resolution).
 var referenceServerConfig = ServerConfig{
-	Token:          "${secretsmanager:linkari/bearer-token}",
-	TSNetAuthKey:   "${secretsmanager:linkari/tsnet-authkey}",
-	FirebaseSA:     "${secretsmanager:linkari/firebase-sa}",
+	Token:          "secretsmanager://linkari/bearer-token",
+	TSNetAuthKey:   "secretsmanager://linkari/tsnet-authkey",
+	FirebaseSA:     "secretsmanager://linkari/firebase-sa",
 	NotifyMinScore: 10,
 	Port:           8080,
 	TsnetHostname:  "linkari",
+	AWS:            AWSConfig{Region: "us-east-2"},
 }
 
 // pinned reference *bool for tsnet field.
@@ -65,6 +67,24 @@ func TestConfigInit_RoundTrip(t *testing.T) {
 	// Debug defaults to false.
 	if got.Debug {
 		t.Error("Debug = true, want false")
+	}
+
+	// AWS region must be set for SM resolution.
+	if got.AWS.Region != referenceServerConfig.AWS.Region {
+		t.Errorf("AWS.Region = %q, want %q", got.AWS.Region, referenceServerConfig.AWS.Region)
+	}
+
+	// Shield defaults to enforce.
+	if got.Shield.Mode != "enforce" {
+		t.Errorf("Shield.Mode = %q, want %q", got.Shield.Mode, "enforce")
+	}
+
+	// Sources: watch_later and liked enabled, monitored and firehose disabled.
+	if !got.Sources.YouTubeWatchLaterEnabled {
+		t.Error("Sources.YouTubeWatchLaterEnabled = false, want true")
+	}
+	if !got.Sources.YouTubeLikedEnabled {
+		t.Error("Sources.YouTubeLikedEnabled = false, want true")
 	}
 }
 
