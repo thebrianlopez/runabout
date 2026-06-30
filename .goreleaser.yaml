@@ -447,6 +447,10 @@ nfpms:
       - ghwatch
       - jira-poller
       - runway
+    deb:
+      signature:
+        key_file: /tmp/apt-signing.key
+        type: origin
 
 dockers:
   - id: linkari
