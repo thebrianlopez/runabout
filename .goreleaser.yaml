@@ -420,6 +420,34 @@ nfpms:
         key_file: /tmp/{{ .Env.APK_KEY_NAME }}
         key_name: "{{ .Env.APK_KEY_NAME }}.pub"
 
+  - id: runabout-deb
+    package_name: runabout
+    vendor: thebrianlopez
+    homepage: "https://github.com/thebrianlopez/runabout"
+    maintainer: "Brian Lopez <noreply@thebrianlopez.dev>"
+    description: "Personal developer tools - mdq, bmux, workctl, linkari, runway, and more"
+    license: MIT
+    formats:
+      - deb
+    ids:
+      - mdq
+      - perfgate
+      - shellprof
+      - hookval
+      - effiscore
+      - castex
+      - chain-eval
+      - bmux
+      - protonexport
+      - linkari
+      - linkari-labeler
+      - plaid-service
+      - wasend
+      - workctl
+      - ghwatch
+      - jira-poller
+      - runway
+
 dockers:
   - id: linkari
     ids: [linkari]
