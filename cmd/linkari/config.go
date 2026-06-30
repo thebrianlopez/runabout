@@ -70,7 +70,8 @@ func (s ServerConfig) IsZero() bool {
 		s.ImageNoiseGateMaxBytes == 0 && s.MaxScoringCostUSD == 0 &&
 		s.LiteParseePath == "" &&
 		s.Whisper.MaxConcurrency == 0 && s.Whisper.TimeoutSecs == 0 && s.Whisper.MaxRetries == 0 &&
-		s.DB.BackupPath == ""
+		s.DB.BackupPath == "" &&
+		s.AWS == (AWSConfig{})
 }
 
 // DBConfig holds database-related knobs for linkari.
@@ -598,6 +599,9 @@ type ServerConfig struct {
 	// Absent block or Backend="" uses "claude_cli" (default behavior).
 	Scoring ScoringConfig `toml:"scoring"`
 
+	// EPIC-230 F1/F6: AWS credential resolution config for Secrets Manager.
+	AWS AWSConfig `toml:"aws" yaml:"aws"`
+
 	// EPIC-229 F1: telemetry routing config.
 	Telemetry TelemetryConfig `toml:"telemetry"`
 }
@@ -609,6 +613,14 @@ type ServerConfig struct {
 // server-side heuristic that wants to override the caller MUST go through the
 // feature flag below  -  and will still emit a `share_action_resolved` event
 // with the override reason recorded.
+// AWSConfig controls SDK credential resolution for secretsmanager:// URIs.
+// Zero value preserves the default AWS SDK chain.
+type AWSConfig struct {
+	Region  string `toml:"region" yaml:"region"`
+	Profile string `toml:"profile" yaml:"profile"`
+	RoleARN string `toml:"role_arn" yaml:"role_arn"`
+}
+
 type ShareConfig struct {
 	// HeuristicOverrideEnabled, when true, allows resolveShareAction to
 	// pick a different (action, profile) than the caller supplied (e.g. a
@@ -732,7 +744,7 @@ func defaultConfigPath() string {
 
 // expandConfigRefs resolves ${env:VAR}, ${file:/path}, ${secretsmanager:name#field},
 // and bare ${VAR} references in the raw config string before TOML parsing.
-func expandConfigRefs(ctx context.Context, s string) string {
+func expandConfigRefs(ctx context.Context, awsCfg secrets.AWSConfig, s string) string {
 	cache := make(map[string]string)
 	var resolver *secrets.Resolver
 
@@ -753,7 +765,7 @@ func expandConfigRefs(ctx context.Context, s string) string {
 				return extractJSONField(cached, field, hasField)
 			}
 			if resolver == nil {
-				resolver = secrets.New(secrets.DefaultAWSFactory())
+				resolver = secrets.New(secrets.DefaultAWSFactory(awsCfg))
 			}
 			raw, _, err := resolver.Resolve(ctx, "secretsmanager://"+secretName)
 			if err != nil {
@@ -792,7 +804,7 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	expanded := expandConfigRefs(ctx, string(data))
+	expanded := expandConfigRefs(ctx, secrets.AWSConfig{}, string(data))
 	var cfg Config
 	if _, err := toml.Decode(expanded, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)

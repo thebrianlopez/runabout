@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/thebrianlopez/runabout/internal/secrets"
+	"gopkg.in/yaml.v3"
 )
 
 const testConfigTOML = `
@@ -273,7 +276,7 @@ func TestPostCaptureConfig_CT9_NonCaptureKind_ValidationError(t *testing.T) {
 
 func TestExpandConfigRefsEnvScheme(t *testing.T) {
 	t.Setenv("EXPAND_TEST_FOO", "bar")
-	got := expandConfigRefs(context.Background(), "${env:EXPAND_TEST_FOO}")
+	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${env:EXPAND_TEST_FOO}")
 	if got != "bar" {
 		t.Errorf("got %q want %q", got, "bar")
 	}
@@ -281,7 +284,7 @@ func TestExpandConfigRefsEnvScheme(t *testing.T) {
 
 func TestExpandConfigRefsPlainEnvCompat(t *testing.T) {
 	t.Setenv("EXPAND_TEST_PLAIN", "plain_val")
-	got := expandConfigRefs(context.Background(), "${EXPAND_TEST_PLAIN}")
+	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${EXPAND_TEST_PLAIN}")
 	if got != "plain_val" {
 		t.Errorf("got %q want %q", got, "plain_val")
 	}
@@ -294,14 +297,14 @@ func TestExpandConfigRefsFileScheme(t *testing.T) {
 	}
 	f.WriteString("  file_content  \n")
 	f.Close()
-	got := expandConfigRefs(context.Background(), "${file:"+f.Name()+"}")
+	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${file:"+f.Name()+"}")
 	if got != "file_content" {
 		t.Errorf("got %q want %q", got, "file_content")
 	}
 }
 
 func TestExpandConfigRefsUnknownScheme(t *testing.T) {
-	got := expandConfigRefs(context.Background(), "${unknown:val}")
+	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${unknown:val}")
 	if got != "" {
 		t.Errorf("got %q want empty string for unknown scheme", got)
 	}
@@ -424,6 +427,50 @@ func TestServerConfig_IsZero(t *testing.T) {
 	s := ServerConfig{Push: PushYAMLConfig{DigestThrottleDefault: Duration{D: 1}}}
 	if s.IsZero() {
 		t.Error("with push throttle should not be zero")
+	}
+	if (ServerConfig{AWS: AWSConfig{Region: "us-east-1"}}).IsZero() {
+		t.Error("with AWS config should not be zero")
+	}
+}
+
+func TestServerConfig_AWSYAMLParses(t *testing.T) {
+	data := []byte("aws:\n  region: us-east-1\n  profile: p\n  role_arn: arn:aws:iam::123:role/r\n")
+	var cfg ServerConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("yaml unmarshal: %v", err)
+	}
+	if cfg.AWS.Region != "us-east-1" || cfg.AWS.Profile != "p" || cfg.AWS.RoleARN != "arn:aws:iam::123:role/r" {
+		t.Fatalf("unexpected AWS config: %#v", cfg.AWS)
+	}
+}
+
+func TestServerConfig_AWSConfigTomlParses(t *testing.T) {
+	tomlStr := "[server.aws]\nregion = \"us-east-1\"\n"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(tomlStr), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := LoadConfig(context.Background(), path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Server.AWS.Region != "us-east-1" {
+		t.Fatalf("region=%q", cfg.Server.AWS.Region)
+	}
+	if cfg.Server.AWS.Profile != "" || cfg.Server.AWS.RoleARN != "" {
+		t.Fatalf("unexpected extra fields: %#v", cfg.Server.AWS)
+	}
+}
+
+func TestServerConfig_MissingAWSBlockZeroValue(t *testing.T) {
+	path := writeTestConfig(t)
+	cfg, err := LoadConfig(context.Background(), path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Server.AWS != (AWSConfig{}) {
+		t.Fatalf("AWS config = %#v, want zero value", cfg.Server.AWS)
 	}
 }
 
