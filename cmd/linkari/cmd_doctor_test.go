@@ -890,11 +890,11 @@ func TestAWSDoctorCT3_NoCredentials(t *testing.T) {
 // CT-4: Doctor reports aws_sm_access_denied when credentials lack SM permissions.
 func TestAWSDoctorCT4_SMAccessDenied(t *testing.T) {
 	result := awsDoctorResult{
-		Source: "shared-credentials-file",
-		ARN:    "arn:aws:iam::082515828319:user/brian",
+		Source:  "shared-credentials-file",
+		ARN:     "arn:aws:iam::082515828319:user/brian",
 		Profile: "brianonpoint",
-		SMOK:   false,
-		Err:    fmt.Errorf("sm access denied: AccessDeniedException"),
+		SMOK:    false,
+		Err:     fmt.Errorf("sm access denied: AccessDeniedException"),
 	}
 	check := formatAWSCheck(result)
 	if check.Status != statusFail {

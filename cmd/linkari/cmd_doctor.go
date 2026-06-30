@@ -705,7 +705,7 @@ var awsDoctorProbeFn = func(ctx context.Context, awsCfg secrets.AWSConfig) awsDo
 	source := detectCredentialSource(awsCfg)
 	result := awsDoctorResult{
 		Source:  source,
-		ARN:    aws.ToString(identity.Arn),
+		ARN:     aws.ToString(identity.Arn),
 		Profile: awsCfg.Profile,
 	}
 
