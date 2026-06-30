@@ -520,6 +520,7 @@ func (s *Server) Mux() http.Handler {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/livez", s.handleHealthMinimal)
 	mux.HandleFunc("/logs", s.handleLogs)
 	mux.HandleFunc("/logs/stream", s.handleLogStream)
 	return traceMiddleware(corsMiddleware(mux))
