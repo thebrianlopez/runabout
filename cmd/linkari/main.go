@@ -332,7 +332,10 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				}
 			}
 
-			// Resolve queue database path.
+			// Resolve queue database path: flag > config.toml > env > default.
+			if queueDB == "" && serverFileCfg != nil && serverFileCfg.QueueDB != "" {
+				queueDB = serverFileCfg.QueueDB
+			}
 			if queueDB == "" {
 				queueDB = os.Getenv("LINKARI_QUEUE_DB")
 			}
