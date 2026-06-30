@@ -1,4 +1,4 @@
-// resolver_shared.go — side-effect-free field resolution helper.
+// resolver_shared.go  -  side-effect-free field resolution helper.
 //
 // resolveAllSecrets runs a simple flag-override pipeline for the secret
 // fields. Pre-parse config ref expansion (expandConfigRefs) already
@@ -10,13 +10,14 @@ package main
 
 import (
 	"os"
+	"strings"
 
 	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
 // SecretResolution holds the resolved result of a single secret field.
 // Err is non-nil when the resolver pipeline returned an error (e.g. SM fetch
-// failed). Value may be non-empty on success even when Err is nil — callers
+// failed). Value may be non-empty on success even when Err is nil  -  callers
 // should check Err first.
 type SecretResolution struct {
 	Field string
@@ -32,7 +33,7 @@ type SecretResolution struct {
 // Environment variables are checked as a fallback for any field that is still
 // empty after TOML loading (covers the case where config.toml is absent).
 //
-// No AWS SDK calls are made — secrets were already resolved by expandConfigRefs
+// No AWS SDK calls are made  -  secrets were already resolved by expandConfigRefs
 // at config parse time.
 func resolveAllSecrets(cfg *ServerConfig) []SecretResolution {
 	type fieldSpec struct {
@@ -93,7 +94,11 @@ func resolveAllSecrets(cfg *ServerConfig) []SecretResolution {
 		switch {
 		case yamlVal != "":
 			value = yamlVal
-			tier = "toml-literal"
+			if strings.HasPrefix(yamlVal, "secretsmanager://") {
+				tier = "toml-sm"
+			} else {
+				tier = "toml-literal"
+			}
 		case spec.env != "":
 			value = spec.env
 			tier = "env"
