@@ -20,10 +20,12 @@ type AWSConfig struct {
 	RoleARN string
 }
 
-var loadDefaultConfig = config.LoadDefaultConfig
-var newSecretsManagerFromConfig = secretsmanager.NewFromConfig
-var newSTSFromConfig = sts.NewFromConfig
-var newAssumeRoleProvider = stscreds.NewAssumeRoleProvider
+var (
+	loadDefaultConfig           = config.LoadDefaultConfig
+	newSecretsManagerFromConfig = secretsmanager.NewFromConfig
+	newSTSFromConfig            = sts.NewFromConfig
+	newAssumeRoleProvider       = stscreds.NewAssumeRoleProvider
+)
 
 // awsSMClient adapts *secretsmanager.Client to the SecretsManagerAPI surface.
 type awsSMClient struct {
