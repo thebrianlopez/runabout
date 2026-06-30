@@ -230,7 +230,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 
 			// Build the resolver early  -  it lazily wires AWS SDK on first
 			// secretsmanager:// URI, so cost is zero when no SM URIs are used.
-			resolver := secrets.New(secrets.DefaultAWSFactory())
+			resolver := secrets.New(secrets.DefaultAWSFactory(secrets.AWSConfig(serverFileCfg.AWS)))
 
 			var provenance []provenanceEntry
 
