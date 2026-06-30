@@ -824,27 +824,29 @@ func checkK8sVolume(dir string) []doctorCheck {
 		return []doctorCheck{failCheck("k8s_volume_mount", fmt.Sprintf("data dir %s not writable: %v", dir, wErr))}
 	}
 
+	checks := []doctorCheck{okCheck("k8s_volume_mount", fmt.Sprintf("data dir %s writable", dir))}
+
 	var freePct int
 	var varfs syscall.Statfs_t
 	if syscall.Statfs(dir, &varfs) == nil && varfs.Blocks > 0 {
 		freePct = int((varfs.Bavail * 100) / varfs.Blocks)
 	}
 	if freePct > 0 && freePct < 5 {
-		return []doctorCheck{failCheck("k8s_volume_capacity", fmt.Sprintf("%s free space critically low (%d%% free)", dir, freePct))}
+		return append(checks, failCheck("k8s_volume_capacity", fmt.Sprintf("%s free space critically low (%d%% free)", dir, freePct)))
 	}
 	if freePct > 0 && freePct < 20 {
-		return []doctorCheck{warnCheck("k8s_volume_capacity", fmt.Sprintf("%s free space low (%d%% free)", dir, freePct))}
+		return append(checks, warnCheck("k8s_volume_capacity", fmt.Sprintf("%s free space low (%d%% free)", dir, freePct)))
 	}
-	checks := []doctorCheck{okCheck("k8s_volume_capacity", fmt.Sprintf("%s capacity ok", dir))}
+	checks = append(checks, okCheck("k8s_volume_capacity", fmt.Sprintf("%s capacity ok", dir)))
 
 	lockPath := filepath.Join(dir, ".linkari-single-writer.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return []doctorCheck{failCheck("k8s_single_writer", fmt.Sprintf("open lock file: %v", err))}
+		return append(checks, failCheck("k8s_single_writer", fmt.Sprintf("open lock file: %v", err)))
 	}
 	defer f.Close()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return []doctorCheck{failCheck("k8s_single_writer", fmt.Sprintf("another writer appears active in %s", dir))}
+		return append(checks, failCheck("k8s_single_writer", fmt.Sprintf("another writer appears active in %s", dir)))
 	}
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	checks = append(checks, okCheck("k8s_single_writer", fmt.Sprintf("%s single-writer lock available", dir)))
