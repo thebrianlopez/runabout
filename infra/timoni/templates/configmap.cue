@@ -12,8 +12,13 @@ import (
 //   tsnet_state_dir: /var/lib/linkari/tsnet       (PVC-backed, survives restarts)
 //   log_file:        ""                           (stdout only  -  K3S log aggregation)
 //
-// Secretsmanager refs use ${secretsmanager:name} syntax, resolved at pod startup
-// by expandConfigRefs via the EC2 instance role (hostNetwork = IMDS reachable).
+// Secrets use secretsmanager:// URI format (not ${secretsmanager:...} expansion syntax).
+// resolveServerField routes secretsmanager:// URIs through the EPIC-230 AWSConfig resolver,
+// giving tier=toml-sm in doctor output. ${secretsmanager:...} is expanded at LoadConfig time
+// with empty AWSConfig{}, bypassing the configured resolver and yielding tier=toml-literal.
+//
+// JSON-field secrets (jira-webhook) use secretsmanager://name#FIELD syntax; the resolver
+// fetches the secret JSON and extracts the named key.
 #ServerConfigMap: corev1.#ConfigMap & {
 	#config:    #Config
 	apiVersion: "v1"
@@ -24,27 +29,30 @@ import (
 	}
 	data: "config.toml": """
 		[server]
-		google_client_id     = "${secretsmanager:\(#config.server.smPrefix)/google-client-id}"
-		google_client_secret = "${secretsmanager:\(#config.server.smPrefix)/google-client-secret}"
+		google_client_id     = "secretsmanager://\(#config.server.smPrefix)/google-client-id"
+		google_client_secret = "secretsmanager://\(#config.server.smPrefix)/google-client-secret"
 		invite_codes         = ["8182980568", "7734260323"]
-		token                = "${secretsmanager:\(#config.server.smPrefix)/bearer-token}"
+		token                = "secretsmanager://\(#config.server.smPrefix)/bearer-token"
 		tsnet                = true
-		tsnet_authkey        = "${secretsmanager:\(#config.server.smPrefix)/tsnet-authkey}"
+		tsnet_authkey        = "secretsmanager://\(#config.server.smPrefix)/tsnet-authkey"
 		tsnet_hostname       = "\(#config.server.tsnetHostname)"
 		tsnet_state_dir      = "/var/lib/linkari/tsnet"
 		firebase_sa          = "secretsmanager://\(#config.server.smPrefix)/firebase-sa"
 		notify_min_score     = \(#config.server.notifyMinScore)
 		notify_on_prefilter_skip = true
-		atlassian_email           = "${secretsmanager:\(#config.server.smPrefix)/jira-webhook#ATLASSIAN_EMAIL}"
-		atlassian_api_token       = "${secretsmanager:\(#config.server.smPrefix)/jira-webhook#ATLASSIAN_API_TOKEN}"
-		atlassian_confluence_token = "${secretsmanager:\(#config.server.smPrefix)/jira-webhook#ATLASSIAN_API_TOKEN}"
-		jira_domain               = "${secretsmanager:\(#config.server.smPrefix)/jira-webhook#JIRA_DOMAIN}"
-		pagerduty_token           = "${secretsmanager:\(#config.server.smPrefix)/jira-webhook#PAGERDUTY_API_TOKEN}"
+		atlassian_email           = "secretsmanager://\(#config.server.smPrefix)/jira-webhook#ATLASSIAN_EMAIL"
+		atlassian_api_token       = "secretsmanager://\(#config.server.smPrefix)/jira-webhook#ATLASSIAN_API_TOKEN"
+		atlassian_confluence_token = "secretsmanager://\(#config.server.smPrefix)/jira-webhook#ATLASSIAN_API_TOKEN"
+		jira_domain               = "secretsmanager://\(#config.server.smPrefix)/jira-webhook#JIRA_DOMAIN"
+		pagerduty_token           = "secretsmanager://\(#config.server.smPrefix)/jira-webhook#PAGERDUTY_API_TOKEN"
 		port       = \(#config.service.port)
 		server_url = ""
 		queue_db   = "/var/lib/linkari/queue.db"
 		log_file   = ""
 		debug      = false
+
+		[server.aws]
+		region = "\(#config.awsRegion)"
 
 		[server.shield]
 		mode = "\(#config.server.shieldMode)"
