@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -176,10 +177,10 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 			var fullCfg *Config
 			awsCredsUnavailable := false
 			{
-				if raw, readErr := os.ReadFile(configPath); readErr == nil && strings.Contains(string(raw), "${secretsmanager:") && !hasExplicitAWSCredentials() {
+				if raw, readErr := os.ReadFile(configPath); readErr == nil && strings.Contains(string(raw), "${secretsmanager:") && !hasExplicitAWSCredentials() && !hasIMDSCredentials() {
 					awsCredsUnavailable = true
 					// Prevent the AWS SDK default chain from blocking on IMDS during local doctor runs.
-					// The structured aws_credentials check below explains the operator action.
+					// Only set when IMDS is genuinely unreachable (not on EC2 or no instance profile).
 					_ = os.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 				}
 				cfg, err := LoadConfig(ctx, configPath)
@@ -197,7 +198,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					addCheck(okCheck("config_toml", configPath))
 				}
 				if awsCredsUnavailable {
-					addCheck(failCheck("aws_credentials", "config contains secretsmanager refs but no explicit AWS credentials/profile are available  -  set AWS_PROFILE=brianonpoint before running linkari doctor"))
+					addCheck(failCheck("aws_credentials", "config contains secretsmanager refs but no AWS credentials found - set AWS_PROFILE or run on an EC2 instance with an IAM instance profile"))
 				}
 			}
 
@@ -669,6 +670,25 @@ func hasExplicitAWSCredentials() bool {
 		os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE") != "" ||
 		os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") != "" ||
 		os.Getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") != ""
+}
+
+// hasIMDSCredentials probes IMDSv2 with a short timeout to detect EC2 instance profiles.
+// Returns true if IMDS responds, indicating the AWS SDK can obtain credentials automatically.
+func hasIMDSCredentials() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
+		"http://169.254.169.254/latest/api/token", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("X-aws-ec2-metadata-token-ttl-seconds", "21600")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 type awsDoctorResult struct {
