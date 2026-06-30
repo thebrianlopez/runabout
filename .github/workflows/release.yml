@@ -60,6 +60,15 @@ jobs:
             --output text > "/tmp/${{ secrets.APK_KEY_NAME }}"
           chmod 600 "/tmp/${{ secrets.APK_KEY_NAME }}"
 
+      - name: Fetch GPG key for deb package signing
+        run: |
+          aws secretsmanager get-secret-value \
+            --secret-id "${{ secrets.APT_GPG_KEY_NAME }}" \
+            --query SecretString \
+            --output text > /tmp/apt-signing.key
+          gpg --batch --import --dry-run /tmp/apt-signing.key
+          echo "GPG key format validated"
+
       - name: Run goreleaser (with homebrew tap)
         if: vars.HOMEBREW_TAP_APP_ID != ''
         uses: goreleaser/goreleaser-action@v6
@@ -240,3 +249,92 @@ jobs:
         run: |
           aws s3 sync /tmp/apk-repo/ s3://${{ secrets.APK_S3_BUCKET }}/alpine/ \
             --exclude "*.unsigned.tar.gz"
+
+  apt-repo:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: runabout-apt-${{ github.ref_name }}
+          aws-region: us-east-1
+
+      - name: Fetch GPG signing key from Secrets Manager
+        run: |
+          aws secretsmanager get-secret-value \
+            --secret-id "${{ secrets.APT_GPG_KEY_NAME }}" \
+            --query SecretString \
+            --output text > /tmp/apt-signing.key
+          gpg --batch --import /tmp/apt-signing.key
+
+      - name: Install APT repository tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev apt-utils
+
+      - name: Download .deb artifacts from GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/apt-repo/pool/main/r/runabout
+          gh release download "${GITHUB_REF_NAME}" --pattern "*_amd64.deb" --dir /tmp/apt-repo/pool/main/r/runabout
+          gh release download "${GITHUB_REF_NAME}" --pattern "*_arm64.deb" --dir /tmp/apt-repo/pool/main/r/runabout
+
+      - name: Generate APT repository metadata
+        run: |
+          mkdir -p /tmp/apt-repo/dists/stable/main/binary-amd64
+          mkdir -p /tmp/apt-repo/dists/stable/main/binary-arm64
+          cd /tmp/apt-repo
+          dpkg-scanpackages -a amd64 pool/main/r/runabout /dev/null > dists/stable/main/binary-amd64/Packages
+          dpkg-scanpackages -a arm64 pool/main/r/runabout /dev/null > dists/stable/main/binary-arm64/Packages
+          gzip -k -f dists/stable/main/binary-amd64/Packages
+          gzip -k -f dists/stable/main/binary-arm64/Packages
+          apt-ftparchive release dists/stable \
+            -o APT::FTPArchive::Release::Origin=runabout \
+            -o APT::FTPArchive::Release::Label=runabout \
+            -o APT::FTPArchive::Release::Suite=stable \
+            -o APT::FTPArchive::Release::Codename=stable \
+            -o APT::FTPArchive::Release::Components=main \
+            -o APT::FTPArchive::Release::Architectures="amd64 arm64" \
+            > dists/stable/Release
+          gpg --batch --yes --clearsign --output dists/stable/InRelease dists/stable/Release
+
+      - name: Export GPG public key
+        run: |
+          gpg --armor --export > /tmp/apt-repo/key.gpg
+
+      - name: Sync APT repo to S3
+        run: |
+          aws s3 sync /tmp/apt-repo/pool/ s3://${{ secrets.APK_S3_BUCKET }}/apt/pool/ --cache-control "max-age=86400"
+          aws s3 sync /tmp/apt-repo/dists/ s3://${{ secrets.APK_S3_BUCKET }}/apt/dists/ --cache-control "max-age=300"
+          aws s3 cp /tmp/apt-repo/key.gpg s3://${{ secrets.APK_S3_BUCKET }}/apt/key.gpg --cache-control "max-age=300"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --paths "/apt/dists/*" "/apt/key.gpg"
+
+  apt-smoke-test:
+    name: Smoke test APT install (debian:bookworm)
+    needs: apt-repo
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Smoke test apt install runabout
+        run: |
+          docker run --rm debian:bookworm sh -c '
+            set -e
+            apt-get update -q
+            apt-get install -y -q curl gpg
+            curl -fsSL https://blo.la/apt/key.gpg | gpg --dearmor -o /usr/share/keyrings/runabout.gpg
+            echo "deb [signed-by=/usr/share/keyrings/runabout.gpg] https://blo.la/apt stable main" > /etc/apt/sources.list.d/runabout.list
+            apt-get update -q
+            apt-get install -y -q runabout
+            mdq --version
+          '
