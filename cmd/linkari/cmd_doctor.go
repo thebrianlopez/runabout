@@ -87,10 +87,10 @@ func checkBackupFreshness(backupPath string, now time.Time) []doctorCheck {
 	}
 
 	var sidecar struct {
-		CompletedAt string `json:"completed_at"`
-		SourcePath  string `json:"source_path"`
-		Bytes       int64  `json:"bytes"`
-		DurationMs  int64  `json:"duration_ms"`
+		CreatedAt   time.Time `json:"created_at"`
+		SourceDB    string    `json:"source_db"`
+		BackupPath  string    `json:"backup_path"`
+		QueueDBSize int64     `json:"queue_db_size_bytes"`
 	}
 
 	if err := json.Unmarshal(raw, &sidecar); err != nil {
@@ -98,13 +98,12 @@ func checkBackupFreshness(backupPath string, now time.Time) []doctorCheck {
 		return []doctorCheck{failCheck("backup_missing", fmt.Sprintf("malformed backup metadata at %s: %v", sidecarPath, err))}
 	}
 
-	completedAt, err := time.Parse("20060102T150405Z", sidecar.CompletedAt)
-	if err != nil {
-		slog.Error("doctor_backup_freshness", "status", "fail", "backup_path", backupPath, "error", err.Error())
-		return []doctorCheck{failCheck("backup_missing", fmt.Sprintf("unparseable completed_at in backup metadata: %v", err))}
+	if sidecar.CreatedAt.IsZero() {
+		slog.Error("doctor_backup_freshness", "status", "fail", "backup_path", backupPath)
+		return []doctorCheck{failCheck("backup_missing", fmt.Sprintf("missing created_at in backup metadata at %s", sidecarPath))}
 	}
 
-	age := now.Sub(completedAt)
+	age := now.Sub(sidecar.CreatedAt)
 	ageHours := int(age.Hours())
 
 	if age <= 24*time.Hour {
@@ -594,11 +593,16 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 			}
 
 			// --- Check 12: backup_freshness (EPIC-223) ---
-			// Only run if backup_path is explicitly configured (optional check).
-			if serverCfg != nil && serverCfg.DB.BackupPath != "" {
-				freshChecks := checkBackupFreshness(serverCfg.DB.BackupPath, time.Now().UTC())
-				for _, c := range freshChecks {
-					addCheck(c)
+			// Always run; falls back to XDG default when backup_path not configured.
+			if serverCfg != nil {
+				backupPath, bpErr := resolveBackupPath(serverCfg)
+				if bpErr == nil {
+					if serverCfg.DB.BackupPath == "" {
+						addCheck(warnCheck("backup_path_configured", fmt.Sprintf("backup_path not set in config; using default %s", backupPath)))
+					}
+					for _, c := range checkBackupFreshness(backupPath, time.Now().UTC()) {
+						addCheck(c)
+					}
 				}
 			}
 
