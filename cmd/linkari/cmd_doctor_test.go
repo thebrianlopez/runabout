@@ -573,8 +573,8 @@ func TestBackupFreshness_FreshBackup(t *testing.T) {
 	sidecarPath := backupPath + ".backup-meta.json"
 
 	now := time.Now().UTC()
-	completedAt := now.Add(-1 * time.Hour).Format("20060102T150405Z")
-	sidecarContent := fmt.Sprintf(`{"completed_at": "%s", "source_path": "%s", "bytes": 1024, "duration_ms": 100}`, completedAt, backupPath)
+	completedAt := now.Add(-1 * time.Hour).Format(time.RFC3339Nano)
+	sidecarContent := fmt.Sprintf(`{"created_at": "%s", "source_db": "%s", "backup_path": "%s", "queue_db_size_bytes": 1024}`, completedAt, backupPath, backupPath)
 
 	if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
 		t.Fatalf("write sidecar: %v", err)
@@ -601,8 +601,8 @@ func TestBackupFreshness_Stale25h(t *testing.T) {
 	sidecarPath := backupPath + ".backup-meta.json"
 
 	now := time.Now().UTC()
-	completedAt := now.Add(-25 * time.Hour).Format("20060102T150405Z")
-	sidecarContent := fmt.Sprintf(`{"completed_at": "%s", "source_path": "%s", "bytes": 1024, "duration_ms": 100}`, completedAt, backupPath)
+	completedAt := now.Add(-25 * time.Hour).Format(time.RFC3339Nano)
+	sidecarContent := fmt.Sprintf(`{"created_at": "%s", "source_db": "%s", "backup_path": "%s", "queue_db_size_bytes": 1024}`, completedAt, backupPath, backupPath)
 
 	if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
 		t.Fatalf("write sidecar: %v", err)
@@ -629,8 +629,8 @@ func TestBackupFreshness_Stale73h(t *testing.T) {
 	sidecarPath := backupPath + ".backup-meta.json"
 
 	now := time.Now().UTC()
-	completedAt := now.Add(-73 * time.Hour).Format("20060102T150405Z")
-	sidecarContent := fmt.Sprintf(`{"completed_at": "%s", "source_path": "%s", "bytes": 1024, "duration_ms": 100}`, completedAt, backupPath)
+	completedAt := now.Add(-73 * time.Hour).Format(time.RFC3339Nano)
+	sidecarContent := fmt.Sprintf(`{"created_at": "%s", "source_db": "%s", "backup_path": "%s", "queue_db_size_bytes": 1024}`, completedAt, backupPath, backupPath)
 
 	if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
 		t.Fatalf("write sidecar: %v", err)
@@ -725,8 +725,8 @@ func TestBackupFreshness_MalformedSidecar(t *testing.T) {
 	backupPath := filepath.Join(dir, "queue.db")
 	sidecarPath := backupPath + ".backup-meta.json"
 
-	// Write malformed JSON with unparseable completed_at
-	sidecarContent := `{"completed_at": "invalid-date", "source_path": "/path", "bytes": 1024, "duration_ms": 100}`
+	// Write JSON with zero-value created_at (triggers missing created_at guard)
+	sidecarContent := `{"created_at": "0001-01-01T00:00:00Z", "source_db": "/path", "backup_path": "/path", "queue_db_size_bytes": 1024}`
 
 	if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
 		t.Fatalf("write sidecar: %v", err)
@@ -759,8 +759,8 @@ func TestBackupFreshness_RG1_NoFalsePositive(t *testing.T) {
 	t.Setenv("LINKARI_BACKUP_PATH", "")
 
 	now := time.Now().UTC()
-	completedAt := now.Add(-30 * time.Minute).Format("20060102T150405Z")
-	sidecarContent := fmt.Sprintf(`{"completed_at": "%s", "source_path": "%s", "bytes": 1024, "duration_ms": 100}`, completedAt, configBackupPath)
+	completedAt := now.Add(-30 * time.Minute).Format(time.RFC3339Nano)
+	sidecarContent := fmt.Sprintf(`{"created_at": "%s", "source_db": "%s", "backup_path": "%s", "queue_db_size_bytes": 1024}`, completedAt, configBackupPath, configBackupPath)
 
 	if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
 		t.Fatalf("write sidecar: %v", err)
