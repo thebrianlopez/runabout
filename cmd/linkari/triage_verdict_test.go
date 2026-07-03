@@ -382,3 +382,19 @@ func TestWriteScoreSidecar_NilExtras_NoLeakage(t *testing.T) {
 		t.Errorf("v1 sidecar key count = %d, want 6: %v", len(got), got)
 	}
 }
+
+func TestParseHaikuEnvelope_BareFenced(t *testing.T) {
+	// Pi --print mode may return JSON wrapped in markdown code fences.
+	inner, err := json.Marshal(canonicalVerdict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fenced := []byte("```json\n" + string(inner) + "\n```")
+	v, _, err := parseHaikuEnvelope(fenced)
+	if err != nil {
+		t.Fatalf("parse bare fenced: %v", err)
+	}
+	if v.Score != 52 || v.Profile != "eng" {
+		t.Errorf("got %+v", v)
+	}
+}

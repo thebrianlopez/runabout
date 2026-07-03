@@ -309,7 +309,11 @@ func parseHaikuEnvelope(stdout []byte) (TriageVerdict, *envelopeMeta, error) {
 		return TriageVerdict{}, nil, fmt.Errorf("empty envelope")
 	}
 
-	// Bare verdict shortcut (test/dev path).
+	// Strip ```json fences before any parse attempt — Pi --print mode
+	// returns raw text which may include markdown code fences.
+	stdout = stripCodeFence(stdout)
+
+	// Bare verdict shortcut (test/dev path + Pi backend).
 	var bare TriageVerdict
 	if err := json.Unmarshal(stdout, &bare); err == nil && len(bare.RubricScores) > 0 {
 		bare.TopicTags = normalizeTopicTags(bare.TopicTags)
