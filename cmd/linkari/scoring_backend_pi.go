@@ -105,6 +105,7 @@ func piEnv() []string {
 		}
 		filtered = append(filtered, kv)
 	}
-	filtered = append(filtered, "HOME="+os.TempDir())
+	// Keep real HOME so pi can find ~/.config/pi/agent/auth.json.
+	// Unlike Claude CLI, pi needs HOME for auth resolution.
 	return filtered
 }
