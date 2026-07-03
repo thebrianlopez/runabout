@@ -728,3 +728,69 @@ func parseScoreFromMarkdown(md string) (int, error) {
 	}
 	return strconv.Atoi(m[1])
 }
+
+// validProfileIDs is the canonical list of triage profiles for fixture validation.
+var validProfileIDs = map[string]bool{
+	"eng":     true,
+	"life":    true,
+	"travel":  true,
+	"fashion": true,
+	"music":   true,
+	"finance": true,
+	"dining":  true,
+}
+
+// LoadFixtures reads all golden fixture JSON files from dir.
+// Skips malformed files silently (does not fail on first error).
+// Returns an error only if dir has no valid fixture JSON files.
+func LoadFixtures(dir string) ([]Fixture, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read fixtures dir %s: %w", dir, err)
+	}
+	var out []Fixture
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		var f Fixture
+		if err := json.Unmarshal(b, &f); err != nil {
+			continue
+		}
+		if !isValidFixtureID(f.ID) {
+			continue
+		}
+		if err := ValidateFixture(f); err != nil {
+			continue
+		}
+		out = append(out, f)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("corpus_empty: no valid fixtures found  -  run eval capture first")
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// ValidateFixture checks that a fixture has all required golden fields.
+// Per TDD: Required fields in golden: score (non-zero), prompt_version (non-empty).
+func ValidateFixture(f Fixture) error {
+	if f.Golden.Score == 0 {
+		return fmt.Errorf("fixture_missing_golden: fixture %s: golden block missing or invalid (score=0)", f.ID)
+	}
+	if f.Golden.PromptVersion == "" {
+		return fmt.Errorf("fixture_missing_golden: fixture %s: golden block missing or invalid (prompt_version empty)", f.ID)
+	}
+	if !validProfileIDs[f.Profile] {
+		return fmt.Errorf("fixture_unknown_profile: fixture %s: unknown profile %q  -  check testdata/profiles/", f.ID, f.Profile)
+	}
+	return nil
+}
