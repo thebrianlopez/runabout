@@ -1,0 +1,19 @@
+{
+  "id": "finance-seed-v1",
+  "captured_at": "2026-07-03T04:38:25Z",
+  "source": "fish-exact",
+  "url": "https://money.example.com/portfolio-rebalancing",
+  "profile": "finance",
+  "content": "Portfolio rebalancing involves periodically adjusting asset allocation to maintain desired risk levels. Market fluctuations cause portfolios to drift from target allocations, requiring strategic buying and selling. A disciplined rebalancing approach helps control risk, maintain consistency with investment goals, and can improve long-term returns through disciplined contrarian actions.",
+  "golden": {
+    "score": 84,
+    "verdict": "finance profile content",
+    "raw_markdown": "## Score: 84/100\n\n## Verdict\nAcceptable finance content\n\n## Gaps\n- Could include more examples\n",
+    "gaps": [
+      "More examples would strengthen coverage"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "v1.0",
+    "prompt_hash": "abc123def456"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "life_bootstrap-wellness",
+  "captured_at": "2026-07-03T04:41:04.793455Z",
+  "source": "fish-exact",
+  "url": "https://example.com/wellness",
+  "profile": "life",
+  "content": "Wellness article about healthy living, stress management, and work-life balance.",
+  "golden": {
+    "score": 68,
+    "verdict": "generally useful",
+    "raw_markdown": "## Score: 68/100\n\n## Verdict\nGenerally useful wellness content",
+    "gaps": [
+      "specific actionable steps"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "abc123def456",
+    "prompt_hash": "sha256_prefix_2"
+  }
+}

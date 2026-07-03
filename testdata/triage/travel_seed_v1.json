@@ -1,0 +1,19 @@
+{
+  "id": "travel-seed-v1",
+  "captured_at": "2026-07-03T04:38:25Z",
+  "source": "fish-exact",
+  "url": "https://travel.example.com/tokyo-itinerary",
+  "profile": "travel",
+  "content": "Tokyo offers an incredible blend of ancient temples and cutting-edge technology. A typical two-week itinerary might include exploring the historic districts of Asakusa and Harajuku, visiting contemporary art museums, enjoying world-class cuisine from street food to Michelin-starred restaurants, and taking day trips to nearby Mount Fuji or the historic temples of Kyoto.",
+  "golden": {
+    "score": 78,
+    "verdict": "travel profile content",
+    "raw_markdown": "## Score: 78/100\n\n## Verdict\nAcceptable travel content\n\n## Gaps\n- Could include more examples\n",
+    "gaps": [
+      "More examples would strengthen coverage"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "v1.0",
+    "prompt_hash": "abc123def456"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "life-seed-v1",
+  "captured_at": "2026-07-03T04:38:25Z",
+  "source": "fish-exact",
+  "url": "https://wellness.example.com/meditation-basics",
+  "profile": "life",
+  "content": "Meditation is a practice of focusing attention inward to develop mindfulness and peace. Beginning practitioners often find it helpful to start with just five minutes daily in a quiet space. Techniques include focusing on breath, body scans, or mantra repetition. Regular practice has been shown to reduce stress, improve emotional regulation, and enhance overall wellbeing.",
+  "golden": {
+    "score": 75,
+    "verdict": "life profile content",
+    "raw_markdown": "## Score: 75/100\n\n## Verdict\nAcceptable life content\n\n## Gaps\n- Could include more examples\n",
+    "gaps": [
+      "More examples would strengthen coverage"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "v1.0",
+    "prompt_hash": "abc123def456"
+  }
+}

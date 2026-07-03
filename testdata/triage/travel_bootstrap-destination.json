@@ -1,0 +1,17 @@
+{
+  "id": "travel_bootstrap-destination",
+  "captured_at": "2026-07-03T04:41:04.793455Z",
+  "source": "fish-exact",
+  "url": "https://example.com/travel/bali",
+  "profile": "travel",
+  "content": "Travel guide for Bali covering attractions, accommodation, food, and transportation options.",
+  "golden": {
+    "score": 75,
+    "verdict": "comprehensive guide",
+    "raw_markdown": "## Score: 75/100\n\n## Verdict\nComprehensive travel guide",
+    "gaps": [],
+    "source_type": "eval-refresh",
+    "prompt_version": "abc123def456",
+    "prompt_hash": "sha256_prefix_3"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "dining_bootstrap-restaurants",
+  "captured_at": "2026-07-03T04:41:04.793455Z",
+  "source": "fish-exact",
+  "url": "https://example.com/dining/sf",
+  "profile": "dining",
+  "content": "San Francisco restaurant guide covering fine dining, casual, international cuisine, and food trends.",
+  "golden": {
+    "score": 72,
+    "verdict": "useful dining reference",
+    "raw_markdown": "## Score: 72/100\n\n## Verdict\nUseful dining reference",
+    "gaps": [
+      "reservations info"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "abc123def456",
+    "prompt_hash": "sha256_prefix_7"
+  }
+}

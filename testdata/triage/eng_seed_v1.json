@@ -1,0 +1,19 @@
+{
+  "id": "eng-seed-v1",
+  "captured_at": "2026-07-03T04:38:25Z",
+  "source": "fish-exact",
+  "url": "https://blog.example.com/rust-lifetime-analysis",
+  "profile": "eng",
+  "content": "Understanding Rust's lifetime system requires grasping the core concept that Rust prevents data races at compile time. Each reference has an associated lifetime parameter that indicates how long that reference is valid. The borrow checker enforces rules that guarantee memory safety without runtime overhead. This is the fundamental breakthrough that makes Rust suitable for systems programming.",
+  "golden": {
+    "score": 82,
+    "verdict": "eng profile content",
+    "raw_markdown": "## Score: 82/100\n\n## Verdict\nAcceptable eng content\n\n## Gaps\n- Could include more examples\n",
+    "gaps": [
+      "More examples would strengthen coverage"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "v1.0",
+    "prompt_hash": "abc123def456"
+  }
+}

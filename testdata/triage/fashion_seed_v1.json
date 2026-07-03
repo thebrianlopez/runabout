@@ -1,0 +1,19 @@
+{
+  "id": "fashion-seed-v1",
+  "captured_at": "2026-07-03T04:38:25Z",
+  "source": "fish-exact",
+  "url": "https://style.example.com/sustainable-wardrobe",
+  "profile": "fashion",
+  "content": "Sustainable fashion focuses on creating clothing with minimal environmental and social impact. Key strategies include using organic or recycled materials, supporting fair labor practices, and designing timeless pieces that transcend seasonal trends. Building a sustainable wardrobe means investing in quality basics, choosing neutral colors, and learning to mix and match pieces effectively.",
+  "golden": {
+    "score": 71,
+    "verdict": "fashion profile content",
+    "raw_markdown": "## Score: 71/100\n\n## Verdict\nAcceptable fashion content\n\n## Gaps\n- Could include more examples\n",
+    "gaps": [
+      "More examples would strengthen coverage"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "v1.0",
+    "prompt_hash": "abc123def456"
+  }
+}

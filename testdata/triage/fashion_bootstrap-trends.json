@@ -1,0 +1,20 @@
+{
+  "id": "fashion_bootstrap-trends",
+  "captured_at": "2026-07-03T04:41:04.793455Z",
+  "source": "fish-exact",
+  "url": "https://example.com/fashion/2026",
+  "profile": "fashion",
+  "content": "Fashion trends for 2026 including sustainable clothing, bold colors, and emerging designers.",
+  "golden": {
+    "score": 65,
+    "verdict": "topical content",
+    "raw_markdown": "## Score: 65/100\n\n## Verdict\nTopical fashion content",
+    "gaps": [
+      "price points",
+      "styling tips"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "abc123def456",
+    "prompt_hash": "sha256_prefix_4"
+  }
+}

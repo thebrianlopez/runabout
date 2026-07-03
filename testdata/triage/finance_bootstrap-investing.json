@@ -1,0 +1,19 @@
+{
+  "id": "finance_bootstrap-investing",
+  "captured_at": "2026-07-03T04:41:04.793455Z",
+  "source": "fish-exact",
+  "url": "https://example.com/finance/investing",
+  "profile": "finance",
+  "content": "Guide to personal investing including stocks, bonds, ETFs, and portfolio diversification strategies.",
+  "golden": {
+    "score": 78,
+    "verdict": "solid financial guidance",
+    "raw_markdown": "## Score: 78/100\n\n## Verdict\nSolid financial guidance",
+    "gaps": [
+      "tax implications"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "abc123def456",
+    "prompt_hash": "sha256_prefix_6"
+  }
+}

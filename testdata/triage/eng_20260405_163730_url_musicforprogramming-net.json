@@ -1,0 +1,14 @@
+{
+  "id": "20260405_163730_url_musicforprogramming-net",
+  "captured_at": "2026-04-06T12:30:20Z",
+  "source": "fish-reconstructed",
+  "url": "https://musicforprogramming.net/",
+  "profile": "eng",
+  "content": "# musicforprogramming.net\n\n| | |\n|---|---|\n| **Source** | https://musicforprogramming.net/ |\n| **Created** | 2026-04-05 16:37:36 |\n| **Domain** | musicforprogramming.net |\n\nFull content: [musicforprogramming-net.md](musicforprogramming-net.md)\n",
+  "golden": {
+    "score": 11,
+    "verdict": "A music curation website (77 episodes of ambient/instrumental mixes for programming focus) — zero technical content; useful for productivity but not aligned with ML Architect growth edges or stack.",
+    "raw_markdown": "## Verdict A music curation website (77 episodes of ambient/instrumental mixes for programming focus) — zero technical content; useful for productivity but not aligned with ML Architect growth edges or stack.\n\n## Score: 11/100\n\n| Component | Weight | Score | Rationale |\n| -----------|--------|-------|----------- |\n| Novelty | 0–20 | 2 | Well-known in programmer communities; no unexplored technical content. Nothing new relative to agent orchestration, LLMOps, or inference serving. |\n| Operational Relevance | 0–25 | 5 | Tangential lifestyle tool (focus management). Does not address Claude Code, Ollama, Terraform, EKS, observability, or active stack. |\n| Strategic Stack Fit | 0–25 | 0 | Zero alignment with agent orchestration, LLMOps, inference serving, observability, or context engineering. Passive consumption only. |\n| Learnability | 0–15 | 3 | No code, no mental models, no exercises. Passive listening; no architecture or systems transfer. |\n| Career Leverage | 0–15 | 1 | Does not build technical expertise, speaking credibility, or visible architectural work. Personal productivity tool only. |\n| **Total** | **0–100** | **11/100** |\n\n## Key Facts - 77 episodes, 1,340 tracks, ~114 hours of curated ambient/instrumental music\n- Recurring curators: Datassette, Michael Hicks, Abe Mangger (multiple episodes)\n- Minimal interaction: player controls, episode nav, RSS/podcast feeds\n- No infrastructure, no systems patterns, no observable technical content\n\n## Action Items **Skip.** Bookmark for personal productivity if useful (deep work focus), but no technical learning or architectural credibility here. Not aligned with ML Architect growth trajectory.",
+    "prompt_version": "v1.0"
+  }
+}
