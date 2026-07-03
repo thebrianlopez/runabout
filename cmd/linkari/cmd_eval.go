@@ -21,7 +21,7 @@ package main
 //   - `capture` subcommand that snapshots an existing scored workspace
 //     (reads README.md + _score.json that fish already produced)
 //   - `run` subcommand with a pluggable Scorer interface (default: identity
-//     scorer that just re-reads the golden — proves the harness loads cleanly)
+//     scorer that just re-reads the golden  -  proves the harness loads cleanly)
 //   - Self-test: `eval run` against captured fixtures must report zero failures
 //
 // M2 will register a real `triageScorer` implementation in cmd_triage.go.
@@ -46,7 +46,7 @@ import (
 // Inputs are everything the scorer needs to reproduce the call. Goldens are
 // what the *current* (fish) path produced when the fixture was captured.
 type Fixture struct {
-	// Stable identifier — derived from workspace slug at capture time.
+	// Stable identifier  -  derived from workspace slug at capture time.
 	ID string `json:"id"`
 
 	// Capture metadata (informational; not asserted).
@@ -68,7 +68,7 @@ type Fixture struct {
 type Golden struct {
 	Score   int    `json:"score"`
 	Verdict string `json:"verdict"`
-	// Raw triage markdown — preserved so prompt-format regressions are
+	// Raw triage markdown  -  preserved so prompt-format regressions are
 	// debuggable even if the score happens to land within tolerance.
 	RawMarkdown string `json:"raw_markdown"`
 	// EPIC-058 M8: extended golden fields for regression coverage.
@@ -78,7 +78,7 @@ type Golden struct {
 	PromptHash    string   `json:"prompt_hash,omitempty"` // EPIC-082 M4: sha256 prefix of rendered prompt
 	// Skip signals that the scorer could not produce a comparable score
 	// this run (parse failure after repair, malformed verdict, noise-gate
-	// hit). The eval runner treats Skip as neither pass nor fail — it is
+	// hit). The eval runner treats Skip as neither pass nor fail  -  it is
 	// reported separately and does not gate the run. Never persisted.
 	Skip bool `json:"-"`
 	// SkipReason is a short human-readable tag ("parse_failed",
@@ -92,7 +92,7 @@ type Golden struct {
 }
 
 // Scorer is the pluggable contract M2 will satisfy with the real Go triage
-// path. In M1 we ship `identityScorer` which just echoes the golden — that
+// path. In M1 we ship `identityScorer` which just echoes the golden  -  that
 // proves the harness loads, parses, and computes deltas correctly.
 type Scorer interface {
 	Score(fixture Fixture) (Golden, error)
@@ -112,7 +112,7 @@ func (identityScorer) Score(f Fixture) (Golden, error) { return f.Golden, nil }
 func evalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "eval",
-		Short: "Triage eval harness — capture fixtures and replay them (EPIC-043 M1)",
+		Short: "Triage eval harness  -  capture fixtures and replay them (EPIC-043 M1)",
 		Long: `Triage eval harness for the Linkari scoring pipeline.
 
 Two modes:
@@ -128,7 +128,7 @@ Two modes:
 Default fixtures directory (both subcommands), in priority order:
   1. explicit --out / --fixtures flag
   2. $LINKARI_EVAL_FIXTURES env var
-  3. ~/.config/linkari/fixtures   (canonical user corpus — auto-created on capture)
+  3. ~/.config/linkari/fixtures   (canonical user corpus  -  auto-created on capture)
   4. ./testdata/triage            (final fallback for clean checkouts / CI seed corpus)`,
 	}
 	cmd.AddCommand(evalCaptureCmd())
@@ -333,7 +333,7 @@ is bumped to the refresh timestamp.`,
 	cmd.Flags().StringVar(&fixturesDir, "fixtures", "", "fixtures directory (default: $LINKARI_EVAL_FIXTURES, then ~/.config/linkari/fixtures, then ./testdata/triage)")
 	cmd.Flags().StringVar(&profileFlag, "profile", "", "only refresh fixtures matching this profile id")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print old→new deltas, do not write")
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip interactive confirmation (destructive — refreshes the regression baseline)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip interactive confirmation (destructive  -  refreshes the regression baseline)")
 	return cmd
 }
 
@@ -415,7 +415,7 @@ func evalRunCmd() *cobra.Command {
 				fixtures = filterFixturesByProfile(fixtures, wantProfile)
 			}
 			if len(fixtures) == 0 {
-				return fmt.Errorf("no fixtures in %s — capture some first", fixturesDir)
+				return fmt.Errorf("no fixtures in %s  -  capture some first", fixturesDir)
 			}
 
 			scorer := registeredScorerFn()
@@ -446,7 +446,7 @@ func evalRunCmd() *cobra.Command {
 				if delta < 0 {
 					delta = -delta
 				}
-				// EPIC-082 M4: STALE — prompt version changed since golden was captured.
+				// EPIC-082 M4: STALE  -  prompt version changed since golden was captured.
 				// Non-gating: logged but does not increment failures.
 				if delta > tolerance && fix.Golden.PromptVersion != "" && got.PromptVersion != fix.Golden.PromptVersion {
 					fmt.Printf("STALE %s: score=%d golden=%d delta=±%d (prompt changed: %s→%s)\n",
@@ -489,7 +489,7 @@ func evalRunCmd() *cobra.Command {
 }
 
 // filterFixturesByProfile returns the subset of fixtures whose Profile
-// matches the given id. EPIC-044 M3 — used by `--profile` and
+// matches the given id. EPIC-044 M3  -  used by `--profile` and
 // `--changed-only` to scope the eval gate per profile.
 func filterFixturesByProfile(fixtures []Fixture, profileID string) []Fixture {
 	if profileID == "" {
@@ -585,7 +585,7 @@ func captureFromWorkspace(workspace, profileOverride, urlOverride string) (Fixtu
 
 // readScoredContent returns the content the fish scorer piped into Haiku.
 //
-// Preferred source: `_haiku_input.txt` — fish dumps this verbatim immediately
+// Preferred source: `_haiku_input.txt`  -  fish dumps this verbatim immediately
 // before the Haiku call (added by fish-config-agent 2026-04-06 for EPIC-043
 // M1). Returning these bytes gives M2 byte-exact parity.
 //
@@ -644,7 +644,7 @@ func loadFixtures(dir string) ([]Fixture, error) {
 		}
 		var f Fixture
 		if err := json.Unmarshal(b, &f); err != nil {
-			// M6b: don't hard-fail on one bad file — log and skip.
+			// M6b: don't hard-fail on one bad file  -  log and skip.
 			fmt.Fprintf(os.Stderr, "eval: skip %s: parse: %v\n", name, err)
 			continue
 		}
@@ -691,7 +691,7 @@ func defaultFixturesDir() string {
 }
 
 // defaultFixturesDirForWrite is the write-side resolver for `eval capture`.
-// Same precedence but never falls back to testdata silently — capture should
+// Same precedence but never falls back to testdata silently  -  capture should
 // always land in the canonical user dir unless explicitly overridden.
 func defaultFixturesDirForWrite() string {
 	if v := os.Getenv("LINKARI_EVAL_FIXTURES"); v != "" {
@@ -714,7 +714,7 @@ var registeredScorerFn = func() Scorer {
 // scoreLineRE extracts the score from one of two forms:
 //
 //	## Score: NN/100               (normal triage output)
-//	**Score: NN/100 — Skip ...**   (noise-gate output from the profile templates)
+//	**Score: NN/100  -  Skip ...**   (noise-gate output from the profile templates)
 //
 // Both forms appear in the M1 fixture corpus and in live Haiku responses,
 // so the parser must accept either. Exposed (lowercase but package-internal)
