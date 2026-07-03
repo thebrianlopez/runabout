@@ -1,0 +1,19 @@
+{
+  "id": "music-seed-v1",
+  "captured_at": "2026-07-03T04:38:25Z",
+  "source": "fish-exact",
+  "url": "https://music.example.com/jazz-history",
+  "profile": "music",
+  "content": "Jazz emerged in early 20th century New Orleans from African American communities, blending blues, ragtime, and European harmonic traditions. Key figures like Louis Armstrong, Duke Ellington, and Charlie Parker revolutionized the art form with innovations in improvisation and arrangement. Jazz remained central to American culture through bebop, cool jazz, and free jazz movements.",
+  "golden": {
+    "score": 79,
+    "verdict": "music profile content",
+    "raw_markdown": "## Score: 79/100\n\n## Verdict\nAcceptable music content\n\n## Gaps\n- Could include more examples\n",
+    "gaps": [
+      "More examples would strengthen coverage"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "v1.0",
+    "prompt_hash": "abc123def456"
+  }
+}

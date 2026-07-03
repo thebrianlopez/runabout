@@ -1,0 +1,19 @@
+{
+  "id": "eng_bootstrap-testdata",
+  "captured_at": "2026-07-03T04:41:04.793455Z",
+  "source": "fish-exact",
+  "url": "https://example.com/engineering",
+  "profile": "eng",
+  "content": "Engineering article about testing frameworks and best practices for software development.",
+  "golden": {
+    "score": 72,
+    "verdict": "useful reference",
+    "raw_markdown": "## Score: 72/100\n\n## Verdict\nUseful reference for engineering practices",
+    "gaps": [
+      "implementation details"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "abc123def456",
+    "prompt_hash": "sha256_prefix_1"
+  }
+}

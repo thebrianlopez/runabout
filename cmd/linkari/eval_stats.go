@@ -25,7 +25,7 @@ type StatsResult struct {
 // RunEvalStats counts fixtures per profile in dir and identifies missing coverage.
 // All 7 registered profiles appear in Profiles, even if count is 0.
 func RunEvalStats(dir string) (*StatsResult, error) {
-	entries, err := loadFixtures(dir)
+	entries, err := LoadFixtures(dir)
 	if err != nil {
 		return nil, fmt.Errorf("stats_no_fixtures: %w", err)
 	}

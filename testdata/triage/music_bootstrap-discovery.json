@@ -1,0 +1,19 @@
+{
+  "id": "music_bootstrap-discovery",
+  "captured_at": "2026-07-03T04:41:04.793455Z",
+  "source": "fish-exact",
+  "url": "https://example.com/music/indie",
+  "profile": "music",
+  "content": "Indie music discovery guide featuring emerging artists, festivals, and streaming playlists.",
+  "golden": {
+    "score": 70,
+    "verdict": "good discovery resource",
+    "raw_markdown": "## Score: 70/100\n\n## Verdict\nGood music discovery resource",
+    "gaps": [
+      "artist backstory"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "abc123def456",
+    "prompt_hash": "sha256_prefix_5"
+  }
+}

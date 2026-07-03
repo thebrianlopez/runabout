@@ -1,0 +1,19 @@
+{
+  "id": "dining-seed-v1",
+  "captured_at": "2026-07-03T04:38:25Z",
+  "source": "fish-exact",
+  "url": "https://food.example.com/michelin-star-review",
+  "profile": "dining",
+  "content": "Michelin-starred restaurants represent the pinnacle of culinary achievement, with ratings indicating exceptional quality and creativity. A three-star restaurant offers extraordinary cuisine worthy of a special journey, while two stars indicate exceptional cooking and one star denotes very good cooking in its category. Dining experiences at these establishments showcase innovative techniques and premium ingredients.",
+  "golden": {
+    "score": 73,
+    "verdict": "dining profile content",
+    "raw_markdown": "## Score: 73/100\n\n## Verdict\nAcceptable dining content\n\n## Gaps\n- Could include more examples\n",
+    "gaps": [
+      "More examples would strengthen coverage"
+    ],
+    "source_type": "eval-refresh",
+    "prompt_version": "v1.0",
+    "prompt_hash": "abc123def456"
+  }
+}
