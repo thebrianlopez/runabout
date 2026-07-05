@@ -172,6 +172,17 @@ jobs:
       - name: Download and organize APK artifacts
         run: |
           mkdir -p /tmp/apk-staging /tmp/apk-repo/aarch64 /tmp/apk-repo/x86_64
+
+          # Preserve packages published by sibling repos (for example
+          # thebrianlopez/alpine-packages: lit, pdfium, whisper-cli,
+          # whisper-model-large-v3-turbo). APKINDEX must be generated from
+          # the full repo contents, not only this release's runabout APKs.
+          # Exclude indexes because they are regenerated and re-signed below.
+          aws s3 sync "s3://${{ secrets.APK_S3_BUCKET }}/alpine/" /tmp/apk-repo/ \
+            --exclude "*/APKINDEX.tar.gz" \
+            --exclude "APKINDEX.tar.gz" \
+            || true
+
           gh release download "${GITHUB_REF_NAME}" \
             --pattern "runabout_*.apk" \
             --dir /tmp/apk-staging
