@@ -180,8 +180,7 @@ jobs:
           # Exclude indexes because they are regenerated and re-signed below.
           aws s3 sync "s3://${{ secrets.APK_S3_BUCKET }}/alpine/" /tmp/apk-repo/ \
             --exclude "*/APKINDEX.tar.gz" \
-            --exclude "APKINDEX.tar.gz" \
-            || true
+            --exclude "APKINDEX.tar.gz"
 
           gh release download "${GITHUB_REF_NAME}" \
             --pattern "runabout_*.apk" \
