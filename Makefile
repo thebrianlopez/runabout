@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval effiscore castex chain-eval
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := bmux fetchpage protonexport linkari linkari-labeler plaid-service wasend workctl ghwatch ts-go jira-poller runway
+SEPARATE := bmux protonexport linkari linkari-labeler plaid-service wasend workctl ghwatch ts-go jira-poller runway
 
 ALL := $(CORE) $(SEPARATE)
 
@@ -19,7 +19,7 @@ LIMA_VM        ?= lima-gvisor
 # containerd socket at {{.Dir}}/containerd.sock → ~/.lima/<name>/containerd.sock.
 LIMA_SOCKET    ?= $(HOME)/.lima/$(LIMA_VM)/containerd.sock
 
-.PHONY: all core build clean install test fmt fmt-check imports imports-check vet staticcheck vulncheck lint test-fish manifest-audit test-ts-go test-jira-poller linkari-serve linkari-serve-local linkari-logs-local setup-fetchpage linkari-labeler install-linkari-labeler \
+.PHONY: all core build clean install test fmt fmt-check imports imports-check vet staticcheck vulncheck lint test-fish manifest-audit test-ts-go test-jira-poller linkari-serve linkari-serve-local linkari-logs-local linkari-labeler install-linkari-labeler \
 	container-build container-push lima-start lima-test \
 	install-bmux-completions install-linkari-completions \
 	jira-poller install-jira-poller run-jira-poller lint-jira-poller \
@@ -127,19 +127,6 @@ $(addprefix install-,$(CORE)):
 	@go install $(LDFLAGS) ./cmd/$(subst install-,,$@)
 
 # --- Separate-module tools ---
-
-setup-fetchpage:
-	@python3 -c "import cloakbrowser" 2>/dev/null || python3 -m pip install cloakbrowser -q
-
-fetchpage: setup-fetchpage
-	@echo "Installing fetchpage script → bin/fetchpage"
-	@cp cmd/fetchpage/fetchpage.py bin/fetchpage
-	@chmod +x bin/fetchpage
-
-install-fetchpage: setup-fetchpage
-	@echo "Installing fetchpage → $(INSTALL_DIR)/fetchpage"
-	@cp cmd/fetchpage/fetchpage.py $(INSTALL_DIR)/fetchpage
-	@chmod +x $(INSTALL_DIR)/fetchpage
 
 bmux:
 	@echo "Building bmux..."
