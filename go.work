@@ -3,7 +3,6 @@ go 1.26.1
 use (
 	.
 	./cmd/bmux
-	./cmd/fetchpage
 	./cmd/jira-poller
 	./cmd/linkari
 	./cmd/linkari-labeler

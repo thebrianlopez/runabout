@@ -265,9 +265,6 @@ builds:
       - -X main.commit={{.Commit}}
       - -X main.date={{.Date}}
 
-  # fetchpage is a Python script (cmd/fetchpage/fetchpage.py)  -  not a Go binary.
-  # It is excluded from goreleaser; install via: cp cmd/fetchpage/fetchpage.py ~/go/bin/fetchpage
-
 archives:
   # Combined archive for all CGO_ENABLED=0 tools, darwin + linux
   - id: runabout
