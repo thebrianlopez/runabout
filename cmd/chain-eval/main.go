@@ -25,6 +25,38 @@ func main() {
 	}
 }
 
+// resolvePromptsDir returns the directory that should contain command_chain.md.
+// Resolution order (first existing wins), per the DocsInfra F4 two-path
+// discovery contract (canonical core/ + docs/ split, no hardcoded refs):
+//  1. $CHAIN_PROMPTS_DIR  - explicit override (used by CI: docs-core/prompts)
+//  2. $ORG_PATH/core/prompts - canonical post core/state split
+//  3. ~/core/prompts      - default Alpine/Termux topology (core/ ~ sibling)
+//  4. docs-core/prompts   - legacy CI subtree clone layout
+//  5. docs/core/prompts   - legacy pre-split subtree layout
+//
+// The final candidate is returned even when nothing resolves so callers emit a
+// stable, actionable path in their diagnostic. Set CHAIN_PROMPTS_DIR to skip
+// discovery entirely.
+func resolvePromptsDir() string {
+	if d := os.Getenv("CHAIN_PROMPTS_DIR"); d != "" {
+		return d
+	}
+	var candidates []string
+	if org := os.Getenv("ORG_PATH"); org != "" {
+		candidates = append(candidates, filepath.Join(org, "core", "prompts"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, "core", "prompts"))
+	}
+	candidates = append(candidates, "docs-core/prompts", "docs/core/prompts")
+	for _, c := range candidates {
+		if _, err := os.Stat(filepath.Join(c, "command_chain.md")); err == nil {
+			return c
+		}
+	}
+	return candidates[len(candidates)-1]
+}
+
 func rootCmd() *cobra.Command {
 	var (
 		flagAll      bool
@@ -93,14 +125,11 @@ func run(ctx context.Context, cfg runConfig) int {
 		fmt.Fprintln(os.Stderr, "chain-eval: WARN: HUGGINGFACE_API_KEY not set - judge disabled, deterministic scoring only")
 	}
 
-	promptsDir := os.Getenv("CHAIN_PROMPTS_DIR")
-	if promptsDir == "" {
-		promptsDir = "docs/core/prompts"
-	}
+	promptsDir := resolvePromptsDir()
 	promptPath := filepath.Join(promptsDir, "command_chain.md")
 	promptBytes, err := os.ReadFile(promptPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "chain-eval: prompt file not found: %s\n", promptPath)
+		fmt.Fprintf(os.Stderr, "chain-eval: ERROR: prompt file not found: %s (set CHAIN_PROMPTS_DIR to the dir containing command_chain.md)\n", promptPath)
 		return 2
 	}
 	prompt := string(promptBytes)
@@ -472,13 +501,10 @@ func dryRun(cfg runConfig) int {
 	if fixturesDir == "" {
 		fixturesDir = "cmd/chain-eval/fixtures"
 	}
-	promptsDir := os.Getenv("CHAIN_PROMPTS_DIR")
-	if promptsDir == "" {
-		promptsDir = "docs/core/prompts"
-	}
+	promptsDir := resolvePromptsDir()
 	promptPath := filepath.Join(promptsDir, "command_chain.md")
 	if _, err := os.Stat(promptPath); err != nil {
-		fmt.Fprintf(os.Stderr, "chain-eval: WARN: prompt file not found: %s\n", promptPath)
+		fmt.Fprintf(os.Stderr, "chain-eval: WARN: prompt file not found: %s (set CHAIN_PROMPTS_DIR to the dir containing command_chain.md)\n", promptPath)
 	} else {
 		fmt.Printf("chain-eval: prompt OK: %s\n", promptPath)
 	}
