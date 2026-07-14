@@ -1,0 +1,99 @@
+# nfpm.termux.yaml - standalone packaging config for Termux-native runabout
+# Intended for a separate Termux repo publish job, not GitHub Release assets.
+# Build inputs should be produced first (for example via goreleaser build --snapshot)
+# and staged under dist/bin/ before invoking nfpm.
+
+name: runabout
+version: ${VERSION}
+arch: arm64
+platform: linux
+maintainer: Brian Lopez <noreply@thebrianlopez.dev>
+description: Personal developer tools - Termux-native package lane
+homepage: https://github.com/thebrianlopez/runabout
+license: MIT
+
+contents:
+  - src: dist/bin/mdq
+    dst: /data/data/com.termux/files/usr/bin/mdq
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/perfgate
+    dst: /data/data/com.termux/files/usr/bin/perfgate
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/shellprof
+    dst: /data/data/com.termux/files/usr/bin/shellprof
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/hookval
+    dst: /data/data/com.termux/files/usr/bin/hookval
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/effiscore
+    dst: /data/data/com.termux/files/usr/bin/effiscore
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/castex
+    dst: /data/data/com.termux/files/usr/bin/castex
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/chain-eval
+    dst: /data/data/com.termux/files/usr/bin/chain-eval
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/bmux
+    dst: /data/data/com.termux/files/usr/bin/bmux
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/protonexport
+    dst: /data/data/com.termux/files/usr/bin/protonexport
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/linkari
+    dst: /data/data/com.termux/files/usr/bin/linkari
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/linkari-labeler
+    dst: /data/data/com.termux/files/usr/bin/linkari-labeler
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/plaid-service
+    dst: /data/data/com.termux/files/usr/bin/plaid-service
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/wasend
+    dst: /data/data/com.termux/files/usr/bin/wasend
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/workctl
+    dst: /data/data/com.termux/files/usr/bin/workctl
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/ghwatch
+    dst: /data/data/com.termux/files/usr/bin/ghwatch
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/jira-poller
+    dst: /data/data/com.termux/files/usr/bin/jira-poller
+    file_info:
+      mode: 0755
+
+  - src: dist/bin/runway
+    dst: /data/data/com.termux/files/usr/bin/runway
+    file_info:
+      mode: 0755
