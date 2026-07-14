@@ -55,11 +55,11 @@ else if test -f $TERMUX_NFPM
     ct_fail CT-4 "Termux package still contains /usr/local paths"
 end
 
-# CT-5: arch is arm64 for the Termux package lane
-if test -f $TERMUX_NFPM; and grep -q '^arch: arm64$' $TERMUX_NFPM
-    ct_pass CT-5 "Termux package arch is arm64"
+# CT-5: arch is aarch64 for the Termux package lane
+if test -f $TERMUX_NFPM; and grep -q '^arch: aarch64$' $TERMUX_NFPM
+    ct_pass CT-5 "Termux package arch is aarch64"
 else if test -f $TERMUX_NFPM
-    ct_fail CT-5 "Termux package missing arch: arm64"
+    ct_fail CT-5 "Termux package missing arch: aarch64"
 end
 
 # CT-6: package includes the runabout CLI suite binaries (spot check)
