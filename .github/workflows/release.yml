@@ -356,3 +356,123 @@ jobs:
             apt-get install -y -q runabout
             mdq --version
           '
+
+  termux-repo:
+    name: Build and publish Termux repository
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache: true
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: runabout-termux-${{ github.ref_name }}
+          aws-region: us-east-1
+
+      - name: Fetch Termux signing key
+        run: |
+          aws secretsmanager get-secret-value \
+            --secret-id "${{ secrets.TERMUX_GPG_KEY_NAME }}" \
+            --query SecretString \
+            --output text > /tmp/termux-signing.key
+          gpg --batch --import /tmp/termux-signing.key
+
+      - name: Install repo tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev apt-utils
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.33.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Download Linux ARM64 release archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/termux-repo/dist/bin /tmp/termux-repo/pool/main/r/runabout
+          gh release download "${GITHUB_REF_NAME}" --pattern "runabout_*_linux_arm64.tar.gz" --dir /tmp/termux-repo
+          tar -xzf /tmp/termux-repo/runabout_*_linux_arm64.tar.gz -C /tmp/termux-repo/dist/bin
+          chmod +x /tmp/termux-repo/dist/bin/*
+
+      - name: Build Termux .deb package
+        working-directory: /tmp/termux-repo
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          export VERSION
+          nfpm package -f "$GITHUB_WORKSPACE/nfpm.termux.yaml" -p deb -t /tmp/termux-repo/pool
+          mv /tmp/termux-repo/pool/*.deb /tmp/termux-repo/pool/main/r/runabout/
+
+      - name: Generate Termux repository metadata
+        run: |
+          mkdir -p /tmp/termux-repo/dists/stable/main/binary-aarch64
+          cd /tmp/termux-repo
+          dpkg-scanpackages -a aarch64 pool/main/r/runabout /dev/null > dists/stable/main/binary-aarch64/Packages
+          gzip -k -f dists/stable/main/binary-aarch64/Packages
+          apt-ftparchive release dists/stable \
+            -o APT::FTPArchive::Release::Origin=runabout \
+            -o APT::FTPArchive::Release::Label=runabout \
+            -o APT::FTPArchive::Release::Suite=stable \
+            -o APT::FTPArchive::Release::Codename=stable \
+            -o APT::FTPArchive::Release::Components=main \
+            -o APT::FTPArchive::Release::Architectures="aarch64" \
+            > dists/stable/Release
+          gpg --batch --yes --clearsign --output dists/stable/InRelease dists/stable/Release
+
+      - name: Export Termux public key
+        run: |
+          gpg --armor --export > /tmp/termux-repo/key.gpg
+
+      - name: Sync Termux repo to S3
+        run: |
+          aws s3 sync /tmp/termux-repo/pool/ s3://${{ secrets.APK_S3_BUCKET }}/termux/pool/ --cache-control "max-age=86400"
+          aws s3 sync /tmp/termux-repo/dists/ s3://${{ secrets.APK_S3_BUCKET }}/termux/dists/ --cache-control "max-age=300"
+          aws s3 cp /tmp/termux-repo/key.gpg s3://${{ secrets.APK_S3_BUCKET }}/termux/key.gpg --cache-control "max-age=300"
+
+      - name: Invalidate Termux CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --paths "/termux/dists/*" "/termux/key.gpg"
+
+  termux-smoke-test:
+    name: Smoke test Termux install path
+    needs: termux-repo
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: runabout-termux-smoke-${{ github.ref_name }}
+          aws-region: us-east-1
+
+      - name: Download published Termux package from S3
+        run: |
+          mkdir -p /tmp/termux-smoke
+          aws s3 cp s3://${{ secrets.APK_S3_BUCKET }}/termux/pool/main/r/runabout/ /tmp/termux-smoke/ --recursive
+          test -n "$(ls /tmp/termux-smoke/*.deb 2>/dev/null | head -1)"
+
+      - name: Validate install path in a fake Termux root
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev
+          PKG=$(ls /tmp/termux-smoke/*.deb | head -1)
+          ROOT=/tmp/termux-root
+          mkdir -p "$ROOT/data/data/com.termux/files/usr"
+          sudo dpkg --root="$ROOT" -i "$PKG"
+          test -x "$ROOT/data/data/com.termux/files/usr/bin/mdq"
+          test -x "$ROOT/data/data/com.termux/files/usr/bin/runway"

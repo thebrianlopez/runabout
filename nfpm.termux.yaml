@@ -5,7 +5,7 @@
 
 name: runabout
 version: ${VERSION}
-arch: arm64
+arch: aarch64
 platform: linux
 maintainer: Brian Lopez <noreply@thebrianlopez.dev>
 description: Personal developer tools - Termux-native package lane
