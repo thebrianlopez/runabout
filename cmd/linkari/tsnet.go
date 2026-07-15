@@ -42,10 +42,11 @@ func realIPFromContext(ctx context.Context, remoteAddr string) string {
 
 // TsnetConfig holds the configuration for the embedded Tailscale node.
 type TsnetConfig struct {
-	Hostname string
-	StateDir string
-	AuthKey  string
-	Debug    bool
+	Hostname     string
+	StateDir     string
+	AuthKey      string
+	ClientSecret string
+	Debug        bool
 }
 
 // TsnetServer wraps tsnet.Server lifecycle for linkari.
@@ -65,9 +66,11 @@ func NewTsnetServer(cfg TsnetConfig) *TsnetServer {
 // and returns a Funnel net.Listener on :443.
 func (t *TsnetServer) Start(ctx context.Context) (net.Listener, error) {
 	t.ts = &tsnet.Server{
-		Hostname: t.cfg.Hostname,
-		Dir:      t.cfg.StateDir,
-		AuthKey:  t.cfg.AuthKey,
+		Hostname:     t.cfg.Hostname,
+		Dir:          t.cfg.StateDir,
+		AuthKey:      t.cfg.AuthKey,
+		ClientSecret: t.cfg.ClientSecret,
+		Ephemeral:    t.cfg.ClientSecret != "",
 		// UserLogf surfaces auth URLs and status messages to the user.
 		UserLogf: func(format string, args ...any) {
 			slog.Info("tsnet", "event_type", "tsnet_event", "msg", fmt.Sprintf(format, args...))
