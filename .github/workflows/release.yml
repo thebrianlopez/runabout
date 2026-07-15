@@ -481,4 +481,5 @@ jobs:
 
       - name: Validate install path in a fake Termux root
         run: |
-          sudo timeout 10m bash scripts/termux-smoke.sh /tmp/termux-smoke /tmp/termux-smoke/*.deb /tmp/termux-root /tmp/termux-smoke/key.gpg
+          PKG="$(ls -t /tmp/termux-smoke/*.deb | head -1)"
+          sudo timeout 10m bash scripts/termux-smoke.sh /tmp/termux-smoke "$PKG" /tmp/termux-root /tmp/termux-smoke/key.gpg
