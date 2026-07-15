@@ -342,7 +342,6 @@ jobs:
     name: Smoke test APT install (debian:bookworm)
     needs: apt-repo
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Smoke test apt install runabout
         run: |
@@ -361,6 +360,10 @@ jobs:
     name: Build and publish Termux repository
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: termux-repo-${{ github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
@@ -382,11 +385,13 @@ jobs:
 
       - name: Fetch Termux signing key
         run: |
+          timeout 10m bash -euo pipefail <<'EOF'
           aws secretsmanager get-secret-value \
             --secret-id "${{ secrets.TERMUX_GPG_KEY_NAME }}" \
             --query SecretString \
             --output text > /tmp/termux-signing.key
           gpg --batch --import /tmp/termux-signing.key
+          EOF
 
       - name: Install repo tools
         run: |
@@ -407,13 +412,16 @@ jobs:
       - name: Build Termux .deb package
         working-directory: /tmp/termux-repo
         run: |
+          timeout 10m bash -euo pipefail <<'EOF'
           VERSION="${GITHUB_REF_NAME#v}"
           export VERSION
           nfpm package -f "$GITHUB_WORKSPACE/nfpm.termux.yaml" -p deb -t /tmp/termux-repo/pool
           mv /tmp/termux-repo/pool/*.deb /tmp/termux-repo/pool/main/r/runabout/
+          EOF
 
       - name: Generate Termux repository metadata
         run: |
+          timeout 10m bash -euo pipefail <<'EOF'
           mkdir -p /tmp/termux-repo/dists/stable/main/binary-aarch64
           cd /tmp/termux-repo
           dpkg-scanpackages -a aarch64 pool/main/r/runabout /dev/null > dists/stable/main/binary-aarch64/Packages
@@ -427,32 +435,35 @@ jobs:
             -o APT::FTPArchive::Release::Architectures="aarch64" \
             > dists/stable/Release
           gpg --batch --yes --clearsign --output dists/stable/InRelease dists/stable/Release
+          EOF
 
       - name: Export Termux public key
         run: |
+          timeout 10m bash -euo pipefail <<'EOF'
           gpg --armor --export > /tmp/termux-repo/key.gpg
+          EOF
 
       - name: Sync Termux repo to S3
         run: |
+          timeout 10m bash -euo pipefail <<'EOF'
           aws s3 sync /tmp/termux-repo/pool/ s3://${{ secrets.APK_S3_BUCKET }}/termux/pool/ --cache-control "max-age=86400"
           aws s3 sync /tmp/termux-repo/dists/ s3://${{ secrets.APK_S3_BUCKET }}/termux/dists/ --cache-control "max-age=300"
           aws s3 cp /tmp/termux-repo/key.gpg s3://${{ secrets.APK_S3_BUCKET }}/termux/key.gpg --cache-control "max-age=300"
-
-      - name: Invalidate Termux CloudFront cache
-        run: |
           aws cloudfront create-invalidation \
             --distribution-id "${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" \
             --paths "/termux/dists/*" "/termux/key.gpg"
+          EOF
 
   termux-smoke-test:
     name: Smoke test Termux install path
     needs: termux-repo
     runs-on: ubuntu-latest
-    continue-on-error: true
+    timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v4
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -460,19 +471,14 @@ jobs:
           role-session-name: runabout-termux-smoke-${{ github.ref_name }}
           aws-region: us-east-1
 
-      - name: Download published Termux package from S3
+      - name: Download published Termux package and key from S3
         run: |
           mkdir -p /tmp/termux-smoke
           aws s3 cp s3://${{ secrets.APK_S3_BUCKET }}/termux/pool/main/r/runabout/ /tmp/termux-smoke/ --recursive
+          aws s3 cp s3://${{ secrets.APK_S3_BUCKET }}/termux/key.gpg /tmp/termux-smoke/key.gpg
           test -n "$(ls /tmp/termux-smoke/*.deb 2>/dev/null | head -1)"
+          test -s /tmp/termux-smoke/key.gpg
 
       - name: Validate install path in a fake Termux root
         run: |
-          sudo apt-get update
-          sudo apt-get install -y dpkg-dev
-          PKG=$(ls /tmp/termux-smoke/*.deb | head -1)
-          ROOT=/tmp/termux-root
-          mkdir -p "$ROOT/data/data/com.termux/files/usr"
-          sudo dpkg --root="$ROOT" -i "$PKG"
-          test -x "$ROOT/data/data/com.termux/files/usr/bin/mdq"
-          test -x "$ROOT/data/data/com.termux/files/usr/bin/runway"
+          timeout 10m bash scripts/termux-smoke.sh /tmp/termux-smoke /tmp/termux-smoke/*.deb /tmp/termux-root /tmp/termux-smoke/key.gpg

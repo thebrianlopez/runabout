@@ -7,6 +7,8 @@
 set -l SCRIPT_DIR (realpath (dirname (status --current-filename)))
 set -l REPO_ROOT (realpath $SCRIPT_DIR/../..)
 set -l TERMUX_NFPM $REPO_ROOT/nfpm.termux.yaml
+set -l TERMUX_SMOKE_SCRIPT $REPO_ROOT/scripts/termux-smoke.sh
+set -l RELEASE_WORKFLOW $REPO_ROOT/.github/workflows/release.yml
 
 set -g pass_count 0
 set -g fail_count 0
@@ -74,6 +76,20 @@ if test (count $missing_bins) -eq 0
     ct_pass CT-6 "Termux package references the full CLI suite"
 else
     ct_fail CT-6 "Missing binaries in Termux package: $missing_bins"
+end
+
+# CT-7: smoke harness exists and exercises repo add/update/install/bin execution
+if test -f $TERMUX_SMOKE_SCRIPT; and grep -qF 'apt-get "${apt_opts[@]}" update' $TERMUX_SMOKE_SCRIPT; and grep -qF 'apt-get "${apt_opts[@]}" -y install "$pkg_name"' $TERMUX_SMOKE_SCRIPT; and grep -qF '"$installed_bin" --version' $TERMUX_SMOKE_SCRIPT
+    ct_pass CT-7 "Termux smoke harness performs add/update/install/binary checks"
+else if test -f $TERMUX_SMOKE_SCRIPT
+    ct_fail CT-7 "Termux smoke harness missing repo/install/binary execution checks"
+end
+
+# CT-8: release workflow publishes and smokes the Termux lane without masking failures
+if test -f $RELEASE_WORKFLOW; and grep -qF 'termux-repo:' $RELEASE_WORKFLOW; and grep -qF 'concurrency:' $RELEASE_WORKFLOW; and grep -qF 'timeout-minutes: 30' $RELEASE_WORKFLOW; and grep -qF 'termux-smoke-test:' $RELEASE_WORKFLOW; and grep -qF 'bash scripts/termux-smoke.sh /tmp/termux-smoke /tmp/termux-smoke/*.deb /tmp/termux-root /tmp/termux-smoke/key.gpg' $RELEASE_WORKFLOW; and not grep -qF 'continue-on-error: true' $RELEASE_WORKFLOW
+    ct_pass CT-8 "Release workflow includes hardened Termux publish + smoke jobs"
+else if test -f $RELEASE_WORKFLOW
+    ct_fail CT-8 "Release workflow is missing hardened Termux publish/smoke coverage"
 end
 
 # Summary
