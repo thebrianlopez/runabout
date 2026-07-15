@@ -86,7 +86,7 @@ else if test -f $TERMUX_SMOKE_SCRIPT
 end
 
 # CT-8: release workflow publishes and smokes the Termux lane without masking failures
-if test -f $RELEASE_WORKFLOW; and grep -qF 'termux-repo:' $RELEASE_WORKFLOW; and grep -qF 'concurrency:' $RELEASE_WORKFLOW; and grep -qF 'timeout-minutes: 30' $RELEASE_WORKFLOW; and grep -qF 'termux-smoke-test:' $RELEASE_WORKFLOW; and grep -qF 'PKG="$(ls -t /tmp/termux-smoke/*.deb | head -1)"' $RELEASE_WORKFLOW; and grep -qF 'sudo timeout 10m bash scripts/termux-smoke.sh /tmp/termux-smoke "$PKG" /tmp/termux-root /tmp/termux-smoke/key.gpg' $RELEASE_WORKFLOW; and not grep -qF 'continue-on-error: true' $RELEASE_WORKFLOW
+if test -f $RELEASE_WORKFLOW; and grep -qF 'termux-repo:' $RELEASE_WORKFLOW; and grep -qF 'concurrency:' $RELEASE_WORKFLOW; and grep -qF 'timeout-minutes: 30' $RELEASE_WORKFLOW; and grep -qF 'termux-smoke-test:' $RELEASE_WORKFLOW; and grep -qF 'runs-on: ubuntu-24.04-arm' $RELEASE_WORKFLOW; and grep -qF 'PKG="$(ls -t /tmp/termux-smoke/*.deb | head -1)"' $RELEASE_WORKFLOW; and grep -qF 'sudo timeout 10m bash scripts/termux-smoke.sh /tmp/termux-smoke "$PKG" /tmp/termux-root /tmp/termux-smoke/key.gpg' $RELEASE_WORKFLOW; and not grep -qF 'continue-on-error: true' $RELEASE_WORKFLOW
     ct_pass CT-8 "Release workflow includes hardened Termux publish + smoke jobs"
 else if test -f $RELEASE_WORKFLOW
     ct_fail CT-8 "Release workflow is missing hardened Termux publish/smoke coverage"

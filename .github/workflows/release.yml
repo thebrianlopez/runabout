@@ -457,7 +457,7 @@ jobs:
   termux-smoke-test:
     name: Smoke test Termux install path
     needs: termux-repo
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     permissions:
       contents: read
