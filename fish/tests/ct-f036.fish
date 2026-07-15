@@ -79,7 +79,7 @@ else
 end
 
 # CT-7: smoke harness exists and exercises repo add/update/install/bin execution
-if test -f $TERMUX_SMOKE_SCRIPT; and grep -qF 'apt-get "${apt_opts[@]}" update' $TERMUX_SMOKE_SCRIPT; and grep -qF 'apt-get "${apt_opts[@]}" -y install "$pkg_name"' $TERMUX_SMOKE_SCRIPT; and grep -qF '"$installed_bin" --version' $TERMUX_SMOKE_SCRIPT
+if test -f $TERMUX_SMOKE_SCRIPT; and grep -qF 'apt-get "${apt_opts[@]}" update' $TERMUX_SMOKE_SCRIPT; and grep -qF 'apt-get "${apt_opts[@]}" -y install "$pkg_name"' $TERMUX_SMOKE_SCRIPT; and grep -qF 'DPkg::Options::="--force-architecture"' $TERMUX_SMOKE_SCRIPT; and grep -qF '"$installed_bin" --version' $TERMUX_SMOKE_SCRIPT
     ct_pass CT-7 "Termux smoke harness performs add/update/install/binary checks"
 else if test -f $TERMUX_SMOKE_SCRIPT
     ct_fail CT-7 "Termux smoke harness missing repo/install/binary execution checks"
