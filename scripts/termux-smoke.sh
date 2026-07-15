@@ -126,6 +126,7 @@ apt_opts=(
   -o APT::Get::List-Cleanup="0"
   -o APT::Architectures="$pkg_arch"
   -o DPkg::Options::="--root=$root_dir"
+  -o DPkg::Options::="--force-architecture"
 )
 
 apt-get "${apt_opts[@]}" update
