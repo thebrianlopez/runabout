@@ -60,6 +60,20 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_TSNetClientSecret(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[server]\ntsnet_client_secret = \"secretsmanager://linkari/tsnet-oauth#client_secret\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Server.TSNetClientSecret; got != "secretsmanager://linkari/tsnet-oauth#client_secret" {
+		t.Fatalf("TSNetClientSecret = %q, want %q", got, "secretsmanager://linkari/tsnet-oauth#client_secret")
+	}
+}
+
 func TestLoadConfigValidation(t *testing.T) {
 	dir := t.TempDir()
 

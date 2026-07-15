@@ -409,12 +409,17 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			if err != nil {
 				return err
 			}
+			tsnetClientSecret, err := resolveField("tsnet_client_secret", "", os.Getenv("TS_CLIENT_SECRET"), "",
+				func(s *ServerConfig) string { return s.TSNetClientSecret })
+			if err != nil {
+				return err
+			}
 			// EPIC-048 M3: fallback-to-local rule. Fires before state-dir
 			// creation so we skip the MkdirAll when falling back.
 			// logger has no flags so the WARN string is golden-testable.
 			{
 				warnLogger := log.New(log.Default().Writer(), "", 0)
-				tsnetEnabled = applyTsnetFallback(tsnetEnabled, tsnetExplicit, tsnetAuthKey, warnLogger)
+				tsnetEnabled = applyTsnetFallback(tsnetEnabled, tsnetExplicit, tsnetAuthKey, tsnetClientSecret, warnLogger)
 			}
 			tsnetStateDir, _, _ = resolveStringField(tsnetStateDir, os.Getenv("LINKARI_TSNET_STATE_DIR"), yamlTsnetStateDir, filepath.Join(configDir, "tsnet"))
 			if tsnetEnabled {
@@ -865,10 +870,11 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 
 			if tsnetEnabled {
 				ln, cleanup, fqdn, err := tsnetStart(cmd.Context(), TsnetConfig{
-					Hostname: tsnetHostname,
-					StateDir: tsnetStateDir,
-					AuthKey:  tsnetAuthKey,
-					Debug:    debug,
+					Hostname:     tsnetHostname,
+					StateDir:     tsnetStateDir,
+					AuthKey:      tsnetAuthKey,
+					ClientSecret: tsnetClientSecret,
+					Debug:        debug,
 				})
 				if err != nil {
 					slog.Warn("tsnet failed to start, continuing with local listener only", "error", err)

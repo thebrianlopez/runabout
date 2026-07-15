@@ -54,7 +54,7 @@ func resolvePushConfigOnce(q *Queue) {
 func (s ServerConfig) IsZero() bool {
 	return s.Port == 0 && s.Token == "" && s.QueueDB == "" && s.FirebaseSA == "" &&
 		s.LogFile == "" && s.Shell == "" && s.ShellArgs == "" && s.NotifyMinScore == 0 &&
-		s.ServerURL == "" && s.TSNetAuthKey == "" && s.Tsnet == nil &&
+		s.ServerURL == "" && s.TSNetAuthKey == "" && s.TSNetClientSecret == "" && s.Tsnet == nil &&
 		s.TsnetHostname == "" && s.TsnetStateDir == "" && !s.Debug &&
 		s.JiraAPIUsername == "" && s.JiraAPIPassword == "" && s.JiraDomain == "" && s.PagerDutyToken == "" &&
 		len(s.Push.DigestThrottle) == 0 && s.Push.DigestThrottleDefault.D == 0 &&
@@ -469,6 +469,7 @@ type ServerConfig struct {
 	NotifyMinScore           int      `toml:"notify_min_score"`
 	ServerURL                string   `toml:"server_url"`    // base URL fish callbacks should use
 	TSNetAuthKey             string   `toml:"tsnet_authkey"` // EPIC-047: ${secretsmanager:...} or literal
+	TSNetClientSecret        string   `toml:"tsnet_client_secret" yaml:"tsnet_client_secret"`
 
 	// EPIC-048: new fields for zero-flag boot.
 	// Tsnet uses *bool so nil encodes "absent" (→ default true) vs explicit false.

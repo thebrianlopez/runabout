@@ -28,8 +28,8 @@ const tsnetFallbackWarn = "WARN: tsnet default enabled but no tsnet_authkey reso
 //
 // logger must use no timestamp prefix (log.New(w, "", 0)) so the WARN text is
 // stable for the golden test.
-func applyTsnetFallback(tsnetEnabled, tsnetExplicit bool, authKey string, logger *log.Logger) bool {
-	if !tsnetEnabled || tsnetExplicit || authKey != "" {
+func applyTsnetFallback(tsnetEnabled, tsnetExplicit bool, authKey, clientSecret string, logger *log.Logger) bool {
+	if !tsnetEnabled || tsnetExplicit || authKey != "" || clientSecret != "" {
 		return tsnetEnabled
 	}
 	logger.Print(tsnetFallbackWarn)

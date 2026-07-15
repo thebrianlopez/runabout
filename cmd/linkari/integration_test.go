@@ -43,7 +43,7 @@ func TestApplyTsnetFallback(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			logger := log.New(&buf, "", 0)
-			got := applyTsnetFallback(tc.enabled, tc.explicit, tc.authKey, logger)
+			got := applyTsnetFallback(tc.enabled, tc.explicit, tc.authKey, "", logger)
 			if got != tc.wantEnabled {
 				t.Errorf("enabled=%v want %v", got, tc.wantEnabled)
 			}
@@ -62,7 +62,7 @@ func TestApplyTsnetFallback(t *testing.T) {
 func TestWarnLogGolden(t *testing.T) {
 	var buf bytes.Buffer
 	logger := log.New(&buf, "", 0)
-	result := applyTsnetFallback(true, false, "", logger)
+	result := applyTsnetFallback(true, false, "", "", logger)
 	if result {
 		t.Error("expected false (fallback to local), got true")
 	}
@@ -239,6 +239,61 @@ tsnet_hostname = "linkari-test"
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not shut down within 5s")
+	}
+}
+
+func TestBareServePropagatesTsnetClientSecret(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("LINKARI_QUEUE_DB", filepath.Join(tmpHome, "queue.db"))
+
+	configDir := filepath.Join(tmpHome, ".config", "linkari")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configTOML := `[server]
+token = "yaml-boot-token"
+tsnet = true
+tsnet_authkey = "test-authkey-from-yaml"
+tsnet_client_secret = "test-client-secret-from-yaml"
+`
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(configTOML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured TsnetConfig
+	swapTsnetStart(t, func(_ context.Context, cfg TsnetConfig) (net.Listener, func() error, string, error) {
+		captured = cfg
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return nil, nil, "", err
+		}
+		return ln, func() error { return ln.Close() }, "linkari.test.ts.net", nil
+	})
+
+	port := findFreePort(t)
+	cmd := serveCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"--port", strconv.Itoa(port)})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- cmd.ExecuteContext(ctx) }()
+	waitHTTP(t, fmt.Sprintf("http://127.0.0.1:%d/healthz", port), 5*time.Second)
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("serve exited with error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down within 5s")
+	}
+	if captured.ClientSecret != "test-client-secret-from-yaml" {
+		t.Fatalf("ClientSecret = %q, want %q", captured.ClientSecret, "test-client-secret-from-yaml")
 	}
 }
 
