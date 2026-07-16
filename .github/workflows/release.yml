@@ -83,7 +83,7 @@ jobs:
           AUTH_KEY=$(curl -fsSL -X POST https://api.tailscale.com/api/v2/tailnet/-/keys \
             -H "Authorization: Bearer $TS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"capabilities":{"devices":{"create":{"reusable":false,"ephemeral":true,"tags":["tag:ci"]}}},"expirySeconds":300}' \
+            -d '{"capabilities":{"devices":{"create":{"reusable":false,"ephemeral":true,"tags":["tag:linkari"]}}},"expirySeconds":300}' \
             | jq -r '.key')
           echo "::add-mask::$AUTH_KEY"
           sudo tailscale up --authkey="$AUTH_KEY" --ephemeral \
