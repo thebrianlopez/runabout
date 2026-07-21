@@ -832,5 +832,5 @@ func (app *FirecrawlApp) handleError(statusCode int, body []byte, action string)
 		message = fmt.Sprintf("Unexpected error during %s: Status code %d. %s", action, statusCode, errorMessage)
 	}
 
-	return fmt.Errorf(message)
+	return fmt.Errorf("%s", message)
 }
