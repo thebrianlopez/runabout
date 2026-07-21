@@ -605,6 +605,16 @@ type ServerConfig struct {
 
 	// EPIC-229 F1: telemetry routing config.
 	Telemetry TelemetryConfig `toml:"telemetry"`
+
+	// Firecrawl URL content fetcher config. Absent block or empty api_key disables.
+	Firecrawl FirecrawlConfig `toml:"firecrawl"`
+}
+
+// FirecrawlConfig holds configuration for the Firecrawl URL scraping service.
+// Nested under [firecrawl] in config.toml.
+type FirecrawlConfig struct {
+	APIURL string `toml:"api_url"` // defaults to https://api.firecrawl.dev if empty
+	APIKey string `toml:"api_key"` // supports SM:// URIs via expandConfigRefs
 }
 
 // ShareConfig controls how share requests map their received action/profile to

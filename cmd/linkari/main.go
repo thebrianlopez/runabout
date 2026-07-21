@@ -672,8 +672,13 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			} else {
 				srv.events = events
 				router.SetEvents(events) // EPIC-076 M1: wire into scoring goroutines
+				// Initialize Firecrawl client if api_key is configured.
+				if err := initFirecrawlClient(serverFileCfg.Firecrawl); err != nil {
+					slog.Warn("firecrawl client disabled", "error", err)
+				}
+
 				// EPIC-010 M5: domain router  -  github.com wired via EPIC-011 M5.
-				dr := NewDomainRouter(nil, fetchJinaContent)
+				dr := NewDomainRouter(nil, fetchFirecrawlContent)
 				dr.EmitVia(events)
 				// EPIC-011 M5: register GitHub REST client for github.com URLs.
 				// F3: config field is primary; env var is local-dev fallback.
