@@ -62,35 +62,13 @@ jobs:
           echo "client_id=$(echo "$SECRET" | jq -r '.client_id')" >> $GITHUB_OUTPUT
           echo "audience=$(echo "$SECRET" | jq -r '.audience')" >> $GITHUB_OUTPUT
 
-      - name: Get GitHub OIDC token
-        id: oidc
-        run: |
-          TOKEN=$(curl -fsSL \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${{ steps.ts_identity.outputs.audience }}" \
-            | jq -r '.value')
-          echo "::add-mask::$TOKEN"
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
-
-      - name: Install Tailscale
-        run: brew install tailscale
-
-      - name: Join Tailscale via WIF
-        run: |
-          TS_TOKEN=$(curl -fsSL -X POST https://api.tailscale.com/api/v2/oauth/token \
-            --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
-            --data-urlencode "client_id=${{ steps.ts_identity.outputs.client_id }}" \
-            --data-urlencode "subject_token=${{ steps.oidc.outputs.token }}" \
-            | jq -r '.access_token')
-          echo "::add-mask::$TS_TOKEN"
-          AUTH_KEY=$(curl -fsSL -X POST https://api.tailscale.com/api/v2/tailnet/-/keys \
-            -H "Authorization: Bearer $TS_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"capabilities":{"devices":{"create":{"reusable":false,"ephemeral":true,"tags":["tag:linkari"]}}},"expirySeconds":300}' \
-            | jq -r '.key')
-          echo "::add-mask::$AUTH_KEY"
-          sudo tailscale up --authkey="$AUTH_KEY" --ephemeral \
-            --hostname="ci-${{ github.run_id }}"
+      - name: Connect to Tailscale via WIF
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ steps.ts_identity.outputs.client_id }}
+          audience: ${{ steps.ts_identity.outputs.audience }}
+          tags: tag:linkari
+          hostname: ci-${{ github.run_id }}
 
       - name: Fetch APK signing key
         run: |
