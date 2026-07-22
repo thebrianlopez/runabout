@@ -139,6 +139,10 @@ func swapTsnetStart(t *testing.T, fn tsnetStartFunc) {
 //  2. starts a local HTTP listener (does NOT attempt tsnet).
 //  3. exits 0 on context cancellation.
 func TestBareServeNoYamlFallbackToLocal(t *testing.T) {
+	prevRouter := pkgDomainRouter
+	t.Cleanup(func() { setDomainRouter(prevRouter) })
+	prevFirecrawl := firecrawlClient
+	t.Cleanup(func() { firecrawlClient = prevFirecrawl })
 	// Capture pre-SetOutput log (where fallback WARN lives) without timestamps.
 	var warnBuf bytes.Buffer
 	origWriter := log.Default().Writer()
@@ -196,6 +200,10 @@ func TestBareServeNoYamlFallbackToLocal(t *testing.T) {
 // config.toml (tsnet: true, tsnet_authkey: literal) boots without any CLI flags.
 // tsnet bring-up is mocked — no real Tailscale node is started.
 func TestBareServeBootsFromYaml(t *testing.T) {
+	prevRouter := pkgDomainRouter
+	t.Cleanup(func() { setDomainRouter(prevRouter) })
+	prevFirecrawl := firecrawlClient
+	t.Cleanup(func() { firecrawlClient = prevFirecrawl })
 	swapTsnetStart(t, mockTsnetStart(t))
 
 	tmpHome := t.TempDir()
@@ -243,6 +251,10 @@ tsnet_hostname = "linkari-test"
 }
 
 func TestBareServePropagatesTsnetClientSecret(t *testing.T) {
+	prevRouter := pkgDomainRouter
+	t.Cleanup(func() { setDomainRouter(prevRouter) })
+	prevFirecrawl := firecrawlClient
+	t.Cleanup(func() { firecrawlClient = prevFirecrawl })
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("LINKARI_QUEUE_DB", filepath.Join(tmpHome, "queue.db"))

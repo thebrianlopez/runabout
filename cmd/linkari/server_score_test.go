@@ -59,11 +59,14 @@ func installJinaServer(t *testing.T, srv *httptest.Server) {
 	t.Helper()
 	prevBase := jinaBaseURL
 	prevClient := jinaHTTPClient
+	prevRouter := pkgDomainRouter
 	jinaBaseURL = srv.URL + "/"
 	jinaHTTPClient = srv.Client()
+	setDomainRouter(nil)
 	t.Cleanup(func() {
 		jinaBaseURL = prevBase
 		jinaHTTPClient = prevClient
+		setDomainRouter(prevRouter)
 	})
 }
 
