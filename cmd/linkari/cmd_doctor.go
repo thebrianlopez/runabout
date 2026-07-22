@@ -11,11 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -118,6 +120,73 @@ func checkBackupFreshness(backupPath string, now time.Time) []doctorCheck {
 
 	slog.Error("doctor_backup_freshness", "status", "fail", "age_hours", ageHours, "backup_path", backupPath)
 	return []doctorCheck{failCheck("backup_freshness", fmt.Sprintf("last backup %dh ago (>72h); backups are stale  -  run: linkari db backup %s", ageHours, backupPath))}
+}
+
+func checkProfiles(tiers []ProfileSearchTier) ([]doctorCheck, string) {
+	var out []doctorCheck
+	status := statusOK
+	resolved := map[string]string{}
+	for _, tier := range tiers {
+		label := tier.Source
+		msg := label
+		count := 0
+		if tier.Path == "" {
+			msg = fmt.Sprintf("%s (unset)", label)
+		} else if tier.Source == "embedded" {
+			entries, err := fs.ReadDir(EmbeddedProfileFS(), ".")
+			if err != nil {
+				msg = fmt.Sprintf("%s (unreadable: %v)", label, err)
+			} else {
+				for _, e := range entries {
+					if strings.HasSuffix(e.Name(), ".yaml") {
+						count++
+						name := strings.TrimSuffix(e.Name(), ".yaml")
+						if _, ok := resolved[name]; !ok {
+							resolved[name] = label
+						}
+					}
+				}
+				msg = fmt.Sprintf("%s %d profiles", label, count)
+			}
+		} else {
+			ents, err := os.ReadDir(tier.Path)
+			if err != nil {
+				msg = fmt.Sprintf("%s (unreadable: %v)", label, err)
+			} else {
+				for _, e := range ents {
+					if !e.IsDir() && strings.HasSuffix(e.Name(), ".yaml") {
+						count++
+						name := strings.TrimSuffix(e.Name(), ".yaml")
+						if _, ok := resolved[name]; !ok {
+							resolved[name] = label
+						}
+					}
+				}
+				msg = fmt.Sprintf("%s %d profiles", label, count)
+			}
+		}
+		if tier.Deprecated && count > 0 {
+			status = statusWarn
+		}
+		out = append(out, okCheck("profile_path", msg))
+	}
+	var names []string
+	for n := range resolved {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		parts = append(parts, fmt.Sprintf("%s [%s]", n, resolved[n]))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "none")
+	}
+	out = append(out, doctorCheck{Name: "profiles_resolved", Status: statusOK, Message: strings.Join(parts, ", ")})
+	if status == statusWarn {
+		out = append(out, warnCheck("profiles_deprecated", "profile resolved from deprecated ORG_PATH tier; migrate to XDG or toml profile_path"))
+	}
+	return out, strings.Join(parts, ", ")
 }
 
 func doctorCmd() *cobra.Command {
@@ -611,7 +680,25 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				addCheck(c)
 			}
 
+			// --- Check 14: profile search path / doctor integration (EPIC-243) ---
+			profiles := ProfileSearchPathAnnotated()
+			profilesChecks, profilesResolved := checkProfiles(profiles)
+			for _, c := range profilesChecks {
+				addCheck(c)
+			}
+
 			// --- Output ---
+			if !jsonOutput {
+				fmt.Fprintln(cmd.OutOrStdout(), "[profiles]")
+				for _, tier := range profiles {
+					if tier.Path == "" {
+						fmt.Fprintf(cmd.OutOrStdout(), "  %s (unset)\n", tier.Source)
+					} else {
+						fmt.Fprintf(cmd.OutOrStdout(), "  %s %s\n", tier.Source, tier.Path)
+					}
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "  resolved: %s\n", profilesResolved)
+			}
 			if jsonOutput {
 				type output struct {
 					Checks   []doctorCheck `json:"checks"`

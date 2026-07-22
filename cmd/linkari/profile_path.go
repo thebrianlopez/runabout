@@ -6,28 +6,52 @@ import (
 	"path/filepath"
 )
 
+type ProfileSearchTier struct {
+	Path       string
+	Source     string
+	Deprecated bool
+}
+
 var profilePathOverride string
 
 func SetProfilePathOverride(p string) { profilePathOverride = p }
 
-// ProfileSearchPath returns the ordered list of directories to search for profile YAMLs.
-// Priority: LINKARI_PROFILE_PATH env → profile_path override → XDG → ORG_PATH → testdata/profiles
-func ProfileSearchPath() []string {
-	var paths []string
+// ProfileSearchPathAnnotated returns the ordered list of profile search tiers.
+func ProfileSearchPathAnnotated() []ProfileSearchTier {
+	tiers := []ProfileSearchTier{}
 	if envPath := os.Getenv("LINKARI_PROFILE_PATH"); envPath != "" {
-		paths = append(paths, envPath)
+		tiers = append(tiers, ProfileSearchTier{Path: envPath, Source: "env LINKARI_PROFILE_PATH"})
+	} else {
+		tiers = append(tiers, ProfileSearchTier{Source: "env LINKARI_PROFILE_PATH"})
 	}
 	if profilePathOverride != "" {
-		paths = append(paths, profilePathOverride)
+		tiers = append(tiers, ProfileSearchTier{Path: profilePathOverride, Source: "toml profile_path"})
+	} else {
+		tiers = append(tiers, ProfileSearchTier{Source: "toml profile_path"})
 	}
 	if cfgDir, err := os.UserConfigDir(); err == nil {
-		paths = append(paths, filepath.Join(cfgDir, "linkari", "profiles"))
+		tiers = append(tiers, ProfileSearchTier{Path: filepath.Join(cfgDir, "linkari", "profiles"), Source: "xdg"})
+	} else {
+		tiers = append(tiers, ProfileSearchTier{Source: "xdg"})
 	}
 	if orgPath := os.Getenv("ORG_PATH"); orgPath != "" {
-		paths = append(paths, filepath.Join(orgPath, "docs", "prompts", "profiles"))
+		tiers = append(tiers, ProfileSearchTier{Path: filepath.Join(orgPath, "docs", "prompts", "profiles"), Source: "org_path (deprecated)", Deprecated: true})
+	} else {
+		tiers = append(tiers, ProfileSearchTier{Source: "org_path (deprecated)", Deprecated: true})
 	}
-	paths = append(paths, "testdata/profiles")
-	return paths
+	tiers = append(tiers, ProfileSearchTier{Path: "testdata/profiles", Source: "embedded"})
+	return tiers
+}
+
+// ProfileSearchPath returns the ordered list of directories to search for profile YAMLs.
+func ProfileSearchPath() []string {
+	out := make([]string, 0, len(ProfileSearchPathAnnotated()))
+	for _, t := range ProfileSearchPathAnnotated() {
+		if t.Path != "" {
+			out = append(out, t.Path)
+		}
+	}
+	return out
 }
 
 // LoadProfile finds and parses a profile YAML by name from ProfileSearchPath.
