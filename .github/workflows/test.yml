@@ -33,17 +33,17 @@ jobs:
         run: make staticcheck
 
       - name: Test root module
-        run: go test -race -coverprofile=coverage-root.out ./...
+        run: go test -race -shuffle=on -coverprofile=coverage-root.out ./...
 
       - name: Test wasend module
         run: |
           cd cmd/wasend
-          go test -race -coverprofile=coverage-wasend.out ./...
+          go test -race -shuffle=on -coverprofile=coverage-wasend.out ./...
 
       - name: Test protonexport module
         run: |
           cd cmd/protonexport
-          go test -race -coverprofile=coverage-protonexport.out ./...
+          go test -race -shuffle=on -coverprofile=coverage-protonexport.out ./...
 
       - name: Build all
         run: make build

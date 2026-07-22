@@ -42,7 +42,15 @@ ts-go extract cmd/linkari/<file>.go <FunctionName>
 
 ```bash
 # Full test suite
-go test ./cmd/linkari/...
+go test ./cmd/linkari/... -shuffle=on
+
+# Full test suite with explicit seed (use 3 distinct seeds when validating order dependence)
+go test ./cmd/linkari/... -shuffle=1
+
+# Global-state test convention: any test that mutates package globals (for example
+# pkgDomainRouter, jinaBaseURL/jinaHTTPClient, profilePathOverride, registered
+# scoring backends, or event-log dirs) must save the previous value and restore it
+# with t.Cleanup before returning.
 
 # Build check
 go build ./cmd/linkari/...
@@ -76,7 +84,7 @@ Circuit-breaker: same tool call fails 3× → stop, surface the blocker.
 
 ## Commit Protocol
 
-1. Run `go test ./cmd/linkari/...` before committing
+1. Run `go test ./cmd/linkari/... -shuffle=on` before committing; verify order-sensitive changes with 3 distinct seeds
 2. Commit messages reference epic IDs when applicable (e.g., `EPIC-161 F2:`)
 3. Changes must be independently valid  -  do not cross-commit across repos
 </content>
