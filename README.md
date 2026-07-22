@@ -8,6 +8,8 @@ Go devtools monorepo - thirteen CLI tools for shell optimization and personal wo
 
 These tools represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
 
+- [Demo GIF](.github/assets/mdq-demo.gif) - real `mdq` output, recorded with vhs
+
 - **mdq** - query fields and tables across markdown files
 - **perfgate** - statistical before/after performance gating
 - **shellprof** - fish shell function profiler with call graphs
@@ -21,7 +23,7 @@ These tools represent patterns that graduated from ad-hoc shell scripts into typ
 - **ghwatch** - stream GitHub repository activity to the terminal (push, PRs, workflow runs)
 - **ts-go** - tree-sitter-based structural Go source analysis (signatures, types, body extraction, search, rewrite)
 
-
+**Last Updated:** 2026-07-22
 
 ## Install
 
@@ -542,6 +544,17 @@ Three images: `ffmpeg` (audio conversion), `whisper` (speech-to-text), `claude-s
 ## Telemetry
 
 Every tool emits schema v2 JSONL events to `~/.automation-metrics/events/YYYY-MM-DD.jsonl` via `emit_jsonl`. Events include command, subcommand, duration, exit code, and flags - correlated by `session_id` across all tools in the suite.
+
+Recent signal from the bus (all counts real, sampled from local event files on 2026-07-22):
+
+| Tool | Observed runs |
+|---|---:|
+| `ts-go` | 1,255,209 |
+| `linkari serve` | 66,382 |
+| `claude_prompt` | 18,758 |
+| `workctl fish` | 13,391 |
+| `mdq query` | 3,054 |
+| **Total events** | **1,539,107** |
 
 This telemetry feeds topology consumers like `agrad` (graduation signals) and `aregress` (regression detection), which track whether a tool is earning its place at the Go CLI layer or should be simplified back to a shell function.
 
