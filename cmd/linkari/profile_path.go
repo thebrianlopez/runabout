@@ -6,18 +6,25 @@ import (
 	"path/filepath"
 )
 
+var profilePathOverride string
+
+func SetProfilePathOverride(p string) { profilePathOverride = p }
+
 // ProfileSearchPath returns the ordered list of directories to search for profile YAMLs.
-// Priority: LINKARI_PROFILE_PATH env → ORG_PATH → home → testdata/profiles
+// Priority: LINKARI_PROFILE_PATH env → profile_path override → XDG → ORG_PATH → testdata/profiles
 func ProfileSearchPath() []string {
 	var paths []string
 	if envPath := os.Getenv("LINKARI_PROFILE_PATH"); envPath != "" {
 		paths = append(paths, envPath)
 	}
+	if profilePathOverride != "" {
+		paths = append(paths, profilePathOverride)
+	}
+	if cfgDir, err := os.UserConfigDir(); err == nil {
+		paths = append(paths, filepath.Join(cfgDir, "linkari", "profiles"))
+	}
 	if orgPath := os.Getenv("ORG_PATH"); orgPath != "" {
 		paths = append(paths, filepath.Join(orgPath, "docs", "prompts", "profiles"))
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		paths = append(paths, filepath.Join(home, "code", "personal", "docs", "prompts", "profiles"))
 	}
 	paths = append(paths, "testdata/profiles")
 	return paths

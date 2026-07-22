@@ -62,7 +62,7 @@ func (s ServerConfig) IsZero() bool {
 		s.SnapshotInterval.D == 0 && s.SnapshotPath == "" &&
 		!s.Share.HeuristicOverrideEnabled &&
 		s.Shield.Mode == "" &&
-		s.WhisperModel == "" && s.FfmpegPath == "" &&
+		s.WhisperModel == "" && s.FfmpegPath == "" && s.ProfilePath == "" &&
 		s.TranscriptsDir == "" && s.YtdlpPath == "" &&
 		s.YouTube.SubtitleLangs == "" && s.YouTube.TimeoutSeconds == 0 &&
 		s.GoogleClientID == "" && s.SessionTTLDays == 0 &&
@@ -509,6 +509,9 @@ type ServerConfig struct {
 	WhisperModel string `toml:"whisper_model"` // path to ggml model file (default: ~/.local/share/whisper/ggml-large-v3-turbo.bin)
 	FfmpegPath   string `toml:"ffmpeg_path"`   // path to ffmpeg binary (default: ffmpeg on PATH)
 
+	// EPIC-242: operator-configured profile search path override.
+	ProfilePath string `toml:"profile_path"`
+
 	// EPIC-009: YouTube transcription config.
 	TranscriptsDir string `toml:"transcripts_dir"` // directory for transcript markdown files (default: ~/code/personal/docs/transcripts)
 	YtdlpPath      string `toml:"ytdlp_path"`      // path to yt-dlp binary (default: yt-dlp on PATH)
@@ -824,6 +827,9 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 	// by ID so operators can override individual fields without having to
 	// re-declare every builtin action. A user file with zero actions cleanly
 	// inherits all builtins  -  previously it would wipe the list entirely.
+	if strings.HasPrefix(cfg.Server.ProfilePath, "~") {
+		cfg.Server.ProfilePath = expandTilde(cfg.Server.ProfilePath)
+	}
 	merged, err := MergeWithBuiltin(builtinConfig(), &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("merge config: %w", err)

@@ -1,0 +1,24 @@
+id: eng
+version: 1
+schema_version: triage_verdict_v1
+persona_intro: "You are a technical triage assistant."
+noise_gate:
+  min_chars: 200
+  skip_label: "no extractable technical content"
+persona_body: |
+  Minimal embedded eng profile for fresh installs.
+verdict_prompt: "what is this?"
+rubric:
+  - name: Relevance
+    weight: 100
+    rationale: "basic technical relevance"
+action_items:
+  count: "1"
+  horizon_days: 7
+  examples:
+    - "review"
+key_facts:
+  count: "1"
+  intro: "key facts:"
+  focus:
+    - "technical content"

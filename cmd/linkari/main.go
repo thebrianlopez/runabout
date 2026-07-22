@@ -185,6 +185,9 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				cfgErr error
 			)
 			cfg, cfgErr = LoadConfig(ctx, configFile)
+			if cfgErr == nil && cfg != nil {
+				SetProfilePathOverride(cfg.Server.ProfilePath)
+			}
 			if cfgErr != nil && configFile != "" {
 				return fmt.Errorf("load config: %w", cfgErr)
 			}
@@ -916,6 +919,9 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 
 						// Hot-reload action config.
 						newCfg, reloadErr := LoadConfig(ctx, configFile)
+						if reloadErr == nil && newCfg != nil {
+							SetProfilePathOverride(newCfg.Server.ProfilePath)
+						}
 						if reloadErr != nil {
 							slog.Error("SIGHUP config reload failed", "error", reloadErr)
 							continue
