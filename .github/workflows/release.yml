@@ -62,13 +62,32 @@ jobs:
           echo "client_id=$(echo "$SECRET" | jq -r '.client_id')" >> $GITHUB_OUTPUT
           echo "audience=$(echo "$SECRET" | jq -r '.audience')" >> $GITHUB_OUTPUT
 
-      - name: Connect to Tailscale via WIF
-        uses: tailscale/github-action@v4
-        with:
-          oauth-client-id: ${{ steps.ts_identity.outputs.client_id }}
-          audience: ${{ steps.ts_identity.outputs.audience }}
-          tags: tag:linkari
-          hostname: ci-${{ github.run_id }}
+      - name: Get GitHub OIDC token
+        id: oidc
+        run: |
+          TOKEN=$(curl -fsSL \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${{ steps.ts_identity.outputs.audience }}" \
+            | jq -r '.value')
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Install Tailscale
+        run: brew install tailscale
+
+      - name: Start Tailscale daemon
+        run: |
+          sudo /opt/homebrew/bin/tailscaled --state=mem: &
+          sleep 3
+
+      - name: Join Tailscale via WIF
+        run: |
+          sudo /opt/homebrew/bin/tailscale up \
+            --client-id="${{ steps.ts_identity.outputs.client_id }}" \
+            --id-token="${{ steps.oidc.outputs.token }}" \
+            --hostname="ci-${{ github.run_id }}" \
+            --advertise-tags=tag:linkari \
+            --timeout=60s
 
       - name: Fetch APK signing key
         run: |
