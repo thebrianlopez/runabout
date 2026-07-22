@@ -14,13 +14,14 @@ import (
 // Fields wired through resolveField use secretsmanager:// URIs (post-load resolution).
 // Fields read directly from config use ${secretsmanager:...} (expansion-time resolution).
 var referenceServerConfig = ServerConfig{
-	Token:          "secretsmanager://linkari/bearer-token",
-	TSNetAuthKey:   "secretsmanager://linkari/tsnet-authkey",
-	FirebaseSA:     "secretsmanager://linkari/firebase-sa",
-	NotifyMinScore: 10,
-	Port:           8080,
-	TsnetHostname:  "linkari",
-	AWS:            AWSConfig{Region: "us-east-2"},
+	Token:            "secretsmanager://linkari/bearer-token",
+	TSNetAuthKey:     "",
+	TSNetClientSecret: "secretsmanager://linkari/tsnet-oauth#client_secret",
+	FirebaseSA:       "secretsmanager://linkari/firebase-sa",
+	NotifyMinScore:   10,
+	Port:             8080,
+	TsnetHostname:    "linkari",
+	AWS:              AWSConfig{Region: "us-east-2"},
 }
 
 // pinned reference *bool for tsnet field.
@@ -41,6 +42,9 @@ func TestConfigInit_RoundTrip(t *testing.T) {
 	}
 	if got.TSNetAuthKey != referenceServerConfig.TSNetAuthKey {
 		t.Errorf("TSNetAuthKey = %q, want %q", got.TSNetAuthKey, referenceServerConfig.TSNetAuthKey)
+	}
+	if got.TSNetClientSecret != referenceServerConfig.TSNetClientSecret {
+		t.Errorf("TSNetClientSecret = %q, want %q", got.TSNetClientSecret, referenceServerConfig.TSNetClientSecret)
 	}
 	if got.FirebaseSA != referenceServerConfig.FirebaseSA {
 		t.Errorf("FirebaseSA = %q, want %q", got.FirebaseSA, referenceServerConfig.FirebaseSA)

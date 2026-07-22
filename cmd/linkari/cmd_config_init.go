@@ -44,9 +44,11 @@ invite_codes = []
 # false = local-only (use --local flag for one-off overrides)
 tsnet = true
 
-# Tailscale auth key for tsnet bring-up.
-# Break-glass: tsnet_authkey = "tskey-auth-..."
-tsnet_authkey = "secretsmanager://linkari/tsnet-authkey"
+# Tailscale OAuth client secret for ephemeral key generation.
+# The JSON secret at linkari/tsnet-oauth must contain {"client_id":"...","client_secret":"..."}.
+# Break-glass (static auth key): tsnet_authkey = "tskey-auth-..."
+tsnet_client_secret = "secretsmanager://linkari/tsnet-oauth#client_secret"
+tsnet_authkey = ""
 
 # Tailscale node hostname (visible in tailnet admin panel).
 tsnet_hostname = "linkari"
