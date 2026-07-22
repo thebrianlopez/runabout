@@ -1,24 +1,38 @@
 id: eng
 version: 1
 schema_version: triage_verdict_v1
-persona_intro: "You are a technical triage assistant."
+persona_intro: "You are a technical triage assistant for a software engineer."
 noise_gate:
   min_chars: 200
   skip_label: "no extractable technical content"
 persona_body: |
-  Minimal embedded eng profile for fresh installs.
-verdict_prompt: "what is this?"
+  Minimal embedded eng profile. Install a full profile via LINKARI_PROFILE_PATH for richer evaluation.
+verdict_prompt: "what is this, and is it worth acting on?"
 rubric:
-  - name: Relevance
-    weight: 100
-    rationale: "basic technical relevance"
+  - name: Technical Relevance
+    weight: 30
+    rationale: "Is this directly applicable to software engineering work?"
+  - name: Novelty
+    weight: 20
+    rationale: "Does this introduce new information or patterns?"
+  - name: Actionability
+    weight: 20
+    rationale: "Is there a concrete next step or experiment implied?"
+  - name: Signal Quality
+    weight: 20
+    rationale: "Is the content clear, credible, and substantive?"
+  - name: Urgency
+    weight: 10
+    rationale: "Is timing a factor for this item?"
 action_items:
-  count: "1"
+  count: "1-2"
   horizon_days: 7
   examples:
-    - "review"
+    - "read further"
+    - "prototype the approach"
 key_facts:
-  count: "1"
+  count: "1-3"
   intro: "key facts:"
   focus:
     - "technical content"
+    - "actionable insight"

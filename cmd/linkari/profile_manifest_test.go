@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -306,7 +307,7 @@ func TestRenderForModeAudio(t *testing.T) {
 
 func TestRenderForModeFallback(t *testing.T) {
 	m := validEngManifest()
-	// No vision/audio rubrics — should fall back to primary rubric
+	// No vision/audio rubrics  -  should fall back to primary rubric
 	out, err := m.RenderForMode("vision")
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -382,5 +383,35 @@ key_facts:
 	}
 	if _, err := m.Render(); err != nil {
 		t.Errorf("render: %v", err)
+	}
+}
+
+// RG-embedded: every embedded profile must load, validate, and render without
+// error. Catches rubric constraint violations (e.g. wrong axis count) that
+// would silently break score_async on fresh installs with no user profile dir.
+func TestEmbeddedProfilesLoadAndRender(t *testing.T) {
+	eFS := EmbeddedProfileFS()
+	entries, err := fs.ReadDir(eFS, ".")
+	if err != nil {
+		t.Fatalf("ReadDir embedded: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no embedded profiles found")
+	}
+	for _, e := range entries {
+		name := e.Name()
+		t.Run(name, func(t *testing.T) {
+			b, err := fs.ReadFile(eFS, name)
+			if err != nil {
+				t.Fatalf("ReadFile %s: %v", name, err)
+			}
+			m, err := LoadProfileManifestBytes(b, "embedded:"+name)
+			if err != nil {
+				t.Fatalf("LoadProfileManifestBytes %s: %v", name, err)
+			}
+			if _, err := m.RenderForJSON(); err != nil {
+				t.Fatalf("RenderForJSON %s: %v", name, err)
+			}
+		})
 	}
 }
