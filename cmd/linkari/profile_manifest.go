@@ -211,6 +211,10 @@ func LoadProfileManifest(path string) (*ProfileManifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
+	return LoadProfileManifestBytes(b, path)
+}
+
+func LoadProfileManifestBytes(b []byte, path string) (*ProfileManifest, error) {
 	var m ProfileManifest
 	if err := yaml.Unmarshal(b, &m); err != nil {
 		return nil, fmt.Errorf("yaml decode %s: %w", path, err)

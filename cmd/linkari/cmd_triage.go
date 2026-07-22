@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -298,7 +299,6 @@ func loadProfileTemplateJSON(profile string) (path, content string, err error) {
 // profileTemplateLookup is the shared directory-search implementation for
 // loadProfileTemplate and loadProfileTemplateJSON.
 func profileTemplateLookup(profile string, render func(*ProfileManifest) (string, error)) (path, content string, err error) {
-	// EPIC-112 F5 M2: use ProfileSearchPath which includes LINKARI_PROFILE_PATH override.
 	dirs := ProfileSearchPath()
 	var checked []string
 	for _, d := range dirs {
@@ -313,6 +313,9 @@ func profileTemplateLookup(profile string, render func(*ProfileManifest) (string
 			if rerr != nil {
 				return "", "", rerr
 			}
+			if strings.Contains(d, filepath.Join("docs", "prompts", "profiles")) {
+				slog.Warn("profile resolved from deprecated ORG_PATH tier", "event_type", "profile_path_deprecated_tier", "profile", profile, "path", yamlPath)
+			}
 			return yamlPath, rendered, nil
 		}
 		mdPath := filepath.Join(d, profile+".md")
@@ -326,6 +329,16 @@ func profileTemplateLookup(profile string, render func(*ProfileManifest) (string
 		}
 		return mdPath, string(b), nil
 	}
+	if b, rerr := fs.ReadFile(EmbeddedProfileFS(), profile+".yaml"); rerr == nil {
+		m, lerr := LoadProfileManifestBytes(b, "embedded:"+profile+".yaml")
+		if lerr == nil {
+			rendered, rerr := render(m)
+			if rerr == nil {
+				return "embedded:" + profile + ".yaml", rendered, nil
+			}
+		}
+	}
+	checked = append(checked, "embedded:"+profile+".yaml")
 	return "", "", fmt.Errorf("no profile prompt template for %q (checked %v)", profile, checked)
 }
 
