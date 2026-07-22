@@ -72,6 +72,9 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
+      - name: Install Tailscale
+        run: brew install tailscale
+
       - name: Join Tailscale via WIF
         run: |
           TS_TOKEN=$(curl -fsSL -X POST https://api.tailscale.com/api/v2/oauth/token \
