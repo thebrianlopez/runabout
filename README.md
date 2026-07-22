@@ -8,7 +8,7 @@ Go devtools monorepo - thirteen CLI tools for shell optimization and personal wo
 
 These tools represent patterns that graduated from ad-hoc shell scripts into typed, testable binaries. Each tool emits structured telemetry to a unified JSONL bus, enabling usage-driven decisions about what to build, optimize, or deprecate.
 
-- [Demo GIF](.github/assets/mdq-demo.gif) - real `mdq` output, recorded with vhs
+![mdq demo - real output, recorded with vhs](.github/assets/mdq-demo.gif)
 
 - **mdq** - query fields and tables across markdown files
 - **perfgate** - statistical before/after performance gating
