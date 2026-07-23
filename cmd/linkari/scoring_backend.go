@@ -1,6 +1,10 @@
 package main
 
-import "context"
+import (
+	"context"
+	"log/slog"
+	"time"
+)
 
 // ScoringBackend is the abstraction over single-turn LLM calls used by the
 // scoring pipeline. Both text and JSON completion paths are represented.
@@ -59,14 +63,60 @@ func (b ClaudeCLIScoringBackend) CompleteVision(ctx context.Context, systemPromp
 	return runClaudeHaikuVision(ctx, systemPrompt, textContent, imagePath, schema)
 }
 
+// execHaiku is the indirection point tests stub. Production path routes
+// through activeScoringBackend.Complete; tests can swap in a deterministic
+// fake by replacing either this var or activeScoringBackend. EPIC-217 M1.
+var execHaiku = func(ctx context.Context, sp, content string) (string, error) {
+	start := time.Now()
+	result, err := activeScoringBackend.Complete(ctx, sp, content)
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	slog.Info("scoring_call_complete",
+		"event_type", "scoring_call",
+		"backend", activeScoringBackend.Name(),
+		"method", "Complete",
+		"duration_ms", time.Since(start).Milliseconds(),
+		"error", errStr,
+	)
+	return result, err
+}
+
 // execHaikuJSON is the indirection point tests stub. Production path routes
 // through activeScoringBackend.CompleteJSON; tests can swap in a deterministic
 // fake by replacing either this var or activeScoringBackend. EPIC-217 M1.
 var execHaikuJSON = func(ctx context.Context, sp, content, schema string) ([]byte, error) {
-	return activeScoringBackend.CompleteJSON(ctx, sp, content, schema)
+	start := time.Now()
+	result, err := activeScoringBackend.CompleteJSON(ctx, sp, content, schema)
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	slog.Info("scoring_call_complete_json",
+		"event_type", "scoring_call",
+		"backend", activeScoringBackend.Name(),
+		"method", "CompleteJSON",
+		"duration_ms", time.Since(start).Milliseconds(),
+		"error", errStr,
+	)
+	return result, err
 }
 
 // execHaikuVision routes image scoring through the active backend.
 var execHaikuVision = func(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
-	return activeScoringBackend.CompleteVision(ctx, systemPrompt, textContent, imagePath, schema)
+	start := time.Now()
+	result, err := activeScoringBackend.CompleteVision(ctx, systemPrompt, textContent, imagePath, schema)
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	slog.Info("scoring_call_complete_vision",
+		"event_type", "scoring_call",
+		"backend", activeScoringBackend.Name(),
+		"method", "CompleteVision",
+		"duration_ms", time.Since(start).Milliseconds(),
+		"error", errStr,
+	)
+	return result, err
 }

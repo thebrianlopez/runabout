@@ -51,13 +51,6 @@ const claudeModel = "claude-haiku-4-5-20251001"
 // causing sections beyond the intro to never be scored.
 const contentTruncationRunes = 8000
 
-// execHaiku is the indirection point that tests stub. Production path routes
-// through activeScoringBackend.Complete; tests can swap in a deterministic
-// fake by replacing either this var or activeScoringBackend. EPIC-217 M1.
-var execHaiku = func(ctx context.Context, sp, content string) (string, error) {
-	return activeScoringBackend.Complete(ctx, sp, content)
-}
-
 // triageCmd wires `linkari triage` into the root command.
 func triageCmd() *cobra.Command {
 	var (
@@ -551,15 +544,20 @@ func initClaudeConfig(cfg *ServerConfig) {
 	)
 
 	// EPIC-008 M5: startup smoke test  -  validate the claude binary is
-	// accessible and responds to --version. Fail fast with an actionable
-	// error rather than discovering the problem on the first scoring request.
-	if err := validateClaudeCLI(); err != nil {
-		slog.Error(
-			"claude CLI validation failed  -  scoring will not work",
-			"event_type", "claude_cli_validation_failed",
-			"claude_path", claudeBinaryPath,
-			"error", err,
-		)
+	// accessible and responds to --version. Skip when backend=pi because the
+	// Pi doctor check already runs during initScoringBackend.
+	switch cfg.Scoring.Backend {
+	case "pi":
+		// no-op
+	default:
+		if err := validateClaudeCLI(); err != nil {
+			slog.Error(
+				"claude CLI validation failed  -  scoring will not work",
+				"event_type", "claude_cli_validation_failed",
+				"claude_path", claudeBinaryPath,
+				"error", err,
+			)
+		}
 	}
 }
 
