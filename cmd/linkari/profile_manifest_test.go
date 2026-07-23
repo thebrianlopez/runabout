@@ -412,6 +412,41 @@ func TestEmbeddedProfilesLoadAndRender(t *testing.T) {
 			if _, err := m.RenderForJSON(); err != nil {
 				t.Fatalf("RenderForJSON %s: %v", name, err)
 			}
+			for _, mode := range []string{"text", "audio", "vision"} {
+				if _, err := m.RenderForModeJSON(mode); err != nil {
+					t.Fatalf("RenderForModeJSON(%s) %s: %v", mode, name, err)
+				}
+			}
 		})
+	}
+}
+
+// RG-embedded-mode: embedded profiles must resolve through the mode-aware
+// lookup path (profileTemplateForModeLookup) when no filesystem profiles
+// exist. Regression guard for POMO_audio-scoring-embedded-profile-fallback.
+func TestEmbeddedProfilesFallbackForModeLookup(t *testing.T) {
+	prev := profilePathOverride
+	profilePathOverride = t.TempDir()
+	t.Cleanup(func() { profilePathOverride = prev })
+
+	origDir, _ := os.Getwd()
+	t.Cleanup(func() { os.Chdir(origDir) })
+	os.Chdir(t.TempDir())
+
+	for _, profile := range []string{"eng", "default"} {
+		for _, mode := range []string{"text", "audio", "vision"} {
+			t.Run(profile+"/"+mode, func(t *testing.T) {
+				path, content, err := loadProfileTemplateForModeJSON(profile, mode)
+				if err != nil {
+					t.Fatalf("loadProfileTemplateForModeJSON(%s, %s): %v", profile, mode, err)
+				}
+				if !strings.HasPrefix(path, "embedded:") {
+					t.Errorf("expected embedded path, got %s", path)
+				}
+				if content == "" {
+					t.Error("rendered content is empty")
+				}
+			})
+		}
 	}
 }

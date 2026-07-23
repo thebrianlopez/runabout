@@ -383,6 +383,16 @@ func profileTemplateForModeLookup(profile, mode string, render func(*ProfileMani
 		}
 		return mdPath, string(b), nil
 	}
+	if b, rerr := fs.ReadFile(EmbeddedProfileFS(), profile+".yaml"); rerr == nil {
+		m, lerr := LoadProfileManifestBytes(b, "embedded:"+profile+".yaml")
+		if lerr == nil {
+			rendered, rerr := render(m)
+			if rerr == nil {
+				return "embedded:" + profile + ".yaml", rendered, nil
+			}
+		}
+	}
+	checked = append(checked, "embedded:"+profile+".yaml")
 	return "", "", fmt.Errorf("no profile prompt template for %q (checked %v)", profile, checked)
 }
 
