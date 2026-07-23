@@ -304,15 +304,24 @@ func parseHaikuEnvelope(stdout []byte) (TriageVerdict, *envelopeMeta, error) {
 		return TriageVerdict{}, nil, fmt.Errorf("empty envelope")
 	}
 
-	// Strip ```json fences before any parse attempt — Pi --print mode
+	// Strip ```json fences before any parse attempt  -  Pi --print mode
 	// returns raw text which may include markdown code fences.
 	stdout = stripCodeFence(stdout)
 
-	// Bare verdict shortcut (test/dev path + Pi backend).
-	var bare TriageVerdict
-	if err := json.Unmarshal(stdout, &bare); err == nil && len(bare.RubricScores) > 0 {
-		bare.TopicTags = normalizeTopicTags(bare.TopicTags)
-		return bare, nil, bare.validate()
+	// Bare verdict shortcut (Pi backend and test/dev paths).
+	// Detect Claude CLI envelope by the presence of a top-level "type" or "result" key.
+	// Pi output is raw JSON with neither; fall through to envelope parser only when one is present.
+	var topKeys map[string]json.RawMessage
+	if err := json.Unmarshal(stdout, &topKeys); err == nil {
+		_, hasType := topKeys["type"]
+		_, hasResult := topKeys["result"]
+		if !hasType && !hasResult {
+			var bare TriageVerdict
+			if err := json.Unmarshal(stdout, &bare); err == nil {
+				bare.TopicTags = normalizeTopicTags(bare.TopicTags)
+				return bare, nil, bare.validate()
+			}
+		}
 	}
 
 	var env struct {

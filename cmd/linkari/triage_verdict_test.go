@@ -15,7 +15,7 @@ import (
 // JSON form serializes deterministically.
 var canonicalVerdict = TriageVerdict{
 	Score:   52,
-	Verdict: "TurboQuant WASM—mature 3-bit/dim vector quantization. Niche relevance to RAG.",
+	Verdict: "TurboQuant WASM - mature 3-bit/dim vector quantization. Niche relevance to RAG.",
 	ActionItems: []string{
 		"Read TurboQuant paper section 3",
 		"Prototype WASM bindings in runabout",
@@ -70,7 +70,7 @@ func TestTriageVerdict_Validate(t *testing.T) {
 // Update the expected block intentionally; do not auto-format.
 func TestRenderMarkdown_Snapshot(t *testing.T) {
 	got := canonicalVerdict.RenderMarkdown()
-	const want = "## Verdict TurboQuant WASM—mature 3-bit/dim vector quantization. Niche relevance to RAG.\n\n" +
+	const want = "## Verdict TurboQuant WASM - mature 3-bit/dim vector quantization. Niche relevance to RAG.\n\n" +
 		"## Score: 52/100\n" +
 		"\n| Component | Score |\n|---|---|\n" +
 		"| Career Leverage | 5 |\n" +
@@ -302,7 +302,7 @@ func TestHaikuVerdictWithRepair_ExecError(t *testing.T) {
 // TestWriteScoreSidecar_Additive locks the EPIC-044 invariant: when extras
 // is non-nil the v1 fields stay byte-stable and the new fields appear
 // alongside them. cmd_eval.go captureFromWorkspace decodes by named field,
-// so unknown keys are silently ignored on read — this test guarantees we
+// so unknown keys are silently ignored on read  -  this test guarantees we
 // never accidentally rename or drop a v1 key.
 func TestWriteScoreSidecar_Additive(t *testing.T) {
 	ws := t.TempDir()
@@ -396,5 +396,83 @@ func TestParseHaikuEnvelope_BareFenced(t *testing.T) {
 	}
 	if v.Score != 52 || v.Profile != "eng" {
 		t.Errorf("got %+v", v)
+	}
+}
+
+// TestParseHaikuEnvelope_PiEmptyRubricScores verifies that a Pi bare verdict
+// with score=0 and an explicitly empty rubric_scores map parses successfully.
+// Before PA-1, the len(RubricScores)>0 guard caused this to fall through to
+// the envelope parser, which then returned "envelope has empty result".
+func TestParseHaikuEnvelope_PiEmptyRubricScores(t *testing.T) {
+	// score=0 with empty rubric_scores: validate() allows this (only fails when
+	// score>0 and rubric_scores is empty).
+	zeroVerdict := `{"score":0,"verdict":"not interesting","rubric_scores":{}}`
+	v, meta, err := parseHaikuEnvelope([]byte(zeroVerdict))
+	if err != nil {
+		t.Fatalf("score=0 empty rubric: %v", err)
+	}
+	if meta != nil {
+		t.Errorf("expected nil meta for bare verdict, got %+v", meta)
+	}
+	if v.Score != 0 {
+		t.Errorf("score = %d, want 0", v.Score)
+	}
+	if v.Verdict != "not interesting" {
+		t.Errorf("verdict = %q", v.Verdict)
+	}
+
+	// score>0 with empty rubric_scores must still fail validate().
+	nonZeroEmptyRubric := `{"score":50,"verdict":"something","rubric_scores":{}}`
+	if _, _, err := parseHaikuEnvelope([]byte(nonZeroEmptyRubric)); err == nil {
+		t.Fatal("expected validate error for score>0 with empty rubric_scores")
+	}
+}
+
+// TestParseHaikuEnvelope_PiZeroScoreNoRubric verifies that a Pi bare verdict
+// with score=0 and rubric_scores omitted entirely also parses successfully.
+func TestParseHaikuEnvelope_PiZeroScoreNoRubric(t *testing.T) {
+	noRubric := `{"score":0,"verdict":"not relevant"}`
+	v, meta, err := parseHaikuEnvelope([]byte(noRubric))
+	if err != nil {
+		t.Fatalf("score=0 omitted rubric: %v", err)
+	}
+	if meta != nil {
+		t.Errorf("expected nil meta for bare verdict, got %+v", meta)
+	}
+	if v.Score != 0 {
+		t.Errorf("score = %d, want 0", v.Score)
+	}
+	if v.Verdict != "not relevant" {
+		t.Errorf("verdict = %q", v.Verdict)
+	}
+}
+
+// TestParseHaikuEnvelope_ClaudeEnvelopeFallthrough is a regression guard:
+// a valid Claude CLI envelope (has "type" and "result" keys) must NOT be
+// consumed by the bare-verdict shortcut - it must go through the envelope path
+// and extract the nested verdict correctly.
+func TestParseHaikuEnvelope_ClaudeEnvelopeFallthrough(t *testing.T) {
+	inner, _ := json.Marshal(canonicalVerdict)
+	envelope := map[string]any{
+		"type":           "result",
+		"subtype":        "success",
+		"result":         string(inner),
+		"is_error":       false,
+		"total_cost_usd": 0.001,
+	}
+	b, _ := json.Marshal(envelope)
+	v, meta, err := parseHaikuEnvelope(b)
+	if err != nil {
+		t.Fatalf("envelope parse: %v", err)
+	}
+	// Must have come through the envelope path, so meta is non-nil.
+	if meta == nil {
+		t.Fatal("expected non-nil meta for Claude CLI envelope")
+	}
+	if v.Score != 52 {
+		t.Errorf("score = %d, want 52", v.Score)
+	}
+	if meta.CostUSD != 0.001 {
+		t.Errorf("cost = %f, want 0.001", meta.CostUSD)
 	}
 }

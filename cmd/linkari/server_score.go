@@ -443,6 +443,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				"type":                     req.Type,
 				"content_type":             contentType.String(), // EPIC-015 M3
 				"domain_client_latency_ms": domainFetchMs,        // EPIC-016
+				"backend":                  eval.Name(),
 			})
 		}
 	}()

@@ -40,6 +40,7 @@
     },
     "rubric_scores": {
       "type": "object",
+      "minProperties": 1,
       "description": "Per-axis scores keyed by axis name from the profile manifest.",
       "additionalProperties": {
         "type": "integer",
