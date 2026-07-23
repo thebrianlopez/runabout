@@ -7,12 +7,12 @@ package main
 // F3: shouldSuppressShortCircuit — pure predicate for personal-photo gate bypass.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -86,75 +86,41 @@ func extractImageText(ctx context.Context, imagePath string, visionModel string)
 	}
 	defer os.Remove(spFile)
 
-	// Build prompt that instructs claude to read the image file via the Read tool.
-	// Format mirrors runClaudeHaikuVision so the tool-use turn cycle is identical.
+	// Build prompt that instructs the backend to read the image file via the Read tool.
 	prompt := fmt.Sprintf("Read the image file at %s and transcribe all visible text.", imagePath)
 
 	// Enforce 30s timeout per subprocess contract (the outer ctx may have a longer deadline).
 	callCtx, callCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer callCancel()
 
-	model := visionModel
-	if model == "" {
-		model = visionModelName
+	raw, err := execHaikuVision(callCtx, systemPrompt, prompt, imagePath, imageTextResultSchema)
+	if err != nil {
+		return "", fmt.Errorf("extractImageText: vision exec: %w", err)
 	}
 
-	cmd := exec.CommandContext(callCtx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
-		Model:        model,
-		MaxTurns:     "3", // Read tool needs 3 turns: invoke + result + final output
-		AllowedTools: "Read",
-		OutputFormat: "json",
-		JSONSchema:   imageTextResultSchema,
-		SystemPrompt: spFile,
-	})...)
-	cmd.Stdin = strings.NewReader(prompt)
-	cmd.Dir = os.TempDir()
-	cmd.Env = haikuEnv()
-
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if runErr := cmd.Run(); runErr != nil {
-		return "", fmt.Errorf("extractImageText: claude exec: %w (stderr=%s)", runErr, strings.TrimSpace(stderr.String()))
-	}
-
-	out := strings.TrimSpace(stdout.String())
-	if out == "" {
-		return "", fmt.Errorf("extractImageText: claude returned empty output")
-	}
-
-	// Unwrap the --output-format json envelope: {"type":"result","result":"<json>","is_error":false,...}
+	// Support both bare JSON and envelope-wrapped output from the backend.
 	var envelope struct {
-		Result  interface{} `json:"result"`
-		IsError bool        `json:"is_error"`
+		Result  json.RawMessage `json:"result"`
+		IsError bool            `json:"is_error"`
 	}
-	if parseErr := json.Unmarshal([]byte(out), &envelope); parseErr != nil {
-		return "", fmt.Errorf("extractImageText: envelope parse: %w", parseErr)
-	}
-	if envelope.IsError {
-		return "", fmt.Errorf("extractImageText: claude returned is_error=true")
-	}
-
-	// result may be a JSON-encoded string or an already-decoded object.
-	var resultBytes []byte
-	switch v := envelope.Result.(type) {
-	case string:
-		resultBytes = []byte(v)
-	default:
-		// Re-marshal the decoded object back to JSON for uniform parsing.
-		b, marshalErr := json.Marshal(v)
-		if marshalErr != nil {
-			return "", fmt.Errorf("extractImageText: re-marshal result: %w", marshalErr)
+	if err := json.Unmarshal(raw, &envelope); err == nil && len(envelope.Result) > 0 {
+		if envelope.IsError {
+			return "", fmt.Errorf("extractImageText: backend returned is_error=true")
 		}
-		resultBytes = b
+		raw = bytes.TrimSpace(envelope.Result)
 	}
 
 	var res imageTextResult
-	if parseErr := json.Unmarshal(resultBytes, &res); parseErr != nil {
-		return "", fmt.Errorf("extractImageText: result parse: %w (raw=%s)", parseErr, string(resultBytes))
+	if parseErr := json.Unmarshal(raw, &res); parseErr != nil {
+		var quoted string
+		if strErr := json.Unmarshal(raw, &quoted); strErr == nil {
+			raw = []byte(quoted)
+			if parseErr = json.Unmarshal(raw, &res); parseErr == nil {
+				return strings.TrimSpace(res.Text), nil
+			}
+		}
+		return "", fmt.Errorf("extractImageText: result parse: %w (raw=%s)", parseErr, string(raw))
 	}
-
 	return strings.TrimSpace(res.Text), nil
 }
 

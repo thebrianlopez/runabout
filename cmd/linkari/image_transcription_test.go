@@ -424,16 +424,16 @@ func TestF2_CT8_RG1_ChromeScreenshot_ScoresAboveZero(t *testing.T) {
 	extractedTextJSON := `{"type":"result","result":"{\"text\":\"Important article: Go 1.22 release notes and memory improvements\"}","is_error":false,"total_cost_usd":0.001}`
 	mockClaudeScript(t, extractedTextJSON, 0)
 
-	// Override runClaudeHaikuVision so the vision scoring step returns a valid triage verdict.
-	// The HaikuVisionEvaluator.Evaluate calls runClaudeHaikuVision and parses its output.
-	prevRunVision := runClaudeHaikuVision
-	runClaudeHaikuVision = func(_ context.Context, _, _, _ string, _ string) ([]byte, error) {
+	// Override execHaikuVision so the vision scoring step returns a valid triage verdict.
+	// The HaikuVisionEvaluator.Evaluate calls execHaikuVision and parses its output.
+	prevRunVision := execHaikuVision
+	execHaikuVision = func(_ context.Context, _, _, _ string, _ string) ([]byte, error) {
 		// Return a valid envelope with rubric_scores populated (required when score > 0).
 		verdict := `{"score":75,"verdict":"Chrome article worth reading","rubric_scores":{"Relevance":75,"Depth":70,"Novelty":75,"Clarity":80,"Actionability":75},"action_items":[],"tags":"tech","topic_tags":["go","programming"]}`
 		envelope := fmt.Sprintf(`{"type":"result","result":%q,"is_error":false,"total_cost_usd":0.002}`, verdict)
 		return []byte(envelope), nil
 	}
-	t.Cleanup(func() { runClaudeHaikuVision = prevRunVision })
+	t.Cleanup(func() { execHaikuVision = prevRunVision })
 
 	// Set transcripts dir to a temp dir.
 	origTranscriptDir := transcriptDir
@@ -533,11 +533,11 @@ func TestF3_CT3_SuppressShortCircuit_EmptyText_ReturnsFalse(t *testing.T) {
 }
 
 // F3-CT-4: isCameraPhoto=true + text >threshold → short-circuit absent from system prompt.
-// Tested via runClaudeHaikuVision call inspection: the personal-photo instruction
+// Tested via execHaikuVision call inspection: the personal-photo instruction
 // must not appear in the prompt when shouldSuppressShortCircuit returns true.
 func TestF3_CT4_ShortCircuit_Absent_WhenTextAboveThreshold(t *testing.T) {
 	// The personal-photo short-circuit instruction is the literal string injected in
-	// runClaudeHaikuVision. When shouldSuppressShortCircuit returns true, scoreAsync
+	// execHaikuVision. When shouldSuppressShortCircuit returns true, scoreAsync
 	// must not set eval = HaikuVisionEvaluator — instead it must use an evaluator
 	// that receives a system prompt without the personal-photo clause.
 	//

@@ -1190,6 +1190,13 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	}
 
 	// Evaluate via Haiku.
+	if eval == nil {
+		if req.AudioPath != "" {
+			eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+		} else {
+			eval = HaikuJSONEvaluator{}
+		}
+	}
 	sc, err := eval.Evaluate(ctx, content, sysPrompt)
 	if err != nil {
 		logArgs := []any{

@@ -62,6 +62,8 @@ func (b PiScoringBackend) Complete(ctx context.Context, systemPrompt, content st
 	return out, nil
 }
 
+func (b PiScoringBackend) Name() string { return "pi" }
+
 // CompleteJSON sends systemPrompt + content to pi in text mode and returns
 // the raw response bytes. The scoring prompt instructs the model to respond
 // in JSON; pi --print mode emits only the final text block (no JSONL events).
@@ -76,6 +78,40 @@ func (b PiScoringBackend) CompleteJSON(ctx context.Context, systemPrompt, conten
 		"--system-prompt", systemPrompt,
 	)
 	cmd.Stdin = strings.NewReader(content)
+	cmd.Dir = os.TempDir()
+	cmd.Env = piEnv()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("pi exec: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	out := bytes.TrimSpace(stdout.Bytes())
+	if len(out) == 0 {
+		return nil, fmt.Errorf("pi returned empty output")
+	}
+	return out, nil
+}
+
+// CompleteVision sends the multimodal prompt to pi, using the Read tool for
+// local image access.
+func (b PiScoringBackend) CompleteVision(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
+	if _, err := os.Stat(imagePath); err != nil {
+		return nil, fmt.Errorf("pi vision: image file not readable: %w", err)
+	}
+	cmd := exec.CommandContext(
+		ctx, piBinaryPath,
+		"--print",
+		"--no-session",
+		"--no-builtin-tools",
+		"--provider", b.provider,
+		"--model", b.model,
+		"--tools", "read",
+		"--system-prompt", systemPrompt,
+	)
+	prompt := strings.TrimSpace(fmt.Sprintf("Read the image file at %s and score it.\n\nMetadata:\n%s", imagePath, textContent))
+	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = os.TempDir()
 	cmd.Env = piEnv()
 

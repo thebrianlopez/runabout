@@ -151,7 +151,7 @@ func (e HaikuVisionEvaluator) Name() string { return "claude-haiku-vision" }
 
 func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTemplate string) (*Scorecard, error) {
 	start := time.Now()
-	raw, err := runClaudeHaikuVision(ctx, promptTemplate, content, e.ImagePath, triageVerdictSchema)
+	raw, err := execHaikuVision(ctx, promptTemplate, content, e.ImagePath, triageVerdictSchema)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		// EPIC-080 M3: fall back to JSON evaluator with synthesized metadata.

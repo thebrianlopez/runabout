@@ -822,11 +822,11 @@ func TestScoreAsync_ImageVision(t *testing.T) {
 
 	// Stub the vision CLI call to avoid real API calls.
 	// Return a bare verdict (parseHaikuEnvelope shortcut requires non-empty rubric_scores).
-	prevVision := runClaudeHaikuVision
-	runClaudeHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
+	prevVision := execHaikuVision
+	execHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
 		return []byte(`{"score":72,"verdict":"WhatsApp photo of receipt","rubric_scores":{"visual_clarity":80,"actionability":65},"tags":"","topic_tags":[]}`), nil
 	}
-	t.Cleanup(func() { runClaudeHaikuVision = prevVision })
+	t.Cleanup(func() { execHaikuVision = prevVision })
 
 	eval := &stubEvaluator{score: 72, verdict: "WhatsApp photo of receipt"}
 	runScoreFileAsyncSync(t, req, q, eval)
@@ -854,15 +854,15 @@ func TestScoreAsync_ImageVision(t *testing.T) {
 // EPIC-080 M7: test coverage for vision failure → fallback → queue chain.
 
 // TestHaikuVisionEvaluator_FallbackOnExecError verifies that when
-// runClaudeHaikuVision fails, the evaluator falls back to the JSON eval path
+// execHaikuVision fails, the evaluator falls back to the JSON eval path
 // and returns a result with backend="claude-haiku-vision-fallback".
 func TestHaikuVisionEvaluator_FallbackOnExecError(t *testing.T) {
 	// Stub vision exec to fail.
-	prevVision := runClaudeHaikuVision
-	runClaudeHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
+	prevVision := execHaikuVision
+	execHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
 		return nil, fmt.Errorf("vision exec crashed")
 	}
-	t.Cleanup(func() { runClaudeHaikuVision = prevVision })
+	t.Cleanup(func() { execHaikuVision = prevVision })
 
 	// Stub the JSON eval path (used by fallback) to return a valid envelope.
 	prevJSON := execHaikuJSON
@@ -947,16 +947,16 @@ func TestScoreAsync_EvalFailureMarksQueueRow(t *testing.T) {
 	}
 }
 
-// TestVisionExecArgs verifies runClaudeHaikuVision is called with the
+// TestVisionExecArgs verifies execHaikuVision is called with the
 // correct image path, and that the fallback path works when vision fails.
 func TestVisionExecArgs(t *testing.T) {
 	var capturedImagePath string
-	prevVision := runClaudeHaikuVision
-	runClaudeHaikuVision = func(_ context.Context, _, _, imagePath, _ string) ([]byte, error) {
+	prevVision := execHaikuVision
+	execHaikuVision = func(_ context.Context, _, _, imagePath, _ string) ([]byte, error) {
 		capturedImagePath = imagePath
 		return nil, fmt.Errorf("intentional test abort")
 	}
-	t.Cleanup(func() { runClaudeHaikuVision = prevVision })
+	t.Cleanup(func() { execHaikuVision = prevVision })
 
 	// Stub JSON fallback to prevent real API calls.
 	prevJSON := execHaikuJSON

@@ -10,6 +10,9 @@ import "context"
 // claude CLI binary. The active implementation is selected at startup via
 // initScoringBackend (F4).
 type ScoringBackend interface {
+	// Name identifies the active backend for logging and tests.
+	Name() string
+
 	// Complete sends systemPrompt + content to the model and returns the
 	// raw text response. Equivalent to the current execHaiku signature.
 	Complete(ctx context.Context, systemPrompt, content string) (string, error)
@@ -18,6 +21,10 @@ type ScoringBackend interface {
 	// returns the raw response bytes. Equivalent to the current execHaikuJSON
 	// signature. schema is passed as a string (same as current path).
 	CompleteJSON(ctx context.Context, systemPrompt, content, schema string) ([]byte, error)
+
+	// CompleteVision sends the text prompt plus image path to the model and
+	// returns the raw response bytes for multimodal scoring.
+	CompleteVision(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error)
 }
 
 // activeScoringBackend is set at startup from ServerConfig.Scoring via
@@ -35,6 +42,8 @@ var activeScoringBackend ScoringBackend = ClaudeCLIScoringBackend{}
 // from pre-EPIC-217 baseline. EPIC-217 F2.
 type ClaudeCLIScoringBackend struct{}
 
+func (b ClaudeCLIScoringBackend) Name() string { return "claude_cli" }
+
 // Complete delegates to runClaudeHaiku.
 func (b ClaudeCLIScoringBackend) Complete(ctx context.Context, systemPrompt, content string) (string, error) {
 	return runClaudeHaiku(ctx, systemPrompt, content)
@@ -43,4 +52,21 @@ func (b ClaudeCLIScoringBackend) Complete(ctx context.Context, systemPrompt, con
 // CompleteJSON delegates to runClaudeHaikuJSON.
 func (b ClaudeCLIScoringBackend) CompleteJSON(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
 	return runClaudeHaikuJSON(ctx, systemPrompt, content, schema)
+}
+
+// CompleteVision delegates to runClaudeHaikuVision.
+func (b ClaudeCLIScoringBackend) CompleteVision(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
+	return runClaudeHaikuVision(ctx, systemPrompt, textContent, imagePath, schema)
+}
+
+// execHaikuJSON is the indirection point tests stub. Production path routes
+// through activeScoringBackend.CompleteJSON; tests can swap in a deterministic
+// fake by replacing either this var or activeScoringBackend. EPIC-217 M1.
+var execHaikuJSON = func(ctx context.Context, sp, content, schema string) ([]byte, error) {
+	return activeScoringBackend.CompleteJSON(ctx, sp, content, schema)
+}
+
+// execHaikuVision routes image scoring through the active backend.
+var execHaikuVision = func(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
+	return activeScoringBackend.CompleteVision(ctx, systemPrompt, textContent, imagePath, schema)
 }

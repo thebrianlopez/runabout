@@ -47,13 +47,13 @@ func TestFeatureFlag_Disabled_Fallthrough(t *testing.T) {
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 
 	// Override the vision scorer too — return a valid triage verdict.
-	prevRunVision := runClaudeHaikuVision
-	runClaudeHaikuVision = func(_ context.Context, _, _, _ string, _ string) ([]byte, error) {
+	prevRunVision := execHaikuVision
+	execHaikuVision = func(_ context.Context, _, _, _ string, _ string) ([]byte, error) {
 		verdict := `{"score":60,"verdict":"metadata only scoring","rubric_scores":{"Relevance":60,"Depth":55,"Novelty":60,"Clarity":65,"Actionability":60},"action_items":[],"tags":"test","topic_tags":["test"]}`
 		envelope := `{"type":"result","result":"` + jsonEscapeForShell(verdict) + `","is_error":false,"total_cost_usd":0.001}`
 		return []byte(envelope), nil
 	}
-	t.Cleanup(func() { runClaudeHaikuVision = prevRunVision })
+	t.Cleanup(func() { execHaikuVision = prevRunVision })
 
 	origTranscriptDir := transcriptDir
 	transcriptDir = t.TempDir()
@@ -155,11 +155,14 @@ func TestFeatureFlag_Enabled_EmitsEvents(t *testing.T) {
 
 	origEnabled := imageTextExtractionEnabled
 	origThreshold := imageShortCircuitBypassMinChars
+	origNoiseGate := imageNoiseGateMinBytes
 	imageTextExtractionEnabled = true
 	imageShortCircuitBypassMinChars = 20
+	imageNoiseGateMinBytes = 1
 	t.Cleanup(func() {
 		imageTextExtractionEnabled = origEnabled
 		imageShortCircuitBypassMinChars = origThreshold
+		imageNoiseGateMinBytes = origNoiseGate
 	})
 
 	imgPath := makeTestImage(t)
@@ -171,13 +174,16 @@ func TestFeatureFlag_Enabled_EmitsEvents(t *testing.T) {
 	extractedTextJSON := `{"type":"result","result":"{\"text\":\"Engineering article about distributed systems\"}","is_error":false,"total_cost_usd":0.001}`
 	mockClaudeScript(t, extractedTextJSON, 0)
 
-	prevRunVision := runClaudeHaikuVision
+	prevRunVision := execHaikuVision
 	verdict := `{"score":80,"verdict":"worth reading","rubric_scores":{"Relevance":80,"Depth":75,"Novelty":80,"Clarity":85,"Actionability":80},"action_items":[],"tags":"eng","topic_tags":["distributed","systems"]}`
 	envelope := `{"type":"result","result":"` + jsonEscapeForShell(verdict) + `","is_error":false,"total_cost_usd":0.002}`
-	runClaudeHaikuVision = func(_ context.Context, _, _, _ string, _ string) ([]byte, error) {
+	execHaikuVision = func(_ context.Context, _, _, _ string, schema string) ([]byte, error) {
+		if schema == imageTextResultSchema {
+			return []byte(`{"type":"result","result":"{\"text\":\"Engineering article about distributed systems\"}","is_error":false,"total_cost_usd":0.001}`), nil
+		}
 		return []byte(envelope), nil
 	}
-	t.Cleanup(func() { runClaudeHaikuVision = prevRunVision })
+	t.Cleanup(func() { execHaikuVision = prevRunVision })
 
 	origTranscriptDir := transcriptDir
 	transcriptDir = t.TempDir()

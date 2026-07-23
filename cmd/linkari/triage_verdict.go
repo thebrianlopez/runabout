@@ -157,18 +157,13 @@ func (v TriageVerdict) RenderMarkdown() string {
 	return sb.String()
 }
 
-// execHaikuJSON is the indirection point tests stub. Production path routes
-// through activeScoringBackend.CompleteJSON; tests can swap in a deterministic
-// fake by replacing either this var or activeScoringBackend. EPIC-217 M1.
-var execHaikuJSON = func(ctx context.Context, sp, content, schema string) ([]byte, error) {
-	return activeScoringBackend.CompleteJSON(ctx, sp, content, schema)
-}
-
 // execHaikuSynopsisJSON is the JSON-mode synopsis execution path for voice note
 // summarization. Separate from execHaikuJSON so tests can stub them independently
 // without the synopsis stub interfering with rubric scoring expectations.
 // EPIC-088 M1: uses --output-format json + --json-schema for persona isolation.
-var execHaikuSynopsisJSON = runClaudeHaikuJSON
+var execHaikuSynopsisJSON = func(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
+	return activeScoringBackend.CompleteJSON(ctx, systemPrompt, content, schema)
+}
 
 // runClaudeHaikuJSON shells the same `claude --print` invocation as
 // runClaudeHaiku but adds `--output-format json --json-schema <schema>` so

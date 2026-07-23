@@ -303,11 +303,11 @@ func TestProcessVoiceNoteAsyncTerminalStatus(t *testing.T) {
 // After  M2: returns (nil, error)
 func TestHaikuVisionDoubleFailureReturnsError(t *testing.T) {
 	// Stub vision exec to fail.
-	prevVision := runClaudeHaikuVision
-	runClaudeHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
+	prevVision := execHaikuVision
+	execHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
 		return nil, fmt.Errorf("vision: exec crashed")
 	}
-	t.Cleanup(func() { runClaudeHaikuVision = prevVision })
+	t.Cleanup(func() { execHaikuVision = prevVision })
 
 	// Stub JSON fallback to also fail — both paths are dead.
 	prevJSON := execHaikuJSON
@@ -366,11 +366,11 @@ func TestVisionDoubleFailure_MarksFailedNotScored(t *testing.T) {
 	installTestProfileDir(t, "life")
 
 	// Both vision and JSON eval fail.
-	prevVision := runClaudeHaikuVision
-	runClaudeHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
+	prevVision := execHaikuVision
+	execHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
 		return nil, fmt.Errorf("vision crashed")
 	}
-	t.Cleanup(func() { runClaudeHaikuVision = prevVision })
+	t.Cleanup(func() { execHaikuVision = prevVision })
 
 	prevJSON := execHaikuJSON
 	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
