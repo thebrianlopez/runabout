@@ -140,12 +140,16 @@ pwd
 	}
 }
 
-// RG-2: CLAUDE_* and PI_* env vars must not appear in the pi subprocess env.
+// RG-2: CLAUDE_* and PI_* env vars must not appear in the pi subprocess env,
+// except PI_CODING_AGENT_DIR which is whitelisted for auth resolution.
 func TestPiScoringBackend_RG2_EnvVarsStripped(t *testing.T) {
 	env := piEnv()
 	for _, kv := range env {
-		if strings.HasPrefix(kv, "CLAUDE_") || strings.HasPrefix(kv, "PI_") {
-			t.Errorf("RG-2: piEnv() must not contain CLAUDE_* or PI_* vars, found: %q", kv)
+		if strings.HasPrefix(kv, "CLAUDE_") {
+			t.Errorf("RG-2: piEnv() must not contain CLAUDE_* vars, found: %q", kv)
+		}
+		if strings.HasPrefix(kv, "PI_") && !strings.HasPrefix(kv, "PI_CODING_AGENT_DIR=") {
+			t.Errorf("RG-2: piEnv() must not contain PI_* vars (except PI_CODING_AGENT_DIR), found: %q", kv)
 		}
 	}
 }

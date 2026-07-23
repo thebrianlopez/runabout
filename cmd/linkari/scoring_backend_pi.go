@@ -143,7 +143,7 @@ func piEnv() []string {
 	env := os.Environ()
 	filtered := make([]string, 0, len(env))
 	for _, kv := range env {
-		if strings.HasPrefix(kv, "CLAUDE_") || strings.HasPrefix(kv, "PI_") {
+		if strings.HasPrefix(kv, "CLAUDE_") || (strings.HasPrefix(kv, "PI_") && !strings.HasPrefix(kv, "PI_CODING_AGENT_DIR=")) {
 			continue
 		}
 		filtered = append(filtered, kv)
