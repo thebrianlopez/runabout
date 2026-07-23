@@ -144,26 +144,34 @@ func TestScoringTelemetryNoReturnValueChange(t *testing.T) {
 }
 
 type fakeScoringBackend struct {
-	complete     string
-	completeErr  error
-	json         []byte
-	jsonErr      error
-	vision       []byte
-	visionErr    error
-	sleep        time.Duration
+	complete    string
+	completeErr error
+	json        []byte
+	jsonErr     error
+	vision      []byte
+	visionErr   error
+	sleep       time.Duration
 }
 
 func (f fakeScoringBackend) Name() string { return "fake" }
 func (f fakeScoringBackend) Complete(_ context.Context, _, _ string) (string, error) {
-	if f.sleep > 0 { time.Sleep(f.sleep) }
+	if f.sleep > 0 {
+		time.Sleep(f.sleep)
+	}
 	return f.complete, f.completeErr
 }
+
 func (f fakeScoringBackend) CompleteJSON(_ context.Context, _, _, _ string) ([]byte, error) {
-	if f.sleep > 0 { time.Sleep(f.sleep) }
+	if f.sleep > 0 {
+		time.Sleep(f.sleep)
+	}
 	return f.json, f.jsonErr
 }
+
 func (f fakeScoringBackend) CompleteVision(_ context.Context, _, _, _, _ string) ([]byte, error) {
-	if f.sleep > 0 { time.Sleep(f.sleep) }
+	if f.sleep > 0 {
+		time.Sleep(f.sleep)
+	}
 	return f.vision, f.visionErr
 }
 

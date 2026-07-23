@@ -73,7 +73,8 @@ var execHaiku = func(ctx context.Context, sp, content string) (string, error) {
 	if err != nil {
 		errStr = err.Error()
 	}
-	slog.Info("scoring_call_complete",
+	slog.Info(
+		"scoring_call_complete",
 		"event_type", "scoring_call",
 		"backend", activeScoringBackend.Name(),
 		"method", "Complete",
@@ -93,7 +94,8 @@ var execHaikuJSON = func(ctx context.Context, sp, content, schema string) ([]byt
 	if err != nil {
 		errStr = err.Error()
 	}
-	slog.Info("scoring_call_complete_json",
+	slog.Info(
+		"scoring_call_complete_json",
 		"event_type", "scoring_call",
 		"backend", activeScoringBackend.Name(),
 		"method", "CompleteJSON",
@@ -111,7 +113,8 @@ var execHaikuVision = func(ctx context.Context, systemPrompt, textContent, image
 	if err != nil {
 		errStr = err.Error()
 	}
-	slog.Info("scoring_call_complete_vision",
+	slog.Info(
+		"scoring_call_complete_vision",
 		"event_type", "scoring_call",
 		"backend", activeScoringBackend.Name(),
 		"method", "CompleteVision",
