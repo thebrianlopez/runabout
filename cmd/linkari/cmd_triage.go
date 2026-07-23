@@ -405,24 +405,23 @@ func orDefault(val, def string) string {
 // initScoringBackend sets activeScoringBackend based on cfg.Backend.
 // Called at server startup after initClaudeConfig. EPIC-217 F4.
 // Default (empty or "claude_cli"): ClaudeCLIScoringBackend - zero behavioral change.
-// "pi": PiScoringBackend using piBinaryPath, cfg.Provider, cfg.Model.
+// "pi": PiScoringBackend using piBinaryPath, cfg.Provider/cfg.Model combined.
 func initScoringBackend(cfg ScoringConfig) {
 	switch cfg.Backend {
 	case "pi":
 		if cfg.PiPath != "" {
 			piBinaryPath = cfg.PiPath
 		}
+		piModel := piModelString(cfg.Provider, cfg.Model)
 		activeScoringBackend = PiScoringBackend{
-			provider: orDefault(cfg.Provider, "anthropic"),
-			model:    orDefault(cfg.Model, claudeModel),
+			model: piModel,
 		}
 		slog.Info(
 			"scoring backend set",
 			"event_type", "scoring_backend_init",
 			"backend", "pi",
 			"pi_path", piBinaryPath,
-			"provider", orDefault(cfg.Provider, "anthropic"),
-			"model", orDefault(cfg.Model, claudeModel),
+			"model", piModel,
 		)
 		// F5: validate pi binary at startup (non-fatal; mirrors claude_cli check).
 		if err := validatePiCLI(); err != nil {

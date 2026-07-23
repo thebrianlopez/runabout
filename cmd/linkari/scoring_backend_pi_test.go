@@ -20,7 +20,7 @@ func resetPiBinaryPath(t *testing.T, path string) {
 // CT-1: Complete returns trimmed stdout on exit 0.
 func TestPiScoringBackend_Complete_ReturnsOutput(t *testing.T) {
 	resetPiBinaryPath(t, "/bin/echo")
-	b := PiScoringBackend{provider: "anthropic", model: "claude-haiku-4-5-20251001"}
+	b := PiScoringBackend{model: "anthropic/claude-haiku-4-5-20251001"}
 	// /bin/echo ignores stdin and prints its args; we just need non-empty output.
 	got, err := b.Complete(context.Background(), "sys", "content")
 	if err != nil {
@@ -39,7 +39,7 @@ echo '{"score":1}'
 `, 0)
 	resetPiBinaryPath(t, stub)
 
-	b := PiScoringBackend{provider: "anthropic", model: "claude-haiku-4-5-20251001"}
+	b := PiScoringBackend{model: "anthropic/claude-haiku-4-5-20251001"}
 	got, err := b.CompleteJSON(context.Background(), "sys", "content", "{}")
 	if err != nil {
 		t.Fatalf("CT-2: unexpected error: %v", err)
@@ -57,7 +57,7 @@ exit 1
 `, 0)
 	resetPiBinaryPath(t, stub)
 
-	b := PiScoringBackend{provider: "anthropic", model: "m"}
+	b := PiScoringBackend{model: "anthropic/m"}
 	_, err := b.Complete(context.Background(), "sys", "content")
 	if err == nil {
 		t.Fatal("CT-3: expected error, got nil")
@@ -77,7 +77,7 @@ exit 0
 `, 0)
 	resetPiBinaryPath(t, stub)
 
-	b := PiScoringBackend{provider: "anthropic", model: "m"}
+	b := PiScoringBackend{model: "anthropic/m"}
 	_, err := b.Complete(context.Background(), "sys", "content")
 	if err == nil {
 		t.Fatal("CT-4: expected error on empty output, got nil")
@@ -98,7 +98,7 @@ sleep 30
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	b := PiScoringBackend{provider: "anthropic", model: "m"}
+	b := PiScoringBackend{model: "anthropic/m"}
 	_, err := b.Complete(ctx, "sys", "content")
 	if err == nil {
 		t.Fatal("CT-5: expected error on cancelled context, got nil")
@@ -110,7 +110,7 @@ func TestPiScoringBackend_UsesPiBinaryPathVar(t *testing.T) {
 	// /bin/echo will print its args and exit 0, giving non-empty output.
 	resetPiBinaryPath(t, "/bin/echo")
 
-	b := PiScoringBackend{provider: "anthropic", model: "m"}
+	b := PiScoringBackend{model: "anthropic/m"}
 	_, err := b.Complete(context.Background(), "sys", "content")
 	if err != nil {
 		t.Fatalf("CT-6: expected success with /bin/echo as piBinaryPath, got: %v", err)
@@ -118,17 +118,13 @@ func TestPiScoringBackend_UsesPiBinaryPathVar(t *testing.T) {
 }
 
 // RG-1: cmd.Dir must NOT be the workspace root; must equal os.TempDir().
-// This is verified structurally - the test confirms piEnv() and cmd.Dir
-// isolation by checking that piEnv() does not expose workspace paths.
-// The Dir isolation is tested indirectly via the spy approach below.
 func TestPiScoringBackend_RG1_DirIsNotWorkspace(t *testing.T) {
-	// Stub prints its working directory to stdout.
 	stub := writePiStub(t, `#!/bin/sh
 pwd
 `, 0)
 	resetPiBinaryPath(t, stub)
 
-	b := PiScoringBackend{provider: "anthropic", model: "m"}
+	b := PiScoringBackend{model: "anthropic/m"}
 	got, err := b.Complete(context.Background(), "sys", "content")
 	if err != nil {
 		t.Fatalf("RG-1: unexpected error: %v", err)
@@ -136,8 +132,6 @@ pwd
 	if got == "" {
 		t.Fatal("RG-1: pwd returned empty")
 	}
-	// Must equal os.TempDir() - not the workspace root.
-	// Normalize both sides: macOS resolves /var -> /private/var in the subprocess.
 	wantReal, _ := filepath.EvalSymlinks(os.TempDir())
 	gotReal, _ := filepath.EvalSymlinks(got)
 	if gotReal != wantReal {
@@ -152,6 +146,110 @@ func TestPiScoringBackend_RG2_EnvVarsStripped(t *testing.T) {
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "CLAUDE_") || strings.HasPrefix(kv, "PI_") {
 			t.Errorf("RG-2: piEnv() must not contain CLAUDE_* or PI_* vars, found: %q", kv)
+		}
+	}
+}
+
+// RG-3: CLI flags passed to pi must match the expected contract.
+// If Pi changes flag names, this test breaks the build.
+func TestPiScoringBackend_RG3_CLIFlagsComplete(t *testing.T) {
+	stub := writePiStub(t, `#!/bin/sh
+echo "$@"
+`, 0)
+	resetPiBinaryPath(t, stub)
+
+	b := PiScoringBackend{model: "openai-codex/gpt-5.4-mini"}
+	got, err := b.Complete(context.Background(), "test-system-prompt", "content")
+	if err != nil {
+		t.Fatalf("RG-3: unexpected error: %v", err)
+	}
+
+	required := []string{
+		"--print",
+		"--no-session",
+		"--no-builtin-tools",
+		"--model", "openai-codex/gpt-5.4-mini",
+		"--system-prompt", "test-system-prompt",
+	}
+	for _, flag := range required {
+		if !strings.Contains(got, flag) {
+			t.Errorf("RG-3: expected flag %q in args, got: %s", flag, got)
+		}
+	}
+}
+
+// RG-4: --provider must NOT appear in the args (combined syntax uses --model only).
+func TestPiScoringBackend_RG4_NoProviderFlag(t *testing.T) {
+	stub := writePiStub(t, `#!/bin/sh
+echo "$@"
+`, 0)
+	resetPiBinaryPath(t, stub)
+
+	b := PiScoringBackend{model: "openai-codex/gpt-5.4-mini"}
+
+	got, err := b.Complete(context.Background(), "sys", "content")
+	if err != nil {
+		t.Fatalf("RG-4 Complete: unexpected error: %v", err)
+	}
+	if strings.Contains(got, "--provider") {
+		t.Errorf("RG-4 Complete: --provider must not appear in args, got: %s", got)
+	}
+
+	gotJSON, err := b.CompleteJSON(context.Background(), "sys", "content", "{}")
+	if err != nil {
+		t.Fatalf("RG-4 CompleteJSON: unexpected error: %v", err)
+	}
+	if strings.Contains(string(gotJSON), "--provider") {
+		t.Errorf("RG-4 CompleteJSON: --provider must not appear in args, got: %s", string(gotJSON))
+	}
+}
+
+// RG-5: CompleteVision uses --tools read (not --no-builtin-tools).
+func TestPiScoringBackend_RG5_VisionUsesToolsRead(t *testing.T) {
+	stub := writePiStub(t, `#!/bin/sh
+echo "$@"
+`, 0)
+	resetPiBinaryPath(t, stub)
+
+	imgFile := filepath.Join(t.TempDir(), "test.png")
+	if err := os.WriteFile(imgFile, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	b := PiScoringBackend{model: "openai-codex/gpt-5.4-mini"}
+	got, err := b.CompleteVision(context.Background(), "sys", "meta", imgFile, "{}")
+	if err != nil {
+		t.Fatalf("RG-5: unexpected error: %v", err)
+	}
+	args := string(got)
+	if !strings.Contains(args, "--tools read") {
+		t.Errorf("RG-5: expected --tools read in args, got: %s", args)
+	}
+	if strings.Contains(args, "--no-builtin-tools") {
+		t.Errorf("RG-5: --no-builtin-tools must not appear in vision args, got: %s", args)
+	}
+	if strings.Contains(args, "--provider") {
+		t.Errorf("RG-5: --provider must not appear in vision args, got: %s", args)
+	}
+}
+
+// piModelString tests
+func TestPiModelString_CombinedSyntax(t *testing.T) {
+	tests := []struct {
+		provider string
+		model    string
+		want     string
+	}{
+		{"openai-codex", "gpt-5.4-mini", "openai-codex/gpt-5.4-mini"},
+		{"anthropic", "claude-haiku-4-5-20251001", "anthropic/claude-haiku-4-5-20251001"},
+		{"", "gpt-5.4-mini", "anthropic/gpt-5.4-mini"},
+		{"", "", "anthropic/" + claudeModel},
+		{"", "openai-codex/gpt-5.4-mini", "openai-codex/gpt-5.4-mini"},
+	}
+	for _, tt := range tests {
+		got := piModelString(tt.provider, tt.model)
+		if got != tt.want {
+			t.Errorf("piModelString(%q, %q) = %q, want %q", tt.provider, tt.model, got, tt.want)
 		}
 	}
 }

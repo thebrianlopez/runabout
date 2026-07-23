@@ -19,7 +19,7 @@ var piBinaryPath = "pi"
 // Subprocess invocation:
 //
 //	pi --print --no-session --no-builtin-tools \
-//	   --provider <b.provider> --model <b.model> \
+//	   --model <provider/model> \
 //	   --system-prompt <systemPrompt>
 //
 // stdin:  content string
@@ -28,8 +28,7 @@ var piBinaryPath = "pi"
 // Dir:    os.TempDir() - prevents pi from discovering workspace .pi/ config
 // Env:    piEnv() - strips CLAUDE_* and PI_* vars; sets neutral HOME
 type PiScoringBackend struct {
-	provider string // "anthropic" (default), "google", "openai", "ollama"
-	model    string // e.g. "claude-haiku-4-5-20251001"
+	model string // "provider/model" combined syntax, e.g. "openai-codex/gpt-5.4-mini"
 }
 
 // Complete sends systemPrompt + content to pi and returns the trimmed text
@@ -41,7 +40,6 @@ func (b PiScoringBackend) Complete(ctx context.Context, systemPrompt, content st
 		"--print",
 		"--no-session",
 		"--no-builtin-tools",
-		"--provider", b.provider,
 		"--model", b.model,
 		"--system-prompt", systemPrompt,
 	)
@@ -73,7 +71,6 @@ func (b PiScoringBackend) CompleteJSON(ctx context.Context, systemPrompt, conten
 		"--print",
 		"--no-session",
 		"--no-builtin-tools",
-		"--provider", b.provider,
 		"--model", b.model,
 		"--system-prompt", systemPrompt,
 	)
@@ -104,8 +101,6 @@ func (b PiScoringBackend) CompleteVision(ctx context.Context, systemPrompt, text
 		ctx, piBinaryPath,
 		"--print",
 		"--no-session",
-		"--no-builtin-tools",
-		"--provider", b.provider,
 		"--model", b.model,
 		"--tools", "read",
 		"--system-prompt", systemPrompt,
@@ -126,6 +121,18 @@ func (b PiScoringBackend) CompleteVision(ctx context.Context, systemPrompt, text
 		return nil, fmt.Errorf("pi returned empty output")
 	}
 	return out, nil
+}
+
+// piModelString builds the combined "provider/model" string for --model.
+// If model already contains a slash, it is returned as-is (already combined).
+// Otherwise provider and model are joined with "/".
+func piModelString(provider, model string) string {
+	p := orDefault(provider, "anthropic")
+	m := orDefault(model, claudeModel)
+	if strings.Contains(m, "/") {
+		return m
+	}
+	return p + "/" + m
 }
 
 // piEnv returns a filtered copy of os.Environ() safe for pi subprocess use.
