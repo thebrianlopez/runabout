@@ -63,9 +63,18 @@ func (b PiScoringBackend) Complete(ctx context.Context, systemPrompt, content st
 func (b PiScoringBackend) Name() string { return "pi" }
 
 // CompleteJSON sends systemPrompt + content to pi in text mode and returns
-// the raw response bytes. The scoring prompt instructs the model to respond
-// in JSON; pi --print mode emits only the final text block (no JSONL events).
+// the raw response bytes. The schema is injected into the system prompt so
+// the model knows the required shape; pi --print emits only the final text
+// block (no JSONL events). parseHaikuEnvelope handles bare JSON from Pi.
 func (b PiScoringBackend) CompleteJSON(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
+	// Inject JSON schema constraint into the system prompt — mirrors the
+	// IMPORTANT suffix that runClaudeHaikuJSON adds for the claude_cli path.
+	// Without this, pi returns free prose and parseHaikuEnvelope rejects it.
+	if schema != "" {
+		systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching this schema. " +
+			"No markdown, no fences, no commentary. For skipped/noise content return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
+			"\n\nSchema:\n" + schema
+	}
 	cmd := exec.CommandContext(
 		ctx, piBinaryPath,
 		"--print",
