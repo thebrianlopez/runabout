@@ -1,5 +1,4 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "TriageVerdict",
   "description": "Linkari triage v1  -  typed contract for Haiku-scored link verdicts (EPIC-044 M1).",
   "type": "object",
