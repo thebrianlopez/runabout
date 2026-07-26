@@ -123,13 +123,19 @@ func TestF5CT1_FirehoseTranscriptBodyPopulated(t *testing.T) {
 	eval := &stubEvaluator{score: 75, verdict: "Strong Yes"}
 	runScoreFileAsyncSync(t, req, q, eval)
 
+	// EPIC-250 M3 (RG-2): narrow the match to this test's own AT-URI slug
+	// ("f5ct1") so a transcript file leaked from another test  -  e.g. a
+	// goroutine that outlived its own test and wrote into this transcriptDir
+	// after reassignment  -  cannot cause this test to fail or false-pass.
+	// See POMO_firehose-transcript-goroutine-leak-suite-order and RG-2 in
+	// PERSONAL_20260519T162045Z_Runabout_Firehose_Transcript_Persistence_TDD.md §6.
 	entries, err := os.ReadDir(transcriptDir)
 	if err != nil {
 		t.Fatalf("read transcriptDir: %v", err)
 	}
 	var found bool
 	for _, e := range entries {
-		if strings.Contains(e.Name(), "_url_") {
+		if strings.Contains(e.Name(), "_url_") && strings.Contains(e.Name(), "f5ct1") {
 			found = true
 			data, _ := os.ReadFile(filepath.Join(transcriptDir, e.Name()))
 			if !strings.Contains(string(data), postText) {
@@ -138,7 +144,7 @@ func TestF5CT1_FirehoseTranscriptBodyPopulated(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("F5-CT-1: no _url_ transcript file found in %s", transcriptDir)
+		t.Errorf("F5-CT-1: no _url_ transcript file matching slug %q found in %s", "f5ct1", transcriptDir)
 	}
 }
 

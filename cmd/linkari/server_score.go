@@ -1382,6 +1382,9 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			if req.QueueRowID > 0 {
 				_ = q.MarkFailedWithReason(req.QueueRowID, "score_persist_failed")
 			}
+			if scoreAsyncDoneHook != nil {
+				scoreAsyncDoneHook()
+			}
 			return
 		}
 		itemID = item.ID
@@ -1397,6 +1400,9 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		if err != nil {
 			slog.Warn("score_async: ScoreByID failed", "row_id", req.QueueRowID, "error", err)
 			_ = q.MarkFailedWithReason(req.QueueRowID, "score_persist_failed")
+			if scoreAsyncDoneHook != nil {
+				scoreAsyncDoneHook()
+			}
 			return
 		}
 		itemID = req.QueueRowID
@@ -1458,6 +1464,17 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		if archErr := q.Archive(itemID); archErr == nil {
 			itemStatus = "archived"
 		}
+	}
+
+	// scoreAsyncDoneHook is a test-only synchronization point (nil in production),
+	// fired once transcript persistence and the queue status/db writes above have
+	// completed  -  i.e. everything a test would assert on. It deliberately fires
+	// before resolvePushConfigOnce below, which can block on real on-disk config
+	// (secretsmanager refs) in dev environments lacking AWS credentials; tests
+	// must not depend on the push-config/FCM tail of scoreAsync completing. See
+	// EPIC-250 and scoreAsyncDoneHook's doc comment.
+	if scoreAsyncDoneHook != nil {
+		scoreAsyncDoneHook()
 	}
 
 	// URL-only: cluster detection.
@@ -2688,6 +2705,20 @@ var ffmpegBinaryPath = "ffmpeg"
 // liteparseBinaryPath is the path to the lit binary. Defaults to "lit" (PATH lookup).
 // Overridden by ServerConfig.LiteParseePath via initClaudeConfig() at startup. EPIC-007 M2.
 var liteparseBinaryPath = "lit"
+
+// scoreAsyncDoneHook is a test-only hook invoked (via defer) at every return
+// path of scoreAsync, i.e. exactly when the scoring goroutine actually
+// finishes  -  not merely when Evaluate() was called. Always nil in production.
+//
+// EPIC-250: introduced because several tests synchronized only on Evaluate()
+// invocation (onceDoneEval's done channel) and then returned, letting
+// scoreAsync's remaining work (transcript persistence, queue status writes)
+// continue in a goroutine that outlives the test. That leaked writes into
+// whatever transcriptDir/db a later test had installed. See
+// POMO_firehose-transcript-goroutine-leak-suite-order. Tests that need to
+// observe scoreAsync's full completion should set this hook (saving/restoring
+// the previous value with t.Cleanup) instead of racing on sleeps.
+var scoreAsyncDoneHook func()
 
 // transcriptDir is the directory where voice note transcripts are saved.
 // Default: ~/code/personal/docs/transcripts. Overridden by ServerConfig.TranscriptsDir

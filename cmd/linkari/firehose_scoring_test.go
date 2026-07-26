@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -474,11 +475,28 @@ func TestFirehoseScoring_F3CT3_ScoreAsyncUsesText(t *testing.T) {
 
 // F3-RG-1: Non-empty firehose post text is included in the scoring content (not lost).
 // Regression guard for POMO firehose-scoring-gap: at:// items were scored with empty content.
+//
+// EPIC-250: this test used to synchronize only on Evaluate() invocation (onceDoneEval's
+// done channel), but scoreAsync's remaining work (including the transcript write) happens
+// *after* Evaluate returns, in the same goroutine. That let the test return with work still
+// in flight, which then landed in whatever transcriptDir a later test had installed  -  see
+// POMO_firehose-transcript-goroutine-leak-suite-order. AC-3/AC-4: this test now isolates its
+// own transcriptDir and blocks on scoreAsyncDoneHook (fired once transcript persistence and queue writes complete)
+// before returning, so no goroutine can outlive it.
 func TestFirehoseScoring_F3RG1_TextReachesPrompt(t *testing.T) {
 	installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "attention")
+
+	prevDir := transcriptDir
+	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
+	t.Cleanup(func() { transcriptDir = prevDir })
+
+	scoreDone := make(chan struct{})
+	prevHook := scoreAsyncDoneHook
+	scoreAsyncDoneHook = func() { close(scoreDone) }
+	t.Cleanup(func() { scoreAsyncDoneHook = prevHook })
 
 	done := make(chan struct{})
 	capturing := &contentCapturingEval{inner: &stubEvaluator{score: 65, verdict: "Interesting"}}
@@ -501,10 +519,18 @@ func TestFirehoseScoring_F3RG1_TextReachesPrompt(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("F3-RG-1: Evaluate never called")
 	}
-	time.Sleep(20 * time.Millisecond)
 
 	if capturing.content == "" {
 		t.Fatal("F3-RG-1: scoring content is empty  -  post text was lost before reaching evaluator")
+	}
+
+	// AC-4: do not return until scoreAsync's transcript write and queue
+	// persistence have completed, so its goroutine cannot leak a write into a
+	// later test's transcriptDir before it gets there.
+	select {
+	case <-scoreDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("F3-RG-1: scoreAsync did not complete within 5s")
 	}
 }
 
@@ -715,11 +741,26 @@ func TestFirehoseF6RG1_AllRowsHaveAction(t *testing.T) {
 
 // TestFirehoseScoring_Integration: firehose post → enqueue → scoreAsync → scored status.
 // Uses stubEvaluator (score=75) to verify the full pipeline without real Claude CLI.
+//
+// EPIC-250: this test used to synchronize on Evaluate() invocation (onceDoneEval's done
+// channel) plus a fixed sleep, then read queue status and let deferred cleanup() close the
+// DB. Under -shuffle=on the sleep was occasionally not enough, so scoreAsync's own queue
+// status write (which happens after Evaluate returns) raced against cleanup() closing the
+// DB, surfacing as "sql: database is closed". Waiting on scoreAsyncDoneHook (fired once the
+// queue status write completes, before the push/FCM tail that can block on real on-disk
+// config in dev environments) instead of a sleep removes the timing dependency  -  see
+// POMO_firehose-transcript-goroutine-leak-suite-order for the same underlying goroutine-leak
+// bug class.
 func TestFirehoseScoring_Integration(t *testing.T) {
 	installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "mixture")
+
+	scoreDone := make(chan struct{})
+	prevHook := scoreAsyncDoneHook
+	scoreAsyncDoneHook = func() { close(scoreDone) }
+	t.Cleanup(func() { scoreAsyncDoneHook = prevHook })
 
 	done := make(chan struct{})
 	eval := &onceDoneEval{inner: &stubEvaluator{score: 75, verdict: "Strong Yes"}, done: done}
@@ -741,7 +782,14 @@ func TestFirehoseScoring_Integration(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("integration: Evaluate never called  -  scoreAsync did not run")
 	}
-	time.Sleep(50 * time.Millisecond) // allow post-eval status write to complete
+
+	// Wait for scoreAsync to fully return (queue status write included) before
+	// reading the DB, so this test cannot race its own deferred cleanup().
+	select {
+	case <-scoreDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("integration: scoreAsync did not complete within 5s")
+	}
 
 	var status string
 	q.db.QueryRow("SELECT status FROM queue WHERE url=?", post.AtURI).Scan(&status)

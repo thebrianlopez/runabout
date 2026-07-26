@@ -52,6 +52,25 @@ go test ./cmd/linkari/... -shuffle=1
 # scoring backends, or event-log dirs) must save the previous value and restore it
 # with t.Cleanup before returning.
 
+# Async-test convention (EPIC-250): no test may return while a goroutine it launched
+# (directly, or indirectly via handleFirehosePost/scoreAsync/etc.) is still touching a
+# package global (transcriptDir, a *Queue it is about to Close(), etc.). Synchronizing
+# on Evaluate() invocation alone (onceDoneEval's done channel) is not sufficient -
+# scoreAsync does real work (transcript persistence, queue status writes) after
+# Evaluate returns, in the same goroutine. Tests that need that work to have finished
+# should set scoreAsyncDoneHook (save/restore the previous value with t.Cleanup) and
+# block on it, instead of a fixed sleep. See
+# POMO_firehose-transcript-goroutine-leak-suite-order for the original manifestation
+# and scoreAsyncDoneHook's doc comment in cmd/linkari/server_score.go for exactly where
+# in scoreAsync it fires (after persistence, before the push/FCM tail that can block on
+# real on-disk config in dev environments lacking AWS credentials).
+#
+# Opt-in goroutine-leak detection: `go test -tags leakcheck ./cmd/linkari/...` runs the
+# suite under go.uber.org/goleak (cmd/linkari/main_leakcheck_test.go). Not enabled in CI
+# - a first pass surfaced ~37 pre-existing leaks unrelated to any specific bug (DB
+# connectionOpener, idle HTTP conns, AWS SDK credential resolution). Use it to audit
+# incrementally, not as a merge gate yet.
+
 # Build check
 go build ./cmd/linkari/...
 

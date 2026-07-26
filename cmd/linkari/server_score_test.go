@@ -93,14 +93,31 @@ func runScoreAsyncSync(t *testing.T, rawURL, profile string, q *Queue, eval Eval
 	t.Helper()
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: eval, done: done}
+
+	// EPIC-250: this previously waited on Evaluate() invocation (done) plus a
+	// fixed 50ms sleep for "post-eval work", which raced against the caller's
+	// deferred q.Close()/cleanup() under load or -shuffle=on, surfacing as
+	// "sql: database is closed" from ScoreByURL. scoreAsyncDoneHook fires once
+	// scoreAsync has actually persisted its result, removing the timing
+	// dependency. See POMO_firehose-transcript-goroutine-leak-suite-order for
+	// the same underlying goroutine-leak bug class.
+	scoreDone := make(chan struct{})
+	prevHook := scoreAsyncDoneHook
+	scoreAsyncDoneHook = func() { close(scoreDone) }
+	t.Cleanup(func() { scoreAsyncDoneHook = prevHook })
+
 	go scoreURLAsync(&ShareRequest{URL: rawURL, Profile: profile}, q, wrapped, nil)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Log("runScoreAsyncSync: timed out waiting for scoreURLAsync (eval never called  -  expected for skip/early-exit paths)")
+		return
 	}
-	// Give the goroutine a moment to finish post-eval work (ScoreByURL, Archive, etc.).
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-scoreDone:
+	case <-time.After(3 * time.Second):
+		t.Log("runScoreAsyncSync: timed out waiting for scoreAsync to persist its result")
+	}
 }
 
 // onceDoneEval closes done on the first Evaluate call (or immediately if inner
