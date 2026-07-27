@@ -402,6 +402,18 @@ func TestDoctorSecretsManager_NoAWSCredentials_FailsFast(t *testing.T) {
 	t.Setenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "")
 	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "")
 
+	// The doctor command only emits the aws_credentials check when the config
+	// contains secretsmanager refs AND hasExplicitAWSCredentials()/
+	// hasIMDSCredentials() both report false (see awsCredsUnavailable in
+	// cmd_doctor.go). hasIMDSCredentials probes the real EC2 metadata endpoint
+	// (169.254.169.254) over the network - on hosts/sandboxes where something
+	// answers that address (e.g. a metadata-emulating proxy), the probe comes
+	// back true even with zero AWS credentials configured, which silently
+	// suppresses the aws_credentials check entirely. Force it off hermetically
+	// via the same AWS_EC2_METADATA_DISABLED env var the AWS SDK's own IMDS
+	// client honors, rather than depending on real network reachability.
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+
 	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
 	err := run()
 	if err == nil {

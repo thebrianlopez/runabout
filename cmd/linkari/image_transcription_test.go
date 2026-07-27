@@ -377,8 +377,14 @@ func TestF2_CT6_EmptyCallingPackage_OmittedFromParts(t *testing.T) {
 
 // F2-CT-7: Write failure returns ("", err); caller continues scoring.
 func TestF2_CT7_SaveImageTranscript_WriteFailure(t *testing.T) {
-	// Use a non-existent dir with a nested path that can't be created.
-	nonExistentDir := "/nonexistent_dir_that_cannot_be_created_12345/transcripts"
+	// Use a regular file as a path component so MkdirAll fails with ENOTDIR for
+	// every uid, including root (root can still MkdirAll under an otherwise
+	// missing directory tree, so a plain nonexistent path is not portable).
+	f := filepath.Join(t.TempDir(), "notadir")
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write blocking file: %v", err)
+	}
+	nonExistentDir := filepath.Join(f, "transcripts")
 	meta := testTranscriptMeta()
 
 	path, err := saveImageTranscript(nonExistentDir, 999, "test.jpg", "some text", meta)

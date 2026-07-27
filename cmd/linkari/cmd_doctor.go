@@ -765,7 +765,14 @@ func hasExplicitAWSCredentials() bool {
 
 // hasIMDSCredentials probes IMDSv2 with a short timeout to detect EC2 instance profiles.
 // Returns true if IMDS responds, indicating the AWS SDK can obtain credentials automatically.
+// Honors the standard AWS_EC2_METADATA_DISABLED env var (same convention the AWS SDK's own
+// IMDS client respects) so callers - including doctor itself when it has already determined
+// IMDS is unreachable, and tests - can hermetically force this probe off without depending
+// on actual network reachability of 169.254.169.254, which can vary by host/sandbox.
 func hasIMDSCredentials() bool {
+	if os.Getenv("AWS_EC2_METADATA_DISABLED") == "true" {
+		return false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
