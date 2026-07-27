@@ -18,6 +18,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -89,11 +91,15 @@ func TestCT5_ContentWarningSetOnLiteParseFailure(t *testing.T) {
 		return "", 0.0, errors.New("lit parse: exit status 1")
 	}
 
+	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
+	if err := os.WriteFile(audioPath, nil, 0o600); err != nil {
+		t.Fatalf("CT-5: write placeholder: %v", err)
+	}
 	// Enqueue a document-type share so scoreAsync takes the lit branch.
 	req := &ShareRequest{
 		Type:      "document",
 		Profile:   "eng",
-		AudioPath: "/dev/null",
+		AudioPath: audioPath,
 	}
 	id, err := q.Enqueue(req)
 	if err != nil {
@@ -124,10 +130,14 @@ func TestCT7_ContentWarningEmptyOnSuccess(t *testing.T) {
 		return "some extracted text", 0.9, nil
 	}
 
+	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
+	if err := os.WriteFile(audioPath, nil, 0o600); err != nil {
+		t.Fatalf("CT-7: write placeholder: %v", err)
+	}
 	req := &ShareRequest{
 		Type:      "document",
 		Profile:   "eng",
-		AudioPath: "/dev/null",
+		AudioPath: audioPath,
 	}
 	id, err := q.Enqueue(req)
 	if err != nil {
@@ -347,10 +357,14 @@ func TestRG1_SuccessfulPDFDoesNotSetContentWarning(t *testing.T) {
 		return "page 1 content", 0.9, nil // successful extraction
 	}
 
+	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
+	if err := os.WriteFile(audioPath, nil, 0o600); err != nil {
+		t.Fatalf("RG-1: write placeholder: %v", err)
+	}
 	req := &ShareRequest{
 		Type:      "document",
 		Profile:   "eng",
-		AudioPath: "/dev/null",
+		AudioPath: audioPath,
 	}
 	id, err := q.Enqueue(req)
 	if err != nil {

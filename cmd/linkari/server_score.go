@@ -450,8 +450,13 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 
 	// EPIC-079 M3: clean up temp file for image/document shares.
 	// scoreAsync now owns the temp file (disarmed in handleShare via audioCleanup="").
+	// Device-node protection: only unlink regular files. Root deployments must never
+	// unlink /dev/null (or any other device node) on a caller-supplied path - as root,
+	// os.Remove on a device node succeeds and deletes the node host-wide.
 	if req.AudioPath != "" && req.Type != "audio" {
-		defer os.Remove(req.AudioPath)
+		if fi, err := os.Lstat(req.AudioPath); err == nil && fi.Mode().IsRegular() {
+			defer os.Remove(req.AudioPath)
+		}
 	}
 
 	isURLShare := req.Type == "url"

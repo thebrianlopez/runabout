@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -76,11 +78,15 @@ func TestCT4_ContentTypePDF_PrependedForDocument(t *testing.T) {
 	installLiteParseStub(t, "extracted pdf text about finance and invoices", 0.9, nil)
 
 	cap := &captureEval{}
+	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
+	if err := os.WriteFile(audioPath, nil, 0o600); err != nil {
+		t.Fatalf("CT-4: write placeholder: %v", err)
+	}
 	req := &ShareRequest{
 		Type:      "document",
 		Profile:   "eng",
 		MimeType:  "application/pdf",
-		AudioPath: "/dev/null",
+		AudioPath: audioPath,
 	}
 	scoreAsync(req, nil, cap, nil, nil, nil)
 

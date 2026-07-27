@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -258,10 +260,14 @@ func TestBT2_ScoreAsyncWritesConfidenceToQueue(t *testing.T) {
 		return "extracted pdf text", 0.87, nil
 	}
 
+	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
+	if err := os.WriteFile(audioPath, nil, 0o600); err != nil {
+		t.Fatalf("BT-2: write placeholder: %v", err)
+	}
 	req := &ShareRequest{
 		Type:      "document",
 		Profile:   "eng",
-		AudioPath: "/dev/null",
+		AudioPath: audioPath,
 	}
 	id, err := q.Enqueue(req)
 	if err != nil {
@@ -295,10 +301,14 @@ func TestBT3_ScoreAsyncWritesNegativeOneOnFallback(t *testing.T) {
 		return "fallback text", -1.0, nil // -1.0 = JSON parse fallback sentinel
 	}
 
+	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
+	if err := os.WriteFile(audioPath, nil, 0o600); err != nil {
+		t.Fatalf("BT-3: write placeholder: %v", err)
+	}
 	req := &ShareRequest{
 		Type:      "document",
 		Profile:   "eng",
-		AudioPath: "/dev/null",
+		AudioPath: audioPath,
 	}
 	id, err := q.Enqueue(req)
 	if err != nil {
