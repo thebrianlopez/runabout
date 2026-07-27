@@ -65,6 +65,14 @@ go test ./cmd/linkari/... -shuffle=1
 # in scoreAsync it fires (after persistence, before the push/FCM tail that can block on
 # real on-disk config in dev environments lacking AWS credentials).
 #
+# Fixture-path convention (POMO devnull-device-unlink-root-test-flake): never use
+# device nodes (/dev/null, /dev/zero) as placeholder paths in fixture fields whose
+# lifecycle contract is delete-on-cleanup (e.g. ShareRequest.AudioPath - scoreAsync
+# owns and removes it). As root, os.Remove on a device node succeeds and deletes it
+# host-wide, breaking every subsequent exec.Command with nil stdio. Use a real file
+# under t.TempDir() instead. scoreAsync's cleanup is also Lstat-guarded to regular
+# files as defense in depth - do not remove that guard.
+
 # Opt-in goroutine-leak detection: `go test -tags leakcheck ./cmd/linkari/...` runs the
 # suite under go.uber.org/goleak (cmd/linkari/main_leakcheck_test.go). Not enabled in CI
 # - a first pass surfaced ~37 pre-existing leaks unrelated to any specific bug (DB
