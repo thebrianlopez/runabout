@@ -158,6 +158,10 @@ auto_enqueue_watch_later   = true
 
 # OAuth account slot routing. Maps named slots to YouTube sources.
 # Re-auth with: linkari auth youtube --slot <name>
+# On a browserless host (SSH/SSM, no port forwarding), run this from an
+# interactive TTY: the command still prints the auth URL, but also accepts
+# a pasted redirect URL (or just the code) from stdin once you approve in a
+# browser on any other machine (EPIC-253).
 # [server.youtube.accounts.default]
 # slot    = "default"
 # sources = ["watch_later", "liked"]
