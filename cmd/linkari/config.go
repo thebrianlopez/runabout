@@ -756,6 +756,12 @@ func defaultConfigPath() string {
 	return filepath.Join(home, ".config", "linkari", "config.toml")
 }
 
+// configRefResolverFactory builds the resolver used for ${secretsmanager:...}
+// expansion. Tests override it with t.Cleanup to keep LoadConfig hermetic.
+var configRefResolverFactory = func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+	return secrets.New(secrets.DefaultAWSFactory(awsCfg))
+}
+
 // expandConfigRefs resolves ${env:VAR}, ${file:/path}, ${secretsmanager:name#field},
 // and bare ${VAR} references in the raw config string before TOML parsing.
 func expandConfigRefs(ctx context.Context, awsCfg secrets.AWSConfig, s string) string {
@@ -779,7 +785,7 @@ func expandConfigRefs(ctx context.Context, awsCfg secrets.AWSConfig, s string) s
 				return extractJSONField(cached, field, hasField)
 			}
 			if resolver == nil {
-				resolver = secrets.New(secrets.DefaultAWSFactory(awsCfg))
+				resolver = configRefResolverFactory(awsCfg)
 			}
 			raw, _, err := resolver.Resolve(ctx, "secretsmanager://"+secretName)
 			if err != nil {
@@ -818,7 +824,11 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	expanded := expandConfigRefs(ctx, secrets.AWSConfig{}, string(data))
+	var preparse Config
+	if _, err := toml.Decode(string(data), &preparse); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	expanded := expandConfigRefs(ctx, secrets.AWSConfig(preparse.Server.AWS), string(data))
 	var cfg Config
 	if _, err := toml.Decode(expanded, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)

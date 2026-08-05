@@ -41,6 +41,22 @@ func writeTestConfig(t *testing.T) string {
 	return path
 }
 
+func writeConfigFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func withConfigRefResolver(t *testing.T, fn func(secrets.AWSConfig) *secrets.Resolver) {
+	t.Helper()
+	orig := configRefResolverFactory
+	configRefResolverFactory = fn
+	t.Cleanup(func() { configRefResolverFactory = orig })
+}
+
 func TestLoadConfig(t *testing.T) {
 	path := writeTestConfig(t)
 	cfg, err := LoadConfig(context.Background(), path)
@@ -486,6 +502,122 @@ func TestServerConfig_MissingAWSBlockZeroValue(t *testing.T) {
 	if cfg.Server.AWS != (AWSConfig{}) {
 		t.Fatalf("AWS config = %#v, want zero value", cfg.Server.AWS)
 	}
+}
+
+func TestLoadConfig_CT1_ServerAWSPreparseFeedsResolverFactory(t *testing.T) {
+	withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+		if awsCfg != (secrets.AWSConfig{Region: "us-east-2", Profile: "alpine", RoleARN: "arn:aws:iam::123456789012:role/linkari"}) {
+			t.Fatalf("resolver factory awsCfg = %#v, want declared server.aws block", awsCfg)
+		}
+		return secrets.New(func(context.Context) (secrets.SecretsManagerAPI, error) {
+			return secretsManagerStub("ct1-token"), nil
+		})
+	})
+	path := writeConfigFile(t, "[server]\ntoken = \"${secretsmanager:linkari/bearer-token}\"\n\n[server.aws]\nregion = \"us-east-2\"\nprofile = \"alpine\"\nrole_arn = \"arn:aws:iam::123456789012:role/linkari\"\n")
+	cfg, err := LoadConfig(context.Background(), path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := cfg.Server.Token; got != "ct1-token" {
+		t.Fatalf("resolved token = %q, want %q", got, "ct1-token")
+	}
+}
+
+func TestLoadConfig_CT2_SecretsManagerReferenceExpandsIntoFinalConfig(t *testing.T) {
+	withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+		return secrets.New(func(context.Context) (secrets.SecretsManagerAPI, error) {
+			return secretsManagerStub("ct2-client-id"), nil
+		})
+	})
+	path := writeConfigFile(t, "[server]\ngoogle_client_id = \"${secretsmanager:linkari/google-client-id}\"\n\n[server.aws]\nregion = \"us-east-2\"\n")
+	cfg, err := LoadConfig(context.Background(), path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := cfg.Server.GoogleClientID; got != "ct2-client-id" {
+		t.Fatalf("GoogleClientID = %q, want %q", got, "ct2-client-id")
+	}
+}
+
+func TestLoadConfig_CT3_NoSecretManagerReferenceSkipsResolverFactory(t *testing.T) {
+	called := false
+	withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+		called = true
+		return secrets.New(func(context.Context) (secrets.SecretsManagerAPI, error) {
+			return secretsManagerStub("unused"), nil
+		})
+	})
+	file := filepath.Join(t.TempDir(), "value.txt")
+	if err := os.WriteFile(file, []byte("file-val\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CT3_TOKEN", "env-val")
+	t.Setenv("CT3_PLAIN", "plain-val")
+	path := writeConfigFile(t, "[server]\ntoken = \"${env:CT3_TOKEN}\"\ngithub_token = \"${CT3_PLAIN}\"\natlassian_confluence_token = \"${file:"+file+"}\"\n\n[server.aws]\nregion = \"us-east-2\"\n")
+	cfg, err := LoadConfig(context.Background(), path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if called {
+		t.Fatal("resolver factory should not be called when no secretsmanager reference is present")
+	}
+	if got := cfg.Server.Token; got != "env-val" {
+		t.Fatalf("Token = %q, want %q", got, "env-val")
+	}
+	if got := cfg.Server.GitHubToken; got != "plain-val" {
+		t.Fatalf("GitHubToken = %q, want %q", got, "plain-val")
+	}
+	if got := cfg.Server.AtlassianConfluenceToken; got != "file-val" {
+		t.Fatalf("AtlassianConfluenceToken = %q, want %q", got, "file-val")
+	}
+}
+
+func TestLoadConfig_CT4_InvalidRawTOMLDoesNotInvokeResolverFactory(t *testing.T) {
+	called := false
+	withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+		called = true
+		return secrets.New(func(context.Context) (secrets.SecretsManagerAPI, error) {
+			return secretsManagerStub("unused"), nil
+		})
+	})
+	path := writeConfigFile(t, "[server\ntoken = \"${secretsmanager:linkari/bearer-token}\"\n")
+	if _, err := LoadConfig(context.Background(), path); err == nil {
+		t.Fatal("expected invalid TOML to fail before resolver invocation")
+	}
+	if called {
+		t.Fatal("resolver factory should not be called for invalid TOML")
+	}
+}
+
+func TestLoadConfig_RG3_AlpineTemplateUsesDeclaredAWSRegion(t *testing.T) {
+	var captured secrets.AWSConfig
+	withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+		captured = awsCfg
+		return secrets.New(func(context.Context) (secrets.SecretsManagerAPI, error) {
+			return secretsManagerStub("rg3-secret"), nil
+		})
+	})
+	path := writeConfigFile(t, serverYAMLTemplate)
+	cfg, err := LoadConfig(context.Background(), path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if captured != (secrets.AWSConfig{Region: "us-east-2"}) {
+		t.Fatalf("resolver factory awsCfg = %#v, want region us-east-2", captured)
+	}
+	if got := cfg.Server.GitHubToken; got != "rg3-secret" {
+		t.Fatalf("GitHubToken = %q, want %q", got, "rg3-secret")
+	}
+}
+
+func secretsManagerStub(value string) secrets.SecretsManagerAPI {
+	return secretsManagerStubValue(value)
+}
+
+type secretsManagerStubValue string
+
+func (s secretsManagerStubValue) GetSecretValue(context.Context, string) (string, error) {
+	return string(s), nil
 }
 
 // EPIC-051 M5: MergeWithBuiltin tests.
