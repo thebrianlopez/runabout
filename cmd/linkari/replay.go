@@ -21,12 +21,23 @@ func replayShareRequest(it QueueItem) *ShareRequest {
 
 // StartReplay runs a background goroutine that replays pending queue items
 // through the router when the tmux session becomes available.
-func StartReplay(q *Queue, router *Router, srv *Server, tmux *TmuxRunner, interval time.Duration, debug bool) {
+//
+// The goroutine runs until ctx is cancelled. In production ctx is the serve
+// command's context, so the replay loop exits cleanly on shutdown instead of
+// running for the lifetime of the process; this also makes the loop testable
+// (integration tests that spin up serveCmd cancel the context and the goroutine
+// returns rather than leaking a ticker goroutine  -  see the leakcheck gate).
+func StartReplay(ctx context.Context, q *Queue, router *Router, srv *Server, tmux *TmuxRunner, interval time.Duration, debug bool) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
-		for range ticker.C {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
 			if !tmux.serverRunning() {
 				slog.Debug("replay: tmux server not running, skipping")
 				continue

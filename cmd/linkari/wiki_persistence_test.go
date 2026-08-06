@@ -11,6 +11,7 @@ package main
 // CT-7: PushItem.WikiTopic is empty when not set (zero-value default)
 
 import (
+	"path/filepath"
 	"testing"
 )
 
@@ -69,17 +70,17 @@ func TestWikiPersistence_CT3_SchemaMigration_Idempotent(t *testing.T) {
 	// a second time) should not error  -  the IF NOT EXISTS and duplicate-column
 	// swallow idiom must tolerate re-runs.
 	q := newTestQueue(t)
-	dbPath := q.db.Stats().OpenConnections // verify DB is open
-	_ = dbPath
 
-	// Open a second Queue on the same path to re-run all migrations.
-	q2, err := NewQueue(q.db.Stats().WaitDuration.String(), false) // wrong path, but we just need idempotency of migrations
-	_ = q2
-	// Any error is acceptable here since we're passing an invalid path for q2.
-	// The real idempotency is verified by the fact that newTestQueue itself never
-	// errors on repeated calls within the same test binary run (each test gets
-	// a fresh DB in t.TempDir(), so this CT focuses on the column already-exists path).
-	_ = err
+	// Open a second Queue against a fresh path to re-run all migrations from
+	// scratch; migrations must not error on a clean DB. (The already-exists
+	// column path is exercised implicitly because newTestQueue itself runs the
+	// full migration set without error.) Close it so we don't leak the
+	// connectionOpener goroutine (goleak gate).
+	q2, err := NewQueue(filepath.Join(t.TempDir(), "q2.db"), false)
+	if err != nil {
+		t.Fatalf("CT-3: second NewQueue must not error on migrations: %v", err)
+	}
+	q2.Close()
 
 	// Verify the wiki columns exist by doing a direct query.
 	var dummy int

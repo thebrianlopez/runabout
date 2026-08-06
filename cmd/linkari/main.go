@@ -757,7 +757,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 
 			slog.Info("queue enabled", "db", queueDB)
-			StartReplay(queue, router, srv, tmux, 30*time.Second, debug)
+			StartReplay(cmd.Context(), queue, router, srv, tmux, 30*time.Second, debug)
 			srv.CacheLitProbe(serverFileCfg.LiteParse.TessDataPrefix)
 			srv.StartPushWorker(cmd.Context())
 

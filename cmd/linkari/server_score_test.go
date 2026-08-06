@@ -872,7 +872,8 @@ func TestScoreAsync_ImageVision(t *testing.T) {
 
 // TestHaikuVisionEvaluator_FallbackOnExecError verifies that when
 // execHaikuVision fails, the evaluator falls back to the JSON eval path
-// and returns a result with backend="claude-haiku-vision-fallback".
+// and returns a result with the vision-fallback envelope label composed with
+// the active backend name (POMO scoring-backend-attribution-split-brain).
 func TestHaikuVisionEvaluator_FallbackOnExecError(t *testing.T) {
 	// Stub vision exec to fail.
 	prevVision := execHaikuVision
@@ -898,8 +899,9 @@ func TestHaikuVisionEvaluator_FallbackOnExecError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate returned error: %v", err)
 	}
-	if sc.Backend != "claude-haiku-vision-fallback" {
-		t.Errorf("backend = %q, want %q", sc.Backend, "claude-haiku-vision-fallback")
+	wantBackend := backendLabel(evalFormatVisionFallback)
+	if sc.Backend != wantBackend {
+		t.Errorf("backend = %q, want %q", sc.Backend, wantBackend)
 	}
 	if sc.Score != 42 {
 		t.Errorf("score = %d, want 42", sc.Score)
@@ -996,8 +998,8 @@ func TestVisionExecArgs(t *testing.T) {
 		t.Errorf("imagePath = %q, want %q", capturedImagePath, tmpFile)
 	}
 	// Vision failed → fell back to JSON → should have fallback backend.
-	if sc.Backend != "claude-haiku-vision-fallback" {
-		t.Errorf("backend = %q, want %q", sc.Backend, "claude-haiku-vision-fallback")
+	if want := backendLabel(evalFormatVisionFallback); sc.Backend != want {
+		t.Errorf("backend = %q, want %q", sc.Backend, want)
 	}
 }
 

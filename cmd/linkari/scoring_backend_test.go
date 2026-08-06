@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -205,3 +206,62 @@ func assertScoringLog(t *testing.T, cap *scoringLogCapture, method, backend, err
 }
 
 var _ io.Reader
+
+// RG-3: backend attribution must be single-sourced from activeScoringBackend.
+//
+// POMO scoring-backend-attribution-split-brain. Evaluator labels were
+// compile-time constants ("claude-haiku-json") that kept reporting Claude after
+// EPIC-246 routed execution through ScoringBackend, so score_prefilter_summary
+// and Scorecard.Backend disagreed with the scoring_call telemetry. The fake
+// backend is deliberately named "fake" — any hardcoded claude* constant fails
+// this test by construction.
+func TestRG3_BackendAttributionMatchesActiveBackend(t *testing.T) {
+	prev := activeScoringBackend
+	t.Cleanup(func() { activeScoringBackend = prev })
+	activeScoringBackend = fakeScoringBackend{}
+
+	cases := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"markdown evaluator", HaikuMarkdownEvaluator{}.Name(), "fake:md"},
+		{"json evaluator", HaikuJSONEvaluator{}.Name(), "fake:json"},
+		{"vision evaluator", HaikuVisionEvaluator{}.Name(), "fake:vision"},
+	}
+	for _, tc := range cases {
+		if tc.got != tc.want {
+			t.Errorf("%s: Name() = %q, want %q (attribution must resolve from activeScoringBackend)", tc.name, tc.got, tc.want)
+		}
+		if strings.Contains(tc.got, "claude") {
+			t.Errorf("%s: Name() = %q leaks a hardcoded claude label while backend is %q", tc.name, tc.got, activeScoringBackend.Name())
+		}
+	}
+}
+
+// RG-3b: Scorecard.Backend must agree with eval.Name() for the same call.
+// This is the field that reaches the persisted archive and the CLI analytics
+// sinks (cmd_triage.go, cmd_score.go).
+func TestRG3b_ScorecardBackendMatchesEvaluatorName(t *testing.T) {
+	prevBackend := activeScoringBackend
+	t.Cleanup(func() { activeScoringBackend = prevBackend })
+	activeScoringBackend = fakeScoringBackend{}
+
+	prevJSON := execHaikuJSON
+	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+		return []byte(`{"type":"result","result":"{\"score\":42,\"verdict\":\"ok\",\"rubric_scores\":{\"relevance\":50,\"depth\":40}}","is_error":false}`), nil
+	}
+	t.Cleanup(func() { execHaikuJSON = prevJSON })
+
+	eval := HaikuJSONEvaluator{}
+	sc, err := eval.Evaluate(context.Background(), "content", "prompt")
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if sc.Backend != eval.Name() {
+		t.Errorf("Scorecard.Backend = %q, eval.Name() = %q; the two attribution sinks must agree", sc.Backend, eval.Name())
+	}
+	if sc.Backend != "fake:json" {
+		t.Errorf("Scorecard.Backend = %q, want %q", sc.Backend, "fake:json")
+	}
+}

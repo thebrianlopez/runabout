@@ -671,6 +671,11 @@ func TestHandleShare_RG2_MaxBytesExceeded_Returns413(t *testing.T) {
 	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
 
 	pr, pw := io.Pipe()
+	// handleShare stops reading the body once MaxBytesReader trips, so the
+	// writer goroutine below would block on pw.Write forever. Closing the read
+	// end after ServeHTTP returns unblocks it (io.Copy returns ErrClosedPipe),
+	// preventing a leaked goroutine (leakcheck gate).
+	defer pr.Close()
 	mw := multipart.NewWriter(pw)
 	ct := mw.FormDataContentType()
 

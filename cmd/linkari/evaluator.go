@@ -72,7 +72,7 @@ type Evaluator interface {
 // (execHaiku + parseTriageMarkdown).
 type HaikuMarkdownEvaluator struct{}
 
-func (HaikuMarkdownEvaluator) Name() string { return "claude-haiku-md" }
+func (HaikuMarkdownEvaluator) Name() string { return backendLabel(evalFormatMarkdown) }
 
 func (HaikuMarkdownEvaluator) Evaluate(ctx context.Context, content, promptTemplate string) (*Scorecard, error) {
 	start := time.Now()
@@ -91,7 +91,7 @@ func (HaikuMarkdownEvaluator) Evaluate(ctx context.Context, content, promptTempl
 		Gaps:        res.ActionItems,
 		Tags:        res.Tags,
 		RawMarkdown: rawMD,
-		Backend:     "claude-haiku-md",
+		Backend:     backendLabel(evalFormatMarkdown),
 		LatencyMs:   latency,
 	}, nil
 }
@@ -100,7 +100,7 @@ func (HaikuMarkdownEvaluator) Evaluate(ctx context.Context, content, promptTempl
 // (haikuVerdictWithRepair → TriageVerdict).
 type HaikuJSONEvaluator struct{}
 
-func (HaikuJSONEvaluator) Name() string { return "claude-haiku-json" }
+func (HaikuJSONEvaluator) Name() string { return backendLabel(evalFormatJSON) }
 
 func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate string) (*Scorecard, error) {
 	start := time.Now()
@@ -119,7 +119,7 @@ func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate 
 		RawMarkdown:    v.RenderMarkdown(),
 		Profile:        v.Profile,
 		ProfileVersion: v.ProfileVersion,
-		Backend:        "claude-haiku-json",
+		Backend:        backendLabel(evalFormatJSON),
 		LatencyMs:      latency,
 	}
 	if meta != nil {
@@ -128,7 +128,7 @@ func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate 
 		sc.RepairTurn = meta.RepairTurn
 		slog.Info(
 			"evaluator: token usage",
-			"backend", "claude-haiku-json",
+			"backend", backendLabel(evalFormatJSON),
 			"cost_usd", meta.CostUSD,
 			"input_tokens", tokenCount(meta.Usage, true),
 			"output_tokens", tokenCount(meta.Usage, false),
@@ -147,7 +147,7 @@ type HaikuVisionEvaluator struct {
 	ImagePath string // path to the local image file
 }
 
-func (e HaikuVisionEvaluator) Name() string { return "claude-haiku-vision" }
+func (e HaikuVisionEvaluator) Name() string { return backendLabel(evalFormatVision) }
 
 func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTemplate string) (*Scorecard, error) {
 	start := time.Now()
@@ -176,7 +176,7 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 			)
 			return nil, fmt.Errorf("all evaluators failed: vision=%w; json=%v", err, fbErr)
 		}
-		fallbackSc.Backend = "claude-haiku-vision-fallback"
+		fallbackSc.Backend = backendLabel(evalFormatVisionFallback)
 		return fallbackSc, nil
 	}
 	v, meta, parseErr := parseHaikuEnvelope(raw)
@@ -200,7 +200,7 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 			)
 			return nil, fmt.Errorf("all evaluators failed: parse=%w; json=%v", parseErr, fbErr)
 		}
-		fallbackSc.Backend = "claude-haiku-vision-fallback"
+		fallbackSc.Backend = backendLabel(evalFormatVisionFallback)
 		return fallbackSc, nil
 	}
 	sc := &Scorecard{
@@ -213,7 +213,7 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 		RawMarkdown:    v.RenderMarkdown(),
 		Profile:        v.Profile,
 		ProfileVersion: v.ProfileVersion,
-		Backend:        "claude-haiku-vision",
+		Backend:        backendLabel(evalFormatVision),
 		LatencyMs:      latency,
 	}
 	if meta != nil {

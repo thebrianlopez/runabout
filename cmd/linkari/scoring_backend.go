@@ -84,6 +84,32 @@ var execHaiku = func(ctx context.Context, sp, content string) (string, error) {
 	return result, err
 }
 
+// Envelope format identifiers used to compose evaluator labels. These describe
+// the *response format* an evaluator parses, not the provider that produced it.
+// The provider half is resolved at runtime from activeScoringBackend.
+const (
+	evalFormatMarkdown       = "md"
+	evalFormatJSON           = "json"
+	evalFormatVision         = "vision"
+	evalFormatVisionFallback = "vision-fallback"
+)
+
+// backendLabel composes the active backend name with an envelope format, e.g.
+// "pi:json" or "claude_cli:vision". It is the single source of truth for
+// backend attribution in telemetry.
+//
+// POMO scoring-backend-attribution-split-brain (PA-1, PA-2): evaluator labels
+// were previously compile-time constants ("claude-haiku-json") that kept
+// reporting Claude after EPIC-246 routed execution through ScoringBackend.
+// Resolving from activeScoringBackend makes eval.Name() and Scorecard.Backend
+// agree with the scoring_call telemetry emitted by the exec* wrappers.
+func backendLabel(format string) string {
+	if activeScoringBackend == nil {
+		return "unknown:" + format
+	}
+	return activeScoringBackend.Name() + ":" + format
+}
+
 // execHaikuJSON is the indirection point tests stub. Production path routes
 // through activeScoringBackend.CompleteJSON; tests can swap in a deterministic
 // fake by replacing either this var or activeScoringBackend. EPIC-217 M1.
