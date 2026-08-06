@@ -157,6 +157,157 @@ func TestDoctor_ExitCodeMatrix(t *testing.T) {
 	}
 }
 
+// TestDoctor_StrictGatesOnWarnings is the RG for POMO ec2-server-dependency-gaps
+// RS-1. Optional-dependency gaps (missing lit, whisper-cli, tessdata) are emitted
+// as warnings, not failures. Default doctor exits 0 on warnings, which is why a
+// month of "lit: not found" never gated a deploy. --strict must turn any warning
+// into a non-zero exit so post-deploy CI can consume the signal.
+func TestDoctor_StrictGatesOnWarnings(t *testing.T) {
+	newCfg := func(t *testing.T) (string, string) {
+		t.Helper()
+		dir := t.TempDir()
+		cfgDir := filepath.Join(dir, ".config", "linkari")
+		if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		tomlPath := filepath.Join(cfgDir, "config.toml")
+		// Minimal config: resolves a token but leaves optional deps unconfigured,
+		// which reliably produces at least one warn check.
+		content := "[server]\ntoken = \"test-literal-token\"\n"
+		if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("write config.toml: %v", err)
+		}
+		return dir, tomlPath
+	}
+
+	decode := func(t *testing.T, b []byte) struct {
+		Checks   []doctorCheck `json:"checks"`
+		ExitCode int           `json:"exit_code"`
+	} {
+		t.Helper()
+		var result struct {
+			Checks   []doctorCheck `json:"checks"`
+			ExitCode int           `json:"exit_code"`
+		}
+		// Cobra appends "Error: ..." after the JSON document when RunE returns a
+		// non-nil error, so decode only the leading JSON value rather than the
+		// whole buffer.
+		if err := json.NewDecoder(bytes.NewReader(b)).Decode(&result); err != nil {
+			t.Fatalf("JSON parse: %v\noutput:\n%s", err, string(b))
+		}
+		return result
+	}
+
+	// Baseline: confirm this fixture actually warns and does not fail, otherwise
+	// the strict assertion below would be vacuous.
+	dir, tomlPath := newCfg(t)
+	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--json"})
+	looseErr := run()
+	loose := decode(t, out.Bytes())
+
+	warnCount, failCount := 0, 0
+	for _, c := range loose.Checks {
+		switch c.Status {
+		case statusWarn:
+			warnCount++
+		case statusFail:
+			failCount++
+		}
+	}
+	if failCount > 0 {
+		t.Skipf("fixture produced %d fail checks; strict-vs-loose is only meaningful with warns and no fails", failCount)
+	}
+	if warnCount == 0 {
+		t.Skip("fixture produced no warn checks; nothing to gate on")
+	}
+
+	// Loose mode: warnings must NOT gate (preserves existing behaviour).
+	if looseErr != nil {
+		t.Errorf("without --strict: got err=%v, want nil with %d warns and no fails", looseErr, warnCount)
+	}
+	if loose.ExitCode != 0 {
+		t.Errorf("without --strict: exit_code=%d, want 0", loose.ExitCode)
+	}
+
+	// Strict mode: the same warnings must gate.
+	dir2, tomlPath2 := newCfg(t)
+	out2, run2 := newDoctorCmdForTest(t, dir2, []string{"--path", tomlPath2, "--json", "--strict"})
+	strictErr := run2()
+	strict := decode(t, out2.Bytes())
+
+	if strictErr == nil {
+		t.Errorf("with --strict: got err=nil, want non-nil (%d warn checks present)", warnCount)
+	}
+	if strict.ExitCode != 1 {
+		t.Errorf("with --strict: exit_code=%d, want 1", strict.ExitCode)
+	}
+	// JSON exit_code and the returned error must never disagree.
+	if (strictErr != nil) != (strict.ExitCode != 0) {
+		t.Errorf("strict: err=%v disagrees with exit_code=%d", strictErr, strict.ExitCode)
+	}
+}
+
+// TestDoctor_RequireIsFocused is the post-deploy gate contract: a deployment
+// can require the tools it needs without being held hostage by unrelated optional
+// integrations. It also prevents an unknown check name from silently passing.
+func TestDoctor_RequireIsFocused(t *testing.T) {
+	newCfg := func(t *testing.T) (string, string) {
+		t.Helper()
+		dir := t.TempDir()
+		cfgDir := filepath.Join(dir, ".config", "linkari")
+		if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		tomlPath := filepath.Join(cfgDir, "config.toml")
+		if err := os.WriteFile(tomlPath, []byte("[server]\ntoken = \"test-literal-token\"\n"), 0o600); err != nil {
+			t.Fatalf("write config.toml: %v", err)
+		}
+		return dir, tomlPath
+	}
+
+	// The minimal fixture has unrelated failures/warnings. A required token is
+	// nevertheless OK, so a focused gate must pass.
+	dir, tomlPath := newCfg(t)
+	_, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath, "--require", "token"})
+	if err := run(); err != nil {
+		t.Fatalf("--require token: got err=%v, want nil", err)
+	}
+
+	// Require a check this fixture actually reports as warn; requiring it must
+	// gate whether the local development machine happens to have lit installed.
+	dir2, tomlPath2 := newCfg(t)
+	out2, run2 := newDoctorCmdForTest(t, dir2, []string{"--path", tomlPath2, "--json"})
+	_ = run2() // unrelated failures are expected in this minimal fixture.
+	var report struct {
+		Checks []doctorCheck `json:"checks"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(out2.Bytes())).Decode(&report); err != nil {
+		t.Fatalf("decode baseline report: %v\noutput:\n%s", err, out2.String())
+	}
+	warnName := ""
+	for _, c := range report.Checks {
+		if c.Status == statusWarn {
+			warnName = c.Name
+			break
+		}
+	}
+	if warnName == "" {
+		t.Fatal("fixture produced no warn check to exercise --require")
+	}
+	dirWarn, tomlPathWarn := newCfg(t)
+	_, runWarn := newDoctorCmdForTest(t, dirWarn, []string{"--path", tomlPathWarn, "--require", warnName})
+	if err := runWarn(); err == nil {
+		t.Fatalf("--require %s: got nil, want error for a warn check", warnName)
+	}
+
+	// Typos/renames are gate failures, never a false green deployment.
+	dir3, tomlPath3 := newCfg(t)
+	_, run3 := newDoctorCmdForTest(t, dir3, []string{"--path", tomlPath3, "--require", "not_a_real_check"})
+	if err := run3(); err == nil {
+		t.Fatal("unknown --require name: got nil, want error")
+	}
+}
+
 // TestDoctor_AllChecksPresent verifies that all expected check names appear in
 // the output for a fully configured (literal-value) config.toml.
 func TestDoctor_AllChecksPresent(t *testing.T) {

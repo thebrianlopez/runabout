@@ -193,6 +193,8 @@ func doctorCmd() *cobra.Command {
 	var (
 		serverYAMLPath string
 		jsonOutput     bool
+		strict         bool
+		requireChecks  []string
 	)
 
 	cmd := &cobra.Command{
@@ -228,11 +230,15 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 
 			var checks []doctorCheck
 			anyFail := false
+			anyWarn := false
 
 			addCheck := func(c doctorCheck) {
 				checks = append(checks, c)
-				if c.Status == statusFail {
+				switch c.Status {
+				case statusFail:
 					anyFail = true
+				case statusWarn:
+					anyWarn = true
 				}
 			}
 
@@ -699,13 +705,66 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "  resolved: %s\n", profilesResolved)
 			}
+			// Optional-dependency gaps (missing lit, whisper-cli, tessdata)
+			// surface as warnings, so a fail-only exit code silently passes a
+			// half-provisioned host -- see POMO ec2-server-dependency-gaps
+			// RC-6/RS-1.
+			//
+			// --strict gates on any warning. That is deliberately blunt and is
+			// wrong for most deployments, where benign warnings are permanent
+			// (unconfigured optional integrations, no backup yet). Prefer
+			// --require, which names the checks a given deployment actually
+			// depends on. A gate that is always red gets disabled.
+			byName := make(map[string]doctorCheck, len(checks))
+			for _, c := range checks {
+				byName[c.Name] = c
+			}
+			var missing, notOK []string
+			for _, want := range requireChecks {
+				want = strings.TrimSpace(want)
+				if want == "" {
+					continue
+				}
+				c, ok := byName[want]
+				if !ok {
+					// An unknown name is a gate failure, not a silent pass:
+					// a typo'd or renamed check must never look healthy.
+					missing = append(missing, want)
+					continue
+				}
+				if c.Status != statusOK {
+					notOK = append(notOK, fmt.Sprintf("%s[%s]: %s", c.Name, c.Status, c.Message))
+				}
+			}
+			requireFailed := len(missing) > 0 || len(notOK) > 0
+
+			// --require is a focused gate: unrelated checks can remain optional or
+			// be configured by a different deployment concern. Without it, retain
+			// doctor's historical whole-host exit semantics.
+			focused := len(requireChecks) > 0
+			gated := requireFailed || (!focused && anyFail) || (strict && anyWarn)
+
+			gateErr := func() error {
+				switch {
+				case len(missing) > 0:
+					return fmt.Errorf("doctor: --require names unknown check(s): %s", strings.Join(missing, ", "))
+				case len(notOK) > 0:
+					return fmt.Errorf("doctor: required check(s) not ok: %s", strings.Join(notOK, "; "))
+				case !focused && anyFail:
+					return fmt.Errorf("doctor: one or more checks failed")
+				case strict && anyWarn:
+					return fmt.Errorf("doctor: one or more checks warned (--strict)")
+				}
+				return nil
+			}
+
 			if jsonOutput {
 				type output struct {
 					Checks   []doctorCheck `json:"checks"`
 					ExitCode int           `json:"exit_code"`
 				}
 				exitCode := 0
-				if anyFail {
+				if gated {
 					exitCode = 1
 				}
 				enc := json.NewEncoder(cmd.OutOrStdout())
@@ -713,10 +772,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				if err := enc.Encode(output{Checks: checks, ExitCode: exitCode}); err != nil {
 					return err
 				}
-				if anyFail {
-					return fmt.Errorf("doctor: one or more checks failed")
-				}
-				return nil
+				return gateErr()
 			}
 
 			for _, c := range checks {
@@ -729,15 +785,14 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				fmt.Fprintf(cmd.OutOrStdout(), "%s %s: %s\n", icon, c.Name, c.Message)
 			}
 
-			if anyFail {
-				return fmt.Errorf("doctor: one or more checks failed")
-			}
-			return nil
+			return gateErr()
 		},
 	}
 
 	cmd.Flags().StringVar(&serverYAMLPath, "path", "", "path to config.toml (default: ~/.config/linkari/config.toml)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	cmd.Flags().BoolVar(&strict, "strict", false, "exit non-zero on warnings as well as failures (blunt; prefer --require for gates)")
+	cmd.Flags().StringSliceVar(&requireChecks, "require", nil, "comma-separated check names that must be ok; exit non-zero otherwise (e.g. --require lit,whisper_cli). Unknown names are treated as failures.")
 	return cmd
 }
 
