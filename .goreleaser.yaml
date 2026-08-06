@@ -107,34 +107,6 @@ builds:
 
   # ── Separate-module tools ────────────────────────────────────────────────────
 
-  - id: bmux
-    binary: bmux
-    main: .
-    dir: ./cmd/bmux
-    env: [CGO_ENABLED=0]
-    goos: [darwin, linux]
-    goarch: [amd64, arm64]
-    flags: [-trimpath]
-    ldflags:
-      - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
-
-  - id: protonexport
-    binary: protonexport
-    main: .
-    dir: ./cmd/protonexport
-    env: [CGO_ENABLED=0]
-    goos: [darwin, linux]
-    goarch: [amd64, arm64]
-    flags: [-trimpath]
-    ldflags:
-      - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
-
   - id: linkari
     binary: linkari
     main: .
@@ -153,34 +125,6 @@ builds:
     binary: linkari-labeler
     main: .
     dir: ./cmd/linkari-labeler
-    env: [CGO_ENABLED=0]
-    goos: [darwin, linux]
-    goarch: [amd64, arm64]
-    flags: [-trimpath]
-    ldflags:
-      - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
-
-  - id: plaid-service
-    binary: plaid-service
-    main: .
-    dir: ./cmd/plaid-service
-    env: [CGO_ENABLED=0]
-    goos: [darwin, linux]
-    goarch: [amd64, arm64]
-    flags: [-trimpath]
-    ldflags:
-      - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
-
-  - id: wasend
-    binary: wasend
-    main: .
-    dir: ./cmd/wasend
     env: [CGO_ENABLED=0]
     goos: [darwin, linux]
     goarch: [amd64, arm64]
@@ -276,12 +220,8 @@ archives:
       - effiscore
       - castex
       - chain-eval
-      - bmux
-      - protonexport
       - linkari
       - linkari-labeler
-      - plaid-service
-      - wasend
       - workctl
       - ghwatch
       - jira-poller
@@ -316,7 +256,7 @@ brews:
       name: homebrew-runabout
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/thebrianlopez/runabout"
-    description: "Personal developer tools  -  mdq, bmux, workctl, linkari, runway, and more"
+    description: "Personal developer tools  -  mdq, workctl, linkari, runway, and more"
     license: "MIT"
     install: |
       bin.install "mdq"
@@ -326,19 +266,14 @@ brews:
       bin.install "effiscore"
       bin.install "castex"
       bin.install "chain-eval"
-      bin.install "bmux"
-      bin.install "protonexport"
       bin.install "linkari"
       bin.install "linkari-labeler"
-      bin.install "plaid-service"
-      bin.install "wasend"
       bin.install "workctl"
       bin.install "ghwatch"
       bin.install "jira-poller"
       bin.install "runway"
     test: |
       system "#{bin}/mdq", "--version"
-      system "#{bin}/bmux", "--version"
       system "#{bin}/workctl", "--version"
       system "#{bin}/castex", "--version"
 
@@ -387,7 +322,7 @@ nfpms:
     vendor: thebrianlopez
     homepage: "https://github.com/thebrianlopez/runabout"
     maintainer: "Brian Lopez <noreply@thebrianlopez.dev>"
-    description: "Personal developer tools - mdq, bmux, workctl, linkari, runway, and more"
+    description: "Personal developer tools - mdq, workctl, linkari, runway, and more"
     license: MIT
     formats:
       - apk
@@ -399,12 +334,8 @@ nfpms:
       - effiscore
       - castex
       - chain-eval
-      - bmux
-      - protonexport
       - linkari
       - linkari-labeler
-      - plaid-service
-      - wasend
       - workctl
       - ghwatch
       - jira-poller
@@ -422,7 +353,7 @@ nfpms:
     vendor: thebrianlopez
     homepage: "https://github.com/thebrianlopez/runabout"
     maintainer: "Brian Lopez <noreply@thebrianlopez.dev>"
-    description: "Personal developer tools - mdq, bmux, workctl, linkari, runway, and more"
+    description: "Personal developer tools - mdq, workctl, linkari, runway, and more"
     license: MIT
     formats:
       - deb
@@ -434,12 +365,8 @@ nfpms:
       - effiscore
       - castex
       - chain-eval
-      - bmux
-      - protonexport
       - linkari
       - linkari-labeler
-      - plaid-service
-      - wasend
       - workctl
       - ghwatch
       - jira-poller

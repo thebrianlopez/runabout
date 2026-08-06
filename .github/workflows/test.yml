@@ -35,16 +35,6 @@ jobs:
       - name: Test root module
         run: go test -race -shuffle=on -coverprofile=coverage-root.out ./...
 
-      - name: Test wasend module
-        run: |
-          cd cmd/wasend
-          go test -race -shuffle=on -coverprofile=coverage-wasend.out ./...
-
-      - name: Test protonexport module
-        run: |
-          cd cmd/protonexport
-          go test -race -shuffle=on -coverprofile=coverage-protonexport.out ./...
-
       - name: Build all
         run: make build
 
@@ -54,8 +44,6 @@ jobs:
           name: coverage
           path: |
             coverage-root.out
-            cmd/wasend/coverage-wasend.out
-            cmd/protonexport/coverage-protonexport.out
 
       # EPIC-112 F2 M5: Eval regression gate fires on profile or fixture changes.
       # Path filter: docs/prompts/profiles/** or cmd/linkari/testdata/triage/**
