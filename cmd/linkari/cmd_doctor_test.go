@@ -978,8 +978,17 @@ func TestK8sVolumeChecks_AllOk(t *testing.T) {
 	if checks[0].Name != "k8s_volume_mount" || checks[0].Status != statusOK {
 		t.Fatalf("unexpected mount check: %#v", checks[0])
 	}
-	if checks[1].Name != "k8s_volume_capacity" || checks[1].Status != statusOK {
+	// Capacity is a property of the host volume, not of the code under test:
+	// checkK8sVolume warns below 20% free and fails below 5%. Asserting statusOK
+	// here made the test fail on any machine with a fullish disk (observed on a
+	// dev box at 13% free) while passing on a fresh CI runner. Assert the check
+	// is present and not FAIL; the warn/fail thresholds are covered by the
+	// freePct logic itself.
+	if checks[1].Name != "k8s_volume_capacity" {
 		t.Fatalf("unexpected capacity check: %#v", checks[1])
+	}
+	if checks[1].Status == statusFail {
+		t.Fatalf("capacity check unexpectedly failed: %#v", checks[1])
 	}
 	if checks[2].Name != "k8s_single_writer" || checks[2].Status != statusOK {
 		t.Fatalf("unexpected single writer check: %#v", checks[2])

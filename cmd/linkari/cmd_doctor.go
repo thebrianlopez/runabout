@@ -984,13 +984,19 @@ func checkK8sVolume(dir string) []doctorCheck {
 	if syscall.Statfs(dir, &varfs) == nil && varfs.Blocks > 0 {
 		freePct = int((varfs.Bavail * 100) / varfs.Blocks)
 	}
-	if freePct > 0 && freePct < 5 {
-		return append(checks, failCheck("k8s_volume_capacity", fmt.Sprintf("%s free space critically low (%d%% free)", dir, freePct)))
+	// Capacity is reported but never short-circuits the remaining probes. These
+	// early-returned, so a volume under 20% free silently dropped the
+	// single-writer check - the doctor lost a diagnostic precisely when the
+	// system was under stress, and the caller could not distinguish "not run"
+	// from "passed".
+	switch {
+	case freePct > 0 && freePct < 5:
+		checks = append(checks, failCheck("k8s_volume_capacity", fmt.Sprintf("%s free space critically low (%d%% free)", dir, freePct)))
+	case freePct > 0 && freePct < 20:
+		checks = append(checks, warnCheck("k8s_volume_capacity", fmt.Sprintf("%s free space low (%d%% free)", dir, freePct)))
+	default:
+		checks = append(checks, okCheck("k8s_volume_capacity", fmt.Sprintf("%s capacity ok", dir)))
 	}
-	if freePct > 0 && freePct < 20 {
-		return append(checks, warnCheck("k8s_volume_capacity", fmt.Sprintf("%s free space low (%d%% free)", dir, freePct)))
-	}
-	checks = append(checks, okCheck("k8s_volume_capacity", fmt.Sprintf("%s capacity ok", dir)))
 
 	lockPath := filepath.Join(dir, ".linkari-single-writer.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
