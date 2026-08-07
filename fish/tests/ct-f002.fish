@@ -123,15 +123,22 @@ if not test -e /dev/full
 else if not test -f $EMIT_JSONL
     ct_fail CT-5 "fish/functions/emit_jsonl.fish does not exist"
 else
+    # Redirect ONLY emit_jsonl's stdout to /dev/full, and record its status to a
+    # file. The previous form redirected the whole harness - including its own
+    # trailing `echo $status` - so that echo hit ENOSPC, the outer fish exited 1,
+    # and the assertion measured the harness rather than emit_jsonl. It passed
+    # locally only because macOS has no /dev/full and the case was skipped.
     set -l tmpdir (mktemp -d)
-    set -l exit_code (fish --no-config -c "
+    set -l statusfile (mktemp)
+    fish --no-config -c "
         set -p fish_function_path $FUNCS_DIR
         set -gx AUTOMATION_METRICS_SINK stdout
         set -gx AUTOMATION_METRICS_DIR $tmpdir
-        emit_jsonl --layer fish --event-type ct5-test --command test
-        echo \$status
-    " > /dev/full 2>/dev/null; echo $status)
-    rm -rf $tmpdir
+        emit_jsonl --layer fish --event-type ct5-test --command test > /dev/full 2>/dev/null
+        echo \$status > $statusfile
+    " 2>/dev/null
+    set -l exit_code (cat $statusfile 2>/dev/null; or echo missing)
+    rm -rf $tmpdir $statusfile
     if test "$exit_code" = 0
         ct_pass CT-5 "emit_jsonl returns 0 when stdout write fails"
     else
