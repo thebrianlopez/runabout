@@ -135,7 +135,6 @@ builds:
       - -X main.commit={{.Commit}}
       - -X main.date={{.Date}}
 
-  # workctl module hosts two binaries under cmd/workctl/cmd/{workctl,ghwatch}
   - id: workctl
     binary: workctl
     main: ./cmd/workctl
@@ -152,8 +151,8 @@ builds:
 
   - id: ghwatch
     binary: ghwatch
-    main: ./cmd/ghwatch
-    dir: ./cmd/workctl
+    main: .
+    dir: ./cmd/ghwatch
     env: [CGO_ENABLED=0]
     goos: [darwin, linux]
     goarch: [amd64, arm64]

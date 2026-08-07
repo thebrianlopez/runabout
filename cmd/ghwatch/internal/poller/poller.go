@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
-	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/formatter"
-	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/state"
+	"github.com/thebrianlopez/runabout/cmd/ghwatch/internal/event"
+	"github.com/thebrianlopez/runabout/cmd/ghwatch/internal/formatter"
+	"github.com/thebrianlopez/runabout/cmd/ghwatch/internal/state"
 )
 
 // EventPoller is the interface each event source implements.

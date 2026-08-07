@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/go-github/v81/github"
 
-	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/client"
-	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
+	"github.com/thebrianlopez/runabout/cmd/ghwatch/internal/client"
+	"github.com/thebrianlopez/runabout/cmd/ghwatch/internal/event"
 )
 
 type prState struct {

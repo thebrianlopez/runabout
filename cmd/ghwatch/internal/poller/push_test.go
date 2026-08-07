@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
+	"github.com/thebrianlopez/runabout/cmd/ghwatch/internal/event"
 )
 
 func TestPushPoller_SetLastSeen(t *testing.T) {

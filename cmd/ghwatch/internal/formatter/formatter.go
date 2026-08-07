@@ -1,6 +1,6 @@
 package formatter
 
-import "github.com/thebrianlopez/runabout/cmd/workctl/internal/ghwatch/event"
+import "github.com/thebrianlopez/runabout/cmd/ghwatch/internal/event"
 
 // Formatter writes events to the output stream.
 type Formatter interface {

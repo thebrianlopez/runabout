@@ -3,6 +3,7 @@ go 1.26.1
 use (
 	.
 	./cmd/bmux
+	./cmd/ghwatch
 	./cmd/jira-poller
 	./cmd/linkari
 	./cmd/linkari-labeler
@@ -15,7 +16,6 @@ use (
 )
 
 replace (
-
 	// EPIC-016: Resolve workspace cloud.google.com/go ambiguity.
 	// Old grpc transitive chain (grpc@v1.19/v1.23/v1.33 → go-control-plane → genproto)
 	// pulls cloud.google.com/go@v0.26.0 which still embeds compute/metadata inline.

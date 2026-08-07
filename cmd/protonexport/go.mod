@@ -7,7 +7,7 @@ require (
 	github.com/ProtonMail/go-proton-api v0.0.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
-	golang.org/x/net v0.54.0
+	golang.org/x/net v0.55.0
 )
 
 require (

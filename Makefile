@@ -368,11 +368,11 @@ install-workctl:
 
 ghwatch:
 	@echo "Building ghwatch..."
-	@cd cmd/workctl && go build $(LDFLAGS) -o ../../bin/ghwatch ./cmd/ghwatch
+	@cd cmd/ghwatch && go build $(LDFLAGS) -o ../../bin/ghwatch .
 
 install-ghwatch:
 	@echo "Installing ghwatch -> $(INSTALL_DIR)/ghwatch"
-	@cd cmd/workctl && go install $(LDFLAGS) ./cmd/ghwatch
+	@cd cmd/ghwatch && go install $(LDFLAGS) .
 
 runway:
 	@echo "Building runway..."
