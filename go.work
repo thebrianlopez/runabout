@@ -12,7 +12,6 @@ use (
 	./cmd/runway
 	./cmd/ts-go
 	./cmd/wasend
-	./cmd/workctl
 )
 
 replace (

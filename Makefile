@@ -8,7 +8,7 @@ INSTALL_DIR := $(shell go env GOPATH)/bin
 CORE := mdq perfgate shellprof hookval effiscore castex chain-eval
 
 # Separate-module tools (each has its own go.mod under cmd/)
-SEPARATE := bmux protonexport linkari linkari-labeler plaid-service wasend workctl ghwatch ts-go jira-poller runway
+SEPARATE := bmux protonexport linkari linkari-labeler plaid-service wasend ghwatch ts-go jira-poller runway
 
 # EPIC-257: unpublished tools. Source and per-tool targets are retained -
 # `make bmux` still works - but they are excluded from the aggregate targets so
@@ -357,14 +357,6 @@ wasend:
 install-wasend:
 	@echo "Installing wasend -> $(INSTALL_DIR)/wasend"
 	@cd cmd/wasend && go install $(LDFLAGS) .
-
-workctl:
-	@echo "Building workctl..."
-	@cd cmd/workctl && go build $(LDFLAGS) -o ../../bin/workctl ./cmd/workctl
-
-install-workctl:
-	@echo "Installing workctl -> $(INSTALL_DIR)/workctl"
-	@cd cmd/workctl && go install $(LDFLAGS) ./cmd/workctl
 
 ghwatch:
 	@echo "Building ghwatch..."

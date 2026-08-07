@@ -58,10 +58,6 @@ contents:
     file_info:
       mode: 0755
 
-  - src: dist/bin/workctl
-    dst: /data/data/com.termux/files/usr/bin/workctl
-    file_info:
-      mode: 0755
 
   - src: dist/bin/ghwatch
     dst: /data/data/com.termux/files/usr/bin/ghwatch

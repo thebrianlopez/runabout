@@ -68,7 +68,7 @@ end
 # EPIC-257: bmux, protonexport, plaid-service and wasend are unpublished and must
 # NOT appear here - see CT-6b. Keep this list in sync with Makefile PUBLISHED and
 # the .goreleaser.yaml build ids.
-set -l required_bins mdq perfgate shellprof hookval effiscore castex chain-eval linkari linkari-labeler workctl ghwatch jira-poller runway
+set -l required_bins mdq perfgate shellprof hookval effiscore castex chain-eval linkari linkari-labeler ghwatch jira-poller runway
 set -l missing_bins
 for bin in $required_bins
     if not grep -qF "dist/bin/$bin" $TERMUX_NFPM

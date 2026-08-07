@@ -19,7 +19,6 @@ These tools represent patterns that graduated from ad-hoc shell scripts into typ
 - **wasend** - send WhatsApp messages from the command line
 - **fetchpage** - headless webpage fetcher via Playwright
 - **protonexport** - export ProtonMail conversations to markdown
-- **workctl** - fetch and export Atlassian & GitHub work data (weekly/quarterly summaries, career reports)
 - **ghwatch** - stream GitHub repository activity to the terminal (push, PRs, workflow runs)
 - **ts-go** - tree-sitter-based structural Go source analysis (signatures, types, body extraction, search, rewrite)
 
@@ -439,21 +438,6 @@ fetchpage https://example.com --channel chromium
 
 Requires one-time Playwright setup: `make setup-fetchpage`.
 
-## workctl
-
-Fetch and export Atlassian & GitHub work data. Reads Jira, Confluence, and GitHub to produce weekly/quarterly summaries, performance reviews, career progression reports, and trend analysis. Config lives in `~/.config/workctl/config.yaml`; cache is SQLite (optionally encrypted via `WORKCTL_CACHE_PASSPHRASE`).
-
-```bash
-workctl init                        # scaffold config
-workctl weekly                      # weekly work summary
-workctl quarterly                   # quarterly summary
-workctl review                      # performance review generation
-workctl insights                    # work insights across sources
-workctl career                      # career progression analysis
-workctl trends                      # trend analysis
-workctl cache --refresh             # force cache refresh
-```
-
 ## ghwatch
 
 Stream GitHub repository activity to the terminal. Polls push events, pull requests, and workflow runs at a configurable interval; deduplicates across restarts via a local state file. Outputs human-readable text or JSONL.
@@ -526,10 +510,10 @@ go test ./... # run root module tests
 cd cmd/linkari && go test ./...    # linkari (separate module)
 cd cmd/wasend && go test ./...     # wasend (separate module)
 cd cmd/protonexport && go test ./... # protonexport (separate module)
-cd cmd/workctl && go test ./...    # workctl + ghwatch (separate module)
+cd cmd/ghwatch && go test ./...    # ghwatch (separate module)
 ```
 
-Version, commit, and build date are injected at build time via ldflags. The Go workspace (`go.work`) ties the root module to six separate-module satellites: linkari, fetchpage, ts-go, wasend, protonexport, and workctl.
+Version, commit, and build date are injected at build time via ldflags. The Go workspace (`go.work`) ties the root module to its separate-module satellites: linkari, ts-go, wasend, protonexport, and ghwatch.
 
 **Container images** (linkari sandbox runtime):
 
@@ -554,7 +538,7 @@ Recent signal from the bus (all counts real, sampled from local event files on 2
 | `ts-go` | 1,255,209 |
 | `linkari serve` | 66,382 |
 | `claude_prompt` | 18,758 |
-| `workctl fish` | 13,391 |
+| `workctl fish` (removed, EPIC-257 Wave 2) | 13,391 |
 | `mdq query` | 3,054 |
 | **Total events** | **1,539,107** |
 
@@ -575,10 +559,8 @@ cmd/ts-go/            # ts-go entry point (separate module - tree-sitter CGo dep
 cmd/linkari/          # linkari entry point (separate module, ~80 files)
 cmd/wasend/           # wasend entry point (separate module)
 cmd/protonexport/     # protonexport entry point (separate module)
-cmd/workctl/          # workctl module root (separate module)
-  cmd/workctl/        # workctl binary entry point
-  cmd/ghwatch/        # ghwatch binary entry point (shares workctl go.mod)
-  internal/           # workctl + ghwatch shared internals
+cmd/ghwatch/          # ghwatch entry point (separate module)
+  internal/           # ghwatch client, event, formatter, poller, state
 internal/mdq/         # markdown parser, query engine, output formatting
 internal/perfgate/    # benchmark runner, statistics, gating logic
 internal/shellprof/   # fish instrumentation, profiling, call graph

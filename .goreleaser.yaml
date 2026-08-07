@@ -135,20 +135,6 @@ builds:
       - -X main.commit={{.Commit}}
       - -X main.date={{.Date}}
 
-  - id: workctl
-    binary: workctl
-    main: ./cmd/workctl
-    dir: ./cmd/workctl
-    env: [CGO_ENABLED=0]
-    goos: [darwin, linux]
-    goarch: [amd64, arm64]
-    flags: [-trimpath]
-    ldflags:
-      - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
-
   - id: ghwatch
     binary: ghwatch
     main: .
@@ -221,7 +207,6 @@ archives:
       - chain-eval
       - linkari
       - linkari-labeler
-      - workctl
       - ghwatch
       - jira-poller
       - runway
@@ -255,7 +240,7 @@ brews:
       name: homebrew-runabout
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/thebrianlopez/runabout"
-    description: "Personal developer tools  -  mdq, workctl, linkari, runway, and more"
+    description: "Personal developer tools  -  mdq, linkari, ghwatch, runway, and more"
     license: "MIT"
     install: |
       bin.install "mdq"
@@ -267,13 +252,12 @@ brews:
       bin.install "chain-eval"
       bin.install "linkari"
       bin.install "linkari-labeler"
-      bin.install "workctl"
       bin.install "ghwatch"
       bin.install "jira-poller"
       bin.install "runway"
     test: |
       system "#{bin}/mdq", "--version"
-      system "#{bin}/workctl", "--version"
+      system "#{bin}/ghwatch", "--version"
       system "#{bin}/castex", "--version"
 
   # ts-go formula: CGo build, darwin only
@@ -321,7 +305,7 @@ nfpms:
     vendor: thebrianlopez
     homepage: "https://github.com/thebrianlopez/runabout"
     maintainer: "Brian Lopez <noreply@thebrianlopez.dev>"
-    description: "Personal developer tools - mdq, workctl, linkari, runway, and more"
+    description: "Personal developer tools - mdq, linkari, ghwatch, runway, and more"
     license: MIT
     formats:
       - apk
@@ -335,7 +319,6 @@ nfpms:
       - chain-eval
       - linkari
       - linkari-labeler
-      - workctl
       - ghwatch
       - jira-poller
       - runway
@@ -352,7 +335,7 @@ nfpms:
     vendor: thebrianlopez
     homepage: "https://github.com/thebrianlopez/runabout"
     maintainer: "Brian Lopez <noreply@thebrianlopez.dev>"
-    description: "Personal developer tools - mdq, workctl, linkari, runway, and more"
+    description: "Personal developer tools - mdq, linkari, ghwatch, runway, and more"
     license: MIT
     formats:
       - deb
@@ -366,7 +349,6 @@ nfpms:
       - chain-eval
       - linkari
       - linkari-labeler
-      - workctl
       - ghwatch
       - jira-poller
       - runway
