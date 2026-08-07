@@ -64,8 +64,11 @@ else if test -f $TERMUX_NFPM
     ct_fail CT-5 "Termux package missing arch: aarch64"
 end
 
-# CT-6: package includes the runabout CLI suite binaries (spot check)
-set -l required_bins mdq perfgate shellprof hookval effiscore castex chain-eval bmux protonexport linkari linkari-labeler plaid-service wasend workctl ghwatch jira-poller runway
+# CT-6: package includes the published runabout CLI suite binaries (spot check)
+# EPIC-257: bmux, protonexport, plaid-service and wasend are unpublished and must
+# NOT appear here - see CT-6b. Keep this list in sync with Makefile PUBLISHED and
+# the .goreleaser.yaml build ids.
+set -l required_bins mdq perfgate shellprof hookval effiscore castex chain-eval linkari linkari-labeler workctl ghwatch jira-poller runway
 set -l missing_bins
 for bin in $required_bins
     if not grep -qF "dist/bin/$bin" $TERMUX_NFPM
@@ -73,9 +76,26 @@ for bin in $required_bins
     end
 end
 if test (count $missing_bins) -eq 0
-    ct_pass CT-6 "Termux package references the full CLI suite"
+    ct_pass CT-6 "Termux package references the published CLI suite"
 else
     ct_fail CT-6 "Missing binaries in Termux package: $missing_bins"
+end
+
+# CT-6b (EPIC-257): unpublished tools must not be referenced by the Termux
+# manifest. goreleaser no longer builds them, so dist/bin/<tool> never exists and
+# nfpm fails the termux-repo job at release time. This guards the third surface -
+# Makefile and .goreleaser.yaml are the other two.
+set -l unpublished_bins bmux protonexport plaid-service wasend
+set -l leaked_bins
+for bin in $unpublished_bins
+    if grep -qF "dist/bin/$bin" $TERMUX_NFPM
+        set leaked_bins $leaked_bins $bin
+    end
+end
+if test (count $leaked_bins) -eq 0
+    ct_pass CT-6b "Termux package excludes unpublished tools"
+else
+    ct_fail CT-6b "Unpublished tools present in Termux package: $leaked_bins"
 end
 
 # CT-7: smoke harness exists and exercises repo add/update/install/bin execution

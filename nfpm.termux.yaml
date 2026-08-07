@@ -48,16 +48,6 @@ contents:
     file_info:
       mode: 0755
 
-  - src: dist/bin/bmux
-    dst: /data/data/com.termux/files/usr/bin/bmux
-    file_info:
-      mode: 0755
-
-  - src: dist/bin/protonexport
-    dst: /data/data/com.termux/files/usr/bin/protonexport
-    file_info:
-      mode: 0755
-
   - src: dist/bin/linkari
     dst: /data/data/com.termux/files/usr/bin/linkari
     file_info:
@@ -65,16 +55,6 @@ contents:
 
   - src: dist/bin/linkari-labeler
     dst: /data/data/com.termux/files/usr/bin/linkari-labeler
-    file_info:
-      mode: 0755
-
-  - src: dist/bin/plaid-service
-    dst: /data/data/com.termux/files/usr/bin/plaid-service
-    file_info:
-      mode: 0755
-
-  - src: dist/bin/wasend
-    dst: /data/data/com.termux/files/usr/bin/wasend
     file_info:
       mode: 0755
 
