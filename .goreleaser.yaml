@@ -197,7 +197,7 @@ builds:
 archives:
   # Combined archive for all CGO_ENABLED=0 tools, darwin + linux
   - id: runabout
-    builds:
+    ids:
       - mdq
       - perfgate
       - shellprof
@@ -211,13 +211,13 @@ archives:
       - jira-poller
       - runway
     name_template: "runabout_{{.Version}}_{{.Os}}_{{.Arch}}"
-    format: tar.gz
+    formats: ["tar.gz"]
 
   # Separate archive for ts-go (CGo, darwin only)
   - id: ts-go-archive
-    builds: [ts-go]
+    ids: [ts-go]
     name_template: "ts-go_{{.Version}}_{{.Os}}_{{.Arch}}"
-    format: tar.gz
+    formats: ["tar.gz"]
 
 checksum:
   name_template: "checksums.txt"
