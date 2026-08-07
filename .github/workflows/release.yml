@@ -112,7 +112,12 @@ jobs:
         if: vars.HOMEBREW_TAP_APP_ID != ''
         uses: goreleaser/goreleaser-action@v6
         with:
-          version: latest
+          # Pinned to the v2 major. `latest` would auto-adopt v3 the day it
+          # ships, which removes deprecated options this config still uses
+          # (brews, archives.format, archives.builds, dockers). Deprecated
+          # options are only removed on major versions, so this pin is what
+          # converts that from an uncontrolled break into scheduled work.
+          version: "~> v2"
           args: release --clean --skip docker
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -124,7 +129,12 @@ jobs:
         if: vars.HOMEBREW_TAP_APP_ID == ''
         uses: goreleaser/goreleaser-action@v6
         with:
-          version: latest
+          # Pinned to the v2 major. `latest` would auto-adopt v3 the day it
+          # ships, which removes deprecated options this config still uses
+          # (brews, archives.format, archives.builds, dockers). Deprecated
+          # options are only removed on major versions, so this pin is what
+          # converts that from an uncontrolled break into scheduled work.
+          version: "~> v2"
           args: release --clean --skip docker --skip homebrew
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
