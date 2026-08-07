@@ -223,17 +223,12 @@ key_facts:
 
 	t.Setenv("ORG_PATH", base)
 
-	// Override transcript dir to temp.
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
-
 	return done
 }
 
-func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID int64, done chan struct{}) {
+func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID int64, done chan struct{}, deps *scoringDeps) {
 	t.Helper()
-	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil, HaikuJSONEvaluator{})
+	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil, HaikuJSONEvaluator{}, deps)
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -242,9 +237,9 @@ func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID 
 	time.Sleep(50 * time.Millisecond)
 }
 
-func runScoreAudioSkip(t *testing.T, audioPath, profile string, q *Queue, rowID int64) {
+func runScoreAudioSkip(t *testing.T, audioPath, profile string, q *Queue, rowID int64, deps *scoringDeps) {
 	t.Helper()
-	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil, HaikuJSONEvaluator{})
+	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil, HaikuJSONEvaluator{}, deps)
 	time.Sleep(300 * time.Millisecond)
 }
 
@@ -271,7 +266,7 @@ func TestScoreAudioAsync_HappyPath(t *testing.T) {
 	}
 	q.MarkRelayed(id)
 
-	runScoreAudioSync(t, audioFile, "eng", q, id, done)
+	runScoreAudioSync(t, audioFile, "eng", q, id, done, newTestDeps(t))
 
 	// Check queue row is scored with transcript backfilled and rubric score.
 	items, err := q.List("", 20)
@@ -316,7 +311,7 @@ func TestScoreAudioAsync_NilReqFallback(t *testing.T) {
 	}
 	q.MarkRelayed(id)
 
-	runScoreAudioSync(t, audioFile, "eng", q, id, done)
+	runScoreAudioSync(t, audioFile, "eng", q, id, done, newTestDeps(t))
 
 	items, err := q.List("", 20)
 	if err != nil {
@@ -353,7 +348,7 @@ func TestScoreAudioAsync_WhisperFailure(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "audio", Action: "vnote_auto"})
 	q.MarkRelayed(id)
 
-	runScoreAudioSkip(t, audioFile, "eng", q, id)
+	runScoreAudioSkip(t, audioFile, "eng", q, id, newTestDeps(t))
 
 	var status string
 	var retryCount int
@@ -384,7 +379,7 @@ func TestScoreAudioAsync_EmptyTranscript(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "audio", Action: "vnote_auto"})
 	q.MarkRelayed(id)
 
-	runScoreAudioSkip(t, audioFile, "eng", q, id)
+	runScoreAudioSkip(t, audioFile, "eng", q, id, newTestDeps(t))
 }
 
 // 4. validateRequest — audio type.
@@ -520,7 +515,7 @@ func TestScoreAudioAsync_Chunked(t *testing.T) {
 	}
 	q.MarkRelayed(id)
 
-	runScoreAudioSync(t, audioFile, "", q, id, done)
+	runScoreAudioSync(t, audioFile, "", q, id, done, newTestDeps(t))
 
 	items, _ := q.List("", 20)
 	for _, it := range items {
@@ -564,7 +559,7 @@ func TestScoreAudioAsync_ProgressUpdates(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "audio", Action: "vnote_auto"})
 	q.MarkRelayed(id)
 
-	runScoreAudioSync(t, audioFile, "", q, id, done)
+	runScoreAudioSync(t, audioFile, "", q, id, done, newTestDeps(t))
 
 	item, err := q.GetByID(id)
 	if err != nil {

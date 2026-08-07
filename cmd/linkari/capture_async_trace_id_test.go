@@ -112,15 +112,13 @@ var errTraceFetch = errors.New("trace_test_fetch_error")
 // jina fallback that always errors. This forces FetchWithFallback to return an
 // error regardless of the domain client, so captureAsync reaches the
 // slog.ErrorContext("captureAsync: fetch failed") call after trace_id is wired.
-func setFailingDomainRouter(t *testing.T) {
+func setFailingDomainRouter(t *testing.T, router *Router) {
 	t.Helper()
-	prev := pkgDomainRouter
 	dr := NewDomainRouter(
 		map[string]DomainClient{},
 		func(_ context.Context, _ string) (string, error) { return "", errTraceFetch },
 	)
-	setDomainRouter(dr)
-	t.Cleanup(func() { setDomainRouter(prev) })
+	router.SetDomainRouter(dr)
 }
 
 // CT-1: slog records emitted inside captureAsync carry the queue row's trace_id in
@@ -131,8 +129,8 @@ func setFailingDomainRouter(t *testing.T) {
 // linklog.TraceIDFromContext(ctx) returns "" for all records.
 func TestCaptureAsync_CT1_TraceIDPresentInSlogContext(t *testing.T) {
 	h := installTraceCapture(t)
-	setFailingDomainRouter(t)
 	s, q := newCaptureServer(t, nil)
+	setFailingDomainRouter(t, s.router)
 	s.RegisterCaptureRenderer("capture_jira_auto", &captureStubRenderer{})
 
 	id := enqueueCapturePending(t, q)
@@ -159,8 +157,8 @@ func TestCaptureAsync_CT1_TraceIDPresentInSlogContext(t *testing.T) {
 // Fails before M2: same root cause as CT-1.
 func TestCaptureAsync_CT2_TraceIDMatchesQueueRow(t *testing.T) {
 	h := installTraceCapture(t)
-	setFailingDomainRouter(t)
 	s, q := newCaptureServer(t, nil)
+	setFailingDomainRouter(t, s.router)
 	s.RegisterCaptureRenderer("capture_jira_auto", &captureStubRenderer{})
 
 	id := enqueueCapturePending(t, q)
@@ -185,8 +183,8 @@ func TestCaptureAsync_CT2_TraceIDMatchesQueueRow(t *testing.T) {
 // WithTraceID or reverts slog calls to non-context form will be caught here by name.
 func TestCaptureAsync_RG1_TraceIDRegressionGuard(t *testing.T) {
 	h := installTraceCapture(t)
-	setFailingDomainRouter(t)
 	s, q := newCaptureServer(t, nil)
+	setFailingDomainRouter(t, s.router)
 	s.RegisterCaptureRenderer("capture_jira_auto", &captureStubRenderer{})
 
 	id := enqueueCapturePending(t, q)
@@ -216,8 +214,8 @@ func TestCaptureAsync_RG1_TraceIDRegressionGuard(t *testing.T) {
 // Fails before M2: no warning is emitted for empty trace_id.
 func TestCaptureAsync_CT3_EmptyTraceIDEmitsWarning(t *testing.T) {
 	h := installTraceCapture(t)
-	setFailingDomainRouter(t)
 	s, q := newCaptureServer(t, nil)
+	setFailingDomainRouter(t, s.router)
 	s.RegisterCaptureRenderer("capture_jira_auto", &captureStubRenderer{})
 
 	id := enqueueWithEmptyTraceID(t, q)

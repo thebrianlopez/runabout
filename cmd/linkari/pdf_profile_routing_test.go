@@ -88,7 +88,7 @@ func TestCT4_ContentTypePDF_PrependedForDocument(t *testing.T) {
 		MimeType:  "application/pdf",
 		AudioPath: audioPath,
 	}
-	scoreAsync(req, nil, cap, nil, nil, nil)
+	scoreAsync(req, nil, cap, nil, nil, nil, nil)
 
 	if !strings.HasPrefix(cap.prompt, ContentTypePDF) {
 		prefix := cap.prompt
@@ -110,7 +110,7 @@ func TestCT5_ContentTypePDF_NotPrependedForURL(t *testing.T) {
 		w.Write([]byte("Some URL page content about machine learning and AI."))
 	}))
 	t.Cleanup(srv.Close)
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
 
 	cap := &captureEval{}
 	req := &ShareRequest{
@@ -118,7 +118,7 @@ func TestCT5_ContentTypePDF_NotPrependedForURL(t *testing.T) {
 		Profile: "eng",
 		URL:     "https://example.com/article",
 	}
-	scoreAsync(req, nil, cap, nil, nil, nil)
+	scoreAsync(req, nil, cap, nil, nil, nil, deps)
 
 	if strings.HasPrefix(cap.prompt, ContentTypePDF) {
 		t.Error("CT-5: sysPrompt for type=url should NOT start with ContentTypePDF")
@@ -217,15 +217,14 @@ func TestRG2_URLShare_CategoryFinance_NoPDFMime_NotFinance(t *testing.T) {
 func TestRG3_BareNoteAction_PDFShare_RoutesOK(t *testing.T) {
 	// Redirect transcriptDir so the background scoreAsync goroutine spawned by
 	// ServeHTTP writes to a temp dir rather than the real transcripts directory.
-	prevTranscriptDir := transcriptDir
-	transcriptDir = t.TempDir()
-	t.Cleanup(func() { transcriptDir = prevTranscriptDir })
+	transcriptDir := t.TempDir()
 
 	installLiteParseStub(t, "extracted pdf text", 0.9, nil)
 	installHaikuJSONStub(t)
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
+	router.SetServerConfig(&ServerConfig{TranscriptsDir: transcriptDir})
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 
@@ -270,6 +269,7 @@ func TestRG3_BareNoteAction_PDFShare_RoutesOK(t *testing.T) {
 func TestRG3b_UnknownAction_Returns400(t *testing.T) {
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
+	router.SetServerConfig(&ServerConfig{TranscriptsDir: t.TempDir()})
 	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
 
 	body, ct := buildPDFMultipart(t, "totally_unknown_action_xyz", "doc.pdf", 1024, false)

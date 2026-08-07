@@ -11,6 +11,9 @@ type firehoseScoreContext struct {
 	Events     *EventLogger
 	BskyClient *BlueskyClient
 	ScoreSem   chan struct{} // capacity=3 concurrency limiter
+	// Deps carries scoring dependencies (transcript dir, domain router, Jina
+	// client). nil resolves to production defaults. EPIC-258 M2.
+	Deps *scoringDeps
 }
 
 // resolveFirehoseProfile maps a firehose subscription profile to a valid

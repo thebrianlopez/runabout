@@ -825,7 +825,7 @@ subtitleReady:
 	}
 
 	// Step 4: save transcript file. EPIC-090 M4: pass video_id, duration, subtitle_type.
-	txPath, err := saveTranscriptFile(rowID, profile, "", transcript, "youtube", videoURL, meta.Title, meta.ID, meta.Duration, meta.SubtitleType)
+	txPath, err := saveTranscriptFile(resolveTranscriptsDir(serverConfig), rowID, profile, "", transcript, "youtube", videoURL, meta.Title, meta.ID, meta.Duration, meta.SubtitleType)
 	if err != nil {
 		slog.Warn("score_youtube: save transcript failed", "row_id", rowID, "error", err)
 		// Non-fatal — continue to scoring.
@@ -1133,7 +1133,7 @@ txSubtitleReady:
 	}
 
 	// Step 3: save transcript file.
-	txPath, err := saveTranscriptFile(rowID, profile, "", transcript, "youtube", videoURL, meta.Title, meta.ID, meta.Duration, meta.SubtitleType)
+	txPath, err := saveTranscriptFile(resolveTranscriptsDir(serverConfig), rowID, profile, "", transcript, "youtube", videoURL, meta.Title, meta.ID, meta.Duration, meta.SubtitleType)
 	if err != nil {
 		slog.Warn("transcribe_youtube: save transcript failed", "row_id", rowID, "error", err)
 		// Non-fatal — still send FCM so the user knows the transcript is done.

@@ -133,7 +133,7 @@ func TestScoreAsyncTerminalStatus(t *testing.T) {
 			installTestProfileDir(t, "eng")
 
 			srv := jinaBodyServer(t, tc.jinaCode, tc.jinaBody)
-			installJinaServer(t, srv)
+			deps := installJinaServer(t, srv)
 
 			// Stub content classify so the cascade resolves without Haiku.
 			prevCC := execContentClassify
@@ -169,7 +169,7 @@ func TestScoreAsyncTerminalStatus(t *testing.T) {
 			done := make(chan struct{})
 			wrapped := &onceDoneEval{inner: inner, done: done}
 
-			go scoreAsync(req, q, wrapped, nil, nil, nil)
+			go scoreAsync(req, q, wrapped, nil, nil, nil, deps)
 			select {
 			case <-done:
 				// Eval was called — give goroutine time to finish post-eval work.
@@ -265,7 +265,7 @@ func TestProcessVoiceNoteAsyncTerminalStatus(t *testing.T) {
 			finished := make(chan struct{})
 			go func() {
 				defer close(finished)
-				processVoiceNoteAsync(audioPath, "life", q, id, "test.m4a", "", "", req, nil, &stubEvaluator{score: 80, verdict: "interesting"})
+				processVoiceNoteAsync(audioPath, "life", q, id, "test.m4a", "", "", req, nil, &stubEvaluator{score: 80, verdict: "interesting"}, nil)
 			}()
 
 			select {
@@ -404,7 +404,7 @@ func TestVisionDoubleFailure_MarksFailedNotScored(t *testing.T) {
 
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: HaikuVisionEvaluator{ImagePath: tmpFile}, done: done}
-	go scoreAsync(req, q, wrapped, nil, nil, nil)
+	go scoreAsync(req, q, wrapped, nil, nil, nil, nil)
 	select {
 	case <-done:
 		time.Sleep(100 * time.Millisecond)
@@ -512,7 +512,7 @@ func TestShareEndpointQueueRowGuarantee(t *testing.T) {
 
 	// Stub Jina to prevent the scoring goroutine from reaching the network.
 	jina := jinaBodyServer(t, http.StatusOK, "interesting engineering content")
-	installJinaServer(t, jina)
+	deps := installJinaServer(t, jina)
 
 	// Stub content classify so async scoring resolves without Haiku.
 	prevCC := execContentClassify
@@ -524,6 +524,7 @@ func TestShareEndpointQueueRowGuarantee(t *testing.T) {
 	cfg := builtinConfig()
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, cfg, false)
+	router.SetJinaClient(deps.Jina)
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 	mux := srv.Mux()

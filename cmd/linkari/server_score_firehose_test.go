@@ -44,7 +44,7 @@ func (e *visionStubEvaluator) Evaluate(_ context.Context, _, _ string) (*Scoreca
 // and event emission happen before the q==nil early return, so vision_token_correction
 // events are still captured correctly.
 // Waits for the goroutine to fully return before returning.
-func runScoreAsyncWithEvents(t *testing.T, req *ShareRequest, eval Evaluator, eventsPath string) {
+func runScoreAsyncWithEvents(t *testing.T, req *ShareRequest, eval Evaluator, eventsPath string, deps *scoringDeps) {
 	t.Helper()
 	el, err := NewEventLogger(eventsPath)
 	if err != nil {
@@ -55,7 +55,7 @@ func runScoreAsyncWithEvents(t *testing.T, req *ShareRequest, eval Evaluator, ev
 	goroutineDone := make(chan struct{})
 	go func() {
 		defer close(goroutineDone)
-		scoreAsync(req, nil, eval, el, nil, nil) // nil q: avoids resolvePushConfigOnce blocking
+		scoreAsync(req, nil, eval, el, nil, nil, deps) // nil q: avoids resolvePushConfigOnce blocking
 	}()
 	select {
 	case <-goroutineDone:
@@ -98,12 +98,11 @@ func readEventTypesFromFile(t *testing.T, path string) map[string]int {
 // transcript file body contains the post text.
 func TestF5CT1_FirehoseTranscriptBodyPopulated(t *testing.T) {
 	isolateEventsDir(t)
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 
+	deps.TranscriptsDir = transcriptDir
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
 
@@ -121,7 +120,7 @@ func TestF5CT1_FirehoseTranscriptBodyPopulated(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 75, verdict: "Strong Yes"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, deps)
 
 	// EPIC-250 M3 (RG-2): narrow the match to this test's own AT-URI slug
 	// ("f5ct1") so a transcript file leaked from another test  -  e.g. a
@@ -152,13 +151,11 @@ func TestF5CT1_FirehoseTranscriptBodyPopulated(t *testing.T) {
 // transcript body contains fetchedContent (not altered by the coalesce).
 func TestF5CT2_HTTPShareTranscriptUnchanged(t *testing.T) {
 	isolateEventsDir(t)
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	const pageContent = "Full article body fetched from the web  -  machine learning research."
-	installJinaServer(t, jinaBodyServer(t, 200, pageContent))
-
+	deps := installJinaServer(t, jinaBodyServer(t, 200, pageContent))
+	deps.TranscriptsDir = transcriptDir
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
 
@@ -176,7 +173,7 @@ func TestF5CT2_HTTPShareTranscriptUnchanged(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 80, verdict: "Worth reading"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, deps)
 
 	entries, err := os.ReadDir(transcriptDir)
 	if err != nil {
@@ -201,13 +198,11 @@ func TestF5CT2_HTTPShareTranscriptUnchanged(t *testing.T) {
 // Coalesce order: rawContent first, req.Text only when rawContent is empty.
 func TestF5CT3_BothPopulatedPrefersRawContent(t *testing.T) {
 	isolateEventsDir(t)
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	const pageContent = "Fetched page content  -  longer and richer than the pre-populated text."
-	installJinaServer(t, jinaBodyServer(t, 200, pageContent))
-
+	deps := installJinaServer(t, jinaBodyServer(t, 200, pageContent))
+	deps.TranscriptsDir = transcriptDir
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
 
@@ -225,7 +220,7 @@ func TestF5CT3_BothPopulatedPrefersRawContent(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 70, verdict: "Maybe"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, deps)
 
 	entries, err := os.ReadDir(transcriptDir)
 	if err != nil {
@@ -246,12 +241,11 @@ func TestF5CT3_BothPopulatedPrefersRawContent(t *testing.T) {
 // AT-URI fetch fails and req.Text is empty → scoreAsync returns early (no transcript created).
 func TestF5CT4_BothEmptyNoFabrication(t *testing.T) {
 	isolateEventsDir(t)
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 
+	deps.TranscriptsDir = transcriptDir
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
 
@@ -268,7 +262,7 @@ func TestF5CT4_BothEmptyNoFabrication(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 75, verdict: "Strong Yes"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, deps)
 
 	// scoreAsync returns early when both fetch and req.Text are empty.
 	// No transcript file should be created with fabricated content.
@@ -287,12 +281,11 @@ func TestF5CT4_BothEmptyNoFabrication(t *testing.T) {
 // must produce a transcript file with non-empty body (not empty as in EPIC-125 M6).
 func TestF5RG1_FirehoseTranscriptBodyNonEmpty(t *testing.T) {
 	isolateEventsDir(t)
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 
+	deps.TranscriptsDir = transcriptDir
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
 
@@ -310,7 +303,7 @@ func TestF5RG1_FirehoseTranscriptBodyNonEmpty(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 80, verdict: "Strong Yes"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, deps)
 
 	entries, err := os.ReadDir(transcriptDir)
 	if err != nil {
@@ -342,12 +335,11 @@ func TestF5RG1_FirehoseTranscriptBodyNonEmpty(t *testing.T) {
 // no vision_token_correction event emitted despite suspicious Usage (low tokens, high cost).
 func TestF7CT1_TextOnlyURLNoVisionTokenEvent(t *testing.T) {
 	isolateEventsDir(t)
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 
+	deps.TranscriptsDir = transcriptDir
 	req := &ShareRequest{
 		Type:     "url",
 		URL:      "at://did:plc:abc/app.bsky.feed.post/f7ct1",
@@ -358,7 +350,7 @@ func TestF7CT1_TextOnlyURLNoVisionTokenEvent(t *testing.T) {
 
 	evPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eval := &visionStubEvaluator{score: 75, verdict: "Strong Yes"}
-	runScoreAsyncWithEvents(t, req, eval, evPath)
+	runScoreAsyncWithEvents(t, req, eval, evPath, deps)
 
 	counts := readEventTypesFromFile(t, evPath)
 	if counts["vision_token_correction"] > 0 {
@@ -371,12 +363,11 @@ func TestF7CT1_TextOnlyURLNoVisionTokenEvent(t *testing.T) {
 // guard does NOT fire; vision_token_correction can still be emitted.
 func TestF7CT2_URLWithFetchedContentNotGuarded(t *testing.T) {
 	isolateEventsDir(t)
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
-	installJinaServer(t, jinaBodyServer(t, 200, "article about machine learning"))
+	deps := installJinaServer(t, jinaBodyServer(t, 200, "article about machine learning"))
 
+	deps.TranscriptsDir = transcriptDir
 	req := &ShareRequest{
 		Type:     "url",
 		URL:      "https://example.com/ml-article-f7ct2",
@@ -387,7 +378,7 @@ func TestF7CT2_URLWithFetchedContentNotGuarded(t *testing.T) {
 
 	evPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eval := &visionStubEvaluator{score: 70, verdict: "Maybe"}
-	runScoreAsyncWithEvents(t, req, eval, evPath)
+	runScoreAsyncWithEvents(t, req, eval, evPath, deps)
 
 	// Guard does not fire (req.Text is empty) → vision_token_correction should emit.
 	counts := readEventTypesFromFile(t, evPath)
@@ -399,12 +390,11 @@ func TestF7CT2_URLWithFetchedContentNotGuarded(t *testing.T) {
 // F7-CT-3: URL share with Filename set → guard does NOT fire (all three conditions required).
 func TestF7CT3_URLWithFilenameNotGuarded(t *testing.T) {
 	isolateEventsDir(t)
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 
+	deps.TranscriptsDir = transcriptDir
 	req := &ShareRequest{
 		Type:     "url",
 		URL:      "at://did:plc:abc/app.bsky.feed.post/f7ct3",
@@ -415,7 +405,7 @@ func TestF7CT3_URLWithFilenameNotGuarded(t *testing.T) {
 
 	evPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eval := &visionStubEvaluator{score: 70, verdict: "Maybe"}
-	runScoreAsyncWithEvents(t, req, eval, evPath)
+	runScoreAsyncWithEvents(t, req, eval, evPath, deps)
 
 	// Guard does not fire (Filename is set) → vision_token_correction should emit.
 	counts := readEventTypesFromFile(t, evPath)
@@ -455,12 +445,11 @@ func TestF7CT4_GuardRequiresAllThreeConditions(t *testing.T) {
 // Source: EPIC-125 M6 live validation (queue_id=23562, $0.013 for 347-char Bluesky post).
 func TestF7RG1_TextOnlyFirehoseNoVisionCost(t *testing.T) {
 	isolateEventsDir(t)
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 
+	deps.TranscriptsDir = transcriptDir
 	req := &ShareRequest{
 		Type:     "url",
 		URL:      "at://did:plc:abc/app.bsky.feed.post/f7rg1",
@@ -471,7 +460,7 @@ func TestF7RG1_TextOnlyFirehoseNoVisionCost(t *testing.T) {
 
 	evPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eval := &visionStubEvaluator{score: 82, verdict: "Strong Yes"}
-	runScoreAsyncWithEvents(t, req, eval, evPath)
+	runScoreAsyncWithEvents(t, req, eval, evPath, deps)
 
 	counts := readEventTypesFromFile(t, evPath)
 	if counts["vision_token_correction"] > 0 {

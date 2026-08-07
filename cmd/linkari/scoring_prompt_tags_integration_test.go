@@ -21,12 +21,12 @@ import (
 
 // runScoreAsyncCapturePrompt calls scoreAsync and waits for the evaluator to be
 // invoked. Returns the system prompt that was passed to eval.Evaluate.
-func runScoreAsyncCapturePrompt(t *testing.T, req *ShareRequest, q *Queue) string {
+func runScoreAsyncCapturePrompt(t *testing.T, req *ShareRequest, q *Queue, deps *scoringDeps) string {
 	t.Helper()
 	inner := &captureEval{}
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: inner, done: done}
-	go scoreAsync(req, q, wrapped, nil, nil, nil)
+	go scoreAsync(req, q, wrapped, nil, nil, nil, deps)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
@@ -42,7 +42,7 @@ func TestF5_CT5_ScoreAsync_UserTags_InjectedIntoPrompt(t *testing.T) {
 
 	// Stub Jina so the URL fetch succeeds without network.
 	srv := jinaBodyServer(t, http.StatusOK, "This is a test engineering article about Go concurrency.")
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
 
 	// Stub content classify to avoid subprocess.
 	prevCC := execContentClassify
@@ -70,7 +70,7 @@ func TestF5_CT5_ScoreAsync_UserTags_InjectedIntoPrompt(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	prompt := runScoreAsyncCapturePrompt(t, req, q)
+	prompt := runScoreAsyncCapturePrompt(t, req, q, deps)
 
 	if !strings.Contains(prompt, "User-Applied Tags: urgent, reference") {
 		t.Errorf("CT-5 FAIL: prompt does not contain tag section; prompt=%q", prompt)
@@ -82,7 +82,7 @@ func TestF5_CT6_ScoreAsync_NilUserTags_PromptUnchanged(t *testing.T) {
 	isolateEventsDir(t)
 
 	srv := jinaBodyServer(t, http.StatusOK, "This is a test engineering article about Go concurrency.")
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
 
 	prevCC := execContentClassify
 	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
@@ -109,7 +109,7 @@ func TestF5_CT6_ScoreAsync_NilUserTags_PromptUnchanged(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	prompt := runScoreAsyncCapturePrompt(t, req, q)
+	prompt := runScoreAsyncCapturePrompt(t, req, q, deps)
 
 	if strings.Contains(prompt, "User-Applied Tags") {
 		t.Errorf("CT-6 FAIL: prompt should not contain tag section when UserTags is nil; prompt=%q", prompt)

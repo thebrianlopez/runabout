@@ -263,6 +263,7 @@ func registeredSources(srv *Server) []ContentSource {
 			client: srv.bskyClient,
 			eval:   HaikuJSONEvaluator{},
 			events: srv.events,
+			depsFn: srv.scoringDepsFn(),
 		})
 	} else {
 		emitSourceDisabled(srv, "bsky_firehose")

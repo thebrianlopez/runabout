@@ -484,9 +484,8 @@ func initClaudeConfig(cfg *ServerConfig) {
 	}
 	// EPIC-009 M1: transcript directory and yt-dlp path.
 	// EPIC-090 M5: tilde expansion for transcripts_dir.
-	if cfg != nil && cfg.TranscriptsDir != "" {
-		transcriptDir = expandTilde(cfg.TranscriptsDir)
-	}
+	// EPIC-258 M2: the transcript directory is no longer a package var; it is
+	// resolved per call via resolveTranscriptsDir(cfg) and carried in scoringDeps.
 	if cfg != nil && cfg.YtdlpPath != "" {
 		ytdlpBinaryPath = cfg.YtdlpPath
 	}

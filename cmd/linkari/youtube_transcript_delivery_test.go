@@ -81,16 +81,14 @@ func TestF3CT_EmptyTranscriptGuard(t *testing.T) {
 	q := newTestQueue(t)
 	el, evtPath := newDeliveryEventLogger(t)
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	// yt-dlp returns exit 0 with no subtitle content.
 	installYtdlpTranscriptStub(t, "", ytVideoMeta{Title: "Empty", ID: "empty1", Duration: 60, SubtitleType: "auto"})
 	pushCalled := installPushStub(t, nil)
 
 	req := enqueueDeliveryReq(t, q, "https://www.youtube.com/watch?v=empty1")
-	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", nil)
+	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir})
 
 	raw := readDeliveryLog(t, el, evtPath)
 
@@ -125,15 +123,13 @@ func TestF3CT_DeliveryEmitsEvent(t *testing.T) {
 	q := newTestQueue(t)
 	el, evtPath := newDeliveryEventLogger(t)
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	installYtdlpTranscriptStub(t, "This is the transcript.", ytVideoMeta{Title: "Good Video", ID: "good1", Duration: 120, SubtitleType: "auto"})
 	pushCalled := installPushStub(t, nil)
 
 	req := enqueueDeliveryReq(t, q, "https://www.youtube.com/watch?v=good1")
-	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", nil)
+	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir})
 
 	raw := readDeliveryLog(t, el, evtPath)
 
@@ -164,15 +160,13 @@ func TestF3CT_FCMFailureEmitsEvent(t *testing.T) {
 	q := newTestQueue(t)
 	el, evtPath := newDeliveryEventLogger(t)
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	installYtdlpTranscriptStub(t, "This is the transcript.", ytVideoMeta{Title: "Push Fail", ID: "pfail1", Duration: 90, SubtitleType: "auto"})
 	pushCalled := installPushStub(t, fmt.Errorf("sqlite: table push_outbox is locked"))
 
 	req := enqueueDeliveryReq(t, q, "https://www.youtube.com/watch?v=pfail1")
-	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", nil)
+	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir})
 
 	raw := readDeliveryLog(t, el, evtPath)
 

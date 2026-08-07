@@ -55,9 +55,8 @@ func TestFeatureFlag_Disabled_Fallthrough(t *testing.T) {
 	}
 	t.Cleanup(func() { execHaikuVision = prevRunVision })
 
-	origTranscriptDir := transcriptDir
-	transcriptDir = t.TempDir()
-	t.Cleanup(func() { transcriptDir = origTranscriptDir })
+	transcriptDir := t.TempDir()
+	deps := &scoringDeps{TranscriptsDir: transcriptDir}
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -80,7 +79,7 @@ func TestFeatureFlag_Disabled_Fallthrough(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	go scoreAsync(req, q, nil, nil, nil, nil)
+	go scoreAsync(req, q, nil, nil, nil, nil, deps)
 
 	// Poll for terminal status.
 	deadline := time.Now().Add(5 * time.Second)
@@ -185,9 +184,8 @@ func TestFeatureFlag_Enabled_EmitsEvents(t *testing.T) {
 	}
 	t.Cleanup(func() { execHaikuVision = prevRunVision })
 
-	origTranscriptDir := transcriptDir
-	transcriptDir = t.TempDir()
-	t.Cleanup(func() { transcriptDir = origTranscriptDir })
+	transcriptDir := t.TempDir()
+	deps := &scoringDeps{TranscriptsDir: transcriptDir}
 
 	// Create the events directory and a JSONL file for the event logger.
 	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
@@ -221,7 +219,7 @@ func TestFeatureFlag_Enabled_EmitsEvents(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	go scoreAsync(req, q, nil, evLogger, nil, nil)
+	go scoreAsync(req, q, nil, evLogger, nil, nil, deps)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

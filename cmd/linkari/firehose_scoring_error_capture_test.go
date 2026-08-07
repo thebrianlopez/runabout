@@ -28,7 +28,7 @@ func (e *blockingFailEval) Evaluate(_ context.Context, _, _ string) (*Scorecard,
 // observable state: non-null trace_id, populated error_reason, and progress=score_failed.
 // This guards against the regression where row 25531 had all three fields empty.
 func TestFirehoseScoringErrorCapture(t *testing.T) {
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "quantum")
@@ -38,7 +38,8 @@ func TestFirehoseScoringErrorCapture(t *testing.T) {
 		proceed: make(chan struct{}),
 		err:     errors.New("claude CLI: exit status 1"),
 	}
-	fsc := testFSCWithEval(q, eval)
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
 
 	post := &firehosePost{
 		AtURI: "at://did:plc:test/app.bsky.feed.post/err-capture",

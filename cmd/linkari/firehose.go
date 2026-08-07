@@ -450,7 +450,7 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 					"profile", profile,
 					"keyword", keyword,
 				)
-				scoreAsync(req, q, fsc.Eval, fsc.Events, fsc.BskyClient, nil)
+				scoreAsync(req, q, fsc.Eval, fsc.Events, fsc.BskyClient, nil, fsc.Deps)
 				slog.Info(
 					"firehose scoring goroutine done",
 					"event_type", "firehose_scoring_done",
@@ -468,6 +468,11 @@ type BlueskyFirehoseSource struct {
 	client *BlueskyClient
 	eval   Evaluator    // M4: wired at registration time
 	events *EventLogger // M4: wired at registration time; nil = event logging disabled
+	// depsFn resolves scoring dependencies lazily at Start() time. EPIC-258 M2:
+	// must not be captured at registration, because registeredSources runs
+	// before main.go installs the domain router via Router.SetDomainRouter.
+	// nil is valid and resolves to production defaults.
+	depsFn func() *scoringDeps
 }
 
 // Name returns the stable source identifier used as the seen_content.source key.
@@ -483,12 +488,17 @@ func (s *BlueskyFirehoseSource) Start(ctx context.Context, q *Queue, emit func(*
 	// Migrate any subscriptions still using the legacy 'default' profile (F2).
 	migrateFirehoseProfiles(q)
 
+	var deps *scoringDeps
+	if s.depsFn != nil {
+		deps = s.depsFn()
+	}
 	fsc := &firehoseScoreContext{
 		Queue:      q,
 		Eval:       s.eval,
 		Events:     s.events,
 		BskyClient: s.client,
 		ScoreSem:   make(chan struct{}, 3),
+		Deps:       deps,
 	}
 	runFirehoseWorker(ctx, fsc, slog.Default())
 	return nil

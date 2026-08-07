@@ -110,9 +110,7 @@ func TestAudioFallback_CT1_SemaphoreCap1(t *testing.T) {
 	ytFallbackToAudio = true
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
@@ -150,11 +148,11 @@ func TestAudioFallback_CT1_SemaphoreCap1(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		transcribeYouTubeAsync(req1, q, "yt-dlp", el, "", nil)
+		transcribeYouTubeAsync(req1, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir})
 	}()
 	go func() {
 		defer wg.Done()
-		transcribeYouTubeAsync(req2, q, "yt-dlp", el, "", nil)
+		transcribeYouTubeAsync(req2, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir})
 	}()
 
 	done := make(chan struct{})
@@ -196,9 +194,7 @@ func TestAudioFallback_CT2_TimeoutEmitsEvent(t *testing.T) {
 	ytFallbackToAudio = true
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
@@ -221,7 +217,7 @@ func TestAudioFallback_CT2_TimeoutEmitsEvent(t *testing.T) {
 
 	req := enqueueAudioFallbackReq(t, q, "https://www.youtube.com/watch?v=timeout1")
 	start := time.Now()
-	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", nil)
+	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir})
 	elapsed := time.Since(start)
 
 	raw := readAudioFallbackLog(t, el, evtPath)
@@ -264,9 +260,7 @@ func TestAudioFallback_CT3_DeadLetterOnFailure(t *testing.T) {
 	ytFallbackToAudio = true
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
@@ -283,7 +277,7 @@ func TestAudioFallback_CT3_DeadLetterOnFailure(t *testing.T) {
 	el, evtPath := newAudioFallbackEventLogger(t)
 
 	req := enqueueAudioFallbackReq(t, q, "https://www.youtube.com/watch?v=fail1")
-	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", nil)
+	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir})
 
 	raw := readAudioFallbackLog(t, el, evtPath)
 
@@ -320,9 +314,7 @@ func TestAudioFallback_CT4_TerminalFailure(t *testing.T) {
 	ytFallbackToAudio = true
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
@@ -339,7 +331,7 @@ func TestAudioFallback_CT4_TerminalFailure(t *testing.T) {
 	el, evtPath := newAudioFallbackEventLogger(t)
 
 	req := enqueueAudioFallbackReq(t, q, "https://www.youtube.com/watch?v=terminal1")
-	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", nil)
+	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir})
 
 	raw := readAudioFallbackLog(t, el, evtPath)
 
@@ -380,9 +372,7 @@ func TestAudioFallback_CT5_SemaphoreReleasedOnError(t *testing.T) {
 	ytFallbackToAudio = true
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
@@ -406,7 +396,7 @@ func TestAudioFallback_CT5_SemaphoreReleasedOnError(t *testing.T) {
 
 	// First job: fails; must release semaphore.
 	req1 := enqueueAudioFallbackReq(t, q, "https://www.youtube.com/watch?v=sem1")
-	transcribeYouTubeAsync(req1, q, "yt-dlp", el, "", nil)
+	transcribeYouTubeAsync(req1, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir})
 
 	// Second job: should run immediately — not block on semaphore.
 	prevMaxRetries2 := ytAudioMaxRetries
@@ -415,7 +405,7 @@ func TestAudioFallback_CT5_SemaphoreReleasedOnError(t *testing.T) {
 
 	req2 := enqueueAudioFallbackReq(t, q, "https://www.youtube.com/watch?v=sem2")
 	secondStart := time.Now()
-	transcribeYouTubeAsync(req2, q, "yt-dlp", el, "", nil)
+	transcribeYouTubeAsync(req2, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir})
 	secondElapsed := time.Since(secondStart)
 
 	_ = readAudioFallbackLog(t, el, evtPath)

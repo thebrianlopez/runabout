@@ -51,23 +51,34 @@ func (s *stubEvaluator) Evaluate(_ context.Context, _, _ string) (*Scorecard, er
 
 // --- Jina HTTP seam ----------------------------------------------------------
 
-// installJinaServer points jinaBaseURL at srv and configures jinaHTTPClient to
-// use srv's transport for the duration of the test. Both vars are restored on
-// cleanup. The test server responds to any path, so fetchJinaContent calls
-// never reach the real network.
-func installJinaServer(t *testing.T, srv *httptest.Server) {
+// newTestDeps returns scoringDeps isolated to this test: a per-test transcript
+// directory and the production Jina client. EPIC-258 M2: replaces the former
+// `transcriptDir = t.TempDir()` package-var mutation, which raced with scoring
+// goroutines from concurrent tests.
+func newTestDeps(t *testing.T) *scoringDeps {
 	t.Helper()
-	prevBase := jinaBaseURL
-	prevClient := jinaHTTPClient
-	prevRouter := pkgDomainRouter
-	jinaBaseURL = srv.URL + "/"
-	jinaHTTPClient = srv.Client()
-	setDomainRouter(nil)
-	t.Cleanup(func() {
-		jinaBaseURL = prevBase
-		jinaHTTPClient = prevClient
-		setDomainRouter(prevRouter)
-	})
+	return &scoringDeps{
+		TranscriptsDir: filepath.Join(t.TempDir(), "transcripts"),
+		Jina:           newJinaClient(),
+	}
+}
+
+// installJinaServer returns scoringDeps whose Jina client points at srv, so
+// URL fetches never reach the real network. The transcript directory is
+// per-test.
+//
+// EPIC-258 M2: this previously mutated the package vars jinaBaseURL,
+// jinaHTTPClient and pkgDomainRouter with t.Cleanup save/restore. That
+// restore discipline was correct and still raced: cleanup controls when the
+// write happens, not whether a scoring goroutine from another test is
+// concurrently reading. It was the largest single source of data races in
+// this package (15 of 25 instances across 3 seeds). Ownership is the fix  -
+// each test now gets its own client.
+func installJinaServer(t *testing.T, srv *httptest.Server) *scoringDeps {
+	t.Helper()
+	d := newTestDeps(t)
+	d.Jina = &jinaClient{baseURL: srv.URL + "/", http: srv.Client()}
+	return d
 }
 
 // jinaBodyServer returns an httptest.Server that responds with body for all requests.
@@ -89,7 +100,7 @@ func jinaBodyServer(t *testing.T, statusCode int, body string) *httptest.Server 
 //
 // The approach: wrap the evaluator so that its Evaluate() call closes a done
 // channel. We block until that fires OR until a short deadline expires.
-func runScoreAsyncSync(t *testing.T, rawURL, profile string, q *Queue, eval Evaluator) {
+func runScoreAsyncSync(t *testing.T, rawURL, profile string, q *Queue, eval Evaluator, deps *scoringDeps) {
 	t.Helper()
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: eval, done: done}
@@ -106,7 +117,7 @@ func runScoreAsyncSync(t *testing.T, rawURL, profile string, q *Queue, eval Eval
 	scoreAsyncDoneHook = func() { close(scoreDone) }
 	t.Cleanup(func() { scoreAsyncDoneHook = prevHook })
 
-	go scoreURLAsync(&ShareRequest{URL: rawURL, Profile: profile}, q, wrapped, nil)
+	go scoreURLAsync(&ShareRequest{URL: rawURL, Profile: profile}, q, wrapped, nil, deps)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
@@ -151,9 +162,9 @@ func (e *onceDoneEval) Evaluate(ctx context.Context, content, prompt string) (*S
 // (unsupported pipeline, fetch error, empty content). We poll the queue for
 // 200 ms to confirm no row was written, which also gives the goroutine time to
 // complete.
-func runScoreAsyncSkip(t *testing.T, rawURL, profile string, q *Queue, eval Evaluator) {
+func runScoreAsyncSkip(t *testing.T, rawURL, profile string, q *Queue, eval Evaluator, deps *scoringDeps) {
 	t.Helper()
-	go scoreURLAsync(&ShareRequest{URL: rawURL, Profile: profile}, q, eval, nil)
+	go scoreURLAsync(&ShareRequest{URL: rawURL, Profile: profile}, q, eval, nil, deps)
 	time.Sleep(200 * time.Millisecond)
 }
 
@@ -164,7 +175,7 @@ func TestScoreURLAsync_HappyPath(t *testing.T) {
 	isolateEventsDir(t)
 	const pageContent = "This is great engineering content about transformers and attention mechanisms."
 	srv := jinaBodyServer(t, http.StatusOK, pageContent)
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
 
 	q := newTestQueue(t)
 	// Pre-insert a relayed row. ScoreByURL updates relayed → scored; it will
@@ -182,7 +193,7 @@ func TestScoreURLAsync_HappyPath(t *testing.T) {
 	runScoreAsyncSync(
 		t,
 		"https://arxiv.org/abs/1706.03762", "eng",
-		q, eval,
+		q, eval, deps,
 	)
 
 	if atomic.LoadInt32(&eval.calls) != 1 {
@@ -223,7 +234,7 @@ func TestScoreURLAsync_HappyPath(t *testing.T) {
 func TestScoreURLAsync_UnsupportedPipelineSkipped(t *testing.T) {
 	eval := &stubEvaluator{score: 90, verdict: "great"}
 	// No Jina server  -  if it tried to fetch, the test would fail with connection refused.
-	runScoreAsyncSkip(t, "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "eng", nil, eval)
+	runScoreAsyncSkip(t, "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "eng", nil, eval, newTestDeps(t))
 	if atomic.LoadInt32(&eval.calls) != 0 {
 		t.Errorf("eval called %d times, want 0 for unsupported pipeline", atomic.LoadInt32(&eval.calls))
 	}
@@ -244,7 +255,7 @@ func TestScoreURLAsync_UnsupportedPipelineMarksRowFailed(t *testing.T) {
 	go scoreURLAsync(&ShareRequest{
 		URL: "https://www.youtube.com/watch?v=abc", Profile: "eng",
 		QueueRowID: id,
-	}, q, eval, nil)
+	}, q, eval, nil, nil)
 	time.Sleep(200 * time.Millisecond)
 
 	items, err := q.List("failed", 10)
@@ -267,7 +278,7 @@ func TestScoreURLAsync_NewUnsupportedPlatformsSkipped(t *testing.T) {
 		"https://rumble.com/v1abc-video.html",
 		"https://www.dailymotion.com/video/x7abc",
 	} {
-		runScoreAsyncSkip(t, u, "eng", nil, eval)
+		runScoreAsyncSkip(t, u, "eng", nil, eval, newTestDeps(t))
 	}
 	if atomic.LoadInt32(&eval.calls) != 0 {
 		t.Errorf("eval called %d times, want 0 for new unsupported platforms", atomic.LoadInt32(&eval.calls))
@@ -277,10 +288,10 @@ func TestScoreURLAsync_NewUnsupportedPlatformsSkipped(t *testing.T) {
 // 3. Jina fetch error (non-2xx)  -  eval is never called, no queue write.
 func TestScoreURLAsync_FetchErrorSkipsEval(t *testing.T) {
 	srv := jinaBodyServer(t, http.StatusInternalServerError, "error")
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
 
 	eval := &stubEvaluator{score: 80, verdict: "test"}
-	runScoreAsyncSkip(t, "https://example.com/fetchfail", "eng", nil, eval)
+	runScoreAsyncSkip(t, "https://example.com/fetchfail", "eng", nil, eval, deps)
 	if atomic.LoadInt32(&eval.calls) != 0 {
 		t.Errorf("eval called %d times, want 0 after fetch error", atomic.LoadInt32(&eval.calls))
 	}
@@ -289,10 +300,10 @@ func TestScoreURLAsync_FetchErrorSkipsEval(t *testing.T) {
 // 4. Empty content after fetch  -  eval skipped, no queue write.
 func TestScoreURLAsync_EmptyContentSkipsEval(t *testing.T) {
 	srv := jinaBodyServer(t, http.StatusOK, "   \n\t  ")
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
 
 	eval := &stubEvaluator{score: 80, verdict: "test"}
-	runScoreAsyncSkip(t, "https://example.com/empty", "eng", nil, eval)
+	runScoreAsyncSkip(t, "https://example.com/empty", "eng", nil, eval, deps)
 	if atomic.LoadInt32(&eval.calls) != 0 {
 		t.Errorf("eval called %d times, want 0 for empty content", atomic.LoadInt32(&eval.calls))
 	}
@@ -301,11 +312,11 @@ func TestScoreURLAsync_EmptyContentSkipsEval(t *testing.T) {
 // 5. Eval failure  -  no queue write.
 func TestScoreURLAsync_EvalErrorSkipsQueue(t *testing.T) {
 	srv := jinaBodyServer(t, http.StatusOK, "Some real content here worth scoring.")
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
 
 	q := newTestQueue(t)
 	eval := &stubEvaluator{err: fmt.Errorf("haiku timeout")}
-	runScoreAsyncSync(t, "https://example.com/evalfail", "eng", q, eval)
+	runScoreAsyncSync(t, "https://example.com/evalfail", "eng", q, eval, deps)
 
 	if atomic.LoadInt32(&eval.calls) != 1 {
 		t.Errorf("eval.calls = %d, want 1 (eval was attempted)", atomic.LoadInt32(&eval.calls))
@@ -322,15 +333,14 @@ func TestScoreURLAsync_EvalErrorSkipsQueue(t *testing.T) {
 
 // 6. Nil queue  -  pipeline runs to completion without panicking.
 func TestScoreURLAsync_NilQueueNoPanic(t *testing.T) {
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	srv := jinaBodyServer(t, http.StatusOK, "Interesting content about distributed systems.")
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
+	deps.TranscriptsDir = transcriptDir
 
 	eval := &stubEvaluator{score: 75, verdict: "save"}
-	runScoreAsyncSync(t, "https://example.com/nilqueue", "life", nil, eval)
+	runScoreAsyncSync(t, "https://example.com/nilqueue", "life", nil, eval, deps)
 	if atomic.LoadInt32(&eval.calls) != 1 {
 		t.Errorf("eval.calls = %d, want 1", atomic.LoadInt32(&eval.calls))
 	}
@@ -396,11 +406,11 @@ func TestFetchJinaContent_TimeoutReturnsError(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	t.Cleanup(hung.Close)
-	installJinaServer(t, hung)
+	deps := installJinaServer(t, hung)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	_, err := fetchJinaContent(ctx, "https://example.com/slow")
+	_, err := deps.Jina.fetch(ctx, "https://example.com/slow")
 	if err == nil {
 		t.Error("expected error from hung server, got nil")
 	}
@@ -409,9 +419,9 @@ func TestFetchJinaContent_TimeoutReturnsError(t *testing.T) {
 // 11. fetchJinaContent non-2xx returns structured error.
 func TestFetchJinaContent_Non2xxError(t *testing.T) {
 	srv := jinaBodyServer(t, http.StatusNotFound, "not found")
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
 
-	_, err := fetchJinaContent(context.Background(), "https://example.com/404")
+	_, err := deps.Jina.fetch(context.Background(), "https://example.com/404")
 	if err == nil {
 		t.Fatal("expected error for 404 response")
 	}
@@ -495,7 +505,7 @@ func TestClassificationPreamble(t *testing.T) {
 // EPIC-061 M3: scoreURLAsync auto-classifies empty profile (domain matched).
 func TestScoreURLAsync_AutoClassifiesEmptyProfile(t *testing.T) {
 	srv := jinaBodyServer(t, 200, "some engineering content about golang")
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
 	isolateEventsDir(t)
 	// Pre-load builtin config so archiveThreshold avoids AWS Secrets Manager
 	// calls inside the goroutine's 50ms post-eval window.
@@ -522,7 +532,7 @@ func TestScoreURLAsync_AutoClassifiesEmptyProfile(t *testing.T) {
 	}
 
 	// Empty profile → should auto-classify to "eng" from github.com (domain matched).
-	runScoreAsyncSync(t, "https://github.com/golang/go", "", q, eval)
+	runScoreAsyncSync(t, "https://github.com/golang/go", "", q, eval, deps)
 
 	// Score 85 triggers auto-archive. Check archived items.
 	items, err := q.List("archived", 10)
@@ -540,7 +550,7 @@ func TestScoreURLAsync_AutoClassifiesEmptyProfile(t *testing.T) {
 // Content classification: when domain falls through, Haiku classifies content.
 func TestScoreURLAsync_ContentClassifiesFallbackProfile(t *testing.T) {
 	srv := jinaBodyServer(t, 200, "Belize tourism board retirement program  -  live abroad in paradise.")
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
 	isolateEventsDir(t)
 
 	// Stub the content classifier to return "travel".
@@ -563,7 +573,7 @@ func TestScoreURLAsync_ContentClassifiesFallbackProfile(t *testing.T) {
 
 	// Empty profile + unknown domain → domain falls through to eng, then content
 	// classifier overrides to "travel".
-	runScoreAsyncSync(t, "https://belizean-programs.example.com/relocate", "", q, eval)
+	runScoreAsyncSync(t, "https://belizean-programs.example.com/relocate", "", q, eval, deps)
 
 	items, err := q.List("", 10)
 	if err != nil {
@@ -720,11 +730,11 @@ func TestDetectScreenshot_FilenameFallback(t *testing.T) {
 // EPIC-079 M5: image/document scoreAsync test coverage.
 
 // runScoreFileAsyncSync runs scoreAsync synchronously for a file share request.
-func runScoreFileAsyncSync(t *testing.T, req *ShareRequest, q *Queue, eval Evaluator) {
+func runScoreFileAsyncSync(t *testing.T, req *ShareRequest, q *Queue, eval Evaluator, deps *scoringDeps) {
 	t.Helper()
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: eval, done: done}
-	go scoreAsync(req, q, wrapped, nil, nil, nil)
+	go scoreAsync(req, q, wrapped, nil, nil, nil, deps)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
@@ -775,7 +785,7 @@ func TestScoreAsync_ImageFileMetadataOnly(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 55, verdict: "Photo of food menu"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, newTestDeps(t))
 
 	if calls := atomic.LoadInt32(&eval.calls); calls != 1 {
 		t.Errorf("eval.calls = %d, want 1", calls)
@@ -802,9 +812,7 @@ func TestScoreAsync_ImageFileMetadataOnly(t *testing.T) {
 // TestScoreAsync_ImageVision verifies an image share with a readable temp file
 // triggers the vision path and cleans up the temp file.
 func TestScoreAsync_ImageVision(t *testing.T) {
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	isolateEventsDir(t)
@@ -846,7 +854,7 @@ func TestScoreAsync_ImageVision(t *testing.T) {
 	t.Cleanup(func() { execHaikuVision = prevVision })
 
 	eval := &stubEvaluator{score: 72, verdict: "WhatsApp photo of receipt"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, &scoringDeps{TranscriptsDir: transcriptDir})
 
 	items, err := q.List("", 20)
 	if err != nil {
@@ -942,7 +950,7 @@ func TestScoreAsync_EvalFailureMarksQueueRow(t *testing.T) {
 	eval := &stubEvaluator{err: fmt.Errorf("total eval failure")}
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: eval, done: done}
-	go scoreAsync(req, q, wrapped, nil, nil, nil)
+	go scoreAsync(req, q, wrapped, nil, nil, nil, newTestDeps(t))
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
@@ -1040,7 +1048,7 @@ func TestIsLoginWallDomain(t *testing.T) {
 // domains exit early without calling eval.
 func TestScoreAsync_LoginWallSkipsEval(t *testing.T) {
 	eval := &stubEvaluator{score: 90, verdict: "great"}
-	runScoreAsyncSkip(t, "https://www.instagram.com/p/abc123", "eng", nil, eval)
+	runScoreAsyncSkip(t, "https://www.instagram.com/p/abc123", "eng", nil, eval, newTestDeps(t))
 	if atomic.LoadInt32(&eval.calls) != 0 {
 		t.Errorf("eval called %d times, want 0 for login-wall domain", atomic.LoadInt32(&eval.calls))
 	}
@@ -1279,11 +1287,10 @@ func TestSaveTranscriptFile(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			prev := transcriptDir
-			transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-			t.Cleanup(func() { transcriptDir = prev })
+			transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 			path, err := saveTranscriptFile(
+				transcriptDir,
 				c.rowID, c.profile, c.origFilename, c.transcript,
 				c.source, c.sourceURL, c.videoTitle, c.videoID,
 				c.duration, c.subtitleType,
@@ -1323,9 +1330,7 @@ func TestSaveTranscriptFile(t *testing.T) {
 func TestScoreAsync_PDFTranscriptSaved(t *testing.T) {
 	isolateEventsDir(t)
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	installLiteParseStub(t, "Extracted PDF text content", 0.9, nil)
 
@@ -1344,7 +1349,7 @@ func TestScoreAsync_PDFTranscriptSaved(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 75, verdict: "Interesting document"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, &scoringDeps{TranscriptsDir: transcriptDir})
 
 	// Match the exact filename: {date}_pdf_{id}_report.md.
 	// Glob on the row ID + base name to avoid picking up stale files from
@@ -1366,13 +1371,12 @@ func TestScoreAsync_PDFTranscriptSaved(t *testing.T) {
 func TestScoreAsync_URLTranscriptSaved(t *testing.T) {
 	isolateEventsDir(t)
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	const pageContent = "Great article about machine learning and neural networks."
 	srv := jinaBodyServer(t, http.StatusOK, pageContent)
-	installJinaServer(t, srv)
+	deps := installJinaServer(t, srv)
+	deps.TranscriptsDir = transcriptDir
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -1392,7 +1396,7 @@ func TestScoreAsync_URLTranscriptSaved(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 80, verdict: "Worth reading"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, deps)
 
 	entries, err := os.ReadDir(transcriptDir)
 	if err != nil {
@@ -1412,9 +1416,7 @@ func TestScoreAsync_URLTranscriptSaved(t *testing.T) {
 func TestScoreAsync_ImageTranscriptSaved(t *testing.T) {
 	isolateEventsDir(t)
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -1432,7 +1434,7 @@ func TestScoreAsync_ImageTranscriptSaved(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 65, verdict: "Beautiful landscape photo"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, &scoringDeps{TranscriptsDir: transcriptDir})
 
 	entries, err := os.ReadDir(transcriptDir)
 	if err != nil {
@@ -1510,7 +1512,7 @@ func TestScoreAsync_Document_LiteParse(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 75, verdict: "Interesting ML paper"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, newTestDeps(t))
 
 	if calls := atomic.LoadInt32(&eval.calls); calls != 1 {
 		t.Errorf("eval.calls = %d, want 1", calls)
@@ -1538,9 +1540,7 @@ func TestScoreAsync_Document_LiteParse(t *testing.T) {
 // LiteParse returns empty text falls through to metadata synthesis without
 // crashing, and the queue row is still scored.
 func TestScoreAsync_Document_EmptyText(t *testing.T) {
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	isolateEventsDir(t)
 
@@ -1569,7 +1569,7 @@ func TestScoreAsync_Document_EmptyText(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 60, verdict: "Paper on transformers"}
-	runScoreFileAsyncSync(t, req, q, eval)
+	runScoreFileAsyncSync(t, req, q, eval, &scoringDeps{TranscriptsDir: transcriptDir})
 
 	if calls := atomic.LoadInt32(&eval.calls); calls != 1 {
 		t.Errorf("eval.calls = %d, want 1 (metadata synthesis should reach eval)", calls)

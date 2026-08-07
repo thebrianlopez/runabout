@@ -2927,12 +2927,14 @@ func (s *Server) captureAsync(ctx context.Context, id int64, cfg *ActionConfig) 
 		slog.WarnContext(ctx, "captureAsync: trace_id absent", "error_class", "trace_id_absent_in_capture", "id", id)
 	}
 
-	if pkgDomainRouter == nil {
+	// EPIC-258 M2: domain router is owned by the Router instance, not a package var.
+	domainRouter := s.scoringDepsFn()().DomainRouter
+	if domainRouter == nil {
 		_ = s.queue.MarkFailedWithReason(id, "capture_no_domain_router")
 		return
 	}
 
-	content, ct, err := pkgDomainRouter.FetchWithFallback(ctx, row.URL)
+	content, ct, err := domainRouter.FetchWithFallback(ctx, row.URL)
 	if err != nil {
 		slog.ErrorContext(ctx, "captureAsync: fetch failed", "id", id, "url", row.URL, "error", err)
 		_ = s.queue.MarkFailedWithReason(id, "capture_fetch_error")

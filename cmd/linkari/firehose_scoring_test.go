@@ -19,8 +19,9 @@ func testFSC(q *Queue) *firehoseScoreContext {
 }
 
 // testFSCWithEval creates an fsc with an Evaluator for integration tests.
-func testFSCWithEval(q *Queue, eval Evaluator) *firehoseScoreContext {
-	return &firehoseScoreContext{Queue: q, Eval: eval, ScoreSem: make(chan struct{}, 3)}
+func testFSCWithEval(t *testing.T, q *Queue, eval Evaluator) *firehoseScoreContext {
+	t.Helper()
+	return &firehoseScoreContext{Queue: q, Eval: eval, ScoreSem: make(chan struct{}, 3), Deps: newTestDeps(t)}
 }
 
 // contentCapturingEval wraps stubEvaluator and records the content arg of Evaluate.
@@ -268,14 +269,15 @@ func TestFirehoseScoring_F3CT1_TextPopulated(t *testing.T) {
 // F1-CT-1: After handleFirehosePost, scoreAsync is called with a ShareRequest containing the AtURI.
 // Verified via onceDoneEval: the done channel fires when Evaluate() is invoked.
 func TestFirehoseScoring_F1CT1_ScoreAsyncCalled(t *testing.T) {
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "quantum")
 
 	done := make(chan struct{})
 	eval := &onceDoneEval{inner: &stubEvaluator{score: 75, verdict: "Strong Yes"}, done: done}
-	fsc := testFSCWithEval(q, eval)
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
 
 	post := &firehosePost{
 		AtURI: "at://did:plc:test/app.bsky.feed.post/f1ct1",
@@ -322,7 +324,7 @@ func TestFirehoseScoring_F1CT3_ScoredPushReplaces(t *testing.T) {
 
 // F1-CT-5: At most 3 concurrent firehose scoring goroutines (semaphore cap).
 func TestFirehoseScoring_F1CT5_SemaphoreCap(t *testing.T) {
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "semaphore")
@@ -333,7 +335,8 @@ func TestFirehoseScoring_F1CT5_SemaphoreCap(t *testing.T) {
 		delay: 150 * time.Millisecond,
 		done:  make(chan struct{}, n),
 	}
-	fsc := testFSCWithEval(q, eval)
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
 
 	for i := 0; i < n; i++ {
 		post := &firehosePost{
@@ -402,14 +405,15 @@ func TestFirehoseScoring_F1CT6_StartReplayPicksUpFirehose(t *testing.T) {
 // F1-RG-1: scoreAsync is invoked within 5s  -  item never stays pending indefinitely.
 // Regression guard: ensures the MarkRelayed bypass removal doesn't leave items unscored.
 func TestFirehoseScoring_F1RG1_NeverScoringTimeout(t *testing.T) {
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "inference")
 
 	done := make(chan struct{})
 	eval := &onceDoneEval{inner: &stubEvaluator{score: 80, verdict: "Worth Watching"}, done: done}
-	fsc := testFSCWithEval(q, eval)
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
 
 	post := &firehosePost{
 		AtURI: "at://did:plc:test/app.bsky.feed.post/f1rg1",
@@ -431,7 +435,7 @@ func TestFirehoseScoring_F1RG1_NeverScoringTimeout(t *testing.T) {
 // F3-CT-3: When URL fetch fails, scoreAsync uses req.Text as the scoring content.
 // Verified via contentCapturingEval: content passed to Evaluate must equal post.Text.
 func TestFirehoseScoring_F3CT3_ScoreAsyncUsesText(t *testing.T) {
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "transformer")
@@ -439,7 +443,8 @@ func TestFirehoseScoring_F3CT3_ScoreAsyncUsesText(t *testing.T) {
 	done := make(chan struct{})
 	capturing := &contentCapturingEval{inner: &stubEvaluator{score: 70, verdict: "Maybe"}}
 	eval := &onceDoneEval{inner: capturing, done: done}
-	fsc := testFSCWithEval(q, eval)
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
 
 	postText := "transformer architecture improvements in 2026"
 	post := &firehosePost{
@@ -484,14 +489,13 @@ func TestFirehoseScoring_F3CT3_ScoreAsyncUsesText(t *testing.T) {
 // own transcriptDir and blocks on scoreAsyncDoneHook (fired once transcript persistence and queue writes complete)
 // before returning, so no goroutine can outlive it.
 func TestFirehoseScoring_F3RG1_TextReachesPrompt(t *testing.T) {
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "attention")
 
-	prevDir := transcriptDir
-	transcriptDir = filepath.Join(t.TempDir(), "transcripts")
-	t.Cleanup(func() { transcriptDir = prevDir })
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
+	deps.TranscriptsDir = transcriptDir
 
 	scoreDone := make(chan struct{})
 	prevHook := scoreAsyncDoneHook
@@ -501,7 +505,8 @@ func TestFirehoseScoring_F3RG1_TextReachesPrompt(t *testing.T) {
 	done := make(chan struct{})
 	capturing := &contentCapturingEval{inner: &stubEvaluator{score: 65, verdict: "Interesting"}}
 	eval := &onceDoneEval{inner: capturing, done: done}
-	fsc := testFSCWithEval(q, eval)
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
 
 	postText := "attention mechanism improvements in LLMs"
 	post := &firehosePost{
@@ -752,7 +757,7 @@ func TestFirehoseF6RG1_AllRowsHaveAction(t *testing.T) {
 // POMO_firehose-transcript-goroutine-leak-suite-order for the same underlying goroutine-leak
 // bug class.
 func TestFirehoseScoring_Integration(t *testing.T) {
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "mixture")
@@ -764,7 +769,8 @@ func TestFirehoseScoring_Integration(t *testing.T) {
 
 	done := make(chan struct{})
 	eval := &onceDoneEval{inner: &stubEvaluator{score: 75, verdict: "Strong Yes"}, done: done}
-	fsc := testFSCWithEval(q, eval)
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
 
 	post := &firehosePost{
 		AtURI: "at://did:plc:test/app.bsky.feed.post/integ-score",
@@ -871,7 +877,7 @@ func TestFirehoseCARBT1_ProcessMessagePopulatesText(t *testing.T) {
 
 // BT-2: End-to-end: firehose post text extracted from CAR blocks reaches the scoreAsync prompt.
 func TestFirehoseCARBT2_TextReachesScoreAsync(t *testing.T) {
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "transformer")
@@ -879,7 +885,8 @@ func TestFirehoseCARBT2_TextReachesScoreAsync(t *testing.T) {
 	done := make(chan struct{})
 	capturing := &contentCapturingEval{inner: &stubEvaluator{score: 70, verdict: "Maybe"}}
 	eval := &onceDoneEval{inner: capturing, done: done}
-	fsc := testFSCWithEval(q, eval)
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
 
 	postText := "transformer architecture for LLM evaluation"
 	frame := buildFirehoseFrame(t, 2, "did:plc:test", "app.bsky.feed.post/bt2", postText)
@@ -922,7 +929,7 @@ func TestFirehoseCARBT3_DeleteOpsNilCID(t *testing.T) {
 
 // RG-1: Firehose items with non-empty text in CAR blocks are never scored with empty content.
 func TestFirehoseCARRG1_NonEmptyTextNeverScoredEmpty(t *testing.T) {
-	installJinaServer(t, jinaBodyServer(t, 404, ""))
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "neural")
@@ -930,7 +937,8 @@ func TestFirehoseCARRG1_NonEmptyTextNeverScoredEmpty(t *testing.T) {
 	done := make(chan struct{})
 	capturing := &contentCapturingEval{inner: &stubEvaluator{score: 75, verdict: "Yes"}}
 	eval := &onceDoneEval{inner: capturing, done: done}
-	fsc := testFSCWithEval(q, eval)
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
 
 	postText := "neural network scaling laws for large models"
 	frame := buildFirehoseFrame(t, 3, "did:plc:test", "app.bsky.feed.post/rg1", postText)

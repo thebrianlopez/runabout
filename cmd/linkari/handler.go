@@ -93,6 +93,8 @@ type Router struct {
 	events       *EventLogger       // EPIC-076: classification telemetry; nil when event logging not configured
 	serverConfig *ServerConfig      // EPIC-098 F3: server config for YouTube sub-behavior toggles
 	wikiResolver *WikiTopicResolver // EPIC-180 M2: nil when wiki is disabled or vault missing
+	domainRouter *DomainRouter      // EPIC-258 M2: was package var pkgDomainRouter
+	jina         *jinaClient        // EPIC-258 M2: was package vars jinaBaseURL/jinaHTTPClient; nil = production client
 }
 
 // SetQueue wires the queue for server-side uinit_* scoring (EPIC-060 M1).
@@ -143,8 +145,50 @@ func (r *Router) SetServerConfig(cfg *ServerConfig) {
 
 // SetDomainRouter installs the domain router for URL fetch routing (EPIC-010 M5).
 // Called after router construction in main.go during server init.
+//
+// EPIC-258 M2: stores the router on the Router instance instead of a package
+// var. The previous package-level installation was read concurrently by
+// scoring goroutines and was the production data race reported by -race.
 func (r *Router) SetDomainRouter(dr *DomainRouter) {
-	setDomainRouter(dr)
+	r.mu.Lock()
+	r.domainRouter = dr
+	r.mu.Unlock()
+}
+
+// scoringDepsFn returns a lazy resolver for this Server's scoring
+// dependencies. EPIC-258 M2: resolution must be deferred until use, because
+// sources are registered before main.go installs the domain router.
+// Safe on a nil Server or nil Router  -  falls back to production defaults.
+func (s *Server) scoringDepsFn() func() *scoringDeps {
+	return func() *scoringDeps {
+		if s == nil || s.router == nil {
+			return newScoringDeps(nil, nil)
+		}
+		return s.router.scoringDeps()
+	}
+}
+
+// SetJinaClient overrides the Jina Reader client for URL fetches. Used by
+// tests to point fetches at a local httptest.Server. nil restores the
+// production client. EPIC-258 M2.
+func (r *Router) SetJinaClient(j *jinaClient) {
+	r.mu.Lock()
+	r.jina = j
+	r.mu.Unlock()
+}
+
+// scoringDeps builds the scoring dependency set for this Router.
+func (r *Router) scoringDeps() *scoringDeps {
+	r.mu.RLock()
+	cfg := r.serverConfig
+	dr := r.domainRouter
+	j := r.jina
+	r.mu.RUnlock()
+	d := newScoringDeps(cfg, dr)
+	if j != nil {
+		d.Jina = j
+	}
+	return d
 }
 
 // SetWikiResolver wires the wiki topic resolver for wiki-context scoring.
@@ -597,7 +641,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	// scoreAudioAsync). Architecturally incompatible with scoreAsync  -
 	// hardcoded score=100, execHaiku directly, 1800s timeout, transcript management.
 	if ac.ServerScore && req.Type == "audio" {
-		go processVoiceNoteAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel, req.ExtraText, req, r.events, HaikuJSONEvaluator{})
+		go processVoiceNoteAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel, req.ExtraText, req, r.events, HaikuJSONEvaluator{}, r.scoringDeps())
 		return "Transcribing  -  synopsis via FCM", nil
 	}
 
@@ -607,7 +651,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	//   - "document": lit parse text extraction, metadata fallback
 	//   - "image": metadata synthesis
 	if ac.ServerScore && (req.Type == "image" || req.Type == "document" || req.Type == "url" || req.Type == "") {
-		go scoreAsync(req, r.queue, HaikuJSONEvaluator{}, r.events, r.bskyClient, r.wikiResolver)
+		go scoreAsync(req, r.queue, HaikuJSONEvaluator{}, r.events, r.bskyClient, r.wikiResolver, r.scoringDeps())
 		switch req.Type {
 		case "image", "document":
 			return "Scoring file  -  verdict via FCM", nil

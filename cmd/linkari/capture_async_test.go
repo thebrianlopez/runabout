@@ -62,13 +62,11 @@ func newCaptureServer(t *testing.T, domainClient DomainClient) (*Server, *Queue)
 	router := NewRouterFromConfig(tmux, builtinConfig(), false)
 	s := NewServer("tok", router, q, NewRingLog(10), false, nil)
 	if domainClient != nil {
-		prev := pkgDomainRouter
 		dr := NewDomainRouter(
 			map[string]DomainClient{"grindr.atlassian.net": domainClient},
 			func(_ context.Context, _ string) (string, error) { return "jina-text", nil },
 		)
-		setDomainRouter(dr)
-		t.Cleanup(func() { setDomainRouter(prev) })
+		router.SetDomainRouter(dr)
 	}
 	return s, q
 }

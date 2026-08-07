@@ -54,13 +54,15 @@ func isYouTubePostURL(u string) bool {
 	return youTubePostRE.MatchString(u)
 }
 
-// pkgDomainRouter is the process-level DomainRouter installed at server startup.
-// nil until SetDomainRouter is called (existing Jina fallback path used).
-var pkgDomainRouter *DomainRouter
-
-// setDomainRouter installs the process-level domain router. Called once at
-// startup via Router.SetDomainRouter. Safe for single-writer startup pattern.
-func setDomainRouter(dr *DomainRouter) { pkgDomainRouter = dr }
+// EPIC-258 M2: pkgDomainRouter and setDomainRouter are removed. The domain
+// router is now owned by the Router instance (Router.domainRouter) and reaches
+// the scoring path through scoringDeps. The former package var was written at
+// startup and read from scoring goroutines, which the race detector reported
+// as a production data race; two prior POMOs treated its symptoms.
+//
+// Historical note (do not reintroduce): the old doc comment asserted the
+// installation was "safe for single-writer startup pattern". That held in
+// production startup and did not hold under test.
 
 // setUnsupportedPipelineDomains rebuilds unsupportedPipelineRE from a custom
 // domain list sourced from server.yaml. Each entry is treated as a literal
@@ -126,19 +128,101 @@ var galleryPackages = map[string]bool{
 // Non-blocking acquire: skip with warning if full. EPIC-083 M5-4.
 var scoreSemaphore = make(chan struct{}, 10)
 
-// jinaHTTPClient is the HTTP client for Jina Reader requests. Uses a 35s
-// timeout to give Jina a margin above the 30s fetch context timeout  -
-// the context cancels first; this is a backstop for runaway connections.
-var jinaHTTPClient = &http.Client{Timeout: 35 * time.Second}
+// jinaClient fetches page content via Jina Reader (r.jina.ai).
+//
+// EPIC-258 M2: baseURL and http were previously package-level vars
+// (jinaBaseURL, jinaHTTPClient) that tests swapped to point at a local
+// httptest.Server. Scoring goroutines read them concurrently with those
+// writes, which the race detector reported as the single largest source of
+// data races in this package (15 of 25 race instances across 3 seeds).
+// They are now per-instance fields reached through scoringDeps, so each
+// test gets its own client and no shared mutable state remains.
+type jinaClient struct {
+	// baseURL is the Jina Reader endpoint prefix.
+	baseURL string
+	// http uses a 35s timeout to give Jina a margin above the 30s fetch
+	// context timeout  -  the context cancels first; this is a backstop for
+	// runaway connections.
+	http *http.Client
+}
 
-// jinaBaseURL is the Jina Reader endpoint prefix. Overridden in tests to point
-// at a local httptest.Server so fetch calls never hit the real network.
-var jinaBaseURL = "https://r.jina.ai/"
+// newJinaClient returns the production Jina Reader client.
+func newJinaClient() *jinaClient {
+	return &jinaClient{
+		baseURL: "https://r.jina.ai/",
+		http:    &http.Client{Timeout: 35 * time.Second},
+	}
+}
 
-// fetchJinaContent retrieves page content via Jina Reader (r.jina.ai).
+// scoringDeps carries the per-invocation dependencies of the scoring path.
+//
+// EPIC-258 M2: these were package-level mutable vars (transcriptDir,
+// jinaBaseURL, jinaHTTPClient, pkgDomainRouter) written by tests while
+// scoring goroutines read them. t.Cleanup save/restore was tried twice in
+// prior POMOs and does not fix it  -  cleanup controls *when* the write
+// happens, not whether a concurrent reader exists. Ownership is the fix:
+// each caller (and each test) constructs its own scoringDeps.
+//
+// A nil *scoringDeps is valid and resolves to production defaults, so call
+// sites that have no configuration to supply may pass nil.
+type scoringDeps struct {
+	// TranscriptsDir is where transcript markdown files are written.
+	TranscriptsDir string
+	// DomainRouter routes URL fetches to per-domain clients. nil selects the
+	// Jina fallback path, preserving the pre-EPIC-258 behaviour exactly.
+	DomainRouter *DomainRouter
+	// Jina is the Jina Reader fallback client. Never nil after newScoringDeps.
+	Jina *jinaClient
+}
+
+// defaultTranscriptsDir is the transcript location used when ServerConfig
+// supplies none. EPIC-009 M1.
+func defaultTranscriptsDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "code", "personal", "docs", "transcripts")
+}
+
+// resolveTranscriptsDir picks the transcript directory from config, falling
+// back to the default. EPIC-090 M5: tilde expansion for transcripts_dir.
+func resolveTranscriptsDir(cfg *ServerConfig) string {
+	if cfg != nil && cfg.TranscriptsDir != "" {
+		return expandTilde(cfg.TranscriptsDir)
+	}
+	return defaultTranscriptsDir()
+}
+
+// newScoringDeps builds scoring dependencies from server configuration.
+// dr may be nil, which selects the Jina fallback fetch path.
+func newScoringDeps(cfg *ServerConfig, dr *DomainRouter) *scoringDeps {
+	return &scoringDeps{
+		TranscriptsDir: resolveTranscriptsDir(cfg),
+		DomainRouter:   dr,
+		Jina:           newJinaClient(),
+	}
+}
+
+// resolve returns d with any zero fields filled from production defaults.
+// Accepts a nil receiver so call sites may pass nil scoringDeps.
+func (d *scoringDeps) resolve() *scoringDeps {
+	if d == nil {
+		return newScoringDeps(nil, nil)
+	}
+	out := *d
+	if out.TranscriptsDir == "" {
+		out.TranscriptsDir = defaultTranscriptsDir()
+	}
+	if out.Jina == nil {
+		out.Jina = newJinaClient()
+	}
+	return &out
+}
+
+// fetch retrieves page content via Jina Reader.
 // Uses ctx for cancellation; callers should pass a context with a 30s deadline.
 // Returns the response body as UTF-8 text, capped at 1MB before rune truncation.
-func fetchJinaContent(ctx context.Context, rawURL string) (string, error) {
+func (j *jinaClient) fetch(ctx context.Context, rawURL string) (string, error) {
+	jinaBaseURL := j.baseURL
+	jinaHTTPClient := j.http
 	jinaURL := jinaBaseURL + rawURL
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jinaURL, nil)
 	if err != nil {
@@ -415,7 +499,11 @@ func classificationPreamble(profile, rawURL string, source string, ct ContentTyp
 //
 // Must be launched as a goroutine from handleTemplate.
 // Takes eval as a parameter so tests can inject a stub Evaluator.
-func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger, bskyClient *BlueskyClient, wikiResolver *WikiTopicResolver) {
+// deps carries transcript/fetch dependencies; nil resolves to production
+// defaults (EPIC-258 M2).
+func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger, bskyClient *BlueskyClient, wikiResolver *WikiTopicResolver, deps *scoringDeps) {
+	deps = deps.resolve()
+	transcriptDir := deps.TranscriptsDir
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -640,10 +728,10 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			// contentType is declared at function scope (EPIC-015 M2); it remains
 			// ContentTypePlain when the Jina fallback executes.
 			fetchStart := time.Now()
-			if pkgDomainRouter != nil {
-				content, contentType, err = pkgDomainRouter.FetchWithFallback(fetchCtx, rawURL)
+			if deps.DomainRouter != nil {
+				content, contentType, err = deps.DomainRouter.FetchWithFallback(fetchCtx, rawURL)
 			} else {
-				content, err = fetchJinaContent(fetchCtx, rawURL)
+				content, err = deps.Jina.fetch(fetchCtx, rawURL)
 			}
 			domainFetchMs = time.Since(fetchStart).Milliseconds()
 			if err == nil {
@@ -1351,7 +1439,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	)
 
 	if req.Type == "document" && content != "" {
-		if _, err := saveTranscriptFile(req.QueueRowID, profile, req.Filename, content, "pdf", "", "", "", 0, ""); err != nil {
+		if _, err := saveTranscriptFile(transcriptDir, req.QueueRowID, profile, req.Filename, content, "pdf", "", "", "", 0, ""); err != nil {
 			slog.Warn("score_async: transcript save failed", "event_type", "transcript_save_failed", "type", req.Type, "row_id", req.QueueRowID, "error", err)
 		}
 	}
@@ -1360,12 +1448,12 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		if transcriptText == "" {
 			transcriptText = req.Text
 		}
-		if _, err := saveTranscriptFile(req.QueueRowID, profile, deriveSlugFromURL(rawURL), transcriptText, "url", rawURL, "", "", 0, ""); err != nil {
+		if _, err := saveTranscriptFile(transcriptDir, req.QueueRowID, profile, deriveSlugFromURL(rawURL), transcriptText, "url", rawURL, "", "", 0, ""); err != nil {
 			slog.Warn("score_async: transcript save failed", "event_type", "transcript_save_failed", "type", req.Type, "row_id", req.QueueRowID, "error", err)
 		}
 	}
 	if req.Type == "image" && sc.Verdict != "" {
-		if _, err := saveTranscriptFile(req.QueueRowID, profile, req.Filename, sc.Verdict, "img", "", "", "", 0, ""); err != nil {
+		if _, err := saveTranscriptFile(transcriptDir, req.QueueRowID, profile, req.Filename, sc.Verdict, "img", "", "", "", 0, ""); err != nil {
 			slog.Warn("score_async: transcript save failed", "event_type", "transcript_save_failed", "type", req.Type, "row_id", req.QueueRowID, "error", err)
 		}
 	}
@@ -1546,18 +1634,18 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 // tests and some call sites use it by name. Ensures req.Type == "url" so
 // scoreAsync takes the URL-share branch regardless of how the caller constructed
 // the request (legacy callers may leave Type empty when URL is populated).
-func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
+func scoreURLAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger, deps *scoringDeps) {
 	if req.Type == "" && req.URL != "" {
 		req.Type = "url"
 	}
-	scoreAsync(req, q, eval, events, nil, nil)
+	scoreAsync(req, q, eval, events, nil, nil, deps)
 }
 
 // scoreFileAsync delegates to scoreAsync. EPIC-077 M5: retained for the same
 // reason as scoreURLAsync. handleTemplate dispatch will be updated to call
 // scoreAsync directly.
-func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger) {
-	scoreAsync(req, q, eval, events, nil, nil)
+func scoreFileAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger, deps *scoringDeps) {
+	scoreAsync(req, q, eval, events, nil, nil, deps)
 }
 
 // isCameraPhoto returns true when a share request looks like a raw camera photo
@@ -2242,7 +2330,10 @@ func classifyContentProfile(ctx context.Context, content string) string {
 //
 // The eval parameter is the Evaluator used for rubric scoring (step 5). Pass
 // HaikuJSONEvaluator{} in production; inject a stub in tests. EPIC-088 M1.
-func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int64, originalFilename string, whisperModel string, extraText string, req *ShareRequest, events *EventLogger, eval Evaluator) {
+// deps carries transcript/fetch dependencies; nil resolves to production
+// defaults (EPIC-258 M2).
+func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int64, originalFilename string, whisperModel string, extraText string, req *ShareRequest, events *EventLogger, eval Evaluator, deps *scoringDeps) {
+	deps = deps.resolve()
 	ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Second)
 	defer cancel()
 	defer os.Remove(audioPath) // temp m4a cleanup
@@ -2502,7 +2593,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			"phase":           "audio_async", // EPIC-083 M5-1
 		})
 	}
-	txPath, err := saveTranscriptFile(rowID, profile, originalFilename, transcript, "m4a", "", "", "", 0, "")
+	txPath, err := saveTranscriptFile(deps.TranscriptsDir, rowID, profile, originalFilename, transcript, "m4a", "", "", "", 0, "")
 	if err != nil {
 		slog.Warn(
 			"score_audio: save transcript failed",
@@ -2725,14 +2816,6 @@ var liteparseBinaryPath = "lit"
 // the previous value with t.Cleanup) instead of racing on sleeps.
 var scoreAsyncDoneHook func()
 
-// transcriptDir is the directory where voice note transcripts are saved.
-// Default: ~/code/personal/docs/transcripts. Overridden by ServerConfig.TranscriptsDir
-// via initClaudeConfig() at startup. EPIC-009 M1.
-var transcriptDir = func() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "code", "personal", "docs", "transcripts")
-}()
-
 // saveTranscriptFile writes a transcript to docs/transcripts/ with YAML
 // frontmatter containing metadata. Returns the written file path or error.
 // EPIC-071 M2. EPIC-009 M4: extended with source, sourceURL, videoTitle.
@@ -2744,7 +2827,11 @@ var transcriptDir = func() string {
 // videoID: YouTube video ID (empty for non-YouTube)
 // duration: video duration in seconds (0 when unknown)
 // subtitleType: "manual" | "auto" | "" (empty for non-YouTube)
-func saveTranscriptFile(rowID int64, profile, originalFilename, transcript, source, sourceURL, videoTitle, videoID string, duration int, subtitleType string) (string, error) {
+// transcriptDir is the destination directory (EPIC-258 M2: was a package var).
+func saveTranscriptFile(transcriptDir string, rowID int64, profile, originalFilename, transcript, source, sourceURL, videoTitle, videoID string, duration int, subtitleType string) (string, error) {
+	if transcriptDir == "" {
+		transcriptDir = defaultTranscriptsDir()
+	}
 	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
 		return "", fmt.Errorf("create transcript dir: %w", err)
 	}
