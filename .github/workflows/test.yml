@@ -43,6 +43,19 @@ jobs:
       - name: Build all
         run: make build
 
+      # EPIC-257 M8: the fish contract suites gate the packaging manifests
+      # (nfpm Debian/Termux, OCI image, CI matrix). They previously ran only
+      # locally, which is why M6 could clean .goreleaser.yaml and test.yml but
+      # miss nfpm.termux.yaml and still show green.
+      #
+      # Uses test-fish-ci, not test-fish: ct-f001 is quarantined (CT-5 asserts
+      # an epic-inject CP-002 guard that was never implemented). See Makefile.
+      - name: Install fish
+        run: sudo apt-get update && sudo apt-get install -y fish
+
+      - name: Fish contract tests
+        run: make test-fish-ci
+
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
