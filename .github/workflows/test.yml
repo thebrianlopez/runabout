@@ -40,6 +40,23 @@ jobs:
       - name: Test root module
         run: go test -race -shuffle=on -coverprofile=coverage-root.out ./...
 
+      # cmd/linkari is a separate module, so the root `go test ./...` above never
+      # reached it - 132 test files covering the actual product ran on no push.
+      # Same structural gap that let the Termux manifest drift and the ct-f002
+      # harness bug sit undetected: the suite existed, nothing executed it.
+      #
+      # NON-GATING until EPIC-258. The first -race run of this module surfaced
+      # 3 pre-existing data races in production code (server_score.go:63 written,
+      # read at :142/:149/:643/:646 via firehose.go:453/460) plus one test-only
+      # race at pipeline_contract_test.go:593/629. Reporting them on every run is
+      # more useful than not running these tests at all, but they must not block
+      # unrelated work. Remove continue-on-error in EPIC-258 once the
+      # package-global state is fixed.
+      - name: Test linkari module
+        continue-on-error: true
+        working-directory: cmd/linkari
+        run: go test -race -shuffle=on -coverprofile=../../coverage-linkari.out ./...
+
       - name: Build all
         run: make build
 
@@ -62,6 +79,7 @@ jobs:
           name: coverage
           path: |
             coverage-root.out
+            coverage-linkari.out
 
       # EPIC-112 F2 M5: Eval regression gate fires on profile or fixture changes.
       # Path filter: docs/prompts/profiles/** or cmd/linkari/testdata/triage/**
