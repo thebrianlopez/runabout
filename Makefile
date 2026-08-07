@@ -10,7 +10,20 @@ CORE := mdq perfgate shellprof hookval effiscore castex chain-eval
 # Separate-module tools (each has its own go.mod under cmd/)
 SEPARATE := bmux protonexport linkari linkari-labeler plaid-service wasend workctl ghwatch ts-go jira-poller runway
 
+# EPIC-257: unpublished tools. Source and per-tool targets are retained -
+# `make bmux` still works - but they are excluded from the aggregate targets so
+# CI does not compile them on every push. They are also absent from
+# .goreleaser.yaml, so no artifacts ship to homebrew/apt/apk/Termux.
+# To resume publishing a tool: remove it here AND restore its .goreleaser.yaml
+# build id. Doing only one leaves the two surfaces inconsistent.
+UNPUBLISHED := bmux protonexport plaid-service wasend
+
+# Every tool that has a target (aggregate + per-tool). Use for .PHONY and for
+# anything that must still address unpublished tools by name.
 ALL := $(CORE) $(SEPARATE)
+
+# What the aggregate targets actually build/install.
+PUBLISHED := $(filter-out $(UNPUBLISHED),$(ALL))
 
 # Container image config (EPIC-038 M9)
 IMAGE_REGISTRY ?= ghcr.io/blo-grindr/linkari
@@ -28,13 +41,17 @@ LIMA_SOCKET    ?= $(HOME)/.lima/$(LIMA_VM)/containerd.sock
 
 # --- Aggregate targets ---
 
-all: $(ALL)
+all: $(PUBLISHED)
 
 core: $(CORE)
 
 build: all
 
-install: $(addprefix install-,$(ALL))
+# Build every tool including unpublished ones - for local verification that
+# retained source still compiles.
+all-including-unpublished: $(ALL)
+
+install: $(addprefix install-,$(PUBLISHED))
 
 clean:
 	rm -rf bin/
