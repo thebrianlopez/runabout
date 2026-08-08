@@ -52,7 +52,7 @@ func resolvePushConfigOnce(q *Queue) {
 // Used as a "was a [server:] block present?" check in main.go now that the
 // struct contains non-comparable fields (PushYAMLConfig holds maps).
 func (s ServerConfig) IsZero() bool {
-	return s.Port == 0 && s.Token == "" && s.QueueDB == "" && s.FirebaseSA == "" &&
+	return s.Port == 0 && s.Token == "" && s.QueueDB == "" && s.DataDir == "" && s.FirebaseSA == "" &&
 		s.LogFile == "" && s.Shell == "" && s.ShellArgs == "" && s.NotifyMinScore == 0 &&
 		s.ServerURL == "" && s.TSNetAuthKey == "" && s.TSNetClientSecret == "" && s.Tsnet == nil &&
 		s.TsnetHostname == "" && s.TsnetStateDir == "" && !s.Debug &&
@@ -461,6 +461,7 @@ type ServerConfig struct {
 	AtlassianConfluenceToken string   `toml:"atlassian_confluence_token"`  // ${secretsmanager:linkari/confluence-token} or literal
 	GoogleOAuthToken         string   `toml:"google_oauth_token"`          // ${secretsmanager:linkari/google-oauth-token} or serialized oauth2.Token JSON
 	QueueDB                  string   `toml:"queue_db"`
+	DataDir                  string   `toml:"data_dir"`
 	FirebaseSA               string   `toml:"firebase_sa"`
 	DB                       DBConfig `toml:"db"` // EPIC-223: backup database config
 	LogFile                  string   `toml:"log_file"`
@@ -750,11 +751,8 @@ func (d TemplateData) ShellQuoted() TemplateData {
 	return d
 }
 
-// defaultConfigPath returns ~/.config/linkari/config.toml.
-func defaultConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "linkari", "config.toml")
-}
+// defaultConfigPath returns the native config.toml path for the current platform.
+func defaultConfigPath() string { return nativeConfigPath() }
 
 // configRefResolverFactory builds the resolver used for ${secretsmanager:...}
 // expansion. Tests override it with t.Cleanup to keep LoadConfig hermetic.
@@ -818,7 +816,7 @@ func extractJSONField(raw, field string, hasField bool) string {
 // LoadConfig reads, expands refs, and validates the TOML config file.
 func LoadConfig(ctx context.Context, path string) (*Config, error) {
 	if path == "" {
-		path = defaultConfigPath()
+		path = resolveConfigPath("").Path
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

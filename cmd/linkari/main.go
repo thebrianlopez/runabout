@@ -19,7 +19,6 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/thebrianlopez/runabout/cmd/linkari/internal/linklog"
-	"github.com/thebrianlopez/runabout/cmd/linkari/internal/xdgpath"
 	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
@@ -300,11 +299,14 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				if value != "" && tier == "toml-sm" {
 					// Materialize JSON content into cache and treat the cache
 					// path as the firebase service account file going forward.
-					cacheDir, cacheErr := xdgpath.CacheDir()
-					if cacheErr != nil {
-						return fmt.Errorf("firebase_sa cache: %w", cacheErr)
+					effectivePaths, pathErr := resolveEffectivePaths(serverFileCfg)
+					if pathErr != nil {
+						return fmt.Errorf("firebase_sa cache: %w", pathErr)
 					}
-					cachePath := filepath.Join(cacheDir, "firebase-sa.json")
+					if err := ensureDir(effectivePaths.CacheDir); err != nil {
+						return fmt.Errorf("firebase_sa cache: %w", err)
+					}
+					cachePath := filepath.Join(effectivePaths.CacheDir, "firebase-sa.json")
 					if writeErr := os.WriteFile(cachePath, []byte(value), 0o600); writeErr != nil {
 						return fmt.Errorf("firebase_sa write: %w", writeErr)
 					}
@@ -343,8 +345,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				queueDB = os.Getenv("LINKARI_QUEUE_DB")
 			}
 			if queueDB == "" {
-				home, _ := os.UserHomeDir()
-				queueDB = home + "/.config/linkari/queue.db"
+				queueDB = filepath.Join(filepath.Dir(defaultConfigPath()), "queue.db")
 			}
 			if err := os.MkdirAll(filepath.Dir(queueDB), 0o755); err != nil {
 				return fmt.Errorf("creating queue db directory: %w", err)

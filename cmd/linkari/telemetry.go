@@ -228,7 +228,7 @@ func serverEventsDir(cfg TelemetryConfig) string {
 func loadTelemetryConfig() TelemetryConfig {
 	path := os.Getenv("LINKARI_CONFIG")
 	if path == "" {
-		path = defaultConfigPath()
+		path = resolveConfigPath("").Path
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

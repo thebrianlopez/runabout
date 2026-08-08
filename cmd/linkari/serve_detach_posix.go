@@ -30,8 +30,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-
-	"github.com/thebrianlopez/runabout/cmd/linkari/internal/xdgpath"
 )
 
 const detachPipeFDEnv = "LINKARI_DETACH_PIPE_FD"
@@ -45,8 +43,12 @@ func maybeDetach(detach bool) error {
 		return nil
 	}
 
-	stateDir, err := xdgpath.StateDir()
+	effectivePaths, err := resolveEffectivePaths(nil)
 	if err != nil {
+		return fmt.Errorf("detach: state dir: %w", err)
+	}
+	stateDir := effectivePaths.StateDir
+	if err := ensureDir(stateDir); err != nil {
 		return fmt.Errorf("detach: state dir: %w", err)
 	}
 	pidPath := filepath.Join(stateDir, "linkari.pid")

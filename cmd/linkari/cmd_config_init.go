@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"github.com/thebrianlopez/runabout/cmd/linkari/internal/xdgpath"
 )
 
 // serverYAMLTemplate is the canonical config.toml starter template.
@@ -246,11 +244,7 @@ Flags:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := path
 			if target == "" {
-				cfgDir, err := xdgpath.ConfigDir()
-				if err != nil {
-					return fmt.Errorf("config init: %w", err)
-				}
-				target = filepath.Join(cfgDir, "config.toml")
+				target = defaultConfigPath()
 			}
 
 			if dryRun {

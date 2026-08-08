@@ -19,6 +19,16 @@ import (
 func newDoctorCmdForTest(t *testing.T, tmpDir string, extraArgs []string) (*bytes.Buffer, func() error) {
 	t.Helper()
 	t.Setenv("HOME", tmpDir)
+	if _, ok := activePathResolver.(xdgPathResolver); ok {
+		prev := activePathResolver
+		activePathResolver = fixedResolver{roots: PathRoots{
+			Config: filepath.Join(tmpDir, ".config", "linkari"),
+			Data:   filepath.Join(tmpDir, ".local", "share", "linkari"),
+			Cache:  filepath.Join(tmpDir, ".cache", "linkari"),
+			State:  filepath.Join(tmpDir, ".local", "state", "linkari"),
+		}}
+		t.Cleanup(func() { activePathResolver = prev })
+	}
 	// Clear SM-related env so tests never attempt real AWS calls.
 	t.Setenv("LINKARI_TOKEN", "")
 	t.Setenv("LINKARI_FIREBASE_SA", "")

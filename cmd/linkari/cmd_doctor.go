@@ -28,7 +28,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/spf13/cobra"
 
-	"github.com/thebrianlopez/runabout/cmd/linkari/internal/xdgpath"
 	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
@@ -68,13 +67,13 @@ func resolveBackupPath(cfg *ServerConfig) (string, error) {
 		return cfg.DB.BackupPath, nil
 	}
 
-	// Fallback to XDG state dir default
-	stateDir, err := xdgpath.StateDir()
+	// Fallback to the shared state-dir default.
+	paths, err := resolveEffectivePaths(cfg)
 	if err != nil {
-		return "", fmt.Errorf("xdg state dir: %w", err)
+		return "", fmt.Errorf("state dir: %w", err)
 	}
 
-	return filepath.Join(stateDir, "backups", "latest.db"), nil
+	return filepath.Join(paths.StateDir, "backups", "latest.db"), nil
 }
 
 // EPIC-223 M4: checkBackupFreshness reads <path>.backup-meta.json and returns doctorChecks.
@@ -243,10 +242,8 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 			}
 
 			// --- Check 1: config.toml present and parseable ---
-			configPath := serverYAMLPath
-			if configPath == "" {
-				configPath = defaultConfigPath()
-			}
+			configResolution := resolveConfigPath(serverYAMLPath)
+			configPath := configResolution.Path
 			var serverCfg *ServerConfig
 			var fullCfg *Config
 			awsCredsUnavailable := false
@@ -270,6 +267,9 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					sc := cfg.Server
 					serverCfg = &sc
 					addCheck(okCheck("config_toml", configPath))
+					if configResolution.Legacy {
+						addCheck(warnCheck("legacy_config_location_detected", legacyConfigLocationMessage(defaultConfigPath(), legacyConfigPath())))
+					}
 				}
 				if awsCredsUnavailable {
 					addCheck(failCheck("aws_credentials", "config contains secretsmanager refs but no AWS credentials found - set AWS_PROFILE or run on an EC2 instance with an IAM instance profile"))
@@ -421,25 +421,25 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				addCheck(formatAWSCheck(result))
 			}
 
-			// --- Checks 6-8: XDG directories ---
+			// --- Checks 6-8: platform directories ---
+			effectivePaths, _ := resolveEffectivePaths(serverCfg)
 			for _, dirCheck := range []struct {
 				name string
-				fn   func() (string, error)
+				dir  string
 			}{
-				{"xdg_config_dir", xdgpath.ConfigDir},
-				{"xdg_cache_dir", xdgpath.CacheDir},
-				{"xdg_state_dir", xdgpath.StateDir},
+				{"xdg_config_dir", effectivePaths.ConfigDir},
+				{"xdg_cache_dir", effectivePaths.CacheDir},
+				{"xdg_state_dir", effectivePaths.StateDir},
 			} {
-				dir, err := dirCheck.fn()
-				if err != nil {
+				if err := ensureDir(dirCheck.dir); err != nil {
 					addCheck(failCheck(dirCheck.name, fmt.Sprintf("create/access failed: %v", err)))
 					continue
 				}
 				// Writable check: try creating a temp file.
-				if wErr := probeWritable(dir); wErr != nil {
-					addCheck(failCheck(dirCheck.name, fmt.Sprintf("%s exists but is not writable: %v", dir, wErr)))
+				if wErr := probeWritable(dirCheck.dir); wErr != nil {
+					addCheck(failCheck(dirCheck.name, fmt.Sprintf("%s exists but is not writable: %v", dirCheck.dir, wErr)))
 				} else {
-					addCheck(okCheck(dirCheck.name, dir))
+					addCheck(okCheck(dirCheck.name, dirCheck.dir))
 				}
 			}
 
@@ -579,10 +579,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				if serverCfg != nil && serverCfg.TsnetStateDir != "" {
 					tsnetStateDir = serverCfg.TsnetStateDir
 				} else {
-					cfgDir, err := xdgpath.ConfigDir()
-					if err == nil {
-						tsnetStateDir = filepath.Join(cfgDir, "tsnet")
-					}
+					tsnetStateDir = filepath.Join(effectivePaths.ConfigDir, "tsnet")
 				}
 				if tsnetStateDir != "" {
 					fi, err := os.Stat(tsnetStateDir)
@@ -603,8 +600,8 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 
 			// --- Check 10: firebase-sa cache path writable ---
 			{
-				cacheDir, err := xdgpath.CacheDir()
-				if err == nil {
+				cacheDir := effectivePaths.CacheDir
+				if err := ensureDir(cacheDir); err == nil {
 					cachePath := filepath.Join(cacheDir, "firebase-sa.json")
 					// Permission check: can we create/overwrite the cache file?
 					if wErr := probeWritable(cacheDir); wErr != nil {
@@ -614,6 +611,8 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 						addCheck(okCheck("firebase_sa_cache",
 							fmt.Sprintf("%s (cache dir writable)", cachePath)))
 					}
+				} else {
+					addCheck(failCheck("firebase_sa_cache", fmt.Sprintf("create/access failed: %v", err)))
 				}
 			}
 
