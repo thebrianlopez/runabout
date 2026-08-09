@@ -133,7 +133,7 @@ func authYouTubeCmd() *cobra.Command {
 			defer q.Close()
 
 			ctx = context.WithValue(ctx, ctxKeyYouTubeSlot{}, slotFlag)
-			tok, err := runYouTubeLoopbackAuthFn(ctx, clientID, clientSecret, callbackAddr, noBrowser)
+			tok, err := runYouTubeLoopbackAuthFn(ctx, clientID, clientSecret, callbackAddr, noBrowser, nil)
 			if err != nil {
 				return err
 			}
@@ -242,7 +242,18 @@ func parsePastedAuthCode(input, wantState string) (string, error) {
 	return trimmed, nil
 }
 
-func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbackAddr string, noBrowser bool) (*oauth2.Token, error) {
+// out receives the operator-facing prompts this flow prints. nil selects
+// os.Stderr.
+//
+// EPIC-258 M2: these were written directly to os.Stderr, and the only test
+// able to observe them reassigned the os.Stderr global while this function's
+// goroutine was still writing to it (cmd_auth_youtube_paste_test.go:212 vs
+// :336). Injecting the writer removes the shared global rather than trying to
+// synchronise around it - the test now owns its own pipe.
+func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbackAddr string, noBrowser bool, out io.Writer) (*oauth2.Token, error) {
+	if out == nil {
+		out = os.Stderr
+	}
 	if callbackAddr == "" {
 		callbackAddr = "127.0.0.1:53682"
 	}
@@ -258,7 +269,7 @@ func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbac
 	pasteOnly := false
 	if listenErr != nil {
 		if tty && errors.Is(listenErr, syscall.EADDRINUSE) {
-			fmt.Fprintf(os.Stderr, "loopback unavailable (port in use) - paste-only mode\n")
+			fmt.Fprintf(out, "loopback unavailable (port in use) - paste-only mode\n")
 			pasteOnly = true
 		} else {
 			return nil, fmt.Errorf("listen loopback: %w", listenErr)
@@ -329,11 +340,11 @@ func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbac
 		oauth2.AccessTypeOffline,
 		oauth2.SetAuthURLParam("prompt", "consent"),
 	)
-	fmt.Fprintf(os.Stderr, "Open this URL to authorize YouTube access:\n%s\n", authURL)
+	fmt.Fprintf(out, "Open this URL to authorize YouTube access:\n%s\n", authURL)
 
 	pasteCh := make(chan pasteEvent, 4)
 	if tty {
-		fmt.Fprintf(os.Stderr, "\nNo browser on this machine? After approving, the redirect page will fail to load -\nthat is expected. Paste the full redirect URL (or just the code) here:\n")
+		fmt.Fprintf(out, "\nNo browser on this machine? After approving, the redirect page will fail to load -\nthat is expected. Paste the full redirect URL (or just the code) here:\n")
 		go pasteAcceptLoop(pasteReaderFn(), state, pasteCh)
 	}
 
@@ -346,7 +357,7 @@ func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbac
 		if err != nil {
 			return nil, fmt.Errorf("exchange oauth code: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "youtube_auth_code_source source=%s slot=%s\n", source, slot)
+		fmt.Fprintf(out, "youtube_auth_code_source source=%s slot=%s\n", source, slot)
 		return tok, nil
 	}
 
@@ -358,9 +369,9 @@ func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbac
 		case ev := <-pasteCh:
 			if ev.err != nil {
 				if errors.Is(ev.err, errStateMismatch) {
-					fmt.Fprintln(os.Stderr, "state mismatch - paste the redirect from THIS login attempt")
+					fmt.Fprintln(out, "state mismatch - paste the redirect from THIS login attempt")
 				} else {
-					fmt.Fprintln(os.Stderr, "could not find an authorization code - paste the full redirect URL")
+					fmt.Fprintln(out, "could not find an authorization code - paste the full redirect URL")
 				}
 				if ev.bad >= 3 {
 					return nil, errPasteUnparseable
