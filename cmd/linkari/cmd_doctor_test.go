@@ -870,7 +870,13 @@ func TestResolveBackupPath_ConfigAuthority(t *testing.T) {
 	}
 }
 
-// CT-6: Default fallback (empty config → XDG default)
+// CT-6: Default fallback (empty config → platform state dir default)
+//
+// EPIC-259 made path resolution platform-native, so the previous assertion
+// against a literal ~/.local/state/... only held on Linux. The contract under
+// test is that resolveBackupPath composes the resolved State root with
+// backups/latest.db, so the expectation is derived from the resolver and the
+// XDG_STATE_HOME case is pinned separately below.
 func TestResolveBackupPath_DefaultFallback(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -886,9 +892,36 @@ func TestResolveBackupPath_DefaultFallback(t *testing.T) {
 		t.Fatalf("CT-6: resolveBackupPath: %v", err)
 	}
 
-	expectedDefault := filepath.Join(dir, ".local", "state", "linkari", "backups", "latest.db")
+	roots, err := activePathResolver.Roots()
+	if err != nil {
+		t.Fatalf("CT-6: Roots: %v", err)
+	}
+	expectedDefault := filepath.Join(roots.State, "backups", "latest.db")
 	if resolved != expectedDefault {
 		t.Errorf("CT-6: resolved = %q, want %q", resolved, expectedDefault)
+	}
+	if !strings.HasPrefix(resolved, dir) {
+		t.Errorf("CT-6: resolved %q escaped the test HOME %q", resolved, dir)
+	}
+}
+
+// CT-6b: XDG_STATE_HOME is honoured for the backup default (Linux layout).
+// Guards the case the original CT-6 literal was really asserting, without
+// tying the platform-native default to it.
+func TestResolveBackupPath_XDGStateHomeHonoured(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	stateHome := filepath.Join(dir, ".local", "state")
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	resolved, err := resolveBackupPath(&ServerConfig{DB: DBConfig{BackupPath: ""}})
+	if err != nil {
+		t.Fatalf("CT-6b: resolveBackupPath: %v", err)
+	}
+
+	want := filepath.Join(stateHome, "linkari", "backups", "latest.db")
+	if resolved != want {
+		t.Errorf("CT-6b: resolved = %q, want %q", resolved, want)
 	}
 }
 

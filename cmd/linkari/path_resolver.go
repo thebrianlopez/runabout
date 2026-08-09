@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/adrg/xdg"
 )
@@ -39,7 +40,25 @@ var activePathResolver PathResolver = xdgPathResolver{}
 
 type xdgPathResolver struct{}
 
+// xdgMu serialises access to github.com/adrg/xdg's package-level state.
+//
+// xdg.Reload() writes xdg.ConfigHome, xdg.DataHome, xdg.CacheHome and
+// xdg.StateHome; the reads immediately below consume them. Roots() is called
+// from scoring goroutines (via resolveConfigPath -> LoadConfig), so without
+// this lock the reload races every concurrent reader - 29 of 36 races observed
+// across three seeds once the tests that previously exited early began running
+// to completion.
+//
+// This is the same defect class EPIC-258 is remediating: package-level mutable
+// state written while other goroutines read it. The state happens to live in a
+// dependency rather than in this package, which is why it is serialised here
+// rather than removed. xdg is referenced nowhere else in the binary, so this
+// lock is sufficient - keep it that way.
+var xdgMu sync.Mutex
+
 func (xdgPathResolver) Roots() (PathRoots, error) {
+	xdgMu.Lock()
+	defer xdgMu.Unlock()
 	xdg.Reload()
 	return PathRoots{
 		Config: filepath.Join(xdg.ConfigHome, linkariAppName),
