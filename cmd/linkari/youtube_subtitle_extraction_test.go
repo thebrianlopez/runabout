@@ -44,13 +44,12 @@ func readEventLog(t *testing.T, el *EventLogger, path string) string {
 func TestSubtitleExtraction_CT1_SubtitlesFound(t *testing.T) {
 	el, evtPath := newSubtitleEventLogger(t)
 
-	orig := execYtdlp
-	defer func() { execYtdlp = orig }()
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "This is the subtitle text.", ytVideoMeta{Title: "Test", ID: "abc123", Duration: 120, SubtitleType: "auto"}, nil
 	}
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
-	subtitleEvent, transcript, meta, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=abc123", 1, el, nil)
+	subtitleEvent, transcript, meta, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=abc123", 1, el, nil, deps)
 	if err != nil {
 		t.Fatalf("CT-1: unexpected error: %v", err)
 	}
@@ -78,13 +77,12 @@ func TestSubtitleExtraction_CT1_SubtitlesFound(t *testing.T) {
 func TestSubtitleExtraction_CT2_NoSubtitles(t *testing.T) {
 	el, evtPath := newSubtitleEventLogger(t)
 
-	orig := execYtdlp
-	defer func() { execYtdlp = orig }()
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: no subtitles found for test-url")
 	}
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
-	subtitleEvent, transcript, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=nosubs", 2, el, nil)
+	subtitleEvent, transcript, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=nosubs", 2, el, nil, deps)
 	// yt_no_subtitles is a normal signal — caller triggers F2, no dead-letter.
 	if err != nil {
 		t.Errorf("CT-2: err = %v, want nil (yt_no_subtitles must not be an error)", err)
@@ -110,13 +108,12 @@ func TestSubtitleExtraction_CT2_NoSubtitles(t *testing.T) {
 func TestSubtitleExtraction_CT3_YtDlpFailure(t *testing.T) {
 	el, evtPath := newSubtitleEventLogger(t)
 
-	orig := execYtdlp
-	defer func() { execYtdlp = orig }()
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: exit status 1: ERROR: Unable to extract video data")
 	}
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
-	subtitleEvent, _, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=fail", 3, el, nil)
+	subtitleEvent, _, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=fail", 3, el, nil, deps)
 
 	if err == nil {
 		t.Error("CT-3: expected non-nil error for yt_dlp_failed")
@@ -139,9 +136,7 @@ func TestSubtitleExtraction_CT3_YtDlpFailure(t *testing.T) {
 func TestSubtitleExtraction_CT4_Timeout(t *testing.T) {
 	el, evtPath := newSubtitleEventLogger(t)
 
-	orig := execYtdlp
-	defer func() { execYtdlp = orig }()
-	execYtdlp = func(ctx context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(ctx context.Context, _, _ string) (string, ytVideoMeta, error) {
 		select {
 		case <-ctx.Done():
 			return "", ytVideoMeta{}, ctx.Err()
@@ -149,11 +144,12 @@ func TestSubtitleExtraction_CT4_Timeout(t *testing.T) {
 			return "", ytVideoMeta{}, fmt.Errorf("stub: should not reach here")
 		}
 	}
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
 
-	subtitleEvent, _, _, err := extractYTSubtitles(ctx, "yt-dlp", "https://www.youtube.com/watch?v=timeout", 4, el, nil)
+	subtitleEvent, _, _, err := extractYTSubtitles(ctx, "yt-dlp", "https://www.youtube.com/watch?v=timeout", 4, el, nil, deps)
 
 	if err == nil {
 		t.Error("CT-4: expected error on timeout")
@@ -187,15 +183,14 @@ func TestSubtitleExtraction_CT5_DeadLetterRetrySucceeds(t *testing.T) {
 	t.Cleanup(func() { ytSubtitleMaxRetries = prevSubRetries })
 
 	var callCount int32
-	orig := execYtdlp
-	defer func() { execYtdlp = orig }()
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		n := atomic.AddInt32(&callCount, 1)
 		if n == 1 {
 			return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: exit status 1: transient network error")
 		}
 		return "Subtitle text on retry.", ytVideoMeta{Title: "Retry Video", ID: "retry1", Duration: 60, SubtitleType: "auto"}, nil
 	}
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	prevHaikuJSON := execHaikuJSON
 	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
@@ -222,7 +217,7 @@ func TestSubtitleExtraction_CT5_DeadLetterRetrySucceeds(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil, deps)
 	}()
 	select {
 	case <-done:
@@ -253,11 +248,10 @@ func TestSubtitleExtraction_CT6_TerminalFailure(t *testing.T) {
 	ytSubtitleMaxRetries = 2
 	t.Cleanup(func() { ytSubtitleMaxRetries = prevSubRetries })
 
-	orig := execYtdlp
-	defer func() { execYtdlp = orig }()
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: exit status 1: persistent failure")
 	}
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
 	el, err := NewEventLogger(evtPath)
@@ -284,7 +278,7 @@ func TestSubtitleExtraction_CT6_TerminalFailure(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", el, "", nil)
+		scoreYouTubeAsync(req, q, "yt-dlp", el, "", nil, deps)
 	}()
 	select {
 	case <-done:
@@ -309,9 +303,7 @@ func TestSubtitleExtraction_CT7_TimeoutConfigWired(t *testing.T) {
 
 	el, _ := newSubtitleEventLogger(t)
 
-	orig := execYtdlp
-	defer func() { execYtdlp = orig }()
-	execYtdlp = func(ctx context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(ctx context.Context, _, _ string) (string, ytVideoMeta, error) {
 		// Simulate a 10ms extraction — well under 5s configured limit.
 		select {
 		case <-time.After(10 * time.Millisecond):
@@ -320,8 +312,9 @@ func TestSubtitleExtraction_CT7_TimeoutConfigWired(t *testing.T) {
 			return "", ytVideoMeta{}, ctx.Err()
 		}
 	}
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
-	subtitleEvent, transcript, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=cfg1", 7, el, nil)
+	subtitleEvent, transcript, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=cfg1", 7, el, nil, deps)
 	// Must succeed — 10ms is well within the 5s config limit.
 	if err != nil {
 		t.Errorf("CT-7: unexpected error with generous timeout config: %v", err)
@@ -344,9 +337,7 @@ func TestSubtitleExtraction_CT8_ConcurrencyCap3(t *testing.T) {
 	var active int32
 	var peakActive int32
 
-	orig := execYtdlp
-	defer func() { execYtdlp = orig }()
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		cur := atomic.AddInt32(&active, 1)
 		defer atomic.AddInt32(&active, -1)
 		// Record peak.
@@ -359,6 +350,7 @@ func TestSubtitleExtraction_CT8_ConcurrencyCap3(t *testing.T) {
 		time.Sleep(80 * time.Millisecond) // hold slot long enough to measure peak
 		return "Subtitle text.", ytVideoMeta{ID: fmt.Sprintf("vid-%d", cur)}, nil
 	}
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	const numJobs = 5
 	var wg [numJobs]chan struct{}
@@ -378,7 +370,7 @@ func TestSubtitleExtraction_CT8_ConcurrencyCap3(t *testing.T) {
 		url := fmt.Sprintf("https://www.youtube.com/watch?v=job%d", i)
 		go func() {
 			defer close(ch)
-			extractYTSubtitles(context.Background(), "yt-dlp", url, int64(i), el, nil) //nolint:errcheck
+			extractYTSubtitles(context.Background(), "yt-dlp", url, int64(i), el, nil, deps) //nolint:errcheck
 		}()
 	}
 

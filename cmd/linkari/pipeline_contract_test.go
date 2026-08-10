@@ -436,11 +436,10 @@ func TestTranscribeYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	t.Cleanup(func() { ytFallbackToAudio = prev })
 
 	// Subtitle extraction always fails with "no subtitles".
-	prevYtdlp := execYtdlp
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "", ytVideoMeta{Title: "Test Video"}, fmt.Errorf("no subtitles found for url")
 	}
-	t.Cleanup(func() { execYtdlp = prevYtdlp })
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	// Audio download succeeds — returns a fake audio file path.
 	fakeAudio := filepath.Join(t.TempDir(), "audio.m4a")
@@ -482,7 +481,7 @@ func TestTranscribeYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		transcribeYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
+		transcribeYouTubeAsync(req, q, "yt-dlp", nil, "", nil, deps)
 	}()
 	select {
 	case <-finished:
@@ -589,12 +588,11 @@ func TestHandleShare_YouTubeURL_EmptyType(t *testing.T) {
 	// Capture whether scoreYouTubeAsync was reached via the execYtdlp seam.
 	// scoreYouTubeAsync calls execYtdlp as its first step; scoreAsync never does.
 	var scoreYTCalled bool
-	prevYtdlp := execYtdlp
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		scoreYTCalled = true
 		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles — stop here")
 	}
-	t.Cleanup(func() { execYtdlp = prevYtdlp })
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	// Disable audio fallback so the goroutine terminates quickly after yt-dlp.
 	prevFallback := ytFallbackToAudio
@@ -604,6 +602,7 @@ func TestHandleShare_YouTubeURL_EmptyType(t *testing.T) {
 	cfg := builtinConfig()
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, cfg, false)
+	router.SetYtDeps(deps)
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 	mux := srv.Mux()

@@ -89,8 +89,6 @@ func TestIsYouTubeURL_RG2_GoogleRedirect(t *testing.T) {
 // EPIC-090 M4: seam now returns ytVideoMeta instead of a bare title string.
 func TestRunYtdlpExtract_MockExec(t *testing.T) {
 	// Save and restore the real execYtdlp seam.
-	orig := execYtdlp
-	defer func() { execYtdlp = orig }()
 
 	wantTranscript := "Hello world"
 	wantMeta := ytVideoMeta{
@@ -100,11 +98,12 @@ func TestRunYtdlpExtract_MockExec(t *testing.T) {
 		SubtitleType: "manual",
 	}
 
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return wantTranscript, wantMeta, nil
 	}
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
-	got, meta, err := execYtdlp(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=test")
+	got, meta, err := deps.Ytdlp(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,14 +126,12 @@ func TestRunYtdlpExtract_MockExec(t *testing.T) {
 
 // TestRunYtdlpExtract_ErrorPath verifies that errors from the seam propagate.
 func TestRunYtdlpExtract_ErrorPath(t *testing.T) {
-	orig := execYtdlp
-	defer func() { execYtdlp = orig }()
-
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: no subtitles found")
 	}
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
-	_, _, err := execYtdlp(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=nosubs")
+	_, _, err := deps.Ytdlp(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=nosubs")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -169,13 +166,13 @@ func TestDetectSubtitleType(t *testing.T) {
 // ─── EPIC-003 M3: audio fallback unit tests ────────────────────────────────
 
 // installYtdlpNoSubtitlesStub makes execYtdlp return a "no subtitles" error.
-func installYtdlpNoSubtitlesStub(t *testing.T) {
+func installYtdlpNoSubtitlesStub(t *testing.T) *ytDeps {
 	t.Helper()
-	prev := execYtdlp
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: no subtitles found for test-url")
 	}
-	t.Cleanup(func() { execYtdlp = prev })
+	deps := &ytDeps{Ytdlp: ytdlpStub}
+	return deps
 }
 
 // installYtdlpAudioStub makes execYtdlpAudio write a fake audio file and return its path.
@@ -217,8 +214,7 @@ func TestScoreYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
 	// Stub yt-dlp subtitle extraction → no subtitles.
-	installYtdlpNoSubtitlesStub(t)
-
+	deps := installYtdlpNoSubtitlesStub(t)
 	// Stub audio download → fake file.
 	installYtdlpAudioStub(t)
 
@@ -258,7 +254,7 @@ func TestScoreYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil, deps)
 	}()
 	select {
 	case <-done:
@@ -316,8 +312,7 @@ func TestScoreYouTubeAsync_FallbackStepFailures(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Stub execYtdlp → no subtitles.
-			installYtdlpNoSubtitlesStub(t)
-
+			deps := installYtdlpNoSubtitlesStub(t)
 			// Stub audio download.
 			prevAudio := execYtdlpAudio
 			if tc.audioErr != nil {
@@ -370,7 +365,7 @@ func TestScoreYouTubeAsync_FallbackStepFailures(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
+				scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil, deps)
 			}()
 			select {
 			case <-done:
@@ -541,7 +536,7 @@ func TestScoreYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 	ytFallbackToAudio = true
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
-	installYtdlpNoSubtitlesStub(t)
+	deps := installYtdlpNoSubtitlesStub(t)
 	installYtdlpAudioStub(t)
 
 	prevFfmpeg := execFfmpegConvert
@@ -584,7 +579,7 @@ func TestScoreYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", evtLogger, "", nil)
+		scoreYouTubeAsync(req, q, "yt-dlp", evtLogger, "", nil, deps)
 	}()
 	select {
 	case <-done:
@@ -611,7 +606,7 @@ func TestTranscribeYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 	ytFallbackToAudio = true
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
-	installYtdlpNoSubtitlesStub(t)
+	deps := installYtdlpNoSubtitlesStub(t)
 	installYtdlpAudioStub(t)
 
 	prevFfmpeg := execFfmpegConvert
@@ -647,7 +642,7 @@ func TestTranscribeYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		transcribeYouTubeAsync(req, q, "yt-dlp", evtLogger, "", nil)
+		transcribeYouTubeAsync(req, q, "yt-dlp", evtLogger, "", nil, deps)
 	}()
 	select {
 	case <-done:
@@ -672,12 +667,11 @@ func TestRouteYouTubeURL_MissingType(t *testing.T) {
 	var scoreYTCalled bool
 
 	// Capture calls via execYtdlp seam — scoreYouTubeAsync calls execYtdlp first.
-	prevYtdlp := execYtdlp
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		scoreYTCalled = true
 		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles")
 	}
-	t.Cleanup(func() { execYtdlp = prevYtdlp })
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	// Also stub ytAudioFallback path (ytFallbackToAudio is false, so won't call it).
 	q := newTestQueue(t)
@@ -698,7 +692,7 @@ func TestRouteYouTubeURL_MissingType(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil, deps)
 	}()
 	select {
 	case <-done:
@@ -732,12 +726,11 @@ func TestScoreYouTubeAsync_BT1_NormalizationWired(t *testing.T) {
 
 	// Capture the URL that execYtdlp actually receives.
 	var capturedURL string
-	prevYtdlp := execYtdlp
-	execYtdlp = func(_ context.Context, _, videoURL string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, videoURL string) (string, ytVideoMeta, error) {
 		capturedURL = videoURL
 		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles")
 	}
-	t.Cleanup(func() { execYtdlp = prevYtdlp })
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	q := newTestQueue(t)
 	req := ShareRequest{
@@ -757,7 +750,7 @@ func TestScoreYouTubeAsync_BT1_NormalizationWired(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil, deps)
 	}()
 	select {
 	case <-done:
@@ -786,12 +779,11 @@ func TestTranscribeYouTubeAsync_BT2_NormalizationWired(t *testing.T) {
 	t.Cleanup(func() { execNormalizeURL = prevNorm })
 
 	var capturedURL string
-	prevYtdlp := execYtdlp
-	execYtdlp = func(_ context.Context, _, videoURL string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, videoURL string) (string, ytVideoMeta, error) {
 		capturedURL = videoURL
 		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles")
 	}
-	t.Cleanup(func() { execYtdlp = prevYtdlp })
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	q := newTestQueue(t)
 	req := ShareRequest{
@@ -811,7 +803,7 @@ func TestTranscribeYouTubeAsync_BT2_NormalizationWired(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		transcribeYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
+		transcribeYouTubeAsync(req, q, "yt-dlp", nil, "", nil, deps)
 	}()
 	select {
 	case <-done:
@@ -839,8 +831,7 @@ func TestAudioFallback_SemaphoreCap1(t *testing.T) {
 	ytAudioMaxRetries = 0
 	t.Cleanup(func() { ytAudioMaxRetries = prevRetries })
 
-	installYtdlpNoSubtitlesStub(t)
-
+	deps := installYtdlpNoSubtitlesStub(t)
 	// hold gates the download stub: the first job holds the channel open until
 	// the test releases it. This keeps the semaphore occupied while we launch a
 	// second job and verify it blocks.
@@ -887,7 +878,7 @@ func TestAudioFallback_SemaphoreCap1(t *testing.T) {
 	done1 := make(chan struct{})
 	go func() {
 		defer close(done1)
-		scoreYouTubeAsync(req1, q, "yt-dlp", evtLogger, "", nil)
+		scoreYouTubeAsync(req1, q, "yt-dlp", evtLogger, "", nil, deps)
 	}()
 
 	// Wait until job1 has entered the download stub and is holding the semaphore.
@@ -904,7 +895,7 @@ func TestAudioFallback_SemaphoreCap1(t *testing.T) {
 	done2 := make(chan struct{})
 	go func() {
 		defer close(done2)
-		scoreYouTubeAsync(req2, q, "yt-dlp", evtLogger, "", nil)
+		scoreYouTubeAsync(req2, q, "yt-dlp", evtLogger, "", nil, deps)
 	}()
 
 	// Give job2 time to attempt semaphore acquire and emit the queued event.

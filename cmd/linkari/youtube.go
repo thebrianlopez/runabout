@@ -168,10 +168,36 @@ func stripSRT(raw string) string {
 	return strings.Join(kept, "\n")
 }
 
-// execYtdlp is the test seam for yt-dlp invocation. Replace in tests to
-// inject mock output without spawning a real subprocess.
-// EPIC-090 M4: returns ytVideoMeta (title + id + duration + subtitle_type) instead of title string.
-var execYtdlp = runYtdlpExtract
+// ytDeps carries the YouTube pipeline's execution seams.
+//
+// EPIC-258 M2 step 2: execYtdlp was a package-level var that tests swapped
+// (20 sites across 7 files) while scoring goroutines read it at
+// extractYTSubtitles and transcribeYouTubeAsync. The race detector reported
+// it on every seed measured, writer pipeline_contract_test.go:630 against
+// reader youtube.go:203.
+//
+// A nil *ytDeps is valid and resolves to production defaults, so call sites
+// with nothing to inject may pass nil. Sibling seams (execYtdlpAudio,
+// execNormalizeURL, whisper/ffmpeg) belong here too and are scheduled for
+// later commits in this milestone.
+type ytDeps struct {
+	// Ytdlp extracts subtitles for a video URL.
+	// EPIC-090 M4: returns ytVideoMeta (title + id + duration + subtitle_type).
+	Ytdlp func(ctx context.Context, ytdlpPath, videoURL string) (transcript string, meta ytVideoMeta, err error)
+}
+
+// resolve returns d with any nil field filled from production defaults.
+// Accepts a nil receiver.
+func (d *ytDeps) resolve() *ytDeps {
+	out := ytDeps{}
+	if d != nil {
+		out = *d
+	}
+	if out.Ytdlp == nil {
+		out.Ytdlp = runYtdlpExtract
+	}
+	return &out
+}
 
 // extractYTSubtitles invokes execYtdlp for subtitle extraction, emits the
 // appropriate event, and returns the outcome as a named event string.
@@ -184,7 +210,8 @@ var execYtdlp = runYtdlpExtract
 // The function acquires ytSubtitleSem before invoking execYtdlp and emits
 // a structured event on the EventLogger for each outcome. EPIC-109 M2.
 // EPIC-098 F3: Added serverConfig parameter for transcription gate access.
-func extractYTSubtitles(ctx context.Context, ytPath, videoURL string, rowID int64, events *EventLogger, serverConfig *ServerConfig) (subtitleEvent string, transcript string, meta ytVideoMeta, err error) {
+func extractYTSubtitles(ctx context.Context, ytPath, videoURL string, rowID int64, events *EventLogger, serverConfig *ServerConfig, deps *ytDeps) (subtitleEvent string, transcript string, meta ytVideoMeta, err error) {
+	deps = deps.resolve()
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(ytSubtitleTimeoutSecs)*time.Second)
 	defer cancel()
 
@@ -200,7 +227,7 @@ func extractYTSubtitles(ctx context.Context, ytPath, videoURL string, rowID int6
 	}
 	defer func() { <-ytSubtitleSem }()
 
-	transcript, meta, err = execYtdlp(ctx, ytPath, videoURL)
+	transcript, meta, err = deps.Ytdlp(ctx, ytPath, videoURL)
 	if err == nil {
 		if events != nil {
 			_ = events.Emit("yt_subtitles_ok", map[string]interface{}{
@@ -592,7 +619,8 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 //  4. Evaluate via HaikuJSONEvaluator
 //  5. UpdateScore → status=scored
 //  6. EnqueueDigestIfDue → FCM push (content_type="youtube" for M5 title template)
-func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger, whisperModel string, serverConfig *ServerConfig) {
+func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger, whisperModel string, serverConfig *ServerConfig, deps *ytDeps) {
+	deps = deps.resolve()
 	outerTimeout := 120 * time.Second
 	if ytFallbackToAudio {
 		outerTimeout = 10 * time.Minute
@@ -628,7 +656,7 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 	var subtitleEvent string
 	for attempt := 1; attempt <= ytSubtitleMaxRetries+1; attempt++ {
 		var subErr error
-		subtitleEvent, transcript, meta, subErr = extractYTSubtitles(ctx, ytPath, videoURL, rowID, events, serverConfig)
+		subtitleEvent, transcript, meta, subErr = extractYTSubtitles(ctx, ytPath, videoURL, rowID, events, serverConfig, deps)
 		if subtitleEvent == "yt_subtitles_ok" {
 			goto subtitleReady
 		}
@@ -952,7 +980,8 @@ subtitleReady:
 //  1. yt-dlp extract → transcript + ytVideoMeta
 //  2. saveTranscriptFile (source="youtube", extended frontmatter)
 //  3. EnqueueTranscriptPush → FCM push with content_type="youtube_transcript"
-func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger, whisperModel string, serverConfig *ServerConfig) {
+func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventLogger, whisperModel string, serverConfig *ServerConfig, deps *ytDeps) {
+	deps = deps.resolve()
 	outerTimeout := 120 * time.Second
 	if ytFallbackToAudio {
 		outerTimeout = 10 * time.Minute
@@ -983,7 +1012,7 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 	}
 
 	// Step 2: yt-dlp extraction.
-	transcript, meta, err := execYtdlp(ctx, ytPath, videoURL)
+	transcript, meta, err := deps.Ytdlp(ctx, ytPath, videoURL)
 	if err != nil {
 		errStr := err.Error()
 		var verdict string

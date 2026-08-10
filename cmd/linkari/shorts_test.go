@@ -199,8 +199,7 @@ func TestShortsAsync_M12_Integration(t *testing.T) {
 	execNormalizeURL = func(_ context.Context, u string) (string, error) { return u, nil }
 	t.Cleanup(func() { execNormalizeURL = prevNorm })
 
-	prevYtdlp := execYtdlp
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "Short: quick and fun video transcript content", ytVideoMeta{
 			Title:        "Fun Short",
 			ID:           "m12-short",
@@ -209,7 +208,7 @@ func TestShortsAsync_M12_Integration(t *testing.T) {
 			SubtitleType: "auto",
 		}, nil
 	}
-	t.Cleanup(func() { execYtdlp = prevYtdlp })
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	prevEval := execHaikuJSON
 	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
@@ -234,7 +233,7 @@ func TestShortsAsync_M12_Integration(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil)
+		scoreYouTubeAsync(req, q, "yt-dlp", nil, "", nil, deps)
 	}()
 	select {
 	case <-done:

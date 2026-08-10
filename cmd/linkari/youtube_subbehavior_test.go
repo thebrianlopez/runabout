@@ -103,7 +103,7 @@ func TestYouTube_TranscribeSubscriptionsDisabled_SubtitleFound_ScoreRuns(t *test
 	})
 
 	// TranscribeSubscriptions=false should NOT block the subtitle-found path
-	// Score should still run if subtitles are found via extractYTSubtitles()
+	// Score should still run if subtitles are found via extractYTSubtitles(, nil)
 	if !srv.serverConfig.YouTube.AutoEnqueueSubscriptions {
 		t.Error("enqueue should still work when only transcribe is disabled")
 	}
@@ -188,11 +188,10 @@ func TestYouTube_BT1_TranscribeWatchLaterDisabled_NoWhisper(t *testing.T) {
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
 	// Stub yt-dlp subtitle extraction → no subtitles.
-	prev := execYtdlp
-	execYtdlp = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: no subtitles found for test-url")
 	}
-	t.Cleanup(func() { execYtdlp = prev })
+	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	// Whisper must NOT be called — track invocations.
 	var whisperCalled atomic.Int32
@@ -231,7 +230,7 @@ func TestYouTube_BT1_TranscribeWatchLaterDisabled_NoWhisper(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		scoreYouTubeAsync(req, q, "yt-dlp", el, "", cfg)
+		scoreYouTubeAsync(req, q, "yt-dlp", el, "", cfg, deps)
 	}()
 	select {
 	case <-done:

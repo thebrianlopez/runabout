@@ -95,6 +95,7 @@ type Router struct {
 	wikiResolver *WikiTopicResolver // EPIC-180 M2: nil when wiki is disabled or vault missing
 	domainRouter *DomainRouter      // EPIC-258 M2: was package var pkgDomainRouter
 	jina         *jinaClient        // EPIC-258 M2: was package vars jinaBaseURL/jinaHTTPClient; nil = production client
+	ytDeps       *ytDeps            // EPIC-258 M2: was package var execYtdlp; nil = production seams
 }
 
 // SetQueue wires the queue for server-side uinit_* scoring (EPIC-060 M1).
@@ -175,6 +176,21 @@ func (r *Router) SetJinaClient(j *jinaClient) {
 	r.mu.Lock()
 	r.jina = j
 	r.mu.Unlock()
+}
+
+// SetYtDeps overrides the YouTube pipeline's execution seams. Used by tests
+// to inject a yt-dlp stub. nil restores production behaviour. EPIC-258 M2.
+func (r *Router) SetYtDeps(d *ytDeps) {
+	r.mu.Lock()
+	r.ytDeps = d
+	r.mu.Unlock()
+}
+
+// youtubeDeps returns this Router's YouTube seams.
+func (r *Router) youtubeDeps() *ytDeps {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.ytDeps
 }
 
 // scoringDeps builds the scoring dependency set for this Router.
@@ -621,7 +637,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		if ytPath == "" {
 			ytPath = ytdlpBinaryPath
 		}
-		go transcribeYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel, r.serverConfig)
+		go transcribeYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel, r.serverConfig, r.youtubeDeps())
 		return "Fetching YouTube transcript  -  ready via FCM", nil
 	}
 
@@ -633,7 +649,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		if ytPath == "" {
 			ytPath = ytdlpBinaryPath
 		}
-		go scoreYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel, r.serverConfig)
+		go scoreYouTubeAsync(*req, r.queue, ytPath, r.events, r.whisperModel, r.serverConfig, r.youtubeDeps())
 		return "Transcribing YouTube  -  verdict via FCM", nil
 	}
 
