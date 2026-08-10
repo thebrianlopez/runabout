@@ -45,11 +45,9 @@ func TestF5_CT5_ScoreAsync_UserTags_InjectedIntoPrompt(t *testing.T) {
 	deps := installJinaServer(t, srv)
 
 	// Stub content classify to avoid subprocess.
-	prevCC := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+	deps.Backend = &funcScoringBackend{complete: func(_ context.Context, _, _ string) (string, error) {
 		return "eng", nil
-	}
-	t.Cleanup(func() { execContentClassify = prevCC })
+	}}
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -84,11 +82,9 @@ func TestF5_CT6_ScoreAsync_NilUserTags_PromptUnchanged(t *testing.T) {
 	srv := jinaBodyServer(t, http.StatusOK, "This is a test engineering article about Go concurrency.")
 	deps := installJinaServer(t, srv)
 
-	prevCC := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+	deps.Backend = &funcScoringBackend{complete: func(_ context.Context, _, _ string) (string, error) {
 		return "eng", nil
-	}
-	t.Cleanup(func() { execContentClassify = prevCC })
+	}}
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})

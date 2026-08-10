@@ -69,7 +69,7 @@ type TranscriptMetadata struct {
 // Callers MUST check err before using text. A non-nil err signals a pipeline
 // degradation — the caller should log the failure and fall through to the
 // current metadata-only scoring path without retrying.
-func extractImageText(ctx context.Context, imagePath string, visionModel string) (string, error) {
+func extractImageText(ctx context.Context, backend ScoringBackend, imagePath string, visionModel string) (string, error) {
 	// Acquire semaphore (max_concurrency=1).
 	select {
 	case imageTextExtractionSem <- struct{}{}:
@@ -93,7 +93,7 @@ func extractImageText(ctx context.Context, imagePath string, visionModel string)
 	callCtx, callCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer callCancel()
 
-	raw, err := execHaikuVision(callCtx, systemPrompt, prompt, imagePath, imageTextResultSchema)
+	raw, err := backendCompleteVision(callCtx, backend, systemPrompt, prompt, imagePath, imageTextResultSchema)
 	if err != nil {
 		return "", fmt.Errorf("extractImageText: vision exec: %w", err)
 	}

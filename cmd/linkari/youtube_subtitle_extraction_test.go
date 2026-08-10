@@ -192,12 +192,10 @@ func TestSubtitleExtraction_CT5_DeadLetterRetrySucceeds(t *testing.T) {
 	}
 	deps := &ytDeps{Ytdlp: ytdlpStub}
 
-	prevHaikuJSON := execHaikuJSON
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+	deps.Backend = &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
 		v := TriageVerdict{Score: 70, Verdict: "interesting", Tags: "test", RubricScores: map[string]int{"overall": 70}}
 		return json.Marshal(v)
-	}
-	t.Cleanup(func() { execHaikuJSON = prevHaikuJSON })
+	}}
 
 	q := newTestQueue(t)
 	req := ShareRequest{

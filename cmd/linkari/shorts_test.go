@@ -210,12 +210,10 @@ func TestShortsAsync_M12_Integration(t *testing.T) {
 	}
 	deps := &ytDeps{Ytdlp: ytdlpStub}
 
-	prevEval := execHaikuJSON
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+	deps.Backend = &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
 		v := TriageVerdict{Score: 80, Verdict: "Entertaining Short", Tags: "shorts", RubricScores: map[string]int{"overall": 80}}
 		return json.Marshal(v)
-	}
-	t.Cleanup(func() { execHaikuJSON = prevEval })
+	}}
 
 	q := newTestQueue(t)
 	req := ShareRequest{

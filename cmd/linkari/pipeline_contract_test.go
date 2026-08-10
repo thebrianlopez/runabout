@@ -137,11 +137,10 @@ func TestScoreAsyncTerminalStatus(t *testing.T) {
 			deps := installJinaServer(t, srv)
 
 			// Stub content classify so the cascade resolves without Haiku.
-			prevCC := execContentClassify
-			execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+			// EPIC-258 M2: injected via deps.Backend, not a package-var swap.
+			deps.Backend = &funcScoringBackend{complete: func(_ context.Context, _, _ string) (string, error) {
 				return "eng", nil
-			}
-			t.Cleanup(func() { execContentClassify = prevCC })
+			}}
 
 			q := newTestQueue(t)
 			q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -303,26 +302,23 @@ func TestProcessVoiceNoteAsyncTerminalStatus(t *testing.T) {
 // Before M2: returns (&Scorecard{Verdict:"eval_failed", Backend:"metadata-only"}, nil)
 // After  M2: returns (nil, error)
 func TestHaikuVisionDoubleFailureReturnsError(t *testing.T) {
-	// Stub vision exec to fail.
-	prevVision := execHaikuVision
-	execHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
-		return nil, fmt.Errorf("vision: exec crashed")
+	// Stub vision exec to fail, and the JSON fallback to also fail — both
+	// paths are dead. EPIC-258 M2: injected backend, not package-var swaps.
+	backend := &funcScoringBackend{
+		completeVision: func(_ context.Context, _, _, _, _ string) ([]byte, error) {
+			return nil, fmt.Errorf("vision: exec crashed")
+		},
+		completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return nil, fmt.Errorf("json: eval also crashed")
+		},
 	}
-	t.Cleanup(func() { execHaikuVision = prevVision })
-
-	// Stub JSON fallback to also fail — both paths are dead.
-	prevJSON := execHaikuJSON
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
-		return nil, fmt.Errorf("json: eval also crashed")
-	}
-	t.Cleanup(func() { execHaikuJSON = prevJSON })
 
 	tmpFile := filepath.Join(t.TempDir(), "test.jpg")
 	if err := os.WriteFile(tmpFile, []byte("fake-image-data"), 0o644); err != nil {
 		t.Fatalf("write temp image: %v", err)
 	}
 
-	e := HaikuVisionEvaluator{ImagePath: tmpFile}
+	e := HaikuVisionEvaluator{ImagePath: tmpFile, Backend: backend}
 	sc, err := e.Evaluate(context.Background(), "some metadata text", "score this image")
 
 	// Contract: double failure MUST propagate an error, not swallow it with a
@@ -366,18 +362,15 @@ func TestVisionDoubleFailure_MarksFailedNotScored(t *testing.T) {
 	isolateEventsDir(t)
 	installTestProfileDir(t, "life")
 
-	// Both vision and JSON eval fail.
-	prevVision := execHaikuVision
-	execHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
-		return nil, fmt.Errorf("vision crashed")
+	// Both vision and JSON eval fail. EPIC-258 M2: injected backend.
+	backend := &funcScoringBackend{
+		completeVision: func(_ context.Context, _, _, _, _ string) ([]byte, error) {
+			return nil, fmt.Errorf("vision crashed")
+		},
+		completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return nil, fmt.Errorf("json also crashed")
+		},
 	}
-	t.Cleanup(func() { execHaikuVision = prevVision })
-
-	prevJSON := execHaikuJSON
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
-		return nil, fmt.Errorf("json also crashed")
-	}
-	t.Cleanup(func() { execHaikuJSON = prevJSON })
 
 	tmpFile := filepath.Join(t.TempDir(), "img.jpg")
 	if err := os.WriteFile(tmpFile, []byte("fake"), 0o644); err != nil {
@@ -404,8 +397,10 @@ func TestVisionDoubleFailure_MarksFailedNotScored(t *testing.T) {
 	req.QueueRowID = id
 
 	done := make(chan struct{})
-	wrapped := &onceDoneEval{inner: HaikuVisionEvaluator{ImagePath: tmpFile}, done: done}
-	go scoreAsync(req, q, wrapped, nil, nil, nil, nil)
+	wrapped := &onceDoneEval{inner: HaikuVisionEvaluator{ImagePath: tmpFile, Backend: backend}, done: done}
+	// EPIC-258 M2: inject the backend via deps too, so the F1 image text
+	// extraction step inside scoreAsync hits the stub, not the real CLI.
+	go scoreAsync(req, q, wrapped, nil, nil, nil, &scoringDeps{TranscriptsDir: t.TempDir(), Backend: backend})
 	select {
 	case <-done:
 		time.Sleep(100 * time.Millisecond)
@@ -514,17 +509,18 @@ func TestShareEndpointQueueRowGuarantee(t *testing.T) {
 	jina := jinaBodyServer(t, http.StatusOK, "interesting engineering content")
 	deps := installJinaServer(t, jina)
 
-	// Stub content classify so async scoring resolves without Haiku.
-	prevCC := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
-		return "eng", nil
-	}
-	t.Cleanup(func() { execContentClassify = prevCC })
-
 	cfg := builtinConfig()
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, cfg, false)
 	router.SetJinaClient(deps.Jina)
+	// Stub content classify so async scoring resolves without Haiku.
+	// EPIC-258 M2: injected backend, not a package-var swap.
+	router.SetScoringBackend(&funcScoringBackend{
+		complete: func(_ context.Context, _, _ string) (string, error) { return "eng", nil },
+		completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return []byte(cannedVerdictJSON), nil
+		},
+	})
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 	mux := srv.Mux()

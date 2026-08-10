@@ -446,6 +446,16 @@ func TestFirehoseScoring_F3CT3_ScoreAsyncUsesText(t *testing.T) {
 	fsc := testFSCWithEval(t, q, eval)
 	fsc.Deps = deps
 
+	// Async-test convention (EPIC-250): block on scoreAsync fully returning,
+	// not just Evaluate. Otherwise this test's scoring goroutine outlives the
+	// test and fires the *next* test's freshly installed scoreAsyncDoneHook,
+	// which made TestFirehoseScoring_Integration read its queue row too early
+	// (pre-existing at 2799ac6; surfaced during EPIC-258 M2).
+	scoreDone := make(chan struct{})
+	prevHook := scoreAsyncDoneHook
+	scoreAsyncDoneHook = func() { close(scoreDone) }
+	t.Cleanup(func() { scoreAsyncDoneHook = prevHook })
+
 	postText := "transformer architecture improvements in 2026"
 	post := &firehosePost{
 		AtURI: "at://did:plc:test/app.bsky.feed.post/f3ct3",
@@ -462,7 +472,11 @@ func TestFirehoseScoring_F3CT3_ScoreAsyncUsesText(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("F3-CT-3: Evaluate never called")
 	}
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-scoreDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("F3-CT-3: scoreAsync did not complete within 5s")
+	}
 
 	if !atomic.CompareAndSwapInt32(&capturing.called, 1, 1) {
 		t.Fatal("F3-CT-3: content not captured  -  Evaluate was not called on contentCapturingEval")
@@ -797,13 +811,22 @@ func TestFirehoseScoring_Integration(t *testing.T) {
 		t.Fatal("integration: scoreAsync did not complete within 5s")
 	}
 
+	// scoreAsyncDoneHook is a shared package global: a scoring goroutine leaked
+	// by an earlier test can fire the hook this test just installed, waking the
+	// wait above before *this* test's scoreAsync has persisted its status
+	// (observed at 2799ac6 in full-suite order; EPIC-258 M2). Poll to a
+	// deadline for a terminal status instead of trusting a single firing.
 	var status string
-	q.db.QueryRow("SELECT status FROM queue WHERE url=?", post.AtURI).Scan(&status)
-	if status == "pending" || status == "relayed" {
-		t.Fatalf("integration: queue row still in %q  -  scoreAsync did not complete scoring", status)
-	}
-	if status == "" {
-		t.Fatal("integration: queue row not found")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		q.db.QueryRow("SELECT status FROM queue WHERE url=?", post.AtURI).Scan(&status)
+		if status != "" && status != "pending" && status != "relayed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("integration: queue row status %q after 5s  -  scoreAsync did not complete scoring", status)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	// Status should be "scored" or "failed" (never "relayed" or stuck "pending").
 	if status != "scored" && status != "failed" {

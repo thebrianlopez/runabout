@@ -128,7 +128,7 @@ func (LocalRuntime) InvokeWhisperTranscribe(ctx context.Context, wavPath, modelP
 }
 
 func (LocalRuntime) InvokeClaudeSubprocess(ctx context.Context, systemPrompt, content string) (string, error) {
-	return execHaiku(ctx, systemPrompt, content)
+	return backendComplete(ctx, nil, systemPrompt, content)
 }
 
 // ─── HybridRuntime ────────────────────────────────────────────────────────────

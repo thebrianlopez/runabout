@@ -63,27 +63,6 @@ func (b ClaudeCLIScoringBackend) CompleteVision(ctx context.Context, systemPromp
 	return runClaudeHaikuVision(ctx, systemPrompt, textContent, imagePath, schema)
 }
 
-// execHaiku is the indirection point tests stub. Production path routes
-// through activeScoringBackend.Complete; tests can swap in a deterministic
-// fake by replacing either this var or activeScoringBackend. EPIC-217 M1.
-var execHaiku = func(ctx context.Context, sp, content string) (string, error) {
-	start := time.Now()
-	result, err := activeScoringBackend.Complete(ctx, sp, content)
-	errStr := ""
-	if err != nil {
-		errStr = err.Error()
-	}
-	slog.Info(
-		"scoring_call_complete",
-		"event_type", "scoring_call",
-		"backend", activeScoringBackend.Name(),
-		"method", "Complete",
-		"duration_ms", time.Since(start).Milliseconds(),
-		"error", errStr,
-	)
-	return result, err
-}
-
 // Envelope format identifiers used to compose evaluator labels. These describe
 // the *response format* an evaluator parses, not the provider that produced it.
 // The provider half is resolved at runtime from activeScoringBackend.
@@ -103,19 +82,53 @@ const (
 // reporting Claude after EPIC-246 routed execution through ScoringBackend.
 // Resolving from activeScoringBackend makes eval.Name() and Scorecard.Backend
 // agree with the scoring_call telemetry emitted by the exec* wrappers.
-func backendLabel(format string) string {
-	if activeScoringBackend == nil {
+func backendLabel(b ScoringBackend, format string) string {
+	b = resolveBackend(b)
+	if b == nil {
 		return "unknown:" + format
 	}
-	return activeScoringBackend.Name() + ":" + format
+	return b.Name() + ":" + format
 }
 
-// execHaikuJSON is the indirection point tests stub. Production path routes
-// through activeScoringBackend.CompleteJSON; tests can swap in a deterministic
-// fake by replacing either this var or activeScoringBackend. EPIC-217 M1.
-var execHaikuJSON = func(ctx context.Context, sp, content, schema string) ([]byte, error) {
+// resolveBackend returns b, or the process default when b is nil.
+//
+// EPIC-258 M2: activeScoringBackend remains the startup-configured default,
+// but it is now only read here. Scoring paths carry their backend explicitly
+// (scoringDeps.Backend, HaikuJSONEvaluator.Backend), so tests inject a fake
+// instead of swapping a package var that scoring goroutines read concurrently.
+func resolveBackend(b ScoringBackend) ScoringBackend {
+	if b != nil {
+		return b
+	}
+	return activeScoringBackend
+}
+
+// backendComplete calls b.Complete and emits the scoring_call telemetry that
+// the former execHaiku wrapper owned.
+func backendComplete(ctx context.Context, b ScoringBackend, sp, content string) (string, error) {
+	b = resolveBackend(b)
 	start := time.Now()
-	result, err := activeScoringBackend.CompleteJSON(ctx, sp, content, schema)
+	result, err := b.Complete(ctx, sp, content)
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	slog.Info(
+		"scoring_call_complete",
+		"event_type", "scoring_call",
+		"backend", b.Name(),
+		"method", "Complete",
+		"duration_ms", time.Since(start).Milliseconds(),
+		"error", errStr,
+	)
+	return result, err
+}
+
+// backendCompleteJSON calls b.CompleteJSON with scoring_call telemetry.
+func backendCompleteJSON(ctx context.Context, b ScoringBackend, sp, content, schema string) ([]byte, error) {
+	b = resolveBackend(b)
+	start := time.Now()
+	result, err := b.CompleteJSON(ctx, sp, content, schema)
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
@@ -123,7 +136,7 @@ var execHaikuJSON = func(ctx context.Context, sp, content, schema string) ([]byt
 	slog.Info(
 		"scoring_call_complete_json",
 		"event_type", "scoring_call",
-		"backend", activeScoringBackend.Name(),
+		"backend", b.Name(),
 		"method", "CompleteJSON",
 		"duration_ms", time.Since(start).Milliseconds(),
 		"error", errStr,
@@ -131,10 +144,11 @@ var execHaikuJSON = func(ctx context.Context, sp, content, schema string) ([]byt
 	return result, err
 }
 
-// execHaikuVision routes image scoring through the active backend.
-var execHaikuVision = func(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
+// backendCompleteVision calls b.CompleteVision with scoring_call telemetry.
+func backendCompleteVision(ctx context.Context, b ScoringBackend, sp, textContent, imagePath, schema string) ([]byte, error) {
+	b = resolveBackend(b)
 	start := time.Now()
-	result, err := activeScoringBackend.CompleteVision(ctx, systemPrompt, textContent, imagePath, schema)
+	result, err := b.CompleteVision(ctx, sp, textContent, imagePath, schema)
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
@@ -142,7 +156,7 @@ var execHaikuVision = func(ctx context.Context, systemPrompt, textContent, image
 	slog.Info(
 		"scoring_call_complete_vision",
 		"event_type", "scoring_call",
-		"backend", activeScoringBackend.Name(),
+		"backend", b.Name(),
 		"method", "CompleteVision",
 		"duration_ms", time.Since(start).Milliseconds(),
 		"error", errStr,

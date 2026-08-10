@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,16 +48,20 @@ func TestFeatureFlag_Disabled_Fallthrough(t *testing.T) {
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 
 	// Override the vision scorer too — return a valid triage verdict.
-	prevRunVision := execHaikuVision
-	execHaikuVision = func(_ context.Context, _, _, _ string, _ string) ([]byte, error) {
+	// EPIC-258 M2: injected backend replaces the former execHaikuVision
+	// package-var stub. F1 text extraction (imageTextResultSchema) must
+	// still fail loudly if called unexpectedly.
+	backend := &funcScoringBackend{completeVision: func(_ context.Context, _, _, _ string, schema string) ([]byte, error) {
+		if schema == imageTextResultSchema {
+			return nil, fmt.Errorf("unexpected F1 image text extraction call")
+		}
 		verdict := `{"score":60,"verdict":"metadata only scoring","rubric_scores":{"Relevance":60,"Depth":55,"Novelty":60,"Clarity":65,"Actionability":60},"action_items":[],"tags":"test","topic_tags":["test"]}`
 		envelope := `{"type":"result","result":"` + jsonEscapeForShell(verdict) + `","is_error":false,"total_cost_usd":0.001}`
 		return []byte(envelope), nil
-	}
-	t.Cleanup(func() { execHaikuVision = prevRunVision })
+	}}
 
 	transcriptDir := t.TempDir()
-	deps := &scoringDeps{TranscriptsDir: transcriptDir}
+	deps := &scoringDeps{TranscriptsDir: transcriptDir, Backend: backend}
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -173,19 +178,17 @@ func TestFeatureFlag_Enabled_EmitsEvents(t *testing.T) {
 	extractedTextJSON := `{"type":"result","result":"{\"text\":\"Engineering article about distributed systems\"}","is_error":false,"total_cost_usd":0.001}`
 	mockClaudeScript(t, extractedTextJSON, 0)
 
-	prevRunVision := execHaikuVision
 	verdict := `{"score":80,"verdict":"worth reading","rubric_scores":{"Relevance":80,"Depth":75,"Novelty":80,"Clarity":85,"Actionability":80},"action_items":[],"tags":"eng","topic_tags":["distributed","systems"]}`
 	envelope := `{"type":"result","result":"` + jsonEscapeForShell(verdict) + `","is_error":false,"total_cost_usd":0.002}`
-	execHaikuVision = func(_ context.Context, _, _, _ string, schema string) ([]byte, error) {
+	backend := &funcScoringBackend{completeVision: func(_ context.Context, _, _, _ string, schema string) ([]byte, error) {
 		if schema == imageTextResultSchema {
 			return []byte(`{"type":"result","result":"{\"text\":\"Engineering article about distributed systems\"}","is_error":false,"total_cost_usd":0.001}`), nil
 		}
 		return []byte(envelope), nil
-	}
-	t.Cleanup(func() { execHaikuVision = prevRunVision })
+	}}
 
 	transcriptDir := t.TempDir()
-	deps := &scoringDeps{TranscriptsDir: transcriptDir}
+	deps := &scoringDeps{TranscriptsDir: transcriptDir, Backend: backend}
 
 	// Create the events directory and a JSONL file for the event logger.
 	if err := os.MkdirAll(eventsDir, 0o755); err != nil {

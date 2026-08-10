@@ -13,9 +13,7 @@ func TestUserRationalePrompt_CT4_ScoreAsyncInjectsRationale(t *testing.T) {
 	srv := jinaBodyServer(t, http.StatusOK, "This is a generic article about developer tooling.")
 	deps := installJinaServer(t, srv)
 
-	prevCC := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) { return "eng", nil }
-	t.Cleanup(func() { execContentClassify = prevCC })
+	deps.Backend = &funcScoringBackend{complete: func(_ context.Context, _, _ string) (string, error) { return "eng", nil }}
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})

@@ -226,14 +226,12 @@ func TestParseHaikuEnvelope_ErrorEnvelope(t *testing.T) {
 }
 
 func TestHaikuVerdictWithRepair_FirstSucceeds(t *testing.T) {
-	orig := execHaikuJSON
-	defer func() { execHaikuJSON = orig }()
 	calls := 0
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+	backend := &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
 		calls++
 		return json.Marshal(canonicalVerdict)
-	}
-	v, _, err := haikuVerdictWithRepair(context.Background(), "sys", "content")
+	}}
+	v, _, err := haikuVerdictWithRepair(context.Background(), backend, "sys", "content")
 	if err != nil {
 		t.Fatalf("verdict: %v", err)
 	}
@@ -246,10 +244,8 @@ func TestHaikuVerdictWithRepair_FirstSucceeds(t *testing.T) {
 }
 
 func TestHaikuVerdictWithRepair_RepairsOnce(t *testing.T) {
-	orig := execHaikuJSON
-	defer func() { execHaikuJSON = orig }()
 	calls := 0
-	execHaikuJSON = func(_ context.Context, sys, _, _ string) ([]byte, error) {
+	backend := &funcScoringBackend{completeJSON: func(_ context.Context, sys, _, _ string) ([]byte, error) {
 		calls++
 		if calls == 1 {
 			// Return a malformed envelope (empty verdict triggers validate fail).
@@ -262,8 +258,8 @@ func TestHaikuVerdictWithRepair_RepairsOnce(t *testing.T) {
 			t.Errorf("repair sys prompt missing context: %q", sys)
 		}
 		return json.Marshal(canonicalVerdict)
-	}
-	v, _, err := haikuVerdictWithRepair(context.Background(), "sys", "content")
+	}}
+	v, _, err := haikuVerdictWithRepair(context.Background(), backend, "sys", "content")
 	if err != nil {
 		t.Fatalf("verdict: %v", err)
 	}
@@ -276,25 +272,21 @@ func TestHaikuVerdictWithRepair_RepairsOnce(t *testing.T) {
 }
 
 func TestHaikuVerdictWithRepair_GivesUpAfterRepair(t *testing.T) {
-	orig := execHaikuJSON
-	defer func() { execHaikuJSON = orig }()
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+	backend := &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
 		bad := canonicalVerdict
 		bad.Score = 999
 		return json.Marshal(bad)
-	}
-	if _, _, err := haikuVerdictWithRepair(context.Background(), "sys", "content"); err == nil {
+	}}
+	if _, _, err := haikuVerdictWithRepair(context.Background(), backend, "sys", "content"); err == nil {
 		t.Fatal("expected repair-give-up error")
 	}
 }
 
 func TestHaikuVerdictWithRepair_ExecError(t *testing.T) {
-	orig := execHaikuJSON
-	defer func() { execHaikuJSON = orig }()
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+	backend := &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
 		return nil, errors.New("boom")
-	}
-	if _, _, err := haikuVerdictWithRepair(context.Background(), "sys", "content"); err == nil {
+	}}
+	if _, _, err := haikuVerdictWithRepair(context.Background(), backend, "sys", "content"); err == nil {
 		t.Fatal("expected exec error to propagate")
 	}
 }

@@ -20,10 +20,11 @@ import (
 // Verifies that an audio multipart share carrying user_tags results in
 // a successful response with tags_persisted=true and the tags in inventory.
 func TestShareTags_BT1_MultipartAudioWithTags(t *testing.T) {
-	installHaikuJSONStub(t)
+	stubBackend := installHaikuJSONStub(t)
 
 	q := newTestQueue(t)
 	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
+	router.SetScoringBackend(stubBackend)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 
 	var body bytes.Buffer

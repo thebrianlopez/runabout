@@ -80,22 +80,23 @@ type Action struct {
 
 // Router dispatches share requests to the appropriate handler based on payload type.
 type Router struct {
-	tmux         *TmuxRunner
-	actions      []Action
-	actionsCfg   []ActionConfig
-	cfgIndex     map[string]*ActionConfig
-	debug        bool
-	mu           sync.RWMutex
-	queue        *Queue
-	bskyClient   *BlueskyClient     // EPIC-094: threaded for scoreAsync verdict replies
-	whisperModel string             // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
-	ytdlpPath    string             // EPIC-009: path to yt-dlp binary for YouTube transcription
-	events       *EventLogger       // EPIC-076: classification telemetry; nil when event logging not configured
-	serverConfig *ServerConfig      // EPIC-098 F3: server config for YouTube sub-behavior toggles
-	wikiResolver *WikiTopicResolver // EPIC-180 M2: nil when wiki is disabled or vault missing
-	domainRouter *DomainRouter      // EPIC-258 M2: was package var pkgDomainRouter
-	jina         *jinaClient        // EPIC-258 M2: was package vars jinaBaseURL/jinaHTTPClient; nil = production client
-	ytDeps       *ytDeps            // EPIC-258 M2: was package var execYtdlp; nil = production seams
+	tmux           *TmuxRunner
+	actions        []Action
+	actionsCfg     []ActionConfig
+	cfgIndex       map[string]*ActionConfig
+	debug          bool
+	mu             sync.RWMutex
+	queue          *Queue
+	bskyClient     *BlueskyClient     // EPIC-094: threaded for scoreAsync verdict replies
+	whisperModel   string             // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
+	ytdlpPath      string             // EPIC-009: path to yt-dlp binary for YouTube transcription
+	events         *EventLogger       // EPIC-076: classification telemetry; nil when event logging not configured
+	serverConfig   *ServerConfig      // EPIC-098 F3: server config for YouTube sub-behavior toggles
+	wikiResolver   *WikiTopicResolver // EPIC-180 M2: nil when wiki is disabled or vault missing
+	domainRouter   *DomainRouter      // EPIC-258 M2: was package var pkgDomainRouter
+	jina           *jinaClient        // EPIC-258 M2: was package vars jinaBaseURL/jinaHTTPClient; nil = production client
+	ytDeps         *ytDeps            // EPIC-258 M2: was package var execYtdlp; nil = production seams
+	scoringBackend ScoringBackend     // EPIC-258 M2: nil = process default (activeScoringBackend)
 }
 
 // SetQueue wires the queue for server-side uinit_* scoring (EPIC-060 M1).
@@ -204,7 +205,20 @@ func (r *Router) scoringDeps() *scoringDeps {
 	if j != nil {
 		d.Jina = j
 	}
+	r.mu.RLock()
+	d.Backend = r.scoringBackend
+	r.mu.RUnlock()
 	return d
+}
+
+// SetScoringBackend overrides the scoring backend used by goroutines this
+// Router launches. Used by tests to inject a deterministic fake instead of
+// swapping the activeScoringBackend package var, which scoring goroutines
+// read concurrently (EPIC-258 M2). nil restores the process default.
+func (r *Router) SetScoringBackend(b ScoringBackend) {
+	r.mu.Lock()
+	r.scoringBackend = b
+	r.mu.Unlock()
 }
 
 // SetWikiResolver wires the wiki topic resolver for wiki-context scoring.
@@ -657,7 +671,8 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	// scoreAudioAsync). Architecturally incompatible with scoreAsync  -
 	// hardcoded score=100, execHaiku directly, 1800s timeout, transcript management.
 	if ac.ServerScore && req.Type == "audio" {
-		go processVoiceNoteAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel, req.ExtraText, req, r.events, HaikuJSONEvaluator{}, r.scoringDeps())
+		deps := r.scoringDeps()
+		go processVoiceNoteAsync(req.AudioPath, req.Profile, r.queue, req.QueueRowID, req.OriginalFilename, r.whisperModel, req.ExtraText, req, r.events, HaikuJSONEvaluator{Backend: deps.Backend}, deps)
 		return "Transcribing  -  synopsis via FCM", nil
 	}
 
@@ -667,7 +682,8 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 	//   - "document": lit parse text extraction, metadata fallback
 	//   - "image": metadata synthesis
 	if ac.ServerScore && (req.Type == "image" || req.Type == "document" || req.Type == "url" || req.Type == "") {
-		go scoreAsync(req, r.queue, HaikuJSONEvaluator{}, r.events, r.bskyClient, r.wikiResolver, r.scoringDeps())
+		deps := r.scoringDeps()
+		go scoreAsync(req, r.queue, HaikuJSONEvaluator{Backend: deps.Backend}, r.events, r.bskyClient, r.wikiResolver, deps)
 		switch req.Type {
 		case "image", "document":
 			return "Scoring file  -  verdict via FCM", nil

@@ -157,14 +157,6 @@ func (v TriageVerdict) RenderMarkdown() string {
 	return sb.String()
 }
 
-// execHaikuSynopsisJSON is the JSON-mode synopsis execution path for voice note
-// summarization. Separate from execHaikuJSON so tests can stub them independently
-// without the synopsis stub interfering with rubric scoring expectations.
-// EPIC-088 M1: uses --output-format json + --json-schema for persona isolation.
-var execHaikuSynopsisJSON = func(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
-	return activeScoringBackend.CompleteJSON(ctx, systemPrompt, content, schema)
-}
-
 // runClaudeHaikuJSON shells the same `claude --print` invocation as
 // runClaudeHaiku but adds `--output-format json --json-schema <schema>` so
 // the CLI returns a result envelope containing schema-validated JSON.
@@ -398,8 +390,8 @@ func truncateForErr(b []byte) string {
 // failure, retries exactly once with the prior error pasted into the system
 // prompt. Returns the validated verdict, envelope metadata (token usage/cost),
 // and the raw envelope bytes from whichever turn succeeded.
-func haikuVerdictWithRepair(ctx context.Context, sysPrompt, content string) (TriageVerdict, *envelopeMeta, error) {
-	stdout, err := execHaikuJSON(ctx, sysPrompt, content, triageVerdictSchema)
+func haikuVerdictWithRepair(ctx context.Context, backend ScoringBackend, sysPrompt, content string) (TriageVerdict, *envelopeMeta, error) {
+	stdout, err := backendCompleteJSON(ctx, backend, sysPrompt, content, triageVerdictSchema)
 	if err != nil {
 		return TriageVerdict{}, nil, err
 	}
@@ -412,7 +404,7 @@ func haikuVerdictWithRepair(ctx context.Context, sysPrompt, content string) (Tri
 		"\n\nIMPORTANT: your prior response failed schema validation: " +
 		perr.Error() +
 		". Return ONLY a JSON object matching the TriageVerdict schema. No markdown, no fences, no commentary."
-	stdout2, err := execHaikuJSON(ctx, repairPrompt, content, triageVerdictSchema)
+	stdout2, err := backendCompleteJSON(ctx, backend, repairPrompt, content, triageVerdictSchema)
 	if err != nil {
 		return TriageVerdict{}, nil, fmt.Errorf("repair haiku: %w (orig parse: %v)", err, perr)
 	}

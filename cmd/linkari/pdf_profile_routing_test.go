@@ -220,10 +220,11 @@ func TestRG3_BareNoteAction_PDFShare_RoutesOK(t *testing.T) {
 	transcriptDir := t.TempDir()
 
 	installLiteParseStub(t, "extracted pdf text", 0.9, nil)
-	installHaikuJSONStub(t)
+	stubBackend := installHaikuJSONStub(t)
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
+	router.SetScoringBackend(stubBackend)
 	router.SetServerConfig(&ServerConfig{TranscriptsDir: transcriptDir})
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)

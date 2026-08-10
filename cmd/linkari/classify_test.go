@@ -453,14 +453,12 @@ func TestClassifyShareRequest_Cascade(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			llmCalls := 0
-			prev := execContentClassify
-			execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+			backend := &funcScoringBackend{complete: func(_ context.Context, _, _ string) (string, error) {
 				llmCalls++
 				return c.llmReturn, nil
-			}
-			t.Cleanup(func() { execContentClassify = prev })
+			}}
 
-			gotProfile, gotSource := classifyShareRequest(ctx, c.req)
+			gotProfile, gotSource := classifyShareRequest(ctx, backend, c.req)
 
 			if gotProfile != c.wantProfile {
 				t.Errorf("classifyShareRequest() profile=%q, want %q", gotProfile, c.wantProfile)
@@ -485,7 +483,7 @@ func TestClassifyShareRequest_Cascade(t *testing.T) {
 func TestClassifyShareRequest_ScreenshotNotConsumed(t *testing.T) {
 	ctx := context.Background()
 	req := makeShareReq("", 0, "", "DCIM/Screenshots/shot.jpg", "", "")
-	gotProfile, gotSource := classifyShareRequest(ctx, req)
+	gotProfile, gotSource := classifyShareRequest(ctx, nil, req)
 	// Screenshot path has isScreenshot=true, profile="" — classifyShareRequest
 	// should not assign a profile from it.
 	if gotProfile != "" || gotSource != "" {
@@ -565,14 +563,12 @@ func TestClassifyIntentProfile_Cascade(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			llmCallCount := 0
-			prev := execContentClassify
-			execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+			backend := &funcScoringBackend{complete: func(_ context.Context, _, _ string) (string, error) {
 				llmCallCount++
 				return c.llmReturn, nil
-			}
-			t.Cleanup(func() { execContentClassify = prev })
+			}}
 
-			got := classifyIntentProfile(ctx, c.req)
+			got := classifyIntentProfile(ctx, backend, c.req)
 
 			if got != c.wantResult {
 				t.Errorf("classifyIntentProfile() = %q, want %q", got, c.wantResult)

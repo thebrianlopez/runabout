@@ -70,13 +70,13 @@ type Evaluator interface {
 
 // HaikuMarkdownEvaluator implements Evaluator using the legacy markdown path
 // (execHaiku + parseTriageMarkdown).
-type HaikuMarkdownEvaluator struct{}
+type HaikuMarkdownEvaluator struct{ Backend ScoringBackend }
 
-func (HaikuMarkdownEvaluator) Name() string { return backendLabel(evalFormatMarkdown) }
+func (e HaikuMarkdownEvaluator) Name() string { return backendLabel(e.Backend, evalFormatMarkdown) }
 
-func (HaikuMarkdownEvaluator) Evaluate(ctx context.Context, content, promptTemplate string) (*Scorecard, error) {
+func (e HaikuMarkdownEvaluator) Evaluate(ctx context.Context, content, promptTemplate string) (*Scorecard, error) {
 	start := time.Now()
-	rawMD, err := execHaiku(ctx, promptTemplate, content)
+	rawMD, err := backendComplete(ctx, e.Backend, promptTemplate, content)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		return nil, fmt.Errorf("haiku: %w", err)
@@ -91,20 +91,20 @@ func (HaikuMarkdownEvaluator) Evaluate(ctx context.Context, content, promptTempl
 		Gaps:        res.ActionItems,
 		Tags:        res.Tags,
 		RawMarkdown: rawMD,
-		Backend:     backendLabel(evalFormatMarkdown),
+		Backend:     backendLabel(e.Backend, evalFormatMarkdown),
 		LatencyMs:   latency,
 	}, nil
 }
 
 // HaikuJSONEvaluator implements Evaluator using the typed JSON path
 // (haikuVerdictWithRepair → TriageVerdict).
-type HaikuJSONEvaluator struct{}
+type HaikuJSONEvaluator struct{ Backend ScoringBackend }
 
-func (HaikuJSONEvaluator) Name() string { return backendLabel(evalFormatJSON) }
+func (e HaikuJSONEvaluator) Name() string { return backendLabel(e.Backend, evalFormatJSON) }
 
-func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate string) (*Scorecard, error) {
+func (e HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate string) (*Scorecard, error) {
 	start := time.Now()
-	v, meta, err := haikuVerdictWithRepair(ctx, promptTemplate, content)
+	v, meta, err := haikuVerdictWithRepair(ctx, e.Backend, promptTemplate, content)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		return nil, fmt.Errorf("haiku-json: %w", err)
@@ -119,7 +119,7 @@ func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate 
 		RawMarkdown:    v.RenderMarkdown(),
 		Profile:        v.Profile,
 		ProfileVersion: v.ProfileVersion,
-		Backend:        backendLabel(evalFormatJSON),
+		Backend:        backendLabel(e.Backend, evalFormatJSON),
 		LatencyMs:      latency,
 	}
 	if meta != nil {
@@ -128,7 +128,7 @@ func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate 
 		sc.RepairTurn = meta.RepairTurn
 		slog.Info(
 			"evaluator: token usage",
-			"backend", backendLabel(evalFormatJSON),
+			"backend", backendLabel(e.Backend, evalFormatJSON),
 			"cost_usd", meta.CostUSD,
 			"input_tokens", tokenCount(meta.Usage, true),
 			"output_tokens", tokenCount(meta.Usage, false),
@@ -144,14 +144,15 @@ func (HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplate 
 // claude CLI with the Read tool enabled so it can read local image files for
 // multimodal scoring. EPIC-079 M3.
 type HaikuVisionEvaluator struct {
-	ImagePath string // path to the local image file
+	ImagePath string         // path to the local image file
+	Backend   ScoringBackend // EPIC-258 M2: nil uses the process default
 }
 
-func (e HaikuVisionEvaluator) Name() string { return backendLabel(evalFormatVision) }
+func (e HaikuVisionEvaluator) Name() string { return backendLabel(e.Backend, evalFormatVision) }
 
 func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTemplate string) (*Scorecard, error) {
 	start := time.Now()
-	raw, err := execHaikuVision(ctx, promptTemplate, content, e.ImagePath, triageVerdictSchema)
+	raw, err := backendCompleteVision(ctx, e.Backend, promptTemplate, content, e.ImagePath, triageVerdictSchema)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		// EPIC-080 M3: fall back to JSON evaluator with synthesized metadata.
@@ -161,7 +162,7 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 			"image_path", e.ImagePath,
 			"vision_error", err.Error(),
 		)
-		fallbackSc, fbErr := HaikuJSONEvaluator{}.Evaluate(ctx, content, promptTemplate)
+		fallbackSc, fbErr := HaikuJSONEvaluator{Backend: e.Backend}.Evaluate(ctx, content, promptTemplate)
 		if fbErr != nil {
 			// EPIC-001 M2: both exec paths failed — propagate error so the caller
 			// (scoreAsync) can mark the row failed via MarkFailedWithReason. The
@@ -176,7 +177,7 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 			)
 			return nil, fmt.Errorf("all evaluators failed: vision=%w; json=%v", err, fbErr)
 		}
-		fallbackSc.Backend = backendLabel(evalFormatVisionFallback)
+		fallbackSc.Backend = backendLabel(e.Backend, evalFormatVisionFallback)
 		return fallbackSc, nil
 	}
 	v, meta, parseErr := parseHaikuEnvelope(raw)
@@ -188,7 +189,7 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 			"image_path", e.ImagePath,
 			"parse_error", parseErr.Error(),
 		)
-		fallbackSc, fbErr := HaikuJSONEvaluator{}.Evaluate(ctx, content, promptTemplate)
+		fallbackSc, fbErr := HaikuJSONEvaluator{Backend: e.Backend}.Evaluate(ctx, content, promptTemplate)
 		if fbErr != nil {
 			// EPIC-001 M2: both paths failed after parse error — propagate error.
 			slog.Error(
@@ -200,7 +201,7 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 			)
 			return nil, fmt.Errorf("all evaluators failed: parse=%w; json=%v", parseErr, fbErr)
 		}
-		fallbackSc.Backend = backendLabel(evalFormatVisionFallback)
+		fallbackSc.Backend = backendLabel(e.Backend, evalFormatVisionFallback)
 		return fallbackSc, nil
 	}
 	sc := &Scorecard{
@@ -213,7 +214,7 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 		RawMarkdown:    v.RenderMarkdown(),
 		Profile:        v.Profile,
 		ProfileVersion: v.ProfileVersion,
-		Backend:        backendLabel(evalFormatVision),
+		Backend:        backendLabel(e.Backend, evalFormatVision),
 		LatencyMs:      latency,
 	}
 	if meta != nil {

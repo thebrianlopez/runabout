@@ -229,12 +229,10 @@ func TestScoreYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	installWhisperStubYT(t, "This is the audio transcript for testing.", nil)
 
 	// Stub evaluator → return a valid scorecard (RubricScores required for bare-verdict shortcut).
-	prevHaikuJSON := execHaikuJSON
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+	deps.Backend = &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
 		v := TriageVerdict{Score: 75, Verdict: "interesting", Tags: "test", RubricScores: map[string]int{"overall": 75}}
 		return json.Marshal(v)
-	}
-	t.Cleanup(func() { execHaikuJSON = prevHaikuJSON })
+	}}
 
 	q := newTestQueue(t)
 	req := ShareRequest{
@@ -547,12 +545,10 @@ func TestScoreYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 
 	installWhisperStubYT(t, "Audio fallback transcript.", nil)
 
-	prevHaikuJSON := execHaikuJSON
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+	deps.Backend = &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
 		v := TriageVerdict{Score: 70, Verdict: "interesting", Tags: "test", RubricScores: map[string]int{"overall": 70}}
 		return json.Marshal(v)
-	}
-	t.Cleanup(func() { execHaikuJSON = prevHaikuJSON })
+	}}
 
 	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
 	evtLogger, err := NewEventLogger(evtPath)

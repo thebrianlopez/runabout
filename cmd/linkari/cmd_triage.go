@@ -950,11 +950,15 @@ var nowRFC3339UTC = func() string {
 // triageScorer implements Scorer (cmd_eval.go) by running the real Go
 // triage path against each fixture's content + profile. Used by `linkari
 // eval run` once registeredScorer() returns it.
-type triageScorer struct{}
+type triageScorer struct {
+	// backend overrides the scoring backend; nil uses the process default.
+	// EPIC-258 M2: injected so tests never swap a package var.
+	backend ScoringBackend
+}
 
 func (triageScorer) Name() string { return "triage-haiku" }
 
-func (triageScorer) Score(fix Fixture) (Golden, error) {
+func (s triageScorer) Score(fix Fixture) (Golden, error) {
 	tmplPath, sysPrompt, err := loadProfileTemplateJSON(fix.Profile)
 	if err != nil {
 		return Golden{}, fmt.Errorf("load template: %w", err)
@@ -963,7 +967,7 @@ func (triageScorer) Score(fix Fixture) (Golden, error) {
 	// same truncation here so eval is robust against future fixture sources.
 	content := truncateRunes(fix.Content, contentTruncationRunes)
 
-	eval := HaikuJSONEvaluator{}
+	eval := HaikuJSONEvaluator{Backend: s.backend}
 	sc, err := eval.Evaluate(context.Background(), content, sysPrompt)
 	if err != nil {
 		// M6b: scorer brittleness fix. A malformed Haiku response (missing

@@ -6,7 +6,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
@@ -44,10 +43,11 @@ func TestHandleShare_ExifData_HandledWithoutError(t *testing.T) {
 	// EPIC-107 M2: multipart body with exif_data field → server accepts, 200 OK.
 	// The field is drained and logged at DEBUG level; no 400 or 500 response.
 	installLiteParseStub(t, "pdf text", 0.9, nil)
-	installHaikuJSONStub(t)
+	stubBackend := installHaikuJSONStub(t)
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
+	router.SetScoringBackend(stubBackend)
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 
@@ -64,15 +64,13 @@ func TestHandleShare_ExifData_HandledWithoutError(t *testing.T) {
 	}
 }
 
-// installHaikuJSONStub stubs execHaikuJSON to return a valid canned score,
-// preventing real Claude CLI calls from background scoring goroutines.
-func installHaikuJSONStub(t *testing.T) {
+// installHaikuJSONStub returns a scoring backend whose CompleteJSON returns a
+// valid canned score, preventing real Claude CLI calls from background scoring
+// goroutines. EPIC-258 M2: wire it with router.SetScoringBackend (or
+// deps.Backend) instead of the former execHaikuJSON package-var swap.
+func installHaikuJSONStub(t *testing.T) ScoringBackend {
 	t.Helper()
-	prev := execHaikuJSON
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
-		return []byte(`{"type":"result","result":"{\"score\":70,\"verdict\":\"ok\",\"rubric_scores\":{\"Clarity\":14,\"Actionability\":14,\"Novelty\":14,\"Urgency\":14,\"Topic Match\":14},\"topic_tags\":[\"test\"]}","is_error":false,"usage":{"input_tokens":10,"output_tokens":20},"total_cost_usd":0.001}`), nil
-	}
-	t.Cleanup(func() { execHaikuJSON = prev })
+	return jsonOnlyBackend(cannedVerdictJSON)
 }
 
 // --- EPIC-103 M1: PDF multipart integration test -----------------------------
@@ -80,10 +78,11 @@ func installHaikuJSONStub(t *testing.T) {
 func TestHandleShare_PDF_Multipart(t *testing.T) {
 	// Asserts: HTTP 200, queue row with type="document" and mime_type="application/pdf".
 	installLiteParseStub(t, "some extracted pdf text", 0.9, nil)
-	installHaikuJSONStub(t)
+	stubBackend := installHaikuJSONStub(t)
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
+	router.SetScoringBackend(stubBackend)
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 
@@ -139,10 +138,11 @@ func TestHandleShare_PDF_Dedup(t *testing.T) {
 	// Asserts: second identical PDF (same filename + file_size) within 5-minute
 	// window returns duplicate=true and HTTP 200.
 	installLiteParseStub(t, "some pdf text", 0.9, nil)
-	installHaikuJSONStub(t)
+	stubBackend := installHaikuJSONStub(t)
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
+	router.SetScoringBackend(stubBackend)
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 

@@ -554,11 +554,9 @@ func TestScoreURLAsync_ContentClassifiesFallbackProfile(t *testing.T) {
 	isolateEventsDir(t)
 
 	// Stub the content classifier to return "travel".
-	prev := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+	deps.Backend = &funcScoringBackend{complete: func(_ context.Context, _, _ string) (string, error) {
 		return "travel", nil
-	}
-	t.Cleanup(func() { execContentClassify = prev })
+	}}
 
 	eval := &stubEvaluator{score: 72, verdict: "interesting"}
 	q := newTestQueue(t)
@@ -610,13 +608,11 @@ func TestClassifyContentProfile(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			prev := execContentClassify
-			execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+			backend := &funcScoringBackend{complete: func(_ context.Context, _, _ string) (string, error) {
 				return c.response, c.err
-			}
-			t.Cleanup(func() { execContentClassify = prev })
+			}}
 
-			got := classifyContentProfile(context.Background(), "some content")
+			got := classifyContentProfile(context.Background(), backend, "some content")
 			if got != c.want {
 				t.Errorf("classifyContentProfile() = %q, want %q", got, c.want)
 			}
@@ -763,11 +759,10 @@ func TestScoreAsync_ImageFileMetadataOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce/loadArchiveThresholdConfig from loading real config.toml
 	isolateEventsDir(t)
 
-	prev := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+	deps := newTestDeps(t)
+	deps.Backend = &funcScoringBackend{complete: func(_ context.Context, _, _ string) (string, error) {
 		return "life", nil
-	}
-	t.Cleanup(func() { execContentClassify = prev })
+	}}
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -785,7 +780,7 @@ func TestScoreAsync_ImageFileMetadataOnly(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 55, verdict: "Photo of food menu"}
-	runScoreFileAsyncSync(t, req, q, eval, newTestDeps(t))
+	runScoreFileAsyncSync(t, req, q, eval, deps)
 
 	if calls := atomic.LoadInt32(&eval.calls); calls != 1 {
 		t.Errorf("eval.calls = %d, want 1", calls)
@@ -817,11 +812,17 @@ func TestScoreAsync_ImageVision(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	isolateEventsDir(t)
 
-	prev := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
-		return "life", nil
+	// EPIC-258 M2: injected backend replaces the former execContentClassify /
+	// execHaikuVision package-var stubs. Vision returns a bare verdict
+	// (parseHaikuEnvelope shortcut requires non-empty rubric_scores).
+	backend := &funcScoringBackend{
+		complete: func(_ context.Context, _, _ string) (string, error) {
+			return "life", nil
+		},
+		completeVision: func(_ context.Context, _, _, _, _ string) ([]byte, error) {
+			return []byte(`{"score":72,"verdict":"WhatsApp photo of receipt","rubric_scores":{"visual_clarity":80,"actionability":65},"tags":"","topic_tags":[]}`), nil
+		},
 	}
-	t.Cleanup(func() { execContentClassify = prev })
 
 	// Create a temp image file to simulate Android upload.
 	tmpFile := filepath.Join(t.TempDir(), "test-image.jpg")
@@ -845,16 +846,8 @@ func TestScoreAsync_ImageVision(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	// Stub the vision CLI call to avoid real API calls.
-	// Return a bare verdict (parseHaikuEnvelope shortcut requires non-empty rubric_scores).
-	prevVision := execHaikuVision
-	execHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
-		return []byte(`{"score":72,"verdict":"WhatsApp photo of receipt","rubric_scores":{"visual_clarity":80,"actionability":65},"tags":"","topic_tags":[]}`), nil
-	}
-	t.Cleanup(func() { execHaikuVision = prevVision })
-
 	eval := &stubEvaluator{score: 72, verdict: "WhatsApp photo of receipt"}
-	runScoreFileAsyncSync(t, req, q, eval, &scoringDeps{TranscriptsDir: transcriptDir})
+	runScoreFileAsyncSync(t, req, q, eval, &scoringDeps{TranscriptsDir: transcriptDir, Backend: backend})
 
 	items, err := q.List("", 20)
 	if err != nil {
@@ -883,31 +876,28 @@ func TestScoreAsync_ImageVision(t *testing.T) {
 // and returns a result with the vision-fallback envelope label composed with
 // the active backend name (POMO scoring-backend-attribution-split-brain).
 func TestHaikuVisionEvaluator_FallbackOnExecError(t *testing.T) {
-	// Stub vision exec to fail.
-	prevVision := execHaikuVision
-	execHaikuVision = func(_ context.Context, _, _, _, _ string) ([]byte, error) {
-		return nil, fmt.Errorf("vision exec crashed")
+	// EPIC-258 M2: injected backend. Vision exec fails; the JSON eval path
+	// (used by fallback) returns a valid envelope.
+	backend := &funcScoringBackend{
+		completeVision: func(_ context.Context, _, _, _, _ string) ([]byte, error) {
+			return nil, fmt.Errorf("vision exec crashed")
+		},
+		completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return []byte(`{"type":"result","result":"{\"score\":42,\"verdict\":\"fallback ok\",\"rubric_scores\":{\"relevance\":50,\"depth\":40}}","is_error":false,"usage":{"input_tokens":10,"output_tokens":20},"total_cost_usd":0.001}`), nil
+		},
 	}
-	t.Cleanup(func() { execHaikuVision = prevVision })
-
-	// Stub the JSON eval path (used by fallback) to return a valid envelope.
-	prevJSON := execHaikuJSON
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
-		return []byte(`{"type":"result","result":"{\"score\":42,\"verdict\":\"fallback ok\",\"rubric_scores\":{\"relevance\":50,\"depth\":40}}","is_error":false,"usage":{"input_tokens":10,"output_tokens":20},"total_cost_usd":0.001}`), nil
-	}
-	t.Cleanup(func() { execHaikuJSON = prevJSON })
 
 	tmpFile := filepath.Join(t.TempDir(), "test.jpg")
 	if err := os.WriteFile(tmpFile, []byte("fake"), 0o644); err != nil {
 		t.Fatalf("write temp: %v", err)
 	}
 
-	e := HaikuVisionEvaluator{ImagePath: tmpFile}
+	e := HaikuVisionEvaluator{ImagePath: tmpFile, Backend: backend}
 	sc, err := e.Evaluate(context.Background(), "test metadata", "test prompt")
 	if err != nil {
 		t.Fatalf("Evaluate returned error: %v", err)
 	}
-	wantBackend := backendLabel(evalFormatVisionFallback)
+	wantBackend := backendLabel(backend, evalFormatVisionFallback)
 	if sc.Backend != wantBackend {
 		t.Errorf("backend = %q, want %q", sc.Backend, wantBackend)
 	}
@@ -921,11 +911,10 @@ func TestHaikuVisionEvaluator_FallbackOnExecError(t *testing.T) {
 func TestScoreAsync_EvalFailureMarksQueueRow(t *testing.T) {
 	isolateEventsDir(t)
 
-	prev := execContentClassify
-	execContentClassify = func(_ context.Context, _, _ string) (string, error) {
+	deps := newTestDeps(t)
+	deps.Backend = &funcScoringBackend{complete: func(_ context.Context, _, _ string) (string, error) {
 		return "life", nil
-	}
-	t.Cleanup(func() { execContentClassify = prev })
+	}}
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -950,7 +939,7 @@ func TestScoreAsync_EvalFailureMarksQueueRow(t *testing.T) {
 	eval := &stubEvaluator{err: fmt.Errorf("total eval failure")}
 	done := make(chan struct{})
 	wrapped := &onceDoneEval{inner: eval, done: done}
-	go scoreAsync(req, q, wrapped, nil, nil, nil, newTestDeps(t))
+	go scoreAsync(req, q, wrapped, nil, nil, nil, deps)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
@@ -977,27 +966,24 @@ func TestScoreAsync_EvalFailureMarksQueueRow(t *testing.T) {
 // TestVisionExecArgs verifies execHaikuVision is called with the
 // correct image path, and that the fallback path works when vision fails.
 func TestVisionExecArgs(t *testing.T) {
+	// EPIC-258 M2: injected backend, not package-var swaps.
 	var capturedImagePath string
-	prevVision := execHaikuVision
-	execHaikuVision = func(_ context.Context, _, _, imagePath, _ string) ([]byte, error) {
-		capturedImagePath = imagePath
-		return nil, fmt.Errorf("intentional test abort")
+	backend := &funcScoringBackend{
+		completeVision: func(_ context.Context, _, _, imagePath, _ string) ([]byte, error) {
+			capturedImagePath = imagePath
+			return nil, fmt.Errorf("intentional test abort")
+		},
+		completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return []byte(`{"type":"result","result":"{\"score\":10,\"verdict\":\"fallback\",\"rubric_scores\":{\"relevance\":10}}","is_error":false,"usage":{"input_tokens":5,"output_tokens":10},"total_cost_usd":0.0001}`), nil
+		},
 	}
-	t.Cleanup(func() { execHaikuVision = prevVision })
-
-	// Stub JSON fallback to prevent real API calls.
-	prevJSON := execHaikuJSON
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
-		return []byte(`{"type":"result","result":"{\"score\":10,\"verdict\":\"fallback\",\"rubric_scores\":{\"relevance\":10}}","is_error":false,"usage":{"input_tokens":5,"output_tokens":10},"total_cost_usd":0.0001}`), nil
-	}
-	t.Cleanup(func() { execHaikuJSON = prevJSON })
 
 	tmpFile := filepath.Join(t.TempDir(), "test.jpg")
 	if err := os.WriteFile(tmpFile, []byte("fake"), 0o644); err != nil {
 		t.Fatalf("write temp: %v", err)
 	}
 
-	e := HaikuVisionEvaluator{ImagePath: tmpFile}
+	e := HaikuVisionEvaluator{ImagePath: tmpFile, Backend: backend}
 	sc, err := e.Evaluate(context.Background(), "test content", "test prompt")
 	if err != nil {
 		t.Fatalf("Evaluate error: %v", err)
@@ -1006,7 +992,7 @@ func TestVisionExecArgs(t *testing.T) {
 		t.Errorf("imagePath = %q, want %q", capturedImagePath, tmpFile)
 	}
 	// Vision failed → fell back to JSON → should have fallback backend.
-	if want := backendLabel(evalFormatVisionFallback); sc.Backend != want {
+	if want := backendLabel(backend, evalFormatVisionFallback); sc.Backend != want {
 		t.Errorf("backend = %q, want %q", sc.Backend, want)
 	}
 }

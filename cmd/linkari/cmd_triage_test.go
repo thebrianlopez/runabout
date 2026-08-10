@@ -294,9 +294,7 @@ func TestHaikuEnv_PersonaIsolation(t *testing.T) {
 }
 
 func TestTriageScorer_FakeHaiku(t *testing.T) {
-	orig := execHaikuJSON
-	defer func() { execHaikuJSON = orig }()
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
+	backend := &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
 		v := TriageVerdict{
 			Score:        52,
 			Verdict:      "TurboQuant WASM test",
@@ -304,13 +302,13 @@ func TestTriageScorer_FakeHaiku(t *testing.T) {
 			RubricScores: map[string]int{"test": 52},
 		}
 		return json.Marshal(v)
-	}
+	}}
 	// Skip if eng template isn't on disk (CI / clean checkout).
 	if _, _, err := loadProfileTemplate("eng"); err != nil {
 		t.Skipf("eng template missing: %v", err)
 	}
 	fix := Fixture{ID: "test", Profile: "eng", Content: "some content"}
-	got, err := triageScorer{}.Score(fix)
+	got, err := triageScorer{backend: backend}.Score(fix)
 	if err != nil {
 		t.Fatalf("score: %v", err)
 	}

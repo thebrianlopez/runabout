@@ -173,6 +173,9 @@ type scoringDeps struct {
 	DomainRouter *DomainRouter
 	// Jina is the Jina Reader fallback client. Never nil after newScoringDeps.
 	Jina *jinaClient
+	// Backend is the scoring backend. nil uses the process default installed
+	// at startup (activeScoringBackend). EPIC-258 M2.
+	Backend ScoringBackend
 }
 
 // defaultTranscriptsDir is the transcript location used when ServerConfig
@@ -573,7 +576,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		classifySource = "image_override"
 	}
 	if profile == "" {
-		profile, classifySource = classifyShareRequest(ctx, req)
+		profile, classifySource = classifyShareRequest(ctx, deps.Backend, req)
 		if profile != "" {
 			autoClassified = true
 		}
@@ -713,7 +716,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				return
 			}
 			if profile == "" || contentClassify {
-				if classified := classifyContentProfile(ctx, screenshotContent); classified != "" {
+				if classified := classifyContentProfile(ctx, deps.Backend, screenshotContent); classified != "" {
 					profile = classified
 					autoClassified = true
 					contentClassify = false
@@ -777,7 +780,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				if req.ExtraSubject != "" {
 					classifyInput = "[Shared with subject: " + req.ExtraSubject + "]\n\n" + content
 				}
-				if classified := classifyContentProfile(ctx, classifyInput); classified != "" {
+				if classified := classifyContentProfile(ctx, deps.Backend, classifyInput); classified != "" {
 					slog.Info(
 						"score_async: content-classified",
 						"event_type", "score_async_content_classify",
@@ -882,7 +885,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		// EPIC-079 M1: stage-6 LLM classify for file shares that had no
 		// profile signal from the fast cascade.
 		if contentClassify {
-			if classified := classifyContentProfile(ctx, content); classified != "" {
+			if classified := classifyContentProfile(ctx, deps.Backend, content); classified != "" {
 				slog.Info(
 					"score_async: file content-classified",
 					"event_type", "score_async_content_classify",
@@ -1035,7 +1038,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 					if imageTextExtractionEnabled {
 						extractStart := time.Now()
 						var extractErr error
-						imageExtractedText, extractErr = extractImageText(ctx, req.AudioPath, visionModelName)
+						imageExtractedText, extractErr = extractImageText(ctx, deps.Backend, req.AudioPath, visionModelName)
 						extractLatencyMs := time.Since(extractStart).Milliseconds()
 						if extractErr != nil {
 							isTimeout := errors.Is(extractErr, context.DeadlineExceeded)
@@ -1249,7 +1252,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 							}
 							// Skip vision  -  fall through to metadata-only eval below.
 						} else {
-							eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+							eval = HaikuVisionEvaluator{ImagePath: req.AudioPath, Backend: deps.Backend}
 						}
 					}
 				}
@@ -1286,9 +1289,9 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	// Evaluate via Haiku.
 	if eval == nil {
 		if req.AudioPath != "" {
-			eval = HaikuVisionEvaluator{ImagePath: req.AudioPath}
+			eval = HaikuVisionEvaluator{ImagePath: req.AudioPath, Backend: deps.Backend}
 		} else {
-			eval = HaikuJSONEvaluator{}
+			eval = HaikuJSONEvaluator{Backend: deps.Backend}
 		}
 	}
 	sc, err := eval.Evaluate(ctx, content, sysPrompt)
@@ -2133,7 +2136,7 @@ func detectScreenshot(req *ShareRequest) {
 // The contentClassify flag is set when URL domain matching returns the "eng"
 // fallback rather than a positive match  -  the caller may then run Haiku
 // classification on fetched page content to refine the profile.
-func classifyShareRequest(ctx context.Context, req *ShareRequest) (profile, source string) {
+func classifyShareRequest(ctx context.Context, backend ScoringBackend, req *ShareRequest) (profile, source string) {
 	// Stage 1: intent metadata (package name, MIME type, app category).
 	if p := classifyByIntentMetadata(req); p != "" {
 		return p, "intent_metadata"
@@ -2191,7 +2194,7 @@ func classifyShareRequest(ctx context.Context, req *ShareRequest) (profile, sour
 		return "", ""
 	}
 	snippet := strings.Join(hints, "\n")
-	if p := classifyContentProfile(ctx, snippet); p != "" {
+	if p := classifyContentProfile(ctx, backend, snippet); p != "" {
 		return p, "content_llm_hints"
 	}
 	return "", ""
@@ -2271,8 +2274,8 @@ func classifyShareRequestFast(req *ShareRequest) (profile, source string) {
 // EPIC-077 M4: callers should prefer classifyShareRequest directly.
 //
 // Deprecated: use classifyShareRequest instead.
-func classifyIntentProfile(ctx context.Context, req *ShareRequest) string {
-	p, _ := classifyShareRequest(ctx, req)
+func classifyIntentProfile(ctx context.Context, backend ScoringBackend, req *ShareRequest) string {
+	p, _ := classifyShareRequest(ctx, backend, req)
 	return p
 }
 
@@ -2280,17 +2283,13 @@ func classifyIntentProfile(ctx context.Context, req *ShareRequest) string {
 // classification call. Designed for minimal token usage.
 const contentClassifyPrompt = "Given shared content metadata or web page text, respond with exactly one profile name from: eng, travel, life, dining, fashion, finance, music. No explanation."
 
-// execContentClassify is the function var used to call Haiku for content
-// classification. Tests override this to avoid real API calls.
-var execContentClassify = execHaiku
-
 // classifyContentProfile calls Haiku with a minimal prompt to classify page
 // content into the best-matching profile. Returns the classified profile, or
 // empty string if the response is unparseable (caller falls back to "eng").
-func classifyContentProfile(ctx context.Context, content string) string {
+func classifyContentProfile(ctx context.Context, backend ScoringBackend, content string) string {
 	// Truncate content aggressively  -  classification needs much less than scoring.
 	snippet := truncateRunes(content, 2000)
-	out, err := execContentClassify(ctx, contentClassifyPrompt, snippet)
+	out, err := backendComplete(ctx, backend, contentClassifyPrompt, snippet)
 	if err != nil {
 		slog.Warn("content classify: haiku failed", "error", err)
 		return ""
@@ -2547,7 +2546,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	// EPIC-077 M6: track the cascade stage that won for classify_stage_win telemetry.
 	audioClassifySource := "caller"
 	if profile == "" && req != nil {
-		classified := classifyIntentProfile(ctx, req)
+		classified := classifyIntentProfile(ctx, deps.Backend, req)
 		if classified != "" {
 			profile = classified
 			audioClassifySource = "intent_metadata"
@@ -2560,7 +2559,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		}
 	} else if profile == "" && extraText != "" {
 		ctx2, cancel2 := context.WithTimeout(ctx, 15*time.Second)
-		classified := classifyContentProfile(ctx2, extraText)
+		classified := classifyContentProfile(ctx2, deps.Backend, extraText)
 		cancel2()
 		if classified != "" {
 			profile = classified
@@ -2703,7 +2702,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	// (--output-format json + --json-schema) for persona isolation: structured
 	// output mode prevents CLAUDE.md context from polluting a free-form response.
 	synopsisCtx, synopsisCancel := context.WithTimeout(ctx, 30*time.Second)
-	synopsisRaw, synopsisErr := execHaikuSynopsisJSON(synopsisCtx, synopsisSysPrompt, transcript, voiceNoteSynopsisSchema)
+	synopsisRaw, synopsisErr := backendCompleteJSON(synopsisCtx, deps.Backend, synopsisSysPrompt, transcript, voiceNoteSynopsisSchema)
 	synopsisCancel()
 
 	var synopsis string

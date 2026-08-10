@@ -54,7 +54,14 @@ import (
 // prompt-iteration entrypoint. Reuses Queue.ScoreByURL + EnqueueDigestIfDue
 // verbatim so there is no shadow persistence path (EPIC-051 dual-writer
 // invariant preserved).
-func scoreCmd() *cobra.Command {
+// scoreCmd builds the `linkari score` command. backendOverride is test-only
+// (EPIC-258 M2): tests pass a fake ScoringBackend instead of swapping the
+// former execHaikuJSON package var.
+func scoreCmd(backendOverride ...ScoringBackend) *cobra.Command {
+	var backend ScoringBackend
+	if len(backendOverride) > 0 {
+		backend = backendOverride[0]
+	}
 	var (
 		queueDB     string
 		profile     string
@@ -119,7 +126,7 @@ For batch evaluation across a fixture set, see EPIC-054 (planned).`,
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			eval := HaikuJSONEvaluator{}
+			eval := HaikuJSONEvaluator{Backend: backend}
 			sc, err := eval.Evaluate(ctx, content, sysPrompt)
 			if err != nil {
 				return err

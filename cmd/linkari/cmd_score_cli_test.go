@@ -18,7 +18,8 @@ import (
 	"testing"
 )
 
-// stubHaiku installs a canned execHaikuJSON stub for the duration of the test.
+// stubHaiku builds a canned scoring backend (EPIC-258 M2: injected into
+// scoreCmd instead of swapping the former execHaikuJSON package var).
 // lastPrompt captures the system prompt used on the most recent call so tests
 // can assert --prompt-file overrides flow through end-to-end.
 type haikuCall struct {
@@ -26,11 +27,10 @@ type haikuCall struct {
 	content string
 }
 
-func stubHaiku(t *testing.T, score int, verdict string) *atomic.Pointer[haikuCall] {
+func stubHaiku(t *testing.T, score int, verdict string) (*funcScoringBackend, *atomic.Pointer[haikuCall]) {
 	t.Helper()
-	orig := execHaikuJSON
 	var last atomic.Pointer[haikuCall]
-	execHaikuJSON = func(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
+	backend := &funcScoringBackend{completeJSON: func(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
 		last.Store(&haikuCall{prompt: systemPrompt, content: content})
 		v := TriageVerdict{
 			Score:        score,
@@ -43,9 +43,8 @@ func stubHaiku(t *testing.T, score int, verdict string) *atomic.Pointer[haikuCal
 			return nil, fmt.Errorf("stub marshal: %w", err)
 		}
 		return b, nil
-	}
-	t.Cleanup(func() { execHaikuJSON = orig })
-	return &last
+	}}
+	return backend, &last
 }
 
 func itoa(n int) string {
@@ -83,10 +82,10 @@ func writePromptFile(t *testing.T, body string) string {
 
 // runScore runs the score subcommand with a stubbed Haiku and content on
 // stdin.
-func runScore(t *testing.T, dbPath, content string, args ...string) (string, error) {
+func runScore(t *testing.T, backend ScoringBackend, dbPath, content string, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir()) // prevent real config.toml from loading SM refs
-	cmd := scoreCmd()
+	cmd := scoreCmd(backend)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
@@ -98,12 +97,12 @@ func runScore(t *testing.T, dbPath, content string, args ...string) (string, err
 }
 
 func TestScoreCLI_DryRun_NoWrites(t *testing.T) {
-	stubHaiku(t, 95, "great post")
+	backend, _ := stubHaiku(t, 95, "great post")
 	prompt := writePromptFile(t, "system prompt v1")
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 
 	if _, err := runScore(
-		t, dbPath, "the body",
+		t, backend, dbPath, "the body",
 		"https://example.com/dry",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -138,12 +137,12 @@ func TestScoreCLI_DryRun_NoWrites(t *testing.T) {
 }
 
 func TestScoreCLI_NoPush_QueueOnly(t *testing.T) {
-	stubHaiku(t, 95, "great post")
+	backend, _ := stubHaiku(t, 95, "great post")
 	prompt := writePromptFile(t, "system prompt v1")
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 
 	if _, err := runScore(
-		t, dbPath, "the body",
+		t, backend, dbPath, "the body",
 		"https://example.com/nopush",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -176,12 +175,12 @@ func TestScoreCLI_NoPush_QueueOnly(t *testing.T) {
 }
 
 func TestScoreCLI_Default_FullPath(t *testing.T) {
-	stubHaiku(t, 95, "great post")
+	backend, _ := stubHaiku(t, 95, "great post")
 	prompt := writePromptFile(t, "system prompt v1")
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 
 	if _, err := runScore(
-		t, dbPath, "the body",
+		t, backend, dbPath, "the body",
 		"https://example.com/full",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -225,12 +224,12 @@ func TestScoreCLI_Default_FullPath(t *testing.T) {
 // the same throttle window does NOT produce a second row (a proof that the
 // throttle guard ran — that guard lives only inside EnqueueDigestIfDue).
 func TestScoreCLI_DualWriterInvariant(t *testing.T) {
-	stubHaiku(t, 95, "great post")
+	backend, _ := stubHaiku(t, 95, "great post")
 	prompt := writePromptFile(t, "system prompt v1")
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 
 	if _, err := runScore(
-		t, dbPath, "first",
+		t, backend, dbPath, "first",
 		"https://example.com/one",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -242,7 +241,7 @@ func TestScoreCLI_DualWriterInvariant(t *testing.T) {
 	// EnqueueDigestIfDue. A fourth path that bypassed the helper would
 	// insert a second row.
 	if _, err := runScore(
-		t, dbPath, "second",
+		t, backend, dbPath, "second",
 		"https://example.com/two",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -274,7 +273,7 @@ func TestScoreCLI_DualWriterInvariant(t *testing.T) {
 }
 
 func TestScoreCLI_PromptFile_Override(t *testing.T) {
-	last := stubHaiku(t, 95, "great post")
+	backend, last := stubHaiku(t, 95, "great post")
 	override := "OVERRIDDEN-PROMPT-TOKEN-XYZ"
 	prompt := writePromptFile(t, override)
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
@@ -286,7 +285,7 @@ func TestScoreCLI_PromptFile_Override(t *testing.T) {
 	archiveThresholdMu.RUnlock()
 
 	if _, err := runScore(
-		t, dbPath, "the body",
+		t, backend, dbPath, "the body",
 		"https://example.com/override",
 		"--profile", "eng",
 		"--prompt-file", prompt,
@@ -313,7 +312,7 @@ func TestScoreCLI_PromptFile_Override(t *testing.T) {
 	// --prompt-file with an empty file must error clearly.
 	empty := writePromptFile(t, "   \n  ")
 	_, err := runScore(
-		t, dbPath, "body",
+		t, backend, dbPath, "body",
 		"https://example.com/empty-prompt",
 		"--profile", "eng",
 		"--prompt-file", empty,
@@ -325,7 +324,7 @@ func TestScoreCLI_PromptFile_Override(t *testing.T) {
 
 	// --prompt-file with a missing path must error clearly.
 	_, err = runScore(
-		t, dbPath, "body",
+		t, backend, dbPath, "body",
 		"https://example.com/missing-prompt",
 		"--profile", "eng",
 		"--prompt-file", filepath.Join(t.TempDir(), "does-not-exist.md"),
@@ -340,7 +339,7 @@ func TestScoreCLI_PromptFile_Override(t *testing.T) {
 // archive threshold (default 80) still produces a push_outbox row.
 // EPIC-059: push is decoupled from archive gate.
 func TestScoreCLI_BelowThreshold_StillPushes(t *testing.T) {
-	stubHaiku(t, 5, "not actionable")
+	backend, _ := stubHaiku(t, 5, "not actionable")
 	prompt := writePromptFile(t, "system prompt v1")
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 
@@ -357,7 +356,7 @@ func TestScoreCLI_BelowThreshold_StillPushes(t *testing.T) {
 	})
 
 	if _, err := runScore(
-		t, dbPath, "the body",
+		t, backend, dbPath, "the body",
 		"https://example.com/below-threshold",
 		"--profile", "eng",
 		"--prompt-file", prompt,

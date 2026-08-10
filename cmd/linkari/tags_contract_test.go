@@ -75,10 +75,11 @@ func TestShareTags_CT1_JSON(t *testing.T) {
 // Verifies: tags_persisted=true when user_tags sent as a JSON-array field in
 // a multipart request alongside an audio file part.
 func TestShareTags_CT2_Multipart(t *testing.T) {
-	installHaikuJSONStub(t)
+	stubBackend := installHaikuJSONStub(t)
 
 	q := newTestQueue(t)
 	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
+	router.SetScoringBackend(stubBackend)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 
 	var body bytes.Buffer

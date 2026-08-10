@@ -114,32 +114,31 @@ func installLiteParseStub(t *testing.T, text string, confidence float64, err err
 
 // --- helper: run scoreAudioAsync synchronously ------------------------------
 
-// installHaikuSynopsisStub stubs execHaikuSynopsisJSON (synopsis path) and
-// execHaikuJSON (rubric scoring path) for audio pipeline tests. Signals done
-// on the first execHaikuSynopsisJSON call. EPIC-088 M1: synopsis uses JSON
-// schema output; stub returns a minimal synopsis envelope.
-func installHaikuSynopsisStub(t *testing.T, synopsis string) chan struct{} {
+// installHaikuSynopsisStub builds a scoring backend stubbing the synopsis
+// path and the rubric scoring path for audio pipeline tests. Signals done on
+// the first synopsis call. EPIC-088 M1: synopsis uses JSON schema output;
+// stub returns a minimal synopsis envelope. EPIC-258 M2: returns an injected
+// backend instead of swapping the former execHaikuSynopsisJSON/execHaikuJSON
+// package vars, which raced with scoring goroutines.
+func installHaikuSynopsisStub(t *testing.T, synopsis string) (*funcScoringBackend, chan struct{}) {
 	t.Helper()
 	done := make(chan struct{})
 	var once int32
 
-	// Stub synopsis JSON path (replaces former execHaiku stub).
-	prevSynopsisJSON := execHaikuSynopsisJSON
-	execHaikuSynopsisJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
-		if atomic.CompareAndSwapInt32(&once, 0, 1) {
-			close(done)
-		}
-		env := fmt.Sprintf(`{"type":"result","result":"{\"synopsis\":%q}","is_error":false,"usage":{"input_tokens":5,"output_tokens":10},"total_cost_usd":0.0001}`, synopsis)
-		return []byte(env), nil
+	backend := &funcScoringBackend{
+		completeJSON: func(_ context.Context, _, _, schema string) ([]byte, error) {
+			if schema == voiceNoteSynopsisSchema {
+				// Synopsis path (replaces former execHaikuSynopsisJSON stub).
+				if atomic.CompareAndSwapInt32(&once, 0, 1) {
+					close(done)
+				}
+				env := fmt.Sprintf(`{"type":"result","result":"{\"synopsis\":%q}","is_error":false,"usage":{"input_tokens":5,"output_tokens":10},"total_cost_usd":0.0001}`, synopsis)
+				return []byte(env), nil
+			}
+			// EPIC-081 M4: rubric scoring step (replaces former execHaikuJSON stub).
+			return []byte(`{"type":"result","result":"{\"score\":75,\"verdict\":\"test rubric verdict\",\"rubric_scores\":{\"Clarity\":15,\"Actionability\":20,\"Novelty\":15,\"Urgency\":10,\"Topic Match\":15},\"topic_tags\":[\"test\"]}","is_error":false,"usage":{"input_tokens":10,"output_tokens":20},"total_cost_usd":0.001}`), nil
+		},
 	}
-	t.Cleanup(func() { execHaikuSynopsisJSON = prevSynopsisJSON })
-
-	// EPIC-081 M4: stub execHaikuJSON for the rubric scoring step.
-	prevJSON := execHaikuJSON
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
-		return []byte(`{"type":"result","result":"{\"score\":75,\"verdict\":\"test rubric verdict\",\"rubric_scores\":{\"Clarity\":15,\"Actionability\":20,\"Novelty\":15,\"Urgency\":10,\"Topic Match\":15},\"topic_tags\":[\"test\"]}","is_error":false,"usage":{"input_tokens":10,"output_tokens":20},"total_cost_usd":0.001}`), nil
-	}
-	t.Cleanup(func() { execHaikuJSON = prevJSON })
 
 	// Create temp vnote_synopsis template so loadProfileTemplate finds it.
 	// Use a single base dir for both the template and ORG_PATH to ensure
@@ -223,12 +222,12 @@ key_facts:
 
 	t.Setenv("ORG_PATH", base)
 
-	return done
+	return backend, done
 }
 
 func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID int64, done chan struct{}, deps *scoringDeps) {
 	t.Helper()
-	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil, HaikuJSONEvaluator{}, deps)
+	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil, HaikuJSONEvaluator{Backend: deps.Backend}, deps)
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -239,7 +238,7 @@ func runScoreAudioSync(t *testing.T, audioPath, profile string, q *Queue, rowID 
 
 func runScoreAudioSkip(t *testing.T, audioPath, profile string, q *Queue, rowID int64, deps *scoringDeps) {
 	t.Helper()
-	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil, HaikuJSONEvaluator{}, deps)
+	go processVoiceNoteAsync(audioPath, profile, q, rowID, "test.m4a", "", "", nil, nil, HaikuJSONEvaluator{Backend: deps.Backend}, deps)
 	time.Sleep(300 * time.Millisecond)
 }
 
@@ -251,7 +250,7 @@ func TestScoreAudioAsync_HappyPath(t *testing.T) {
 	installFfmpegStub(t)
 	installWhisperStub(t, "This is a voice memo about machine learning transformers and attention mechanisms.", nil)
 
-	done := installHaikuSynopsisStub(t, "Speaker discusses ML transformer architecture and attention mechanisms.")
+	backend, done := installHaikuSynopsisStub(t, "Speaker discusses ML transformer architecture and attention mechanisms.")
 
 	q := newTestQueue(t)
 
@@ -266,7 +265,9 @@ func TestScoreAudioAsync_HappyPath(t *testing.T) {
 	}
 	q.MarkRelayed(id)
 
-	runScoreAudioSync(t, audioFile, "eng", q, id, done, newTestDeps(t))
+	deps := newTestDeps(t)
+	deps.Backend = backend
+	runScoreAudioSync(t, audioFile, "eng", q, id, done, deps)
 
 	// Check queue row is scored with transcript backfilled and rubric score.
 	items, err := q.List("", 20)
@@ -299,7 +300,7 @@ func TestScoreAudioAsync_NilReqFallback(t *testing.T) {
 	isolateEventsDir(t)
 	installFfmpegStub(t)
 	installWhisperStub(t, "This is a source-generated voice note.", nil)
-	done := installHaikuSynopsisStub(t, "Source-generated voice note synopsis.")
+	backend, done := installHaikuSynopsisStub(t, "Source-generated voice note synopsis.")
 
 	q := newTestQueue(t)
 	audioFile := filepath.Join(t.TempDir(), "test.m4a")
@@ -311,7 +312,9 @@ func TestScoreAudioAsync_NilReqFallback(t *testing.T) {
 	}
 	q.MarkRelayed(id)
 
-	runScoreAudioSync(t, audioFile, "eng", q, id, done, newTestDeps(t))
+	deps := newTestDeps(t)
+	deps.Backend = backend
+	runScoreAudioSync(t, audioFile, "eng", q, id, done, deps)
 
 	items, err := q.List("", 20)
 	if err != nil {
@@ -436,10 +439,11 @@ func TestHandleShare_MultipartAudio(t *testing.T) {
 	isolateEventsDir(t)
 	installFfmpegStub(t)
 	installWhisperStub(t, "test transcript", nil)
-	installHaikuSynopsisStub(t, "Test synopsis for multipart.")
+	mpBackend, _ := installHaikuSynopsisStub(t, "Test synopsis for multipart.")
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
+	router.SetScoringBackend(mpBackend)
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 
@@ -503,7 +507,7 @@ func TestScoreAudioAsync_Chunked(t *testing.T) {
 		"Third chunk about attention.",
 	})
 
-	done := installHaikuSynopsisStub(t, "Speaker discusses ML across three chunks.")
+	backend, done := installHaikuSynopsisStub(t, "Speaker discusses ML across three chunks.")
 
 	q := newTestQueue(t)
 	audioFile := filepath.Join(t.TempDir(), "large.m4a")
@@ -515,7 +519,9 @@ func TestScoreAudioAsync_Chunked(t *testing.T) {
 	}
 	q.MarkRelayed(id)
 
-	runScoreAudioSync(t, audioFile, "", q, id, done, newTestDeps(t))
+	deps := newTestDeps(t)
+	deps.Backend = backend
+	runScoreAudioSync(t, audioFile, "", q, id, done, deps)
 
 	items, _ := q.List("", 20)
 	for _, it := range items {
@@ -550,7 +556,7 @@ func TestScoreAudioAsync_ProgressUpdates(t *testing.T) {
 	}
 	t.Cleanup(func() { execWhisper = prevWhisper })
 
-	done := installHaikuSynopsisStub(t, "Progress test synopsis.")
+	backend, done := installHaikuSynopsisStub(t, "Progress test synopsis.")
 
 	q := newTestQueue(t)
 	audioFile := filepath.Join(t.TempDir(), "progress.m4a")
@@ -559,7 +565,9 @@ func TestScoreAudioAsync_ProgressUpdates(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "audio", Action: "vnote_auto"})
 	q.MarkRelayed(id)
 
-	runScoreAudioSync(t, audioFile, "", q, id, done, newTestDeps(t))
+	deps := newTestDeps(t)
+	deps.Backend = backend
+	runScoreAudioSync(t, audioFile, "", q, id, done, deps)
 
 	item, err := q.GetByID(id)
 	if err != nil {

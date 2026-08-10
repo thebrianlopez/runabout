@@ -70,7 +70,7 @@ func TestF1_CT1_ExtractImageText_ReturnsText(t *testing.T) {
 	mockClaudeScript(t, `{"type":"result","result":"{\"text\":\"Hello World\"}","is_error":false,"total_cost_usd":0.001}`, 0)
 
 	ctx := context.Background()
-	text, err := extractImageText(ctx, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, nil, imagePath, "claude-haiku-4-5-20251001")
 	if err != nil {
 		t.Fatalf("extractImageText returned unexpected error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestF1_CT2_ExtractImageText_NoText_ReturnsEmptyNil(t *testing.T) {
 	mockClaudeScript(t, `{"type":"result","result":"{\"text\":\"\"}","is_error":false,"total_cost_usd":0.001}`, 0)
 
 	ctx := context.Background()
-	text, err := extractImageText(ctx, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, nil, imagePath, "claude-haiku-4-5-20251001")
 	if err != nil {
 		t.Fatalf("extractImageText returned unexpected error: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestF1_CT3_ExtractImageText_CLIFailure_ReturnsError(t *testing.T) {
 	mockClaudeScript(t, "", 1)
 
 	ctx := context.Background()
-	text, err := extractImageText(ctx, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, nil, imagePath, "claude-haiku-4-5-20251001")
 	if err == nil {
 		t.Fatal("extractImageText returned nil error; want error on CLI failure")
 	}
@@ -169,7 +169,7 @@ func TestF1_CT6_ExtractImageText_ContextTimeout(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	text, err := extractImageText(ctx, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, nil, imagePath, "claude-haiku-4-5-20251001")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -430,20 +430,22 @@ func TestF2_CT8_RG1_ChromeScreenshot_ScoresAboveZero(t *testing.T) {
 	extractedTextJSON := `{"type":"result","result":"{\"text\":\"Important article: Go 1.22 release notes and memory improvements\"}","is_error":false,"total_cost_usd":0.001}`
 	mockClaudeScript(t, extractedTextJSON, 0)
 
-	// Override execHaikuVision so the vision scoring step returns a valid triage verdict.
-	// The HaikuVisionEvaluator.Evaluate calls execHaikuVision and parses its output.
-	prevRunVision := execHaikuVision
-	execHaikuVision = func(_ context.Context, _, _, _ string, _ string) ([]byte, error) {
+	// EPIC-258 M2: injected backend replaces the former execHaikuVision
+	// package-var stub. F1 text extraction (imageTextResultSchema) returns the
+	// extracted text; the vision scoring step returns a valid triage verdict.
+	backend := &funcScoringBackend{completeVision: func(_ context.Context, _, _, _ string, schema string) ([]byte, error) {
+		if schema == imageTextResultSchema {
+			return []byte(extractedTextJSON), nil
+		}
 		// Return a valid envelope with rubric_scores populated (required when score > 0).
 		verdict := `{"score":75,"verdict":"Chrome article worth reading","rubric_scores":{"Relevance":75,"Depth":70,"Novelty":75,"Clarity":80,"Actionability":75},"action_items":[],"tags":"tech","topic_tags":["go","programming"]}`
 		envelope := fmt.Sprintf(`{"type":"result","result":%q,"is_error":false,"total_cost_usd":0.002}`, verdict)
 		return []byte(envelope), nil
-	}
-	t.Cleanup(func() { execHaikuVision = prevRunVision })
+	}}
 
 	// Set transcripts dir to a temp dir.
 	transcriptDir := t.TempDir()
-	deps := &scoringDeps{TranscriptsDir: transcriptDir}
+	deps := &scoringDeps{TranscriptsDir: transcriptDir, Backend: backend}
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -615,7 +617,7 @@ func TestExtractImageTextLiveCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	text, err := extractImageText(ctx, fixturePath, visionModelName)
+	text, err := extractImageText(ctx, nil, fixturePath, visionModelName)
 	if err != nil {
 		t.Fatalf("extractImageText returned CLI error (exit-1 bug): %v", err)
 	}

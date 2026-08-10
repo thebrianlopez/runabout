@@ -74,50 +74,38 @@ func TestPiScoringBackendName(t *testing.T) {
 
 func TestScoringTelemetryComplete(t *testing.T) {
 	cap := installScoringLogCapture(t)
-	orig := activeScoringBackend
-	t.Cleanup(func() { activeScoringBackend = orig })
-	activeScoringBackend = fakeScoringBackend{complete: "ok"}
 
-	got, err := execHaiku(context.Background(), "sp", "content")
+	got, err := backendComplete(context.Background(), fakeScoringBackend{complete: "ok"}, "sp", "content")
 	if err != nil || got != "ok" {
-		t.Fatalf("execHaiku() = %q, %v", got, err)
+		t.Fatalf("backendComplete() = %q, %v", got, err)
 	}
 	assertScoringLog(t, cap, "Complete", "fake", "")
 }
 
 func TestScoringTelemetryCompleteJSON(t *testing.T) {
 	cap := installScoringLogCapture(t)
-	orig := activeScoringBackend
-	t.Cleanup(func() { activeScoringBackend = orig })
-	activeScoringBackend = fakeScoringBackend{json: []byte(`{"ok":true}`)}
 
-	got, err := execHaikuJSON(context.Background(), "sp", "content", "schema")
+	got, err := backendCompleteJSON(context.Background(), fakeScoringBackend{json: []byte(`{"ok":true}`)}, "sp", "content", "schema")
 	if err != nil || string(got) != `{"ok":true}` {
-		t.Fatalf("execHaikuJSON() = %s, %v", string(got), err)
+		t.Fatalf("backendCompleteJSON() = %s, %v", string(got), err)
 	}
 	assertScoringLog(t, cap, "CompleteJSON", "fake", "")
 }
 
 func TestScoringTelemetryCompleteVision(t *testing.T) {
 	cap := installScoringLogCapture(t)
-	orig := activeScoringBackend
-	t.Cleanup(func() { activeScoringBackend = orig })
-	activeScoringBackend = fakeScoringBackend{vision: []byte(`{"vision":true}`)}
 
-	got, err := execHaikuVision(context.Background(), "sp", "text", "img.png", "schema")
+	got, err := backendCompleteVision(context.Background(), fakeScoringBackend{vision: []byte(`{"vision":true}`)}, "sp", "text", "img.png", "schema")
 	if err != nil || string(got) != `{"vision":true}` {
-		t.Fatalf("execHaikuVision() = %s, %v", string(got), err)
+		t.Fatalf("backendCompleteVision() = %s, %v", string(got), err)
 	}
 	assertScoringLog(t, cap, "CompleteVision", "fake", "")
 }
 
 func TestScoringTelemetryDurationAndError(t *testing.T) {
 	cap := installScoringLogCapture(t)
-	orig := activeScoringBackend
-	t.Cleanup(func() { activeScoringBackend = orig })
-	activeScoringBackend = fakeScoringBackend{completeErr: errors.New("boom"), sleep: 10 * time.Millisecond}
 
-	_, err := execHaiku(context.Background(), "sp", "content")
+	_, err := backendComplete(context.Background(), fakeScoringBackend{completeErr: errors.New("boom"), sleep: 10 * time.Millisecond}, "sp", "content")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -134,13 +122,9 @@ func TestScoringTelemetryDurationAndError(t *testing.T) {
 }
 
 func TestScoringTelemetryNoReturnValueChange(t *testing.T) {
-	orig := activeScoringBackend
-	t.Cleanup(func() { activeScoringBackend = orig })
-	activeScoringBackend = fakeScoringBackend{complete: "same"}
-
-	got, err := execHaiku(context.Background(), "sp", "content")
+	got, err := backendComplete(context.Background(), fakeScoringBackend{complete: "same"}, "sp", "content")
 	if err != nil || got != "same" {
-		t.Fatalf("execHaiku() = %q, %v", got, err)
+		t.Fatalf("backendComplete() = %q, %v", got, err)
 	}
 }
 
@@ -243,17 +227,14 @@ func TestRG3_BackendAttributionMatchesActiveBackend(t *testing.T) {
 // This is the field that reaches the persisted archive and the CLI analytics
 // sinks (cmd_triage.go, cmd_score.go).
 func TestRG3b_ScorecardBackendMatchesEvaluatorName(t *testing.T) {
-	prevBackend := activeScoringBackend
-	t.Cleanup(func() { activeScoringBackend = prevBackend })
-	activeScoringBackend = fakeScoringBackend{}
-
-	prevJSON := execHaikuJSON
-	execHaikuJSON = func(_ context.Context, _, _, _ string) ([]byte, error) {
-		return []byte(`{"type":"result","result":"{\"score\":42,\"verdict\":\"ok\",\"rubric_scores\":{\"relevance\":50,\"depth\":40}}","is_error":false}`), nil
+	backend := &funcScoringBackend{
+		name: "fake",
+		completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return []byte(`{"type":"result","result":"{\"score\":42,\"verdict\":\"ok\",\"rubric_scores\":{\"relevance\":50,\"depth\":40}}","is_error":false}`), nil
+		},
 	}
-	t.Cleanup(func() { execHaikuJSON = prevJSON })
 
-	eval := HaikuJSONEvaluator{}
+	eval := HaikuJSONEvaluator{Backend: backend}
 	sc, err := eval.Evaluate(context.Background(), "content", "prompt")
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)

@@ -184,6 +184,9 @@ type ytDeps struct {
 	// Ytdlp extracts subtitles for a video URL.
 	// EPIC-090 M4: returns ytVideoMeta (title + id + duration + subtitle_type).
 	Ytdlp func(ctx context.Context, ytdlpPath, videoURL string) (transcript string, meta ytVideoMeta, err error)
+	// Backend is the scoring backend for rubric scoring. nil uses the process
+	// default (activeScoringBackend). EPIC-258 M2.
+	Backend ScoringBackend
 }
 
 // resolve returns d with any nil field filled from production defaults.
@@ -870,7 +873,7 @@ subtitleReady:
 	if q != nil {
 		q.SetProgress(rowID, "scoring")
 	}
-	eval := HaikuJSONEvaluator{}
+	eval := HaikuJSONEvaluator{Backend: deps.resolve().Backend}
 	_, sysPrompt, tmplErr := loadProfileTemplateForModeJSON(profile, "url")
 	var ytScore int
 	var ytVerdict, ytTags string
