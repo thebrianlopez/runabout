@@ -33,37 +33,34 @@ import (
 
 // --- seams -------------------------------------------------------------------
 
-// installFfmpegStub overrides execFfmpegConvert for the duration of the test.
-// The stub creates an empty wav file (simulating a successful conversion).
-func installFfmpegStub(t *testing.T) {
+// installFfmpegStub returns an ffmpeg-convert stub that creates an empty wav
+// file (simulating a successful conversion). EPIC-258 M2: wire it via
+// deps.FfmpegConvert or router.SetFfmpegConvert instead of the former
+// execFfmpegConvert package-var swap, which raced with scoring goroutines.
+func installFfmpegStub(t *testing.T) func(context.Context, string, string) error {
 	t.Helper()
-	prev := execFfmpegConvert
-	execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+	return func(_ context.Context, _, outputPath string) error {
 		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
 	}
-	t.Cleanup(func() { execFfmpegConvert = prev })
 }
 
 // installFfmpegStubLargeWav creates a fake wav file large enough to trigger
 // chunked transcription (> audioChunkSizeThreshold).
-func installFfmpegStubLargeWav(t *testing.T) {
+func installFfmpegStubLargeWav(t *testing.T) func(context.Context, string, string) error {
 	t.Helper()
-	prev := execFfmpegConvert
-	execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+	return func(_ context.Context, _, outputPath string) error {
 		// Write a file just over audioChunkSizeThreshold.
 		data := make([]byte, audioChunkSizeThreshold+1024)
 		copy(data, []byte("RIFF-fake-large-wav"))
 		return os.WriteFile(outputPath, data, 0o644)
 	}
-	t.Cleanup(func() { execFfmpegConvert = prev })
 }
 
 // installSegmentStub overrides execFfmpegSegment for the duration of the test.
 // It creates numChunks fake chunk files in the same directory as the input wav.
-func installSegmentStub(t *testing.T, numChunks int) {
+func installSegmentStub(t *testing.T, numChunks int) func(context.Context, string, int) ([]string, error) {
 	t.Helper()
-	prev := execFfmpegSegment
-	execFfmpegSegment = func(_ context.Context, wavPath string, _ int) ([]string, error) {
+	return func(_ context.Context, wavPath string, _ int) ([]string, error) {
 		dir := filepath.Dir(wavPath)
 		base := strings.TrimSuffix(filepath.Base(wavPath), filepath.Ext(wavPath))
 		var chunks []string
@@ -74,32 +71,29 @@ func installSegmentStub(t *testing.T, numChunks int) {
 		}
 		return chunks, nil
 	}
-	t.Cleanup(func() { execFfmpegSegment = prev })
 }
 
 // installWhisperChunkStub returns different transcript per chunk call.
-func installWhisperChunkStub(t *testing.T, transcripts []string) {
+func installWhisperChunkStub(t *testing.T, transcripts []string) func(context.Context, string, string) (string, error) {
 	t.Helper()
 	var callIdx atomic.Int32
-	prev := execWhisper
-	execWhisper = func(_ context.Context, _, _ string) (string, error) {
+	return func(_ context.Context, _, _ string) (string, error) {
 		i := int(callIdx.Add(1)) - 1
 		if i < len(transcripts) {
 			return transcripts[i], nil
 		}
 		return "extra chunk", nil
 	}
-	t.Cleanup(func() { execWhisper = prev })
 }
 
-// installWhisperStub overrides execWhisper for the duration of the test.
-func installWhisperStub(t *testing.T, transcript string, err error) {
+// installWhisperStub returns a whisper stub. EPIC-258 M2: wire via
+// deps.Whisper (or a router deps mutator) instead of the former execWhisper
+// package-var swap.
+func installWhisperStub(t *testing.T, transcript string, err error) func(context.Context, string, string) (string, error) {
 	t.Helper()
-	prev := execWhisper
-	execWhisper = func(_ context.Context, _, _ string) (string, error) {
+	return func(_ context.Context, _, _ string) (string, error) {
 		return transcript, err
 	}
-	t.Cleanup(func() { execWhisper = prev })
 }
 
 // installLiteParseStub overrides execLiteParse for the duration of the test.
@@ -247,8 +241,8 @@ func runScoreAudioSkip(t *testing.T, audioPath, profile string, q *Queue, rowID 
 // 1. Happy path: whisper returns transcript, Haiku returns synopsis, queue row updated.
 func TestScoreAudioAsync_HappyPath(t *testing.T) {
 	isolateEventsDir(t)
-	installFfmpegStub(t)
-	installWhisperStub(t, "This is a voice memo about machine learning transformers and attention mechanisms.", nil)
+	ffmpegFn := installFfmpegStub(t)
+	whisperFn := installWhisperStub(t, "This is a voice memo about machine learning transformers and attention mechanisms.", nil)
 
 	backend, done := installHaikuSynopsisStub(t, "Speaker discusses ML transformer architecture and attention mechanisms.")
 
@@ -267,6 +261,8 @@ func TestScoreAudioAsync_HappyPath(t *testing.T) {
 
 	deps := newTestDeps(t)
 	deps.Backend = backend
+	deps.FfmpegConvert = ffmpegFn
+	deps.Whisper = whisperFn
 	runScoreAudioSync(t, audioFile, "eng", q, id, done, deps)
 
 	// Check queue row is scored with transcript backfilled and rubric score.
@@ -298,8 +294,8 @@ func TestScoreAudioAsync_HappyPath(t *testing.T) {
 // 2. Nil req — audio scoring should not panic and should fall back to digest push.
 func TestScoreAudioAsync_NilReqFallback(t *testing.T) {
 	isolateEventsDir(t)
-	installFfmpegStub(t)
-	installWhisperStub(t, "This is a source-generated voice note.", nil)
+	ffmpegFn := installFfmpegStub(t)
+	whisperFn := installWhisperStub(t, "This is a source-generated voice note.", nil)
 	backend, done := installHaikuSynopsisStub(t, "Source-generated voice note synopsis.")
 
 	q := newTestQueue(t)
@@ -314,6 +310,8 @@ func TestScoreAudioAsync_NilReqFallback(t *testing.T) {
 
 	deps := newTestDeps(t)
 	deps.Backend = backend
+	deps.FfmpegConvert = ffmpegFn
+	deps.Whisper = whisperFn
 	runScoreAudioSync(t, audioFile, "eng", q, id, done, deps)
 
 	items, err := q.List("", 20)
@@ -341,8 +339,8 @@ func TestScoreAudioAsync_NilReqFallback(t *testing.T) {
 // First failure sets status='pending' with retry_count=1 and retry_after=now+30s.
 func TestScoreAudioAsync_WhisperFailure(t *testing.T) {
 	isolateEventsDir(t)
-	installFfmpegStub(t)
-	installWhisperStub(t, "", fmt.Errorf("whisper-cli: model not found"))
+	ffmpegFn := installFfmpegStub(t)
+	whisperFn := installWhisperStub(t, "", fmt.Errorf("whisper-cli: model not found"))
 
 	q := newTestQueue(t)
 	audioFile := filepath.Join(t.TempDir(), "test.m4a")
@@ -351,7 +349,10 @@ func TestScoreAudioAsync_WhisperFailure(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "audio", Action: "vnote_auto"})
 	q.MarkRelayed(id)
 
-	runScoreAudioSkip(t, audioFile, "eng", q, id, newTestDeps(t))
+	deps := newTestDeps(t)
+	deps.FfmpegConvert = ffmpegFn
+	deps.Whisper = whisperFn
+	runScoreAudioSkip(t, audioFile, "eng", q, id, deps)
 
 	var status string
 	var retryCount int
@@ -372,8 +373,8 @@ func TestScoreAudioAsync_WhisperFailure(t *testing.T) {
 // 3. Empty transcript — queue row marked failed.
 func TestScoreAudioAsync_EmptyTranscript(t *testing.T) {
 	isolateEventsDir(t)
-	installFfmpegStub(t)
-	installWhisperStub(t, "  \n  ", nil) // whitespace-only
+	ffmpegFn := installFfmpegStub(t)
+	whisperFn := installWhisperStub(t, "  \n  ", nil) // whitespace-only
 
 	q := newTestQueue(t)
 	audioFile := filepath.Join(t.TempDir(), "test.m4a")
@@ -382,7 +383,10 @@ func TestScoreAudioAsync_EmptyTranscript(t *testing.T) {
 	id, _ := q.Enqueue(&ShareRequest{Type: "audio", Action: "vnote_auto"})
 	q.MarkRelayed(id)
 
-	runScoreAudioSkip(t, audioFile, "eng", q, id, newTestDeps(t))
+	deps := newTestDeps(t)
+	deps.FfmpegConvert = ffmpegFn
+	deps.Whisper = whisperFn
+	runScoreAudioSkip(t, audioFile, "eng", q, id, deps)
 }
 
 // 4. validateRequest — audio type.
@@ -437,13 +441,17 @@ func TestQueueSetText(t *testing.T) {
 // 6. Multipart handleShare — happy path.
 func TestHandleShare_MultipartAudio(t *testing.T) {
 	isolateEventsDir(t)
-	installFfmpegStub(t)
-	installWhisperStub(t, "test transcript", nil)
+	ffmpegFn := installFfmpegStub(t)
+	whisperFn := installWhisperStub(t, "test transcript", nil)
 	mpBackend, _ := installHaikuSynopsisStub(t, "Test synopsis for multipart.")
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
 	router.SetScoringBackend(mpBackend)
+	router.SetScoringDepsMutator(func(d *scoringDeps) {
+		d.FfmpegConvert = ffmpegFn
+		d.Whisper = whisperFn
+	})
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 
@@ -499,9 +507,9 @@ func TestHandleShare_MultipartSmallFile(t *testing.T) {
 // 8. Chunked transcription — large WAV triggers segmentation and concatenation.
 func TestScoreAudioAsync_Chunked(t *testing.T) {
 	isolateEventsDir(t)
-	installFfmpegStubLargeWav(t)
-	installSegmentStub(t, 3)
-	installWhisperChunkStub(t, []string{
+	ffmpegFn := installFfmpegStubLargeWav(t)
+	segmentFn := installSegmentStub(t, 3)
+	whisperFn := installWhisperChunkStub(t, []string{
 		"First chunk about machine learning.",
 		"Second chunk about transformers.",
 		"Third chunk about attention.",
@@ -521,6 +529,9 @@ func TestScoreAudioAsync_Chunked(t *testing.T) {
 
 	deps := newTestDeps(t)
 	deps.Backend = backend
+	deps.FfmpegConvert = ffmpegFn
+	deps.FfmpegSegment = segmentFn
+	deps.Whisper = whisperFn
 	runScoreAudioSync(t, audioFile, "", q, id, done, deps)
 
 	items, _ := q.List("", 20)
@@ -546,15 +557,13 @@ func TestScoreAudioAsync_Chunked(t *testing.T) {
 // 9. Progress column updates during chunked transcription.
 func TestScoreAudioAsync_ProgressUpdates(t *testing.T) {
 	isolateEventsDir(t)
-	installFfmpegStubLargeWav(t)
-	installSegmentStub(t, 2)
+	ffmpegFn := installFfmpegStubLargeWav(t)
+	segmentFn := installSegmentStub(t, 2)
 
-	// Whisper stub for chunk transcription.
-	prevWhisper := execWhisper
-	execWhisper = func(_ context.Context, _, _ string) (string, error) {
+	// Whisper stub for chunk transcription (EPIC-258 M2: injected via deps).
+	whisperFn := func(_ context.Context, _, _ string) (string, error) {
 		return "chunk text", nil
 	}
-	t.Cleanup(func() { execWhisper = prevWhisper })
 
 	backend, done := installHaikuSynopsisStub(t, "Progress test synopsis.")
 
@@ -567,6 +576,9 @@ func TestScoreAudioAsync_ProgressUpdates(t *testing.T) {
 
 	deps := newTestDeps(t)
 	deps.Backend = backend
+	deps.FfmpegConvert = ffmpegFn
+	deps.FfmpegSegment = segmentFn
+	deps.Whisper = whisperFn
 	runScoreAudioSync(t, audioFile, "", q, id, done, deps)
 
 	item, err := q.GetByID(id)

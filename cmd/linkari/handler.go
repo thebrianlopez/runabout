@@ -97,6 +97,7 @@ type Router struct {
 	jina           *jinaClient        // EPIC-258 M2: was package vars jinaBaseURL/jinaHTTPClient; nil = production client
 	ytDeps         *ytDeps            // EPIC-258 M2: was package var execYtdlp; nil = production seams
 	scoringBackend ScoringBackend     // EPIC-258 M2: nil = process default (activeScoringBackend)
+	scoringDepsMut func(*scoringDeps) // EPIC-258 M2: test-only mutator applied to freshly built scoringDeps; nil = no-op
 }
 
 // SetQueue wires the queue for server-side uinit_* scoring (EPIC-060 M1).
@@ -207,7 +208,11 @@ func (r *Router) scoringDeps() *scoringDeps {
 	}
 	r.mu.RLock()
 	d.Backend = r.scoringBackend
+	mut := r.scoringDepsMut
 	r.mu.RUnlock()
+	if mut != nil {
+		mut(d)
+	}
 	return d
 }
 
@@ -218,6 +223,16 @@ func (r *Router) scoringDeps() *scoringDeps {
 func (r *Router) SetScoringBackend(b ScoringBackend) {
 	r.mu.Lock()
 	r.scoringBackend = b
+	r.mu.Unlock()
+}
+
+// SetScoringDepsMutator installs a test-only mutator applied to every
+// scoringDeps this Router builds, so tests can inject exec stubs (ffmpeg,
+// whisper, ...) into router-launched scoring goroutines without package-var
+// swaps (EPIC-258 M2). nil removes the mutator.
+func (r *Router) SetScoringDepsMutator(mut func(*scoringDeps)) {
+	r.mu.Lock()
+	r.scoringDepsMut = mut
 	r.mu.Unlock()
 }
 

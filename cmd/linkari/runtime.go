@@ -113,18 +113,18 @@ func NewExecutionRuntime(cfg SandboxConfig) ExecutionRuntime {
 
 // ─── LocalRuntime ─────────────────────────────────────────────────────────────
 
-// LocalRuntime delegates to the existing function vars (runFfmpegConvert,
-// runWhisperCLI, runClaudeHaiku). It is the default implementation and
-// preserves the full test-seam story: callers that override execFfmpegConvert
-// et al. continue to work because LocalRuntime calls through those vars.
+// LocalRuntime delegates to the production implementations (runFfmpegConvert,
+// runWhisperCLI, runClaudeHaiku). It is the default implementation.
+// EPIC-258 M2: calls the run* functions directly; the execFfmpegConvert
+// package seam is gone (tests inject via scoringDeps/ytDeps instead).
 type LocalRuntime struct{}
 
 func (LocalRuntime) InvokeFFmpeg(ctx context.Context, inputPath, outputPath string) error {
-	return execFfmpegConvert(ctx, inputPath, outputPath)
+	return runFfmpegConvert(ctx, inputPath, outputPath)
 }
 
 func (LocalRuntime) InvokeWhisperTranscribe(ctx context.Context, wavPath, modelPath string) (string, error) {
-	return execWhisper(ctx, wavPath, modelPath)
+	return runWhisperCLI(ctx, wavPath, modelPath)
 }
 
 func (LocalRuntime) InvokeClaudeSubprocess(ctx context.Context, systemPrompt, content string) (string, error) {

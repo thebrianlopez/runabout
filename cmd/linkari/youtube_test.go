@@ -190,14 +190,13 @@ func installYtdlpAudioStub(t *testing.T) {
 	t.Cleanup(func() { execYtdlpAudio = prev })
 }
 
-// installWhisperStubYT makes execWhisper return tx (or err if non-nil).
-func installWhisperStubYT(t *testing.T, tx string, err error) {
+// installWhisperStubYT wires a whisper stub returning tx (or err if non-nil)
+// into deps. EPIC-258 M2: injected via ytDeps instead of a package-var swap.
+func installWhisperStubYT(t *testing.T, deps *ytDeps, tx string, err error) {
 	t.Helper()
-	prev := execWhisper
-	execWhisper = func(_ context.Context, _, _ string) (string, error) {
+	deps.Whisper = func(_ context.Context, _, _ string) (string, error) {
 		return tx, err
 	}
-	t.Cleanup(func() { execWhisper = prev })
 }
 
 // TestScoreYouTubeAsync_NoSubtitlesFallback verifies that when yt-dlp finds no
@@ -218,15 +217,13 @@ func TestScoreYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	// Stub audio download → fake file.
 	installYtdlpAudioStub(t)
 
-	// Stub ffmpeg → write fake wav.
-	prevFfmpeg := execFfmpegConvert
-	execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+	// Stub ffmpeg → write fake wav (EPIC-258 M2: injected via ytDeps).
+	deps.FfmpegConvert = func(_ context.Context, _, outputPath string) error {
 		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
 	}
-	t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
 
 	// Stub whisper → return a transcript.
-	installWhisperStubYT(t, "This is the audio transcript for testing.", nil)
+	installWhisperStubYT(t, deps, "This is the audio transcript for testing.", nil)
 
 	// Stub evaluator → return a valid scorecard (RubricScores required for bare-verdict shortcut).
 	deps.Backend = &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
@@ -327,22 +324,20 @@ func TestScoreYouTubeAsync_FallbackStepFailures(t *testing.T) {
 			}
 			t.Cleanup(func() { execYtdlpAudio = prevAudio })
 
-			// Stub ffmpeg.
-			prevFfmpeg := execFfmpegConvert
+			// Stub ffmpeg (EPIC-258 M2: injected via ytDeps).
 			if tc.audioErr == nil {
 				if tc.ffmpegErr != nil {
-					execFfmpegConvert = func(_ context.Context, _, _ string) error { return tc.ffmpegErr }
+					deps.FfmpegConvert = func(_ context.Context, _, _ string) error { return tc.ffmpegErr }
 				} else {
-					execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+					deps.FfmpegConvert = func(_ context.Context, _, outputPath string) error {
 						return os.WriteFile(outputPath, []byte("RIFF-fake"), 0o644)
 					}
 				}
 			}
-			t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
 
 			// Stub whisper.
 			if tc.audioErr == nil && tc.ffmpegErr == nil {
-				installWhisperStubYT(t, tc.whisperTx, tc.whisperErr)
+				installWhisperStubYT(t, deps, tc.whisperTx, tc.whisperErr)
 			}
 
 			q := newTestQueue(t)
@@ -403,11 +398,10 @@ func TestYtAudioFallback_TempDirCleanup(t *testing.T) {
 	t.Cleanup(func() { execYtdlpAudio = prev })
 
 	// Stub ffmpeg to fail so cleanup logic in ytAudioFallback triggers.
-	prevFfmpeg := execFfmpegConvert
-	execFfmpegConvert = func(_ context.Context, _, _ string) error {
+	// EPIC-258 M2: injected via ytDeps.
+	ytFallbackDeps := &ytDeps{FfmpegConvert: func(_ context.Context, _, _ string) error {
 		return fmt.Errorf("ffmpeg: injected failure")
-	}
-	t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
+	}}
 
 	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
 	evtLogger, evtErr := NewEventLogger(evtPath)
@@ -416,7 +410,7 @@ func TestYtAudioFallback_TempDirCleanup(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, _, err := ytAudioFallback(ctx, "yt-dlp", "https://www.youtube.com/watch?v=cleanup", 7, nil, evtLogger, "")
+	_, _, err := ytAudioFallback(ctx, "yt-dlp", "https://www.youtube.com/watch?v=cleanup", 7, nil, evtLogger, "", ytFallbackDeps)
 	if err == nil {
 		t.Fatal("expected error from ffmpeg failure")
 	}
@@ -464,20 +458,17 @@ func TestYtAudioFallback_TimeoutExpiry(t *testing.T) {
 	}
 	t.Cleanup(func() { execYtdlpAudio = prev })
 
-	// Stub ffmpeg — succeed immediately.
-	prevFfmpeg := execFfmpegConvert
-	execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
-		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
+	// EPIC-258 M2: ffmpeg no-op + blocking whisper injected via ytDeps so the
+	// whisper step is reached and blocks until the context is cancelled.
+	ytFallbackDeps := &ytDeps{
+		FfmpegConvert: func(_ context.Context, _, outputPath string) error {
+			return os.WriteFile(outputPath, []byte("RIFF-fake"), 0o644)
+		},
+		Whisper: func(ctx context.Context, _, _ string) (string, error) {
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
 	}
-	t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
-
-	// Stub whisper — block until the context is cancelled.
-	prevWhisper := execWhisper
-	execWhisper = func(ctx context.Context, _, _ string) (string, error) {
-		<-ctx.Done()
-		return "", ctx.Err()
-	}
-	t.Cleanup(func() { execWhisper = prevWhisper })
 
 	// Short outer context to trigger timeout during whisper step.
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -490,7 +481,7 @@ func TestYtAudioFallback_TimeoutExpiry(t *testing.T) {
 	}
 	defer evtLogger.Close()
 
-	_, _, fallbackErr := ytAudioFallback(ctx, "yt-dlp", "https://www.youtube.com/watch?v=timeout1", 42, nil, evtLogger, "")
+	_, _, fallbackErr := ytAudioFallback(ctx, "yt-dlp", "https://www.youtube.com/watch?v=timeout1", 42, nil, evtLogger, "", ytFallbackDeps)
 	if fallbackErr == nil {
 		t.Fatal("expected error from context expiry, got nil")
 	}
@@ -537,13 +528,11 @@ func TestScoreYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 	deps := installYtdlpNoSubtitlesStub(t)
 	installYtdlpAudioStub(t)
 
-	prevFfmpeg := execFfmpegConvert
-	execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+	deps.FfmpegConvert = func(_ context.Context, _, outputPath string) error {
 		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
 	}
-	t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
 
-	installWhisperStubYT(t, "Audio fallback transcript.", nil)
+	installWhisperStubYT(t, deps, "Audio fallback transcript.", nil)
 
 	deps.Backend = &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
 		v := TriageVerdict{Score: 70, Verdict: "interesting", Tags: "test", RubricScores: map[string]int{"overall": 70}}
@@ -605,13 +594,11 @@ func TestTranscribeYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 	deps := installYtdlpNoSubtitlesStub(t)
 	installYtdlpAudioStub(t)
 
-	prevFfmpeg := execFfmpegConvert
-	execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+	deps.FfmpegConvert = func(_ context.Context, _, outputPath string) error {
 		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
 	}
-	t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
 
-	installWhisperStubYT(t, "Audio transcript via whisper.", nil)
+	installWhisperStubYT(t, deps, "Audio transcript via whisper.", nil)
 
 	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
 	evtLogger, err := NewEventLogger(evtPath)

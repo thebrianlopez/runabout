@@ -227,18 +227,16 @@ func TestProcessVoiceNoteAsyncTerminalStatus(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Install ffmpeg stub.
-			prevFfmpeg := execFfmpegConvert
+			// ffmpeg stub, injected via deps (EPIC-258 M2).
+			ffmpegFn := func(_ context.Context, _, outputPath string) error {
+				return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
+			}
 			if tc.ffmpegErr != nil {
-				execFfmpegConvert = func(_ context.Context, _, _ string) error {
+				ffmpegFn = func(_ context.Context, _, _ string) error {
 					return tc.ffmpegErr
 				}
-			} else {
-				execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
-					return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
-				}
 			}
-			t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
+			deps := &scoringDeps{TranscriptsDir: t.TempDir(), FfmpegConvert: ffmpegFn}
 
 			// Install whisper stub (only relevant if ffmpeg succeeds).
 			if tc.ffmpegErr == nil {
@@ -265,7 +263,7 @@ func TestProcessVoiceNoteAsyncTerminalStatus(t *testing.T) {
 			finished := make(chan struct{})
 			go func() {
 				defer close(finished)
-				processVoiceNoteAsync(audioPath, "life", q, id, "test.m4a", "", "", req, nil, &stubEvaluator{score: 80, verdict: "interesting"}, nil)
+				processVoiceNoteAsync(audioPath, "life", q, id, "test.m4a", "", "", req, nil, &stubEvaluator{score: 80, verdict: "interesting"}, deps)
 			}()
 
 			select {
@@ -448,12 +446,10 @@ func TestTranscribeYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	}
 	t.Cleanup(func() { execYtdlpAudio = prevAudio })
 
-	// ffmpeg converts audio to wav.
-	prevFfmpeg := execFfmpegConvert
-	execFfmpegConvert = func(_ context.Context, _, outputPath string) error {
+	// ffmpeg converts audio to wav (EPIC-258 M2: injected via ytDeps).
+	deps.FfmpegConvert = func(_ context.Context, _, outputPath string) error {
 		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
 	}
-	t.Cleanup(func() { execFfmpegConvert = prevFfmpeg })
 
 	// Whisper transcribes successfully.
 	installWhisperStub(t, "This is a transcribed YouTube video about machine learning.", nil)

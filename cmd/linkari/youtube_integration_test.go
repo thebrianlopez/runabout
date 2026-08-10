@@ -84,7 +84,7 @@ func TestNormalizeYouTubeURL_RG1_Integration(t *testing.T) {
 	ytFallbackToAudio = true
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
-	transcript, meta, fallbackErr := ytAudioFallback(ctx, ytPath, canonical, 0, nil, nil, "")
+	transcript, meta, fallbackErr := ytAudioFallback(ctx, ytPath, canonical, 0, nil, nil, "", nil)
 	if fallbackErr != nil {
 		t.Fatalf("ytAudioFallback: %v (RG-1: canonical URL %q must produce a transcript, not yt_no_subtitles)", fallbackErr, canonical)
 	}
@@ -114,7 +114,7 @@ func TestYouTubeAudioFallback_Integration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	transcript, meta, err := ytAudioFallback(ctx, ytPath, videoURL, 0, nil, nil, "")
+	transcript, meta, err := ytAudioFallback(ctx, ytPath, videoURL, 0, nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("ytAudioFallback: %v", err)
 	}

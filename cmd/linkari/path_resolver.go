@@ -36,7 +36,33 @@ type PathResolver interface {
 	Resolve(server ServerConfig) (EffectivePaths, error)
 }
 
-var activePathResolver PathResolver = xdgPathResolver{}
+// activePathResolver holds the process PathResolver. Guarded by
+// pathResolverMu: tests swap it (withPathResolver, newDoctorCmdForTest) while
+// scoring goroutines read it on the post-scoring push tail
+// (resolvePushConfigOnce -> LoadConfig -> nativeConfigPath), which runs after
+// scoreAsyncDoneHook fires by design - so goroutine-lifetime discipline alone
+// cannot prevent the race (EPIC-258 M2, observed at shuffle seed 6).
+var (
+	pathResolverMu     sync.RWMutex
+	activePathResolver PathResolver = xdgPathResolver{}
+)
+
+// currentPathResolver returns the active resolver under the read lock.
+func currentPathResolver() PathResolver {
+	pathResolverMu.RLock()
+	defer pathResolverMu.RUnlock()
+	return activePathResolver
+}
+
+// setPathResolver swaps the active resolver and returns the previous one.
+// Test-only; callers restore the previous value in t.Cleanup.
+func setPathResolver(r PathResolver) PathResolver {
+	pathResolverMu.Lock()
+	defer pathResolverMu.Unlock()
+	prev := activePathResolver
+	activePathResolver = r
+	return prev
+}
 
 type xdgPathResolver struct{}
 
@@ -103,13 +129,13 @@ func (r xdgPathResolver) Resolve(server ServerConfig) (EffectivePaths, error) {
 
 func resolveEffectivePaths(cfg *ServerConfig) (EffectivePaths, error) {
 	if cfg == nil {
-		return activePathResolver.Resolve(ServerConfig{})
+		return currentPathResolver().Resolve(ServerConfig{})
 	}
-	return activePathResolver.Resolve(*cfg)
+	return currentPathResolver().Resolve(*cfg)
 }
 
 func nativeConfigPath() string {
-	roots, err := activePathResolver.Roots()
+	roots, err := currentPathResolver().Roots()
 	if err != nil {
 		return filepath.Join(os.TempDir(), linkariAppName, "config.toml")
 	}

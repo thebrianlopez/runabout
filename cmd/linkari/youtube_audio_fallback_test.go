@@ -65,12 +65,12 @@ func installAudioDownloadStub(t *testing.T) {
 	t.Cleanup(func() { execYtdlpAudio = prev })
 }
 
-// installFfmpegNoopStub makes execFfmpegConvert a no-op.
-func installFfmpegNoopStub(t *testing.T) {
+// installFfmpegNoopStub wires a no-op ffmpeg conversion into deps.
+// EPIC-258 M2: injected via ytDeps.FfmpegConvert instead of the former
+// execFfmpegConvert package-var swap.
+func installFfmpegNoopStub(t *testing.T, deps *ytDeps) {
 	t.Helper()
-	prev := execFfmpegConvert
-	execFfmpegConvert = func(_ context.Context, _, _ string) error { return nil }
-	t.Cleanup(func() { execFfmpegConvert = prev })
+	deps.FfmpegConvert = func(_ context.Context, _, _ string) error { return nil }
 }
 
 // installNormalizeURLNoopStub makes execNormalizeURL pass through the URL unchanged.
@@ -114,13 +114,12 @@ func TestAudioFallback_CT1_SemaphoreCap1(t *testing.T) {
 
 	deps := installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
-	installFfmpegNoopStub(t)
+	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t)
 	installPushStub(t, nil)
 
 	var activeCount, peakActive int32
-	prevWhisper := execWhisper
-	execWhisper = func(ctx context.Context, _, _ string) (string, error) {
+	deps.Whisper = func(ctx context.Context, _, _ string) (string, error) {
 		cur := atomic.AddInt32(&activeCount, 1)
 		defer atomic.AddInt32(&activeCount, -1)
 		for {
@@ -136,7 +135,6 @@ func TestAudioFallback_CT1_SemaphoreCap1(t *testing.T) {
 			return "", ctx.Err()
 		}
 	}
-	t.Cleanup(func() { execWhisper = prevWhisper })
 
 	q := newTestQueue(t)
 	el, evtPath := newAudioFallbackEventLogger(t)
@@ -198,11 +196,10 @@ func TestAudioFallback_CT2_TimeoutEmitsEvent(t *testing.T) {
 
 	deps := installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
-	installFfmpegNoopStub(t)
+	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t)
 
-	prevWhisper := execWhisper
-	execWhisper = func(ctx context.Context, _, _ string) (string, error) {
+	deps.Whisper = func(ctx context.Context, _, _ string) (string, error) {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
@@ -210,7 +207,6 @@ func TestAudioFallback_CT2_TimeoutEmitsEvent(t *testing.T) {
 			return "", fmt.Errorf("stub: should not reach here")
 		}
 	}
-	t.Cleanup(func() { execWhisper = prevWhisper })
 
 	q := newTestQueue(t)
 	el, evtPath := newAudioFallbackEventLogger(t)
@@ -264,14 +260,12 @@ func TestAudioFallback_CT3_DeadLetterOnFailure(t *testing.T) {
 
 	deps := installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
-	installFfmpegNoopStub(t)
+	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t)
 
-	prevWhisper := execWhisper
-	execWhisper = func(_ context.Context, _, _ string) (string, error) {
+	deps.Whisper = func(_ context.Context, _, _ string) (string, error) {
 		return "", fmt.Errorf("whisper-cli: exit status 1: decode error")
 	}
-	t.Cleanup(func() { execWhisper = prevWhisper })
 
 	q := newTestQueue(t)
 	el, evtPath := newAudioFallbackEventLogger(t)
@@ -318,14 +312,12 @@ func TestAudioFallback_CT4_TerminalFailure(t *testing.T) {
 
 	deps := installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
-	installFfmpegNoopStub(t)
+	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t)
 
-	prevWhisper := execWhisper
-	execWhisper = func(_ context.Context, _, _ string) (string, error) {
+	deps.Whisper = func(_ context.Context, _, _ string) (string, error) {
 		return "", fmt.Errorf("whisper-cli: exit status 1: persistent failure")
 	}
-	t.Cleanup(func() { execWhisper = prevWhisper })
 
 	q := newTestQueue(t)
 	el, evtPath := newAudioFallbackEventLogger(t)
@@ -376,20 +368,18 @@ func TestAudioFallback_CT5_SemaphoreReleasedOnError(t *testing.T) {
 
 	deps := installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
-	installFfmpegNoopStub(t)
+	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t)
 	installPushStub(t, nil)
 
 	var callCount int32
-	prevWhisper := execWhisper
-	execWhisper = func(_ context.Context, _, _ string) (string, error) {
+	deps.Whisper = func(_ context.Context, _, _ string) (string, error) {
 		n := atomic.AddInt32(&callCount, 1)
 		if n == 1 {
 			return "", fmt.Errorf("whisper-cli: exit status 1: first job fails")
 		}
 		return "transcript from second job", nil
 	}
-	t.Cleanup(func() { execWhisper = prevWhisper })
 
 	q := newTestQueue(t)
 	el, evtPath := newAudioFallbackEventLogger(t)

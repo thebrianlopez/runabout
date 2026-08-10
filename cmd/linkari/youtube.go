@@ -187,6 +187,13 @@ type ytDeps struct {
 	// Backend is the scoring backend for rubric scoring. nil uses the process
 	// default (activeScoringBackend). EPIC-258 M2.
 	Backend ScoringBackend
+	// FfmpegConvert converts an audio file to 16kHz mono WAV. nil selects the
+	// production ffmpeg invocation. EPIC-258 M2: was package var
+	// execFfmpegConvert.
+	FfmpegConvert func(ctx context.Context, inputPath, outputPath string) error
+	// Whisper transcribes a WAV file. nil selects the production whisper-cli
+	// invocation. EPIC-258 M2: was package var execWhisper.
+	Whisper func(ctx context.Context, wavPath, modelPath string) (string, error)
 }
 
 // resolve returns d with any nil field filled from production defaults.
@@ -198,6 +205,12 @@ func (d *ytDeps) resolve() *ytDeps {
 	}
 	if out.Ytdlp == nil {
 		out.Ytdlp = runYtdlpExtract
+	}
+	if out.FfmpegConvert == nil {
+		out.FfmpegConvert = runFfmpegConvert
+	}
+	if out.Whisper == nil {
+		out.Whisper = runWhisperCLI
 	}
 	return &out
 }
@@ -469,7 +482,8 @@ func runYtdlpAudioDownload(ctx context.Context, ytdlpPath, videoURL string) (aud
 // EPIC-001 M3. whisperModel is passed through to execWhisper (empty = default).
 // EPIC-005 M1: context.DeadlineExceeded from whisper is wrapped as yt_audio_timeout.
 // EPIC-005 M2: emits yt_audio_fallback_complete / yt_audio_fallback_failed with step/duration fields.
-func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, q *Queue, events *EventLogger, whisperModel string) (string, ytVideoMeta, error) {
+func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, q *Queue, events *EventLogger, whisperModel string, deps *ytDeps) (string, ytVideoMeta, error) {
+	deps = deps.resolve()
 	start := time.Now()
 
 	slog.Info(
@@ -513,7 +527,7 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 	defer os.Remove(wavPath)
 
 	ffmpegCtx, ffmpegCancel := context.WithTimeout(ctx, 60*time.Second)
-	ffErr := execFfmpegConvert(ffmpegCtx, audioPath, wavPath)
+	ffErr := deps.FfmpegConvert(ffmpegCtx, audioPath, wavPath)
 	ffmpegCancel()
 	if ffErr != nil {
 		slog.Warn(
@@ -540,7 +554,7 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 	// EPIC-108 M2: dynamic deadline — max(duration×2, 900s); configurable via [server.whisper].timeout_secs.
 	deadlineSecs := whisperDeadlineSecs(meta.Duration, ytWhisperTimeoutSecs)
 	whisperCtx, whisperCancel := context.WithTimeout(ctx, time.Duration(deadlineSecs)*time.Second)
-	transcript, whisperErr := execWhisper(whisperCtx, wavPath, whisperModel)
+	transcript, whisperErr := deps.Whisper(whisperCtx, wavPath, whisperModel)
 	whisperCancel()
 	if whisperErr != nil {
 		if errors.Is(whisperErr, context.DeadlineExceeded) {
@@ -746,7 +760,7 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 				}
 			}
 			var audioErr error
-			transcript, meta, audioErr = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events, whisperModel)
+			transcript, meta, audioErr = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events, whisperModel, deps)
 			<-ytAudioSem
 			if audioErr == nil {
 				meta.SubtitleType = "audio"
@@ -1064,7 +1078,7 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 					return
 				}
 			}
-			transcript, meta, err = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events, whisperModel)
+			transcript, meta, err = ytAudioFallback(ctx, ytPath, videoURL, rowID, q, events, whisperModel, deps)
 			<-ytAudioSem
 			if err == nil {
 				meta.SubtitleType = "audio"

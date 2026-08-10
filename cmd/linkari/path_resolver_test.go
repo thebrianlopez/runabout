@@ -41,9 +41,8 @@ func (r fixedResolver) Resolve(server ServerConfig) (EffectivePaths, error) {
 
 func withPathResolver(t *testing.T, r PathResolver) {
 	t.Helper()
-	prev := activePathResolver
-	activePathResolver = r
-	t.Cleanup(func() { activePathResolver = prev })
+	prev := setPathResolver(r)
+	t.Cleanup(func() { setPathResolver(prev) })
 }
 
 func TestEffectivePathsResolve_Fixtures(t *testing.T) {

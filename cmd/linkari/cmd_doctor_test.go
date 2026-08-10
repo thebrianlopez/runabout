@@ -19,15 +19,14 @@ import (
 func newDoctorCmdForTest(t *testing.T, tmpDir string, extraArgs []string) (*bytes.Buffer, func() error) {
 	t.Helper()
 	t.Setenv("HOME", tmpDir)
-	if _, ok := activePathResolver.(xdgPathResolver); ok {
-		prev := activePathResolver
-		activePathResolver = fixedResolver{roots: PathRoots{
+	if _, ok := currentPathResolver().(xdgPathResolver); ok {
+		prev := setPathResolver(fixedResolver{roots: PathRoots{
 			Config: filepath.Join(tmpDir, ".config", "linkari"),
 			Data:   filepath.Join(tmpDir, ".local", "share", "linkari"),
 			Cache:  filepath.Join(tmpDir, ".cache", "linkari"),
 			State:  filepath.Join(tmpDir, ".local", "state", "linkari"),
-		}}
-		t.Cleanup(func() { activePathResolver = prev })
+		}})
+		t.Cleanup(func() { setPathResolver(prev) })
 	}
 	// Clear SM-related env so tests never attempt real AWS calls.
 	t.Setenv("LINKARI_TOKEN", "")
@@ -892,7 +891,7 @@ func TestResolveBackupPath_DefaultFallback(t *testing.T) {
 		t.Fatalf("CT-6: resolveBackupPath: %v", err)
 	}
 
-	roots, err := activePathResolver.Roots()
+	roots, err := currentPathResolver().Roots()
 	if err != nil {
 		t.Fatalf("CT-6: Roots: %v", err)
 	}

@@ -194,13 +194,12 @@ func TestYouTube_BT1_TranscribeWatchLaterDisabled_NoWhisper(t *testing.T) {
 	deps := &ytDeps{Ytdlp: ytdlpStub}
 
 	// Whisper must NOT be called — track invocations.
+	// EPIC-258 M2: injected via ytDeps instead of a package-var swap.
 	var whisperCalled atomic.Int32
-	prevWhisper := execWhisper
-	execWhisper = func(_ context.Context, _, _ string) (string, error) {
+	deps.Whisper = func(_ context.Context, _, _ string) (string, error) {
 		whisperCalled.Add(1)
 		return "should not reach here", nil
 	}
-	t.Cleanup(func() { execWhisper = prevWhisper })
 
 	q := newTestQueue(t)
 	el, evtPath := newTestEventLogger(t)

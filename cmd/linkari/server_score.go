@@ -176,6 +176,17 @@ type scoringDeps struct {
 	// Backend is the scoring backend. nil uses the process default installed
 	// at startup (activeScoringBackend). EPIC-258 M2.
 	Backend ScoringBackend
+	// FfmpegConvert converts an audio file to 16kHz mono WAV. nil selects the
+	// production ffmpeg invocation. EPIC-258 M2: was package var
+	// execFfmpegConvert, which tests swapped while scoring goroutines read it.
+	FfmpegConvert func(ctx context.Context, inputPath, outputPath string) error
+	// Whisper transcribes a WAV file. nil selects the production whisper-cli
+	// invocation. EPIC-258 M2: was package var execWhisper.
+	Whisper func(ctx context.Context, wavPath, modelPath string) (string, error)
+	// FfmpegSegment splits a WAV file into fixed-length chunks. nil selects
+	// the production ffmpeg invocation. EPIC-258 M2: was package var
+	// execFfmpegSegment.
+	FfmpegSegment func(ctx context.Context, wavPath string, chunkSeconds int) ([]string, error)
 }
 
 // defaultTranscriptsDir is the transcript location used when ServerConfig
@@ -217,6 +228,15 @@ func (d *scoringDeps) resolve() *scoringDeps {
 	if out.Jina == nil {
 		out.Jina = newJinaClient()
 	}
+	if out.FfmpegConvert == nil {
+		out.FfmpegConvert = runFfmpegConvert
+	}
+	if out.Whisper == nil {
+		out.Whisper = runWhisperCLI
+	}
+	if out.FfmpegSegment == nil {
+		out.FfmpegSegment = runFfmpegSegment
+	}
 	return &out
 }
 
@@ -253,10 +273,6 @@ func defaultWhisperModel() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "share", "whisper", "ggml-large-v3-turbo.bin")
 }
-
-// execFfmpegConvert is the function var for converting audio files via ffmpeg.
-// Tests override this to avoid real ffmpeg invocation.
-var execFfmpegConvert = runFfmpegConvert
 
 // runFfmpegConvert invokes ffmpeg to convert an audio file to 16kHz mono WAV.
 func runFfmpegConvert(ctx context.Context, inputPath, outputPath string) error {
@@ -381,10 +397,6 @@ func runLiteParse(ctx context.Context, path string, cfg LiteParseConfig) (string
 	return text, confidence, nil
 }
 
-// execWhisper is the function var for running whisper-cli. Tests override this
-// to avoid real transcription. Same pattern as execHaiku.
-var execWhisper = runWhisperCLI
-
 // runWhisperCLI invokes whisper-cli to transcribe a WAV file. Returns the
 // transcript text. The model path is resolved from server config or default.
 func runWhisperCLI(ctx context.Context, wavPath, modelPath string) (string, error) {
@@ -406,10 +418,6 @@ func runWhisperCLI(ctx context.Context, wavPath, modelPath string) (string, erro
 	}
 	return strings.TrimSpace(stdout.String()), nil
 }
-
-// execFfmpegSegment is the function var for segmenting a WAV file into chunks.
-// Tests override this to avoid real ffmpeg invocation.
-var execFfmpegSegment = runFfmpegSegment
 
 // runFfmpegSegment invokes ffmpeg to split a WAV file into fixed-duration
 // chunks using the segment muxer. Returns paths of the produced chunk files.
@@ -2364,7 +2372,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 
 	ffmpegCtx, ffmpegCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer ffmpegCancel()
-	if err := execFfmpegConvert(ffmpegCtx, audioPath, wavPath); err != nil {
+	if err := deps.FfmpegConvert(ffmpegCtx, audioPath, wavPath); err != nil {
 		if errors.Is(err, ErrContainerOOM) {
 			audioInfo, _ := os.Stat(audioPath)
 			var actualMB float64
@@ -2410,7 +2418,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		}
 
 		segCtx, segCancel := context.WithTimeout(ctx, 30*time.Second)
-		chunks, err := execFfmpegSegment(segCtx, wavPath, audioChunkSeconds)
+		chunks, err := deps.FfmpegSegment(segCtx, wavPath, audioChunkSeconds)
 		segCancel()
 		if err != nil {
 			slog.Warn(
@@ -2442,7 +2450,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 				"chunk", i+1,
 				"total", len(chunks),
 			)
-			part, err := execWhisper(ctx, chunk, whisperModel)
+			part, err := deps.Whisper(ctx, chunk, whisperModel)
 			if err != nil {
 				if errors.Is(err, ErrContainerOOM) {
 					wavChunkInfo, _ := os.Stat(chunk)
@@ -2482,7 +2490,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 		if q != nil {
 			q.SetProgress(rowID, "transcribing 1/1")
 		}
-		transcript, err = execWhisper(ctx, wavPath, whisperModel)
+		transcript, err = deps.Whisper(ctx, wavPath, whisperModel)
 		if err != nil {
 			if errors.Is(err, ErrContainerOOM) {
 				var actualMB float64
