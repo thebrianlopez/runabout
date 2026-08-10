@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -585,11 +586,15 @@ func TestHandleShare_YouTubeURL_EmptyType(t *testing.T) {
 	isolateEventsDir(t)
 	installTestProfileDir(t, "eng")
 
-	// Capture whether scoreYouTubeAsync was reached via the execYtdlp seam.
-	// scoreYouTubeAsync calls execYtdlp as its first step; scoreAsync never does.
-	var scoreYTCalled bool
+	// Capture whether scoreYouTubeAsync was reached via the yt-dlp stub.
+	// scoreYouTubeAsync calls the Ytdlp dep as its first step; scoreAsync never
+	// does. The stub runs on the scoring goroutine, so signal via a channel
+	// (closed exactly once) rather than a shared bool synchronised by a sleep -
+	// the bool+sleep form raced (EPIC-258, scoreYTCalled in the handoff race map).
+	ytCalled := make(chan struct{})
+	var ytCalledOnce sync.Once
 	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
-		scoreYTCalled = true
+		ytCalledOnce.Do(func() { close(ytCalled) })
 		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles — stop here")
 	}
 	deps := &ytDeps{Ytdlp: ytdlpStub}
@@ -623,10 +628,11 @@ func TestHandleShare_YouTubeURL_EmptyType(t *testing.T) {
 		t.Fatalf("expected HTTP 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Give the goroutine time to call execYtdlp before we assert.
-	time.Sleep(200 * time.Millisecond)
-
-	if !scoreYTCalled {
-		t.Error("execYtdlp not called — YouTube URL with type=\"\" did not route to scoreYouTubeAsync (handler.go:520)")
+	// Block on the stub's signal instead of sleeping; the stub runs on the
+	// scoring goroutine.
+	select {
+	case <-ytCalled:
+	case <-time.After(5 * time.Second):
+		t.Error("yt-dlp dep not called — YouTube URL with type=\"\" did not route to scoreYouTubeAsync (handler.go:520)")
 	}
 }
