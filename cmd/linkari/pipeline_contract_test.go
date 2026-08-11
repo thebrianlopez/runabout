@@ -239,8 +239,9 @@ func TestProcessVoiceNoteAsyncTerminalStatus(t *testing.T) {
 			deps := &scoringDeps{TranscriptsDir: t.TempDir(), FfmpegConvert: ffmpegFn}
 
 			// Install whisper stub (only relevant if ffmpeg succeeds).
+			// EPIC-258 M2: inject the returned seam into this invocation's deps.
 			if tc.ffmpegErr == nil {
-				installWhisperStub(t, tc.whisperTx, tc.whisperErr)
+				deps.Whisper = installWhisperStub(t, tc.whisperTx, tc.whisperErr)
 			}
 
 			// Create a dummy audio file.
