@@ -15,13 +15,16 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	"os"
 	"testing"
 
 	"go.uber.org/goleak"
 )
 
 func runTests(m *testing.M) int {
-	goleakVerifyTestMain(
+	return goleakRun(
 		m,
 		// net/http's transport idle-connection reaper and DNS resolution
 		// goroutines are long-lived by design and not test-owned leaks.
@@ -41,10 +44,32 @@ func runTests(m *testing.M) int {
 		// merely passes through the SDK is still caught.
 		goleak.IgnoreTopFunction("github.com/aws/aws-sdk-go-v2/internal/sdk.sleepWithContext"),
 		goleak.IgnoreTopFunction("github.com/aws/aws-sdk-go-v2/aws.(*CredentialsCache).Retrieve"),
+		// The same SDK credential round trips are sometimes caught mid-dial,
+		// where the top of stack is net/http.(*Transport).getConn rather than
+		// the two functions above. Ignoring getConn globally would mask real
+		// application dials, so match on the AWS SDK's own transport wrapper
+		// frame, which is present only in SDK-issued requests.
+		goleak.IgnoreAnyFunction("github.com/aws/aws-sdk-go-v2/aws/transport/http.suppressBadHTTPRedirectTransport.RoundTrip"),
 	)
-	return 0
 }
 
-func goleakVerifyTestMain(m *testing.M, opts ...goleak.Option) {
-	goleak.VerifyTestMain(m, opts...)
+// goleakRun mirrors goleak.VerifyTestMain but drains net/http's default
+// transport idle-connection pool before checking. Keep-alive persistConn
+// read/write loops parked on idle connections are pool-owned, not test-owned;
+// without this drain they surface as false leaks whenever any test exercises
+// http.DefaultClient/DefaultTransport (oauth2 token refresh, httptest clients).
+// Application-owned goroutines are still fully checked  -  the drain only
+// affects connections that are already idle.
+func goleakRun(m *testing.M, opts ...goleak.Option) int {
+	code := m.Run()
+	if code == 0 {
+		if tr, ok := http.DefaultTransport.(*http.Transport); ok {
+			tr.CloseIdleConnections()
+		}
+		if err := goleak.Find(opts...); err != nil {
+			fmt.Fprintf(os.Stderr, "goleak: Errors on successful test run: %v\n", err)
+			code = 1
+		}
+	}
+	return code
 }

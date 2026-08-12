@@ -54,6 +54,13 @@ jobs:
         working-directory: cmd/linkari
         run: go test -race -shuffle=on -coverprofile=../../coverage-linkari.out ./...
 
+      # EPIC-258 M4: goroutine-leak gate. Runs the linkari module under the
+      # leakcheck build tag (goleak.Find after m.Run; see main_leakcheck_test.go).
+      # Gating from day one: the suite was verified 5x clean at enablement.
+      - name: Leakcheck linkari module
+        working-directory: cmd/linkari
+        run: go test -tags leakcheck -count=1 ./...
+
       - name: Build all
         run: make build
 

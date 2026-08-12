@@ -135,8 +135,12 @@ func dbRestoreCmd() *cobra.Command {
 			if st, err := os.Stat(walPath); err == nil && st.Size() > 0 && !force {
 				return fmt.Errorf("source WAL is non-empty: %s (use --force to override)", walPath)
 			}
-			if _, err := NewQueue(src, false); err != nil {
+			srcQ, err := NewQueue(src, false)
+			if err != nil {
 				return fmt.Errorf("integrity check source: %w", err)
+			}
+			if err := srcQ.Close(); err != nil {
+				return fmt.Errorf("close integrity-check handle: %w", err)
 			}
 			dstDir := filepath.Dir(queueDB)
 			if err := os.MkdirAll(dstDir, 0o700); err != nil {

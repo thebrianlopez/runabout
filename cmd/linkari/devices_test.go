@@ -52,6 +52,9 @@ func postRegisterDevice(t *testing.T, ts *httptest.Server, token string, body ma
 	if err != nil {
 		t.Fatalf("POST /devices/register: %v", err)
 	}
+	// Close is idempotent; this covers call sites that discard the response,
+	// which otherwise strand the connection outside the idle pool (goleak M4).
+	t.Cleanup(func() { resp.Body.Close() })
 	return resp
 }
 
@@ -361,6 +364,7 @@ func getDevicesReq(t *testing.T, ts *httptest.Server, token string) *http.Respon
 	if err != nil {
 		t.Fatalf("GET /devices: %v", err)
 	}
+	t.Cleanup(func() { resp.Body.Close() })
 	return resp
 }
 
@@ -374,6 +378,7 @@ func postDisableDevice(t *testing.T, ts *httptest.Server, token, deviceID string
 	if err != nil {
 		t.Fatalf("POST /devices/%s/disable: %v", deviceID, err)
 	}
+	t.Cleanup(func() { resp.Body.Close() })
 	return resp
 }
 
