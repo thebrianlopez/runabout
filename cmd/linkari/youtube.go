@@ -78,10 +78,10 @@ func whisperDeadlineSecs(audioDurationSecs, configSecs int) int {
 // EPIC-001 M3.
 var execYtdlpAudio = runYtdlpAudioDownload
 
-// enqueueTranscriptPushFn is the test seam for FCM transcript push delivery.
-// Replace in tests to simulate push success or failure without a real Queue.
-// EPIC-110 M1.
-var enqueueTranscriptPushFn = func(q *Queue, profile, slug, verdict, url string) error {
+// enqueueTranscriptPush is the production FCM transcript push delivery.
+// EPIC-110 M1. EPIC-258 M2: was the package var enqueueTranscriptPushFn;
+// now threaded through ytDeps.TranscriptPush.
+func enqueueTranscriptPush(q *Queue, profile, slug, verdict, url string) error {
 	return q.EnqueueTranscriptPush(profile, slug, verdict, url)
 }
 
@@ -194,6 +194,10 @@ type ytDeps struct {
 	// Whisper transcribes a WAV file. nil selects the production whisper-cli
 	// invocation. EPIC-258 M2: was package var execWhisper.
 	Whisper func(ctx context.Context, wavPath, modelPath string) (string, error)
+	// TranscriptPush delivers the FCM transcript push. nil selects the
+	// production queue-backed delivery. EPIC-258 M2: was package var
+	// enqueueTranscriptPushFn.
+	TranscriptPush func(q *Queue, profile, slug, verdict, url string) error
 }
 
 // resolve returns d with any nil field filled from production defaults.
@@ -211,6 +215,9 @@ func (d *ytDeps) resolve() *ytDeps {
 	}
 	if out.Whisper == nil {
 		out.Whisper = runWhisperCLI
+	}
+	if out.TranscriptPush == nil {
+		out.TranscriptPush = enqueueTranscriptPush
 	}
 	return &out
 }
@@ -1192,7 +1199,7 @@ txSubtitleReady:
 		)
 	}
 
-	// Step 4: FCM push via enqueueTranscriptPushFn — bypasses min-score floor
+	// Step 4: FCM push via deps.TranscriptPush — bypasses min-score floor
 	// and throttle. Emits yt_transcript_delivered on success, fcm_push_failed
 	// on error (non-fatal — vnote is stored). EPIC-110 M3.
 	if q != nil {
@@ -1201,7 +1208,7 @@ txSubtitleReady:
 		if meta.Title != "" {
 			verdict = meta.Title
 		}
-		if pushErr := enqueueTranscriptPushFn(q, profile, slug, verdict, videoURL); pushErr != nil {
+		if pushErr := deps.TranscriptPush(q, profile, slug, verdict, videoURL); pushErr != nil {
 			slog.Warn(
 				"transcribe_youtube: EnqueueTranscriptPush failed",
 				"event_type", "fcm_push_failed",

@@ -116,7 +116,7 @@ func TestAudioFallback_CT1_SemaphoreCap1(t *testing.T) {
 	installAudioDownloadStub(t)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t)
-	installPushStub(t, nil)
+	installPushStub(t, deps, nil)
 
 	var activeCount, peakActive int32
 	deps.Whisper = func(ctx context.Context, _, _ string) (string, error) {
@@ -370,7 +370,7 @@ func TestAudioFallback_CT5_SemaphoreReleasedOnError(t *testing.T) {
 	installAudioDownloadStub(t)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t)
-	installPushStub(t, nil)
+	installPushStub(t, deps, nil)
 
 	var callCount int32
 	deps.Whisper = func(_ context.Context, _, _ string) (string, error) {

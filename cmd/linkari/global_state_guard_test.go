@@ -97,7 +97,6 @@ func unexpectedKeys(found map[string]string, allowed map[string]bool) []string {
 var legacyFuncVarAllowlist = map[string]bool{
 	"awsDoctorProbeFn":         true,
 	"configRefResolverFactory": true,
-	"enqueueTranscriptPushFn":  true,
 	"execLiteCmd":              true,
 	"probeYouTubeSlotFn":       true,
 	"refreshScorerFn":          true,
@@ -111,7 +110,6 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"awsDoctorProbeFn":                true,
 	"configRefResolverFactory":        true,
 	"domainRouteOverrideEmitter":      true,
-	"enqueueTranscriptPushFn":         true,
 	"execConnectAndRead":              true,
 	"execGetRecord":                   true,
 	"execLiteCmd":                     true,

@@ -45,16 +45,15 @@ func installYtdlpTranscriptStub(t *testing.T, transcript string, meta ytVideoMet
 	return deps
 }
 
-// installPushStub overrides enqueueTranscriptPushFn; returns &called counter.
-func installPushStub(t *testing.T, returnErr error) *atomic.Int32 {
+// installPushStub sets deps.TranscriptPush; returns &called counter.
+// EPIC-258 M2: injects into the passed deps instead of a package seam.
+func installPushStub(t *testing.T, deps *ytDeps, returnErr error) *atomic.Int32 {
 	t.Helper()
 	var n atomic.Int32
-	prev := enqueueTranscriptPushFn
-	enqueueTranscriptPushFn = func(_ *Queue, _, _, _, _ string) error {
+	deps.TranscriptPush = func(_ *Queue, _, _, _, _ string) error {
 		n.Add(1)
 		return returnErr
 	}
-	t.Cleanup(func() { enqueueTranscriptPushFn = prev })
 	return &n
 }
 
@@ -85,7 +84,7 @@ func TestF3CT_EmptyTranscriptGuard(t *testing.T) {
 
 	// yt-dlp returns exit 0 with no subtitle content.
 	deps := installYtdlpTranscriptStub(t, "", ytVideoMeta{Title: "Empty", ID: "empty1", Duration: 60, SubtitleType: "auto"})
-	pushCalled := installPushStub(t, nil)
+	pushCalled := installPushStub(t, deps, nil)
 
 	req := enqueueDeliveryReq(t, q, "https://www.youtube.com/watch?v=empty1")
 	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir}, deps)
@@ -126,7 +125,7 @@ func TestF3CT_DeliveryEmitsEvent(t *testing.T) {
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installYtdlpTranscriptStub(t, "This is the transcript.", ytVideoMeta{Title: "Good Video", ID: "good1", Duration: 120, SubtitleType: "auto"})
-	pushCalled := installPushStub(t, nil)
+	pushCalled := installPushStub(t, deps, nil)
 
 	req := enqueueDeliveryReq(t, q, "https://www.youtube.com/watch?v=good1")
 	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir}, deps)
@@ -163,7 +162,7 @@ func TestF3CT_FCMFailureEmitsEvent(t *testing.T) {
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installYtdlpTranscriptStub(t, "This is the transcript.", ytVideoMeta{Title: "Push Fail", ID: "pfail1", Duration: 90, SubtitleType: "auto"})
-	pushCalled := installPushStub(t, fmt.Errorf("sqlite: table push_outbox is locked"))
+	pushCalled := installPushStub(t, deps, fmt.Errorf("sqlite: table push_outbox is locked"))
 
 	req := enqueueDeliveryReq(t, q, "https://www.youtube.com/watch?v=pfail1")
 	transcribeYouTubeAsync(req, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir}, deps)
