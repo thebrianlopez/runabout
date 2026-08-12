@@ -206,7 +206,7 @@ func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema strin
 // runClaudeHaikuVision calls the claude CLI with the Read tool enabled so it
 // can read a local image file for multimodal scoring. The prompt instructs the
 // model to read the image at imagePath and score it. EPIC-079 M3.
-var runClaudeHaikuVision = func(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
+func runClaudeHaikuVision(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
 	// EPIC-083 M2-1: score-first instruction  -  short-circuit personal photos to
 	// avoid filling the full rubric when the image has no engineered content.
 	systemPrompt += "\n\nIf the image is a personal photo (DCIM, camera roll, selfie, food, pet, scenery)" +

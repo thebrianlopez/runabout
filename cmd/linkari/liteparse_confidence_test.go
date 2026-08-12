@@ -14,7 +14,7 @@ import (
 
 // --- Helpers ---
 
-// fakeLiteCmd returns an execLiteCmd replacement controlled by the caller.
+// fakeLiteCmd returns a LiteCmdFunc stub controlled by the caller.
 // Each call to the returned func advances an internal counter; responses
 // are supplied in order. If more calls are made than responses provided,
 // the last response is repeated.
@@ -33,15 +33,13 @@ func fakeLiteCmd(responses []struct {
 	}
 }
 
-// installExecLiteCmd overrides execLiteCmd for the duration of the test.
-func installExecLiteCmd(t *testing.T, fn func(context.Context, ...string) ([]byte, error)) {
-	t.Helper()
-	prev := execLiteCmd
-	execLiteCmd = fn
-	t.Cleanup(func() { execLiteCmd = prev })
+// newLiteCmdStub returns fn as a LiteCmdFunc for explicit injection into
+// runLiteParse. EPIC-258 M2: replaces the package-level execLiteCmd swap.
+func newLiteCmdStub(fn func(context.Context, ...string) ([]byte, error)) LiteCmdFunc {
+	return fn
 }
 
-// --- CT-1: execLiteParse returns confidence from --format json output ---
+// --- CT-1: runLiteParse returns confidence from --format json output ---
 
 func TestCT1_JSONParsesConfidence(t *testing.T) {
 	// CT-1: parseLiteParseJSON correctly extracts text and confidence from a
@@ -66,7 +64,7 @@ func TestCT1_JSONParsesConfidence(t *testing.T) {
 
 func TestCT2_LowConfidenceTriggersOCRRetry(t *testing.T) {
 	calls := 0
-	installExecLiteCmd(t, fakeLiteCmd([]struct {
+	litCmd := newLiteCmdStub(fakeLiteCmd([]struct {
 		out []byte
 		err error
 	}{
@@ -74,12 +72,12 @@ func TestCT2_LowConfidenceTriggersOCRRetry(t *testing.T) {
 		{out: []byte(`{"pages":[{"text":"page1 ocr","confidence":0.8}]}`), err: nil}, // second: OCR retry
 	}, &calls))
 
-	text, conf, err := runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5})
+	text, conf, err := runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5}, litCmd)
 	if err != nil {
 		t.Fatalf("CT-2: unexpected error: %v", err)
 	}
 	if calls != 2 {
-		t.Errorf("CT-2: execLiteCmd called %d times, want 2 (OCR retry must be triggered)", calls)
+		t.Errorf("CT-2: litCmd called %d times, want 2 (OCR retry must be triggered)", calls)
 	}
 	if text != "page1 ocr" {
 		t.Errorf("CT-2: text = %q, want %q", text, "page1 ocr")
@@ -94,19 +92,19 @@ func TestCT2_LowConfidenceTriggersOCRRetry(t *testing.T) {
 func TestCT3_HighConfidenceSkipsOCRRetry(t *testing.T) {
 	// CT-3: high confidence → only ONE lit call is made.
 	calls := 0
-	installExecLiteCmd(t, fakeLiteCmd([]struct {
+	litCmd := newLiteCmdStub(fakeLiteCmd([]struct {
 		out []byte
 		err error
 	}{
 		{out: []byte(`{"pages":[{"text":"clean text","confidence":0.8}]}`), err: nil},
 	}, &calls))
 
-	_, _, err := runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5})
+	_, _, err := runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5}, litCmd)
 	if err != nil {
 		t.Fatalf("CT-3: unexpected error: %v", err)
 	}
 	if calls != 1 {
-		t.Errorf("CT-3: execLiteCmd called %d times, want 1 (no OCR retry when confidence >= threshold)", calls)
+		t.Errorf("CT-3: litCmd called %d times, want 1 (no OCR retry when confidence >= threshold)", calls)
 	}
 }
 
@@ -114,7 +112,7 @@ func TestCT3_HighConfidenceSkipsOCRRetry(t *testing.T) {
 
 func TestCT4_JSONParseFallbackToPlainText(t *testing.T) {
 	calls := 0
-	installExecLiteCmd(t, fakeLiteCmd([]struct {
+	litCmd := newLiteCmdStub(fakeLiteCmd([]struct {
 		out []byte
 		err error
 	}{
@@ -122,12 +120,12 @@ func TestCT4_JSONParseFallbackToPlainText(t *testing.T) {
 		{out: []byte(`plain text result`), err: nil}, // second: fallback --no-ocr -q
 	}, &calls))
 
-	text, conf, err := runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5})
+	text, conf, err := runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5}, litCmd)
 	if err != nil {
 		t.Fatalf("CT-4: unexpected error: %v", err)
 	}
 	if calls != 2 {
-		t.Errorf("CT-4: execLiteCmd called %d times, want 2 (JSON parse failure → fallback call)", calls)
+		t.Errorf("CT-4: litCmd called %d times, want 2 (JSON parse failure → fallback call)", calls)
 	}
 	if text != "plain text result" {
 		t.Errorf("CT-4: text = %q, want %q", text, "plain text result")
@@ -155,7 +153,7 @@ func TestCT5_EmptyPagesTriggersOCRRetry(t *testing.T) {
 
 	// CT-5b: runLiteParse triggers OCR retry when confidence == 0.0 < threshold.
 	calls := 0
-	installExecLiteCmd(t, fakeLiteCmd([]struct {
+	litCmd := newLiteCmdStub(fakeLiteCmd([]struct {
 		out []byte
 		err error
 	}{
@@ -163,23 +161,23 @@ func TestCT5_EmptyPagesTriggersOCRRetry(t *testing.T) {
 		{out: []byte(`{"pages":[{"text":"ocr text","confidence":0.7}]}`), err: nil}, // second: OCR retry
 	}, &calls))
 
-	_, _, err = runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5})
+	_, _, err = runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5}, litCmd)
 	if err != nil {
 		t.Fatalf("CT-5b: unexpected error: %v", err)
 	}
 	if calls != 2 {
-		t.Errorf("CT-5b: execLiteCmd called %d times, want 2 (empty pages → OCR retry)", calls)
+		t.Errorf("CT-5b: litCmd called %d times, want 2 (empty pages → OCR retry)", calls)
 	}
 }
 
 // --- CT-6: lit exit code 1 → error returned ---
 
 func TestCT6_LitExitErrorReturned(t *testing.T) {
-	installExecLiteCmd(t, func(_ context.Context, _ ...string) ([]byte, error) {
+	litCmd := newLiteCmdStub(func(_ context.Context, _ ...string) ([]byte, error) {
 		return nil, fmt.Errorf("exit status 1")
 	})
 
-	_, _, err := runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5})
+	_, _, err := runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.5}, litCmd)
 	if err == nil {
 		t.Error("CT-6: expected error when lit exits 1, got nil")
 	}
@@ -190,7 +188,7 @@ func TestCT6_LitExitErrorReturned(t *testing.T) {
 func TestCT7_ConfidenceThresholdConfigControlsRetry(t *testing.T) {
 	// With threshold=0.7, confidence=0.6 is below threshold → OCR retry.
 	calls := 0
-	installExecLiteCmd(t, fakeLiteCmd([]struct {
+	litCmd := newLiteCmdStub(fakeLiteCmd([]struct {
 		out []byte
 		err error
 	}{
@@ -198,12 +196,12 @@ func TestCT7_ConfidenceThresholdConfigControlsRetry(t *testing.T) {
 		{out: []byte(`{"pages":[{"text":"text ocr","confidence":0.9}]}`), err: nil},
 	}, &calls))
 
-	_, _, err := runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.7})
+	_, _, err := runLiteParse(context.Background(), "fake.pdf", LiteParseConfig{ConfidenceThreshold: 0.7}, litCmd)
 	if err != nil {
 		t.Fatalf("CT-7: unexpected error: %v", err)
 	}
 	if calls != 2 {
-		t.Errorf("CT-7: execLiteCmd called %d times, want 2 (confidence=0.6 < threshold=0.7)", calls)
+		t.Errorf("CT-7: litCmd called %d times, want 2 (confidence=0.6 < threshold=0.7)", calls)
 	}
 }
 
@@ -228,14 +226,14 @@ func TestCT8_ConfidenceIsMeanOfPageScores(t *testing.T) {
 
 func TestBT1_HighConfidenceNoOCRSubprocess(t *testing.T) {
 	calls := 0
-	installExecLiteCmd(t, fakeLiteCmd([]struct {
+	litCmd := newLiteCmdStub(fakeLiteCmd([]struct {
 		out []byte
 		err error
 	}{
 		{out: []byte(`{"pages":[{"text":"native text","confidence":0.95}]}`), err: nil},
 	}, &calls))
 
-	text, conf, err := runLiteParse(context.Background(), "native.pdf", LiteParseConfig{ConfidenceThreshold: 0.5})
+	text, conf, err := runLiteParse(context.Background(), "native.pdf", LiteParseConfig{ConfidenceThreshold: 0.5}, litCmd)
 	if err != nil {
 		t.Fatalf("BT-1: unexpected error: %v", err)
 	}
@@ -254,11 +252,9 @@ func TestBT2_ScoreAsyncWritesConfidenceToQueue(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	q := newTestQueue(t)
 
-	orig := execLiteParse
-	defer func() { execLiteParse = orig }()
-	execLiteParse = func(_ context.Context, _ string, _ LiteParseConfig) (string, float64, error) {
+	deps := &scoringDeps{LiteParse: func(_ context.Context, _ string, _ LiteParseConfig) (string, float64, error) {
 		return "extracted pdf text", 0.87, nil
-	}
+	}}
 
 	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
 	if err := os.WriteFile(audioPath, nil, 0o600); err != nil {
@@ -275,7 +271,7 @@ func TestBT2_ScoreAsyncWritesConfidenceToQueue(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	scoreAsync(req, q, &stubEvaluator{score: 60, verdict: "ok"}, nil, nil, nil, nil)
+	scoreAsync(req, q, &stubEvaluator{score: 60, verdict: "ok"}, nil, nil, nil, deps)
 
 	item, err := q.GetByID(id)
 	if err != nil {
@@ -295,11 +291,9 @@ func TestBT3_ScoreAsyncWritesNegativeOneOnFallback(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	q := newTestQueue(t)
 
-	orig := execLiteParse
-	defer func() { execLiteParse = orig }()
-	execLiteParse = func(_ context.Context, _ string, _ LiteParseConfig) (string, float64, error) {
+	deps := &scoringDeps{LiteParse: func(_ context.Context, _ string, _ LiteParseConfig) (string, float64, error) {
 		return "fallback text", -1.0, nil // -1.0 = JSON parse fallback sentinel
-	}
+	}}
 
 	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
 	if err := os.WriteFile(audioPath, nil, 0o600); err != nil {
@@ -316,7 +310,7 @@ func TestBT3_ScoreAsyncWritesNegativeOneOnFallback(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	scoreAsync(req, q, &stubEvaluator{score: 60, verdict: "ok"}, nil, nil, nil, nil)
+	scoreAsync(req, q, &stubEvaluator{score: 60, verdict: "ok"}, nil, nil, nil, deps)
 
 	item, err := q.GetByID(id)
 	if err != nil {
@@ -330,28 +324,26 @@ func TestBT3_ScoreAsyncWritesNegativeOneOnFallback(t *testing.T) {
 	}
 }
 
-// --- RG-1: Non-PDF shares do not call execLiteParse ---
+// --- RG-1: Non-PDF shares do not call LiteParse ---
 
 func TestRG1_NonPDFShareDoesNotCallLiteParse(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	liteCalled := false
-	orig := execLiteParse
-	defer func() { execLiteParse = orig }()
-	execLiteParse = func(_ context.Context, _ string, _ LiteParseConfig) (string, float64, error) {
+	deps := &scoringDeps{LiteParse: func(_ context.Context, _ string, _ LiteParseConfig) (string, float64, error) {
 		liteCalled = true
 		return "", 0, errors.New("should not be called")
-	}
+	}}
 
 	req := &ShareRequest{
 		Type:    "url",
 		Profile: "eng",
 		URL:     "https://example.com/rg1",
 	}
-	scoreAsync(req, nil, &stubEvaluator{score: 70, verdict: "ok"}, nil, nil, nil, nil)
+	scoreAsync(req, nil, &stubEvaluator{score: 70, verdict: "ok"}, nil, nil, nil, deps)
 
 	if liteCalled {
-		t.Error("RG-1: execLiteParse was called for a non-document share")
+		t.Error("RG-1: LiteParse was called for a non-document share")
 	}
 }
 
@@ -359,7 +351,7 @@ func TestRG1_NonPDFShareDoesNotCallLiteParse(t *testing.T) {
 
 func TestRG2_PlainTextFallbackProducesExtractedText(t *testing.T) {
 	calls := 0
-	installExecLiteCmd(t, fakeLiteCmd([]struct {
+	litCmd := newLiteCmdStub(fakeLiteCmd([]struct {
 		out []byte
 		err error
 	}{
@@ -367,7 +359,7 @@ func TestRG2_PlainTextFallbackProducesExtractedText(t *testing.T) {
 		{out: []byte(`extracted content`), err: nil}, // second: fallback --no-ocr -q
 	}, &calls))
 
-	text, conf, err := runLiteParse(context.Background(), "file.pdf", LiteParseConfig{ConfidenceThreshold: 0.5})
+	text, conf, err := runLiteParse(context.Background(), "file.pdf", LiteParseConfig{ConfidenceThreshold: 0.5}, litCmd)
 	if err != nil {
 		t.Fatalf("RG-2: unexpected error: %v", err)
 	}

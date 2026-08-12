@@ -1318,7 +1318,7 @@ func TestScoreAsync_PDFTranscriptSaved(t *testing.T) {
 
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
-	installLiteParseStub(t, "Extracted PDF text content", 0.9, nil)
+	liteParse := liteParseStub("Extracted PDF text content", 0.9, nil)
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -1335,7 +1335,7 @@ func TestScoreAsync_PDFTranscriptSaved(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 75, verdict: "Interesting document"}
-	runScoreFileAsyncSync(t, req, q, eval, &scoringDeps{TranscriptsDir: transcriptDir})
+	runScoreFileAsyncSync(t, req, q, eval, &scoringDeps{TranscriptsDir: transcriptDir, LiteParse: liteParse})
 
 	// Match the exact filename: {date}_pdf_{id}_report.md.
 	// Glob on the row ID + base name to avoid picking up stale files from
@@ -1479,7 +1479,7 @@ func TestScoreAsync_Document_LiteParse(t *testing.T) {
 		t.Fatalf("write temp: %v", err)
 	}
 
-	installLiteParseStub(t, "Interesting content about machine learning and transformers.", 0.9, nil)
+	liteParse := liteParseStub("Interesting content about machine learning and transformers.", 0.9, nil)
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -1498,7 +1498,9 @@ func TestScoreAsync_Document_LiteParse(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 75, verdict: "Interesting ML paper"}
-	runScoreFileAsyncSync(t, req, q, eval, newTestDeps(t))
+	deps := newTestDeps(t)
+	deps.LiteParse = liteParse
+	runScoreFileAsyncSync(t, req, q, eval, deps)
 
 	if calls := atomic.LoadInt32(&eval.calls); calls != 1 {
 		t.Errorf("eval.calls = %d, want 1", calls)
@@ -1535,7 +1537,7 @@ func TestScoreAsync_Document_EmptyText(t *testing.T) {
 		t.Fatalf("write temp: %v", err)
 	}
 
-	installLiteParseStub(t, "", 0.0, nil)
+	liteParse := liteParseStub("", 0.0, nil)
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -1555,7 +1557,7 @@ func TestScoreAsync_Document_EmptyText(t *testing.T) {
 	req.QueueRowID = id
 
 	eval := &stubEvaluator{score: 60, verdict: "Paper on transformers"}
-	runScoreFileAsyncSync(t, req, q, eval, &scoringDeps{TranscriptsDir: transcriptDir})
+	runScoreFileAsyncSync(t, req, q, eval, &scoringDeps{TranscriptsDir: transcriptDir, LiteParse: liteParse})
 
 	if calls := atomic.LoadInt32(&eval.calls); calls != 1 {
 		t.Errorf("eval.calls = %d, want 1 (metadata synthesis should reach eval)", calls)

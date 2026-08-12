@@ -187,6 +187,10 @@ type scoringDeps struct {
 	// the production ffmpeg invocation. EPIC-258 M2: was package var
 	// execFfmpegSegment.
 	FfmpegSegment func(ctx context.Context, wavPath string, chunkSeconds int) ([]string, error)
+	// LiteParse extracts text from a document via the lit CLI. nil selects the
+	// production invocation. EPIC-258 M2: was package var execLiteParse, which
+	// tests swapped while scoreAsync goroutines read it.
+	LiteParse func(ctx context.Context, path string, cfg LiteParseConfig) (string, float64, error)
 }
 
 // defaultTranscriptsDir is the transcript location used when ServerConfig
@@ -236,6 +240,9 @@ func (d *scoringDeps) resolve() *scoringDeps {
 	}
 	if out.FfmpegSegment == nil {
 		out.FfmpegSegment = runFfmpegSegment
+	}
+	if out.LiteParse == nil {
+		out.LiteParse = defaultLiteParse
 	}
 	return &out
 }
@@ -292,15 +299,20 @@ func runFfmpegConvert(ctx context.Context, inputPath, outputPath string) error {
 	return nil
 }
 
-// execLiteCmd is the injectable subprocess runner for the lit binary.
-// Tests override this to avoid real subprocess invocation.
-var execLiteCmd = func(ctx context.Context, args ...string) ([]byte, error) {
+// LiteCmdFunc runs the lit binary. EPIC-258 M2: threaded as an explicit
+// parameter so tests never swap a package-level seam.
+type LiteCmdFunc func(ctx context.Context, args ...string) ([]byte, error)
+
+// runLiteCmd is the production subprocess runner for the lit binary.
+func runLiteCmd(ctx context.Context, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, liteparseBinaryPath, args...).Output()
 }
 
-// execLiteParse is the function var for extracting text from documents via LiteParse.
-// Tests override this to avoid real lit invocation.
-var execLiteParse = runLiteParse
+// defaultLiteParse extracts text from documents via LiteParse using the real
+// lit binary. EPIC-258 M2: was the package var execLiteParse.
+func defaultLiteParse(ctx context.Context, path string, cfg LiteParseConfig) (string, float64, error) {
+	return runLiteParse(ctx, path, cfg, nil)
+}
 
 // liteParseConfig holds the active confidence threshold. Initialized to the
 // default 0.5; overwritten by initClaudeConfig at startup. EPIC-104.
@@ -345,13 +357,17 @@ func parseLiteParseJSON(data []byte) (string, float64, int, error) {
 // Calls --format json --no-ocr first; retries with OCR when confidence < threshold.
 // Falls back to plain-text --no-ocr mode if JSON parsing fails.
 // Returns (text, confidence, error); confidence == -1.0 signals JSON parse fallback.
-func runLiteParse(ctx context.Context, path string, cfg LiteParseConfig) (string, float64, error) {
+// litCmd may be nil, selecting the production lit invocation.
+func runLiteParse(ctx context.Context, path string, cfg LiteParseConfig, litCmd LiteCmdFunc) (string, float64, error) {
 	threshold := cfg.ConfidenceThreshold
 	if threshold <= 0 {
 		threshold = 0.5
 	}
+	if litCmd == nil {
+		litCmd = runLiteCmd
+	}
 
-	out, err := execLiteCmd(ctx, "parse", "--format", "json", "--no-ocr", path)
+	out, err := litCmd(ctx, "parse", "--format", "json", "--no-ocr", path)
 	if err != nil {
 		return "", 0.0, fmt.Errorf("lit parse: %w", err)
 	}
@@ -364,7 +380,7 @@ func runLiteParse(ctx context.Context, path string, cfg LiteParseConfig) (string
 			"event_type", "pdf_extraction_json_fallback",
 			"parse_error", parseErr,
 		)
-		out2, err2 := execLiteCmd(ctx, "parse", "--no-ocr", "-q", path)
+		out2, err2 := litCmd(ctx, "parse", "--no-ocr", "-q", path)
 		if err2 != nil {
 			return "", 0.0, fmt.Errorf("lit parse (fallback): %w", err2)
 		}
@@ -379,7 +395,7 @@ func runLiteParse(ctx context.Context, path string, cfg LiteParseConfig) (string
 			"confidence_before_ocr", confidence,
 		)
 		ocrRetry = true
-		out3, err3 := execLiteCmd(ctx, "parse", "--format", "json", path)
+		out3, err3 := litCmd(ctx, "parse", "--format", "json", path)
 		if err3 == nil {
 			if t3, c3, pc3, pe3 := parseLiteParseJSON(out3); pe3 == nil {
 				text, confidence, pageCount = t3, c3, pc3
@@ -561,7 +577,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	isURLShare := req.Type == "url"
 	rawURL := req.URL
 	profile := req.Profile
-	var contentWarning string // EPIC-102: set to "lit_parse_failed" on execLiteParse error
+	var contentWarning string // EPIC-102: set to "lit_parse_failed" on LiteParse error
 
 	// Screenshot detection  -  unconditional, orthogonal to profile assignment.
 	detectScreenshot(req)
@@ -803,7 +819,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	} else {
 		// type=document → lit parse text extraction, metadata fallback.
 		if req.Type == "document" {
-			text, confidence, err := execLiteParse(ctx, req.AudioPath, liteParseConfig)
+			text, confidence, err := deps.LiteParse(ctx, req.AudioPath, liteParseConfig)
 			if err != nil {
 				slog.Warn(
 					"score_async: pdf text extraction failed",

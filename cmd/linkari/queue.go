@@ -812,7 +812,7 @@ func (q *Queue) EnqueueAudioRetry(id int64, retryCount int) error {
 }
 
 // SetContentWarning writes the content_warning field on a queue row.
-// Called by scoreAsync when execLiteParse returns an error (EPIC-102).
+// Called by scoreAsync when LiteParse returns an error (EPIC-102).
 func (q *Queue) SetContentWarning(id int64, warning string) error {
 	_, err := q.db.Exec("UPDATE queue SET content_warning=? WHERE id=?", warning, id)
 	return err
@@ -820,7 +820,7 @@ func (q *Queue) SetContentWarning(id int64, warning string) error {
 
 // SetExtractionConfidence writes the mean per-page extraction confidence to a
 // queue row. confidence==-1.0 signals JSON parse fallback; NULL (not written)
-// means non-PDF or pre-feature. Called by scoreAsync after execLiteParse. EPIC-104.
+// means non-PDF or pre-feature. Called by scoreAsync after LiteParse. EPIC-104.
 func (q *Queue) SetExtractionConfidence(id int64, confidence float64) error {
 	_, err := q.db.Exec("UPDATE queue SET extraction_confidence=? WHERE id=?", confidence, id)
 	return err

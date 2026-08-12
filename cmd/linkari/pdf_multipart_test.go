@@ -42,12 +42,13 @@ func buildPDFMultipart(t *testing.T, action, filename string, fileSize int, with
 func TestHandleShare_ExifData_HandledWithoutError(t *testing.T) {
 	// EPIC-107 M2: multipart body with exif_data field → server accepts, 200 OK.
 	// The field is drained and logged at DEBUG level; no 400 or 500 response.
-	installLiteParseStub(t, "pdf text", 0.9, nil)
+	liteParse := liteParseStub("pdf text", 0.9, nil)
 	stubBackend := installHaikuJSONStub(t)
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
 	router.SetScoringBackend(stubBackend)
+	router.SetScoringDepsMutator(func(d *scoringDeps) { d.LiteParse = liteParse })
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 
@@ -77,12 +78,13 @@ func installHaikuJSONStub(t *testing.T) ScoringBackend {
 
 func TestHandleShare_PDF_Multipart(t *testing.T) {
 	// Asserts: HTTP 200, queue row with type="document" and mime_type="application/pdf".
-	installLiteParseStub(t, "some extracted pdf text", 0.9, nil)
+	liteParse := liteParseStub("some extracted pdf text", 0.9, nil)
 	stubBackend := installHaikuJSONStub(t)
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
 	router.SetScoringBackend(stubBackend)
+	router.SetScoringDepsMutator(func(d *scoringDeps) { d.LiteParse = liteParse })
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 
@@ -137,12 +139,13 @@ func TestHandleShare_PDF_Multipart(t *testing.T) {
 func TestHandleShare_PDF_Dedup(t *testing.T) {
 	// Asserts: second identical PDF (same filename + file_size) within 5-minute
 	// window returns duplicate=true and HTTP 200.
-	installLiteParseStub(t, "some pdf text", 0.9, nil)
+	liteParse := liteParseStub("some pdf text", 0.9, nil)
 	stubBackend := installHaikuJSONStub(t)
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
 	router.SetScoringBackend(stubBackend)
+	router.SetScoringDepsMutator(func(d *scoringDeps) { d.LiteParse = liteParse })
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
 

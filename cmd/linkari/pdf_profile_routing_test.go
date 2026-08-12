@@ -75,7 +75,7 @@ func TestCT3_NonPDF_FinanceCategory_Unchanged(t *testing.T) {
 
 func TestCT4_ContentTypePDF_PrependedForDocument(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	installLiteParseStub(t, "extracted pdf text about finance and invoices", 0.9, nil)
+	liteParse := liteParseStub("extracted pdf text about finance and invoices", 0.9, nil)
 
 	cap := &captureEval{}
 	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
@@ -88,7 +88,7 @@ func TestCT4_ContentTypePDF_PrependedForDocument(t *testing.T) {
 		MimeType:  "application/pdf",
 		AudioPath: audioPath,
 	}
-	scoreAsync(req, nil, cap, nil, nil, nil, nil)
+	scoreAsync(req, nil, cap, nil, nil, nil, &scoringDeps{LiteParse: liteParse})
 
 	if !strings.HasPrefix(cap.prompt, ContentTypePDF) {
 		prefix := cap.prompt
@@ -219,12 +219,13 @@ func TestRG3_BareNoteAction_PDFShare_RoutesOK(t *testing.T) {
 	// ServeHTTP writes to a temp dir rather than the real transcripts directory.
 	transcriptDir := t.TempDir()
 
-	installLiteParseStub(t, "extracted pdf text", 0.9, nil)
+	liteParse := liteParseStub("extracted pdf text", 0.9, nil)
 	stubBackend := installHaikuJSONStub(t)
 
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
 	router.SetScoringBackend(stubBackend)
+	router.SetScoringDepsMutator(func(d *scoringDeps) { d.LiteParse = liteParse })
 	router.SetServerConfig(&ServerConfig{TranscriptsDir: transcriptDir})
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)

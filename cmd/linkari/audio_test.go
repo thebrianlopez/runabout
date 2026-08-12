@@ -96,14 +96,13 @@ func installWhisperStub(t *testing.T, transcript string, err error) func(context
 	}
 }
 
-// installLiteParseStub overrides execLiteParse for the duration of the test.
-func installLiteParseStub(t *testing.T, text string, confidence float64, err error) {
-	t.Helper()
-	prev := execLiteParse
-	execLiteParse = func(_ context.Context, _ string, _ LiteParseConfig) (string, float64, error) {
+// liteParseStub returns a scoringDeps.LiteParse replacement returning fixed
+// values. EPIC-258 M2: callers inject it via scoringDeps.LiteParse or
+// Router.SetScoringDepsMutator instead of swapping a package var.
+func liteParseStub(text string, confidence float64, err error) func(context.Context, string, LiteParseConfig) (string, float64, error) {
+	return func(_ context.Context, _ string, _ LiteParseConfig) (string, float64, error) {
 		return text, confidence, err
 	}
-	t.Cleanup(func() { execLiteParse = prev })
 }
 
 // --- helper: run scoreAudioAsync synchronously ------------------------------

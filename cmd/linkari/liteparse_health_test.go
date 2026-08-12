@@ -78,18 +78,16 @@ func TestCT4_HealthOKWhenBothPresent(t *testing.T) {
 	}
 }
 
-// --- CT-5: scoreAsync sets content_warning on queue row when execLiteParse errors ---
+// --- CT-5: scoreAsync sets content_warning on queue row when LiteParse errors ---
 
 func TestCT5_ContentWarningSetOnLiteParseFailure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	q := newTestQueue(t)
 
-	// Override execLiteParse to simulate failure.
-	orig := execLiteParse
-	defer func() { execLiteParse = orig }()
-	execLiteParse = func(ctx context.Context, path string, cfg LiteParseConfig) (string, float64, error) {
+	// Inject a LiteParse stub that simulates failure.
+	deps := &scoringDeps{LiteParse: func(ctx context.Context, path string, cfg LiteParseConfig) (string, float64, error) {
 		return "", 0.0, errors.New("lit parse: exit status 1")
-	}
+	}}
 
 	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
 	if err := os.WriteFile(audioPath, nil, 0o600); err != nil {
@@ -107,7 +105,7 @@ func TestCT5_ContentWarningSetOnLiteParseFailure(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	scoreAsync(req, q, &stubEvaluator{score: 50, verdict: "ok"}, nil, nil, nil, nil)
+	scoreAsync(req, q, &stubEvaluator{score: 50, verdict: "ok"}, nil, nil, nil, deps)
 
 	item, err := q.GetByID(id)
 	if err != nil {
@@ -118,17 +116,15 @@ func TestCT5_ContentWarningSetOnLiteParseFailure(t *testing.T) {
 	}
 }
 
-// --- CT-7: scoreAsync does NOT set content_warning when execLiteParse succeeds ---
+// --- CT-7: scoreAsync does NOT set content_warning when LiteParse succeeds ---
 
 func TestCT7_ContentWarningEmptyOnSuccess(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	q := newTestQueue(t)
 
-	orig := execLiteParse
-	defer func() { execLiteParse = orig }()
-	execLiteParse = func(ctx context.Context, path string, cfg LiteParseConfig) (string, float64, error) {
+	deps := &scoringDeps{LiteParse: func(ctx context.Context, path string, cfg LiteParseConfig) (string, float64, error) {
 		return "some extracted text", 0.9, nil
-	}
+	}}
 
 	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
 	if err := os.WriteFile(audioPath, nil, 0o600); err != nil {
@@ -145,7 +141,7 @@ func TestCT7_ContentWarningEmptyOnSuccess(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	scoreAsync(req, q, &stubEvaluator{score: 50, verdict: "ok"}, nil, nil, nil, nil)
+	scoreAsync(req, q, &stubEvaluator{score: 50, verdict: "ok"}, nil, nil, nil, deps)
 
 	item, err := q.GetByID(id)
 	if err != nil {
@@ -351,11 +347,9 @@ func TestRG1_SuccessfulPDFDoesNotSetContentWarning(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	q := newTestQueue(t)
 
-	orig := execLiteParse
-	defer func() { execLiteParse = orig }()
-	execLiteParse = func(ctx context.Context, path string, cfg LiteParseConfig) (string, float64, error) {
+	deps := &scoringDeps{LiteParse: func(ctx context.Context, path string, cfg LiteParseConfig) (string, float64, error) {
 		return "page 1 content", 0.9, nil // successful extraction
-	}
+	}}
 
 	audioPath := filepath.Join(t.TempDir(), "audio-placeholder")
 	if err := os.WriteFile(audioPath, nil, 0o600); err != nil {
@@ -372,7 +366,7 @@ func TestRG1_SuccessfulPDFDoesNotSetContentWarning(t *testing.T) {
 	}
 	req.QueueRowID = id
 
-	scoreAsync(req, q, &stubEvaluator{score: 70, verdict: "Worth saving"}, nil, nil, nil, nil)
+	scoreAsync(req, q, &stubEvaluator{score: 70, verdict: "Worth saving"}, nil, nil, nil, deps)
 
 	item, err := q.GetByID(id)
 	if err != nil {
