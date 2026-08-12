@@ -191,7 +191,8 @@ func assertScoringLog(t *testing.T, cap *scoringLogCapture, method, backend, err
 
 var _ io.Reader
 
-// RG-3: backend attribution must be single-sourced from activeScoringBackend.
+// RG-3: backend attribution must be single-sourced from the evaluator's
+// threaded ScoringBackend dependency.
 //
 // POMO scoring-backend-attribution-split-brain. Evaluator labels were
 // compile-time constants ("claude-haiku-json") that kept reporting Claude after
@@ -199,26 +200,23 @@ var _ io.Reader
 // and Scorecard.Backend disagreed with the scoring_call telemetry. The fake
 // backend is deliberately named "fake" — any hardcoded claude* constant fails
 // this test by construction.
-func TestRG3_BackendAttributionMatchesActiveBackend(t *testing.T) {
-	prev := activeScoringBackend
-	t.Cleanup(func() { activeScoringBackend = prev })
-	activeScoringBackend = fakeScoringBackend{}
-
+func TestRG3_BackendAttributionMatchesThreadedBackend(t *testing.T) {
+	backend := fakeScoringBackend{}
 	cases := []struct {
 		name string
 		got  string
 		want string
 	}{
-		{"markdown evaluator", HaikuMarkdownEvaluator{}.Name(), "fake:md"},
-		{"json evaluator", HaikuJSONEvaluator{}.Name(), "fake:json"},
-		{"vision evaluator", HaikuVisionEvaluator{}.Name(), "fake:vision"},
+		{"markdown evaluator", HaikuMarkdownEvaluator{Backend: backend}.Name(), "fake:md"},
+		{"json evaluator", HaikuJSONEvaluator{Backend: backend}.Name(), "fake:json"},
+		{"vision evaluator", HaikuVisionEvaluator{Backend: backend}.Name(), "fake:vision"},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
-			t.Errorf("%s: Name() = %q, want %q (attribution must resolve from activeScoringBackend)", tc.name, tc.got, tc.want)
+			t.Errorf("%s: Name() = %q, want %q (attribution must resolve from threaded backend)", tc.name, tc.got, tc.want)
 		}
 		if strings.Contains(tc.got, "claude") {
-			t.Errorf("%s: Name() = %q leaks a hardcoded claude label while backend is %q", tc.name, tc.got, activeScoringBackend.Name())
+			t.Errorf("%s: Name() = %q leaks a hardcoded claude label", tc.name, tc.got)
 		}
 	}
 }

@@ -113,7 +113,6 @@ var legacyFuncVarAllowlist = map[string]bool{
 }
 
 var legacyTestGlobalWriteAllowlist = map[string]bool{
-	"activeScoringBackend":            true,
 	"archiveThresholdCfg":             true,
 	"awsDoctorProbeFn":                true,
 	"configRefResolverFactory":        true,
