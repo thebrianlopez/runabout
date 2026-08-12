@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Real-fixture markdown shape captured from M1 corpus
@@ -211,12 +212,9 @@ func TestLoadProfileTemplate_Missing(t *testing.T) {
 
 func TestWriteScoreSidecar(t *testing.T) {
 	ws := t.TempDir()
-	// Pin nowRFC3339UTC for byte-level determinism.
-	orig := nowRFC3339UTC
-	defer func() { nowRFC3339UTC = orig }()
-	nowRFC3339UTC = func() string { return "2026-04-06T12:00:00Z" }
+	scoredAt := time.Date(2026, 4, 6, 12, 0, 0, 0, time.UTC)
 
-	if err := writeScoreSidecar(ws, 73, "looks fine", "my-slug", "eng", "https://example.com", nil); err != nil {
+	if err := writeScoreSidecarAt(ws, 73, "looks fine", "my-slug", "eng", "https://example.com", nil, scoredAt); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(ws, "_score.json"))

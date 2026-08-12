@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // canonicalVerdict is the snapshot fixture used by RenderMarkdown +
@@ -298,9 +299,7 @@ func TestHaikuVerdictWithRepair_ExecError(t *testing.T) {
 // never accidentally rename or drop a v1 key.
 func TestWriteScoreSidecar_Additive(t *testing.T) {
 	ws := t.TempDir()
-	orig := nowRFC3339UTC
-	defer func() { nowRFC3339UTC = orig }()
-	nowRFC3339UTC = func() string { return "2026-04-07T10:14:45Z" }
+	scoredAt := time.Date(2026, 4, 7, 10, 14, 45, 0, time.UTC)
 
 	extras := &sidecarExtras{
 		SchemaVersion:  "triage_verdict_v1",
@@ -309,7 +308,7 @@ func TestWriteScoreSidecar_Additive(t *testing.T) {
 			"Novelty": 14,
 		},
 	}
-	if err := writeScoreSidecar(ws, 52, "looks fine", "slug-x", "eng", "https://example.com", extras); err != nil {
+	if err := writeScoreSidecarAt(ws, 52, "looks fine", "slug-x", "eng", "https://example.com", extras, scoredAt); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -355,11 +354,9 @@ func TestWriteScoreSidecar_Additive(t *testing.T) {
 // but downstream consumers might be stricter).
 func TestWriteScoreSidecar_NilExtras_NoLeakage(t *testing.T) {
 	ws := t.TempDir()
-	orig := nowRFC3339UTC
-	defer func() { nowRFC3339UTC = orig }()
-	nowRFC3339UTC = func() string { return "2026-04-07T10:14:45Z" }
+	scoredAt := time.Date(2026, 4, 7, 10, 14, 45, 0, time.UTC)
 
-	if err := writeScoreSidecar(ws, 10, "v", "s", "p", "u", nil); err != nil {
+	if err := writeScoreSidecarAt(ws, 10, "v", "s", "p", "u", nil, scoredAt); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(ws, "_score.json"))

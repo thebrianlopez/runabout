@@ -893,6 +893,10 @@ type sidecarExtras struct {
 // _uinit_profile_prompt.fish lines 138-145, plus optional additive fields
 // (schema_version, profile_version, rubric_scores) when extras is non-nil.
 func writeScoreSidecar(workspace string, score int, verdict, slug, profile, url string, extras *sidecarExtras) error {
+	return writeScoreSidecarAt(workspace, score, verdict, slug, profile, url, extras, time.Now().UTC())
+}
+
+func writeScoreSidecarAt(workspace string, score int, verdict, slug, profile, url string, extras *sidecarExtras, scoredAt time.Time) error {
 	type payloadV1 struct {
 		Score    int    `json:"score"`
 		Verdict  string `json:"verdict"`
@@ -911,7 +915,7 @@ func writeScoreSidecar(workspace string, score int, verdict, slug, profile, url 
 		Slug:     slug,
 		Profile:  profile,
 		URL:      url,
-		ScoredAt: nowRFC3339UTC(),
+		ScoredAt: scoredAt.UTC().Format(time.RFC3339),
 	}
 	var b []byte
 	var err error
@@ -938,11 +942,6 @@ func appendTriageToReadme(workspace, raw string) error {
 	defer f.Close()
 	_, err = fmt.Fprintf(f, "\n---\n\n%s\n", raw)
 	return err
-}
-
-// nowRFC3339UTC is split out so tests can stub the timestamp.
-var nowRFC3339UTC = func() string {
-	return time.Now().UTC().Format(time.RFC3339)
 }
 
 // --- Eval harness wiring ---
