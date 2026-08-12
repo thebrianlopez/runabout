@@ -770,7 +770,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// start: a deterministic precondition failure must not degrade
 			// into per-row silent drops at scoring time.
 			if cerr := ValidateProfileClosure(); cerr != nil {
-				slog.Error("profile closure violation — refusing to serve",
+				slog.Error(
+					"profile closure violation — refusing to serve",
 					"event_type", "profile_closure_violation",
 					"error", cerr,
 				)

@@ -791,7 +791,8 @@ func (q *Queue) MarkFailedWithReason(id int64, reason string) error {
 		"UPDATE queue SET status='failed', error_reason=? WHERE id=?",
 		reason, id,
 	)
-	slog.Error("queue row terminal failure",
+	slog.Error(
+		"queue row terminal failure",
 		"event_type", "row_terminal_failure",
 		"row_id", id,
 		"reason", reason,
