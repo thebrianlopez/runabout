@@ -2652,9 +2652,12 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 			"error", scoreErr,
 		)
 		// Fallback: try vnote_triage directly.
-		_, scoreSysPrompt, scoreErr = loadProfileTemplateForModeJSON("vnote_triage", "audio")
+		_, scoreSysPrompt, scoreErr = loadProfileTemplateForModeJSON(ProfileVnoteTriage, "audio")
 		if scoreErr != nil {
-			slog.Warn(
+			// EPIC-264 M5: deterministic precondition failure → ERROR
+			// (telemetry contract; was WARN). Startup closure assertion
+			// makes this unreachable in a correctly built binary.
+			slog.Error(
 				"score_audio: vnote_triage fallback template also missing",
 				"event_type", "score_audio_double_template_miss",
 				"row_id", rowID,
@@ -2701,55 +2704,58 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	// Step 6: synopsis generation via Haiku (decoupled from score).
 	// EPIC-071 M2: uses execHaiku directly for plain text output.
 	// Synopsis is used for FCM notification body, not scoring.
-	_, synopsisSysPrompt, err := loadProfileTemplateJSON("vnote_synopsis")
+	_, synopsisSysPrompt, err := loadProfileTemplateJSON(ProfileVnoteSynopsis)
+	var synopsis string
 	if err != nil {
-		slog.Warn(
-			"score_audio: load vnote_synopsis template failed",
+		// EPIC-264 M5: handling inversion fix. A missing synopsis template
+		// (deterministic precondition) was terminal at WARN while a failed
+		// LLM call (probabilistic) degraded gracefully 30 lines below —
+		// backwards. Now: ERROR (deterministic → ERROR contract) and
+		// degrade exactly like the LLM-failure path: persist rubric score,
+		// empty synopsis, still archive and push. The row must never be
+		// silently dropped over a notification garnish.
+		slog.Error(
+			"score_audio: load vnote_synopsis template failed, degrading to empty synopsis",
 			"event_type", "score_audio_template_error",
 			"row_id", rowID,
 			"error", err,
 		)
-		if q != nil {
-			q.MarkFailedWithReason(rowID, "template_load_failed")
-		}
-		return
-	}
-
-	// Replace {{transcript}} placeholder with actual transcript in the prompt.
-	synopsisSysPrompt = strings.Replace(synopsisSysPrompt, "{{transcript}}", transcript, 1)
-
-	if q != nil {
-		q.SetProgress(rowID, "summarizing")
-	}
-
-	// EPIC-088 M1: per-step timeout  -  30s for synopsis. Use execHaikuSynopsisJSON
-	// (--output-format json + --json-schema) for persona isolation: structured
-	// output mode prevents CLAUDE.md context from polluting a free-form response.
-	synopsisCtx, synopsisCancel := context.WithTimeout(ctx, 30*time.Second)
-	synopsisRaw, synopsisErr := backendCompleteJSON(synopsisCtx, deps.Backend, synopsisSysPrompt, transcript, voiceNoteSynopsisSchema)
-	synopsisCancel()
-
-	var synopsis string
-	if synopsisErr != nil {
-		slog.Warn(
-			"score_audio: synopsis failed, persisting rubric score with empty synopsis",
-			"event_type", "score_audio_synopsis_error",
-			"row_id", rowID,
-			"score", audioScore,
-			"verdict", audioVerdict,
-			"error", synopsisErr,
-		)
 	} else {
-		parsed, _, parseErr := parseSynopsisFromEnvelope(synopsisRaw)
-		if parseErr != nil {
+		// Replace {{transcript}} placeholder with actual transcript in the prompt.
+		synopsisSysPrompt = strings.Replace(synopsisSysPrompt, "{{transcript}}", transcript, 1)
+
+		if q != nil {
+			q.SetProgress(rowID, "summarizing")
+		}
+
+		// EPIC-088 M1: per-step timeout  -  30s for synopsis. Use execHaikuSynopsisJSON
+		// (--output-format json + --json-schema) for persona isolation: structured
+		// output mode prevents CLAUDE.md context from polluting a free-form response.
+		synopsisCtx, synopsisCancel := context.WithTimeout(ctx, 30*time.Second)
+		synopsisRaw, synopsisErr := backendCompleteJSON(synopsisCtx, deps.Backend, synopsisSysPrompt, transcript, voiceNoteSynopsisSchema)
+		synopsisCancel()
+
+		if synopsisErr != nil {
 			slog.Warn(
-				"score_audio: synopsis parse failed",
-				"event_type", "score_audio_synopsis_parse_error",
+				"score_audio: synopsis failed, persisting rubric score with empty synopsis",
+				"event_type", "score_audio_synopsis_error",
 				"row_id", rowID,
-				"error", parseErr,
+				"score", audioScore,
+				"verdict", audioVerdict,
+				"error", synopsisErr,
 			)
 		} else {
-			synopsis = parsed
+			parsed, _, parseErr := parseSynopsisFromEnvelope(synopsisRaw)
+			if parseErr != nil {
+				slog.Warn(
+					"score_audio: synopsis parse failed",
+					"event_type", "score_audio_synopsis_parse_error",
+					"row_id", rowID,
+					"error", parseErr,
+				)
+			} else {
+				synopsis = parsed
+			}
 		}
 	}
 

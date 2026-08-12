@@ -783,10 +783,18 @@ func (q *Queue) UpdateFailedVerdict(id int64, verdict string) error {
 
 // MarkFailedWithReason sets status=failed and records an error_reason.
 // EPIC-054 M3: used by the relayed-state watchdog to classify timeouts.
+// EPIC-264 M5: emits its own centralized structured ERROR — a row reaching
+// terminal failure is the most important operational fact in the pipeline
+// and previously had zero log presence (silent DB write).
 func (q *Queue) MarkFailedWithReason(id int64, reason string) error {
 	_, err := q.db.Exec(
 		"UPDATE queue SET status='failed', error_reason=? WHERE id=?",
 		reason, id,
+	)
+	slog.Error("queue row terminal failure",
+		"event_type", "row_terminal_failure",
+		"row_id", id,
+		"reason", reason,
 	)
 	return err
 }

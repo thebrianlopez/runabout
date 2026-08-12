@@ -5,7 +5,7 @@ import (
 	"io/fs"
 )
 
-//go:embed profiles/*.yaml
+//go:embed profiles/*.yaml profiles/*.md
 var embeddedProfiles embed.FS
 
 func EmbeddedProfileFS() fs.FS {

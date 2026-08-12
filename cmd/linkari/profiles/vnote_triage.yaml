@@ -1,0 +1,49 @@
+# EPIC-264 M1: embedded fallback for the voice-note audio rubric-scoring
+# path (server_score.go score_audio Step 5). Before this embed existed, a
+# fresh host with no user-tier profiles silently dropped voice-note FCM
+# notifications (Instance 3 of the profile-resolution failure class).
+id: vnote_triage
+version: 1
+schema_version: triage_verdict_v1
+content_modes:
+  - audio
+persona_intro: "You are a voice-note triage assistant. You evaluate a transcribed voice note the user recorded for themselves."
+noise_gate:
+  min_chars: 20
+  skip_label: "too short to evaluate"
+persona_body: |
+  ## Task
+  The content is a transcript of a voice note the user recorded. Voice notes
+  are first-person, informal, and often contain reminders, ideas, or tasks
+  the user wants to act on later. Evaluate the note on its usefulness to the
+  user's future self, not on production quality.
+verdict_prompt: "what is this voice note about, and what should the user do with it?"
+rubric:
+  - name: Clarity
+    weight: 20
+    rationale: "Is the intent of the note understandable from the transcript alone?"
+  - name: Actionability
+    weight: 25
+    rationale: "Does the note imply a concrete task, reminder, or next step?"
+  - name: Novelty
+    weight: 20
+    rationale: "Does the note capture a new idea or information not already obvious?"
+  - name: Urgency
+    weight: 15
+    rationale: "Is timing a factor  -  deadline, appointment, or time-sensitive follow-up?"
+  - name: Topic Match
+    weight: 20
+    rationale: "Is the note relevant to the user's ongoing projects or interests?"
+action_items:
+  count: "1-3"
+  horizon_days: 3
+  examples:
+    - "add reminder"
+    - "follow up"
+    - "capture idea in notes"
+key_facts:
+  count: "2-4"
+  intro: "key facts:"
+  focus:
+    - "the main subject of the note"
+    - "any explicit task or deadline mentioned"

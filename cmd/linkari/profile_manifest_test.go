@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -404,6 +405,15 @@ func TestEmbeddedProfilesLoadAndRender(t *testing.T) {
 			b, err := fs.ReadFile(eFS, name)
 			if err != nil {
 				t.Fatalf("ReadFile %s: %v", name, err)
+			}
+			// EPIC-264 M1: raw .md prompts (e.g. vnote_synopsis.md) are not
+			// YAML manifests — they only need to be non-empty. Demand-side
+			// coverage lives in TestProfileClosureEmbeddedSupply.
+			if strings.HasSuffix(name, ".md") {
+				if len(bytes.TrimSpace(b)) == 0 {
+					t.Fatalf("embedded %s is empty", name)
+				}
+				return
 			}
 			m, err := LoadProfileManifestBytes(b, "embedded:"+name)
 			if err != nil {

@@ -760,6 +760,22 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			slog.Info("queue enabled", "db", queueDB)
 			StartReplay(cmd.Context(), queue, router, srv, tmux, 30*time.Second, debug)
 			srv.CacheLitProbe(serverFileCfg.LiteParse.TessDataPrefix)
+
+			// EPIC-264 M4: startup profile-closure assertion. Every required
+			// profile must resolve in every demanded mode through the real
+			// search path before serving traffic. Catches both an incomplete
+			// embedded supply (build defect the closure test should have
+			// caught) and an invalid user override shadowing a valid embed
+			// (runtime-only — unreachable by any build-time gate). Refuse to
+			// start: a deterministic precondition failure must not degrade
+			// into per-row silent drops at scoring time.
+			if cerr := ValidateProfileClosure(); cerr != nil {
+				slog.Error("profile closure violation — refusing to serve",
+					"event_type", "profile_closure_violation",
+					"error", cerr,
+				)
+				return fmt.Errorf("profile closure violation: %w", cerr)
+			}
 			srv.StartPushWorker(cmd.Context())
 
 			// EPIC-054 M3: relayed-state watchdog. Reclassifies rows stuck in

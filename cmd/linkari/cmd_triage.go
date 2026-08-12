@@ -322,17 +322,35 @@ func profileTemplateLookup(profile string, render func(*ProfileManifest) (string
 		}
 		return mdPath, string(b), nil
 	}
+	if path, content, err, ok := embeddedProfileLookup(profile, render); ok {
+		return path, content, err
+	}
+	checked = append(checked, "embedded:"+profile+".{yaml,md}")
+	return "", "", fmt.Errorf("no profile prompt template for %q (checked %v)", profile, checked)
+}
+
+// embeddedProfileLookup is the shared embedded-tier terminal fallback.
+// ok=false means the profile is absent from the embedded supply entirely
+// (caller renders the not-found error with its checked list). EPIC-264:
+// an INVALID embedded manifest is now a distinct, surfaced error instead of
+// being swallowed into not-found — a corrupt shipped artifact must be
+// distinguishable from an absent one (Instance 2 silence).
+func embeddedProfileLookup(profile string, render func(*ProfileManifest) (string, error)) (path, content string, err error, ok bool) {
 	if b, rerr := fs.ReadFile(EmbeddedProfileFS(), profile+".yaml"); rerr == nil {
 		m, lerr := LoadProfileManifestBytes(b, "embedded:"+profile+".yaml")
-		if lerr == nil {
-			rendered, rerr := render(m)
-			if rerr == nil {
-				return "embedded:" + profile + ".yaml", rendered, nil
-			}
+		if lerr != nil {
+			return "", "", fmt.Errorf("embedded profile %q invalid (build defect): %w", profile, lerr), true
 		}
+		rendered, rerr := render(m)
+		if rerr != nil {
+			return "", "", fmt.Errorf("embedded profile %q failed render: %w", profile, rerr), true
+		}
+		return "embedded:" + profile + ".yaml", rendered, nil, true
 	}
-	checked = append(checked, "embedded:"+profile+".yaml")
-	return "", "", fmt.Errorf("no profile prompt template for %q (checked %v)", profile, checked)
+	if b, rerr := fs.ReadFile(EmbeddedProfileFS(), profile+".md"); rerr == nil && len(bytes.TrimSpace(b)) > 0 {
+		return "embedded:" + profile + ".md", string(b), nil, true
+	}
+	return "", "", nil, false
 }
 
 // loadProfileTemplateForMode loads a profile YAML and renders it for
@@ -383,16 +401,10 @@ func profileTemplateForModeLookup(profile, mode string, render func(*ProfileMani
 		}
 		return mdPath, string(b), nil
 	}
-	if b, rerr := fs.ReadFile(EmbeddedProfileFS(), profile+".yaml"); rerr == nil {
-		m, lerr := LoadProfileManifestBytes(b, "embedded:"+profile+".yaml")
-		if lerr == nil {
-			rendered, rerr := render(m)
-			if rerr == nil {
-				return "embedded:" + profile + ".yaml", rendered, nil
-			}
-		}
+	if path, content, err, ok := embeddedProfileLookup(profile, render); ok {
+		return path, content, err
 	}
-	checked = append(checked, "embedded:"+profile+".yaml")
+	checked = append(checked, "embedded:"+profile+".{yaml,md}")
 	return "", "", fmt.Errorf("no profile prompt template for %q (checked %v)", profile, checked)
 }
 
