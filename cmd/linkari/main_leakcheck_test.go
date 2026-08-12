@@ -20,8 +20,8 @@ import (
 	"go.uber.org/goleak"
 )
 
-func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(
+func runTests(m *testing.M) int {
+	goleakVerifyTestMain(
 		m,
 		// net/http's transport idle-connection reaper and DNS resolution
 		// goroutines are long-lived by design and not test-owned leaks.
@@ -42,4 +42,9 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/aws/aws-sdk-go-v2/internal/sdk.sleepWithContext"),
 		goleak.IgnoreTopFunction("github.com/aws/aws-sdk-go-v2/aws.(*CredentialsCache).Retrieve"),
 	)
+	return 0
+}
+
+func goleakVerifyTestMain(m *testing.M, opts ...goleak.Option) {
+	goleak.VerifyTestMain(m, opts...)
 }

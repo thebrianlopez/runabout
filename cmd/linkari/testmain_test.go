@@ -54,5 +54,5 @@ func TestMain(m *testing.M) {
 	for _, k := range xdgEnvVars {
 		_ = os.Unsetenv(k)
 	}
-	os.Exit(m.Run())
+	os.Exit(runTests(m))
 }
