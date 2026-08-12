@@ -24,9 +24,12 @@ type FixtureTestResult struct {
 	Status      string // "OK", "EXCEEDS TOLERANCE", or "SKIP"
 }
 
-// execGitShowProfile is injectable for deterministic testing.
-// Returns the file content at HEAD for the given path.
-var execGitShowProfile = func(repoPath, filePath string) ([]byte, error) {
+// GitShowFunc reads a file's contents at HEAD. EPIC-258 M2: threaded as an
+// explicit dependency so tests never swap a package-level seam.
+type GitShowFunc func(repoPath, filePath string) ([]byte, error)
+
+// gitShowProfile is the production GitShowFunc.
+func gitShowProfile(repoPath, filePath string) ([]byte, error) {
 	cmd := exec.Command("git", "-C", repoPath, "show", "HEAD:"+filePath)
 	out, err := cmd.Output()
 	if err != nil {
@@ -37,17 +40,21 @@ var execGitShowProfile = func(repoPath, filePath string) ([]byte, error) {
 
 // RunProfileTest compares HEAD vs working-tree scoring for a profile's fixtures.
 // scorer may be nil — identityScorer is used when nil.
+// gitShow may be nil — gitShowProfile is used when nil.
 // Returns empty Fixtures slice (no error) if no fixtures match the profile.
-func RunProfileTest(profilePath, fixturesDir string, tolerance int, scorer Scorer) (*ProfileTestResult, error) {
+func RunProfileTest(profilePath, fixturesDir string, tolerance int, scorer Scorer, gitShow GitShowFunc) (*ProfileTestResult, error) {
 	if scorer == nil {
 		scorer = identityScorer{}
+	}
+	if gitShow == nil {
+		gitShow = gitShowProfile
 	}
 
 	// Derive profile name from path: "docs/prompts/profiles/eng.yaml" → "eng"
 	profileName := strings.TrimSuffix(filepath.Base(profilePath), ".yaml")
 
 	// Load HEAD profile bytes via git show
-	headBytes, err := execGitShowProfile(".", profilePath)
+	headBytes, err := gitShow(".", profilePath)
 	if err != nil {
 		return nil, fmt.Errorf("profile_test_no_git: %w", err)
 	}

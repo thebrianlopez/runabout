@@ -98,16 +98,12 @@ var legacyFuncVarAllowlist = map[string]bool{
 	"awsDoctorProbeFn":         true,
 	"configRefResolverFactory": true,
 	"enqueueTranscriptPushFn":  true,
-	"execGitShowProfile":       true,
 	"execLiteCmd":              true,
-	"filenameShortKeywords":    true,
-	"monotonicID":              true,
 	"probeYouTubeSlotFn":       true,
 	"refreshScorerFn":          true,
 	"registeredScorerFn":       true,
 	"runClaudeHaikuVision":     true,
 	"scoreAsyncDoneHook":       true,
-	"validProfilesSorted":      true,
 }
 
 var legacyTestGlobalWriteAllowlist = map[string]bool{
@@ -118,7 +114,6 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"enqueueTranscriptPushFn":         true,
 	"execConnectAndRead":              true,
 	"execGetRecord":                   true,
-	"execGitShowProfile":              true,
 	"execLiteCmd":                     true,
 	"execLiteParse":                   true,
 	"execNormalizeURL":                true,

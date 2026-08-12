@@ -117,13 +117,11 @@ func TestProfileTestBT1_NegativeDelta(t *testing.T) {
 
 	scorer := newAlternateScorer(80, 65) // before=80, after=65, delta=-15
 
-	origGit := execGitShowProfile
-	execGitShowProfile = func(repoPath, filePath string) ([]byte, error) {
+	var gitShow GitShowFunc = func(repoPath, filePath string) ([]byte, error) {
 		return readTestProfile(t, "eng")
 	}
-	defer func() { execGitShowProfile = origGit }()
 
-	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer)
+	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer, gitShow)
 	if err != nil {
 		t.Fatalf("BT-1: RunProfileTest: %v", err)
 	}
@@ -152,13 +150,11 @@ func TestProfileTestBT2_TableOutput(t *testing.T) {
 
 	scorer := newAlternateScorer(75, 76) // delta=1 ≤ 10
 
-	origGit := execGitShowProfile
-	execGitShowProfile = func(repoPath, filePath string) ([]byte, error) {
+	var gitShow GitShowFunc = func(repoPath, filePath string) ([]byte, error) {
 		return readTestProfile(t, "eng")
 	}
-	defer func() { execGitShowProfile = origGit }()
 
-	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer)
+	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer, gitShow)
 	if err != nil {
 		t.Fatalf("BT-2: RunProfileTest: %v", err)
 	}

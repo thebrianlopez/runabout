@@ -45,19 +45,17 @@ func (a *alternateMockScorer) Score(f Fixture) (Golden, error) {
 	return Golden{Score: a.after, PromptVersion: "after"}, nil
 }
 
-// CT-1: Loads HEAD profile version via git (injectable execGitShowProfile)
+// CT-1: Loads HEAD profile version via an injected GitShowFunc
 func TestProfileTestCT1_LoadsHEADVersion(t *testing.T) {
-	// Inject a deterministic git show stub
-	origGit := execGitShowProfile
-	execGitShowProfile = func(repoPath, filePath string) ([]byte, error) {
+	// A deterministic git show stub, passed as an explicit dependency.
+	var gitShow GitShowFunc = func(repoPath, filePath string) ([]byte, error) {
 		return []byte("id: eng\nversion: 1\n"), nil
 	}
-	defer func() { execGitShowProfile = origGit }()
 
 	// This test verifies the injectable works — RunProfileTest will call it.
-	data, err := execGitShowProfile(".", "testdata/profiles/eng.yaml")
+	data, err := gitShow(".", "testdata/profiles/eng.yaml")
 	if err != nil {
-		t.Fatalf("CT-1: execGitShowProfile failed: %v", err)
+		t.Fatalf("CT-1: gitShow failed: %v", err)
 	}
 	if len(data) == 0 {
 		t.Error("CT-1: HEAD profile content empty")
@@ -75,13 +73,11 @@ func TestProfileTestCT2_DeltaComputation(t *testing.T) {
 
 	scorer := newAlternateScorer(70, 85) // before=70, after=85, delta=15
 
-	origGit := execGitShowProfile
-	execGitShowProfile = func(repoPath, filePath string) ([]byte, error) {
+	var gitShow GitShowFunc = func(repoPath, filePath string) ([]byte, error) {
 		return readTestProfile(t, "eng")
 	}
-	defer func() { execGitShowProfile = origGit }()
 
-	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer)
+	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer, gitShow)
 	if err != nil {
 		t.Fatalf("CT-2: RunProfileTest failed: %v", err)
 	}
@@ -105,13 +101,11 @@ func TestProfileTestCT3_WithinToleranceNoFailure(t *testing.T) {
 
 	scorer := newAlternateScorer(75, 78) // before=75, after=78, delta=3 ≤ 10
 
-	origGit := execGitShowProfile
-	execGitShowProfile = func(repoPath, filePath string) ([]byte, error) {
+	var gitShow GitShowFunc = func(repoPath, filePath string) ([]byte, error) {
 		return readTestProfile(t, "eng")
 	}
-	defer func() { execGitShowProfile = origGit }()
 
-	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer)
+	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer, gitShow)
 	if err != nil {
 		t.Fatalf("CT-3: RunProfileTest failed: %v", err)
 	}
@@ -131,13 +125,11 @@ func TestProfileTestCT4_ExceedsToleranceHasFailure(t *testing.T) {
 
 	scorer := newAlternateScorer(70, 90) // before=70, after=90, delta=20 > 10
 
-	origGit := execGitShowProfile
-	execGitShowProfile = func(repoPath, filePath string) ([]byte, error) {
+	var gitShow GitShowFunc = func(repoPath, filePath string) ([]byte, error) {
 		return readTestProfile(t, "eng")
 	}
-	defer func() { execGitShowProfile = origGit }()
 
-	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer)
+	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer, gitShow)
 	if err != nil {
 		t.Fatalf("CT-4: RunProfileTest failed: %v", err)
 	}
@@ -157,13 +149,11 @@ func TestProfileTestCT5_ScorerErrorProducesSKIP(t *testing.T) {
 
 	scorer := &mockScorer{err: fmt.Errorf("scorer unavailable")}
 
-	origGit := execGitShowProfile
-	execGitShowProfile = func(repoPath, filePath string) ([]byte, error) {
+	var gitShow GitShowFunc = func(repoPath, filePath string) ([]byte, error) {
 		return readTestProfile(t, "eng")
 	}
-	defer func() { execGitShowProfile = origGit }()
 
-	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer)
+	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, scorer, gitShow)
 	if err != nil {
 		t.Fatalf("CT-5: RunProfileTest failed: %v", err)
 	}
@@ -188,13 +178,11 @@ func TestProfileTestCT6_NoFixturesIsWarning(t *testing.T) {
 		Golden: Golden{Score: 70, Verdict: "ok", PromptVersion: "v1"},
 	})
 
-	origGit := execGitShowProfile
-	execGitShowProfile = func(repoPath, filePath string) ([]byte, error) {
+	var gitShow GitShowFunc = func(repoPath, filePath string) ([]byte, error) {
 		return readTestProfile(t, "eng")
 	}
-	defer func() { execGitShowProfile = origGit }()
 
-	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, &mockScorer{})
+	result, err := RunProfileTest("testdata/profiles/eng.yaml", dir, 10, &mockScorer{}, gitShow)
 	if err != nil {
 		t.Fatalf("CT-6: expected no error, got: %v", err)
 	}

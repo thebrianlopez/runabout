@@ -291,7 +291,7 @@ func (r *ContainerRuntime) containerRunWithIO(
 }
 
 // monotonicID returns a nanosecond timestamp for use in container IDs.
-var monotonicID = func() int64 {
+func monotonicID() int64 {
 	return time.Now().UnixNano()
 }
 

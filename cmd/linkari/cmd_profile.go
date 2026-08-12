@@ -57,7 +57,7 @@ func profileTestCmd() *cobra.Command {
 				fixturesDir = defaultFixturesDir()
 			}
 			scorer := registeredScorerFn()
-			result, err := RunProfileTest(profilePath, fixturesDir, tolerance, scorer)
+			result, err := RunProfileTest(profilePath, fixturesDir, tolerance, scorer, nil)
 			if err != nil {
 				return err
 			}
