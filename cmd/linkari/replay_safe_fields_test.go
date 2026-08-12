@@ -50,10 +50,7 @@ func TestReplaySafeCT3_TraceIDStoredOnRow(t *testing.T) {
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 
-	// Inject a deterministic UUID for this test
-	origGen := generateTraceID
-	generateTraceID = func() string { return "12345678-1234-4123-a123-123456789abc" }
-	defer func() { generateTraceID = origGen }()
+	q.traceIDFn = func() string { return "12345678-1234-4123-a123-123456789abc" }
 
 	id, err := q.Enqueue(&ShareRequest{URL: "https://ct3f3.example.com", Type: "url", Profile: "life"})
 	if err != nil {

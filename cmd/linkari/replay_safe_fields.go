@@ -14,8 +14,6 @@ func ContentHash(content []byte) string {
 	return fmt.Sprintf("%x", h)
 }
 
-// generateTraceID is injectable for deterministic testing (overridden in tests).
-// Default: uuid.New().String()
-var generateTraceID = func() string {
+func newTraceID() string {
 	return uuid.New().String()
 }

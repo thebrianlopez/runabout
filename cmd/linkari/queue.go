@@ -97,6 +97,8 @@ type Queue struct {
 	// without blocking in-flight writer paths. Nil is treated as the
 	// zero-value PushConfig (1h throttle, no min score).
 	pushCfg atomic.Pointer[PushConfig]
+
+	traceIDFn func() string
 }
 
 // boolToInt converts a bool to 0/1 for SQLite INTEGER columns.
@@ -603,7 +605,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		return nil, fmt.Errorf("create fts5 index: %w", err)
 	}
 
-	q := &Queue{db: db, debug: debug}
+	q := &Queue{db: db, debug: debug, traceIDFn: newTraceID}
 
 	// Backfill FTS5 index with any existing rows not yet indexed.
 	if err := q.initFTS5(); err != nil {
@@ -616,6 +618,13 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 	return q, nil
 }
 
+func (q *Queue) newTraceID() string {
+	if q != nil && q.traceIDFn != nil {
+		return q.traceIDFn()
+	}
+	return newTraceID()
+}
+
 // Enqueue inserts a share request into the queue with status=pending.
 // req.ClassifySource (EPIC-077 M1) is persisted to the classify_source column
 // to record which pre-enqueue cascade stage determined the profile.
@@ -623,7 +632,7 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 // request text/URL bytes at intake so all pipeline events share a stable trace.
 func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	traceID := generateTraceID()
+	traceID := q.newTraceID()
 	// content_hash is computed from available request content at intake.
 	// For URL shares, this is the URL bytes (refined to fetched content in scoreAsync).
 	// For file/audio shares, request.Text carries metadata or transcript path.
@@ -2356,7 +2365,7 @@ func (q *Queue) LoadLastFirehoseSeq() (int64, error) {
 // Used by the firehose worker to mark rows as source='firehose'.
 func (q *Queue) EnqueueWithSource(req *ShareRequest, source string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	traceID := generateTraceID()
+	traceID := q.newTraceID()
 	res, err := q.db.Exec(
 		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, title, mime_type, calling_package, relative_path, file_name, classify_source, is_screenshot, file_size, slug, source, trace_id)
 		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
