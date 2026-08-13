@@ -99,19 +99,15 @@ func setEndpoint(t *testing.T, srv *httptest.Server) {
 	t.Cleanup(func() { youtubeOAuthEndpoint = orig })
 }
 
-// setSeams overrides isTerminalFn and pasteReaderFn, restoring on cleanup.
-func setSeams(t *testing.T, tty bool, reader io.Reader) {
-	t.Helper()
-	origTerm := isTerminalFn
-	origReader := pasteReaderFn
-	isTerminalFn = func(int) bool { return tty }
+// ioSeams builds authIODeps for tests: a fixed TTY answer and an optional
+// paste reader (EPIC-258 M2: injected, not package globals).
+func ioSeams(tty bool, reader io.Reader) authIODeps {
+	d := defaultAuthIODeps()
+	d.isTerminal = func(int) bool { return tty }
 	if reader != nil {
-		pasteReaderFn = func() io.Reader { return reader }
+		d.pasteReader = func() io.Reader { return reader }
 	}
-	t.Cleanup(func() {
-		isTerminalFn = origTerm
-		pasteReaderFn = origReader
-	})
+	return d
 }
 
 // freePort returns an available TCP loopback address, releasing the listener
@@ -135,12 +131,11 @@ func TestRunYouTubeLoopbackAuth_CT5_PasteWinsRace(t *testing.T) {
 	// generated state to construct a valid paste line, so instead paste a bare
 	// code (no state required, Q1=A) - simplest deterministic race winner.
 	reader := strings.NewReader("bare-pasted-code-1234567890\n")
-	setSeams(t, true, reader)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tok, err := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil)
+	tok, err := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil, ioSeams(true, reader))
 	require.NoError(t, err)
 	assert.Equal(t, "fake_refresh", tok.RefreshToken)
 	assert.EqualValues(t, 1, atomic.LoadInt32(hits))
@@ -159,7 +154,6 @@ func TestRunYouTubeLoopbackAuth_CT6_LoopbackWinsRace(t *testing.T) {
 	addr := freePort(t)
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pw.Close() })
-	setSeams(t, true, pr)
 
 	// EPIC-258 M2: this test previously reassigned os.Stderr and restored it
 	// while the auth goroutine was still writing to it - a data race the
@@ -195,7 +189,7 @@ func TestRunYouTubeLoopbackAuth_CT6_LoopbackWinsRace(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		tok, aerr := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, wPipe)
+		tok, aerr := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, wPipe, ioSeams(true, pr))
 		resultCh <- struct {
 			tok *oauth2.Token
 			err error
@@ -233,12 +227,11 @@ func TestRunYouTubeLoopbackAuth_CT7_NonTTYNeverArmsPaste(t *testing.T) {
 
 	addr := freePort(t)
 	reader := strings.NewReader("bare-pasted-code-1234567890\n")
-	setSeams(t, false, reader)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	_, err := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil)
+	_, err := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil, ioSeams(false, reader))
 	require.Error(t, err)
 	// Should time out on ctx, not resolve via the paste we injected.
 	assert.EqualValues(t, 0, atomic.LoadInt32(hits))
@@ -251,12 +244,11 @@ func TestRunYouTubeLoopbackAuth_CT8_ThreeBadPastesFatal(t *testing.T) {
 
 	addr := freePort(t)
 	reader := strings.NewReader("bad1\nbad2\nbad3\n")
-	setSeams(t, true, reader)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil)
+	_, err := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil, ioSeams(true, reader))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errPasteUnparseable)
 	assert.EqualValues(t, 0, atomic.LoadInt32(hits))
@@ -275,12 +267,11 @@ func TestRunYouTubeLoopbackAuth_CT9_BoundPortTTYPasteOnly(t *testing.T) {
 	addr := ln.Addr().String()
 
 	reader := strings.NewReader("bare-pasted-code-1234567890\n")
-	setSeams(t, true, reader)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tok, err := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil)
+	tok, err := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil, ioSeams(true, reader))
 	require.NoError(t, err)
 	assert.Equal(t, "fake_refresh", tok.RefreshToken)
 	assert.EqualValues(t, 1, atomic.LoadInt32(hits))
@@ -296,12 +287,10 @@ func TestRunYouTubeLoopbackAuth_CT10_BoundPortNonTTYFailFast(t *testing.T) {
 	defer ln.Close()
 	addr := ln.Addr().String()
 
-	setSeams(t, false, nil)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err = runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil)
+	_, err = runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil, ioSeams(false, nil))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "listen loopback")
 	assert.EqualValues(t, 0, atomic.LoadInt32(hits))
@@ -316,25 +305,24 @@ func TestRunYouTubeLoopbackAuth_CT10_BoundPortNonTTYFailFast(t *testing.T) {
 // wiring here.
 func TestRunYouTubeLoopbackAuth_BT2_SeamConsulted(t *testing.T) {
 	var consulted bool
-	origTerm := isTerminalFn
-	isTerminalFn = func(int) bool {
+	deps := defaultAuthIODeps()
+	deps.isTerminal = func(int) bool {
 		consulted = true
 		return false
 	}
-	defer func() { isTerminalFn = origTerm }()
 
 	addr := freePort(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	_, _ = runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil)
-	assert.True(t, consulted, "isTerminalFn seam must be consulted")
+	_, _ = runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil, deps)
+	assert.True(t, consulted, "isTerminal dep must be consulted")
 }
 
 // --- Regression guards (RG-2..RG-4) ---
 
 // RG-2 (F-019 RG-5): static default callback 127.0.0.1:53682 unchanged.
 func TestRunYouTubeLoopbackAuth_RG2_DefaultCallbackAddrUnchanged(t *testing.T) {
-	cmd := authYouTubeCmd()
+	cmd := authYouTubeCmd(defaultAuthIODeps())
 	f := cmd.Flags().Lookup("callback-addr")
 	require.NotNil(t, f)
 	assert.Equal(t, "127.0.0.1:53682", f.DefValue)
@@ -350,12 +338,11 @@ func TestRunYouTubeLoopbackAuth_RG3_ExactlyOneExchange(t *testing.T) {
 
 	addr := freePort(t)
 	reader := strings.NewReader("bare-pasted-code-1234567890\nbare-pasted-code-should-not-fire\n")
-	setSeams(t, true, reader)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil)
+	_, err := runYouTubeLoopbackAuth(ctx, "cid", "csecret", addr, true, nil, ioSeams(true, reader))
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, atomic.LoadInt32(hits), "exactly one token exchange must occur")
 }
@@ -374,12 +361,12 @@ func TestAuthYouTube_RG4_FailedAuthLeavesSlotUntouched(t *testing.T) {
 	addr := freePort(t)
 	// Garbage paste x3 forces a fatal error without ever reaching exchange.
 	reader := strings.NewReader("bad1\nbad2\nbad3\n")
-	setSeams(t, true, reader)
 
 	queueDB, restore := setupAuthYouTubeTest(t, "unused")
 	// setupAuthYouTubeTest overrides runYouTubeLoopbackAuthFn to a stub; we
 	// want the real function here, so restore its default first and re-point
-	// it at the real implementation with our seams engaged.
+	// it at the real implementation. The paste seams travel through
+	// authCmdWith rather than package globals (EPIC-258 M2).
 	restore()
 	runYouTubeLoopbackAuthFn = runYouTubeLoopbackAuth
 	defer func() { runYouTubeLoopbackAuthFn = runYouTubeLoopbackAuth }()
@@ -389,7 +376,7 @@ func TestAuthYouTube_RG4_FailedAuthLeavesSlotUntouched(t *testing.T) {
 	require.NoError(t, q.SetYouTubeSlotToken(1, "default", "pre_existing_token", 999))
 	q.Close()
 
-	cmd := authCmd()
+	cmd := authCmdWith(ioSeams(true, reader))
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs([]string{"youtube", "--queue-db", queueDB, "--callback-addr", addr, "--no-browser"})

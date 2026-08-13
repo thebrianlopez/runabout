@@ -29,13 +29,19 @@ import (
 // runYouTubeLoopbackAuthFn is the injectable seam for testing.
 var runYouTubeLoopbackAuthFn = runYouTubeLoopbackAuth
 
-// isTerminalFn and pasteReaderFn are injectable seams for the headless paste
-// race (EPIC-253). isTerminalFn reports whether stdin is an interactive TTY;
-// pasteReaderFn returns the reader used to collect pasted redirect URLs/codes.
-var (
-	isTerminalFn  = defaultIsTerminal
-	pasteReaderFn = defaultPasteReader
-)
+// authIODeps carries the terminal probe and paste reader for the headless
+// paste race (EPIC-253), threaded as parameters instead of package-level
+// seams (EPIC-258 M2). isTerminal reports whether stdin is an interactive
+// TTY; pasteReader returns the reader used to collect pasted redirect
+// URLs/codes.
+type authIODeps struct {
+	isTerminal  func(fd int) bool
+	pasteReader func() io.Reader
+}
+
+func defaultAuthIODeps() authIODeps {
+	return authIODeps{isTerminal: defaultIsTerminal, pasteReader: defaultPasteReader}
+}
 
 // youtubeOAuthEndpoint is an injectable seam so tests can point token
 // exchange at a fake httptest.Server instead of Google's real endpoint.
@@ -70,15 +76,21 @@ func defaultPasteReader() io.Reader {
 }
 
 func authCmd() *cobra.Command {
+	return authCmdWith(defaultAuthIODeps())
+}
+
+// authCmdWith threads paste-flow IO dependencies explicitly so tests can
+// inject TTY behaviour without writing package globals (EPIC-258 M2).
+func authCmdWith(ioDeps authIODeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
 		Short: "Authenticate Linkari integrations",
 	}
-	cmd.AddCommand(authYouTubeCmd())
+	cmd.AddCommand(authYouTubeCmd(ioDeps))
 	return cmd
 }
 
-func authYouTubeCmd() *cobra.Command {
+func authYouTubeCmd(ioDeps authIODeps) *cobra.Command {
 	var configFile string
 	var queueDB string
 	var profile string
@@ -133,7 +145,7 @@ func authYouTubeCmd() *cobra.Command {
 			defer q.Close()
 
 			ctx = context.WithValue(ctx, ctxKeyYouTubeSlot{}, slotFlag)
-			tok, err := runYouTubeLoopbackAuthFn(ctx, clientID, clientSecret, callbackAddr, noBrowser, nil)
+			tok, err := runYouTubeLoopbackAuthFn(ctx, clientID, clientSecret, callbackAddr, noBrowser, nil, ioDeps)
 			if err != nil {
 				return err
 			}
@@ -250,7 +262,7 @@ func parsePastedAuthCode(input, wantState string) (string, error) {
 // goroutine was still writing to it (cmd_auth_youtube_paste_test.go:212 vs
 // :336). Injecting the writer removes the shared global rather than trying to
 // synchronise around it - the test now owns its own pipe.
-func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbackAddr string, noBrowser bool, out io.Writer) (*oauth2.Token, error) {
+func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbackAddr string, noBrowser bool, out io.Writer, ioDeps authIODeps) (*oauth2.Token, error) {
 	if out == nil {
 		out = os.Stderr
 	}
@@ -263,7 +275,7 @@ func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbac
 		slot = "unknown"
 	}
 
-	tty := isTerminalFn(int(os.Stdin.Fd()))
+	tty := ioDeps.isTerminal(int(os.Stdin.Fd()))
 
 	ln, listenErr := net.Listen("tcp", callbackAddr)
 	pasteOnly := false
@@ -345,7 +357,7 @@ func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbac
 	pasteCh := make(chan pasteEvent, 4)
 	if tty {
 		fmt.Fprintf(out, "\nNo browser on this machine? After approving, the redirect page will fail to load -\nthat is expected. Paste the full redirect URL (or just the code) here:\n")
-		go pasteAcceptLoop(pasteReaderFn(), state, pasteCh)
+		go pasteAcceptLoop(ioDeps.pasteReader(), state, pasteCh)
 	}
 
 	if !noBrowser && !pasteOnly {

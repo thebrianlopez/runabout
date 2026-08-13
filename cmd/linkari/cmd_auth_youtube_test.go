@@ -42,7 +42,7 @@ google_client_secret = "test_client_secret"
 
 	// Override OAuth seam.
 	orig := runYouTubeLoopbackAuthFn
-	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer) (*oauth2.Token, error) {
+	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
 		return fakeToken(refreshToken), nil
 	}
 	restore = func() { runYouTubeLoopbackAuthFn = orig }
@@ -110,7 +110,7 @@ func TestAuthYouTube_CT4b_DefaultSlotBackwardCompat(t *testing.T) {
 func TestAuthYouTube_CT4c_EmptySlotRejected(t *testing.T) {
 	origFn := runYouTubeLoopbackAuthFn
 	oauthCalled := false
-	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer) (*oauth2.Token, error) {
+	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
 		oauthCalled = true
 		return fakeToken("should_not_reach"), nil
 	}
@@ -137,7 +137,7 @@ google_client_secret = "secret"
 func TestAuthYouTube_CT4d_SpaceInSlotRejected(t *testing.T) {
 	origFn := runYouTubeLoopbackAuthFn
 	oauthCalled := false
-	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer) (*oauth2.Token, error) {
+	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
 		oauthCalled = true
 		return fakeToken("nope"), nil
 	}
@@ -162,7 +162,7 @@ google_client_secret = "secret"
 
 // RG-4: Redirect URI is fixed at port 53682 (not random).
 func TestAuthYouTube_RG4_RedirectURIFixed(t *testing.T) {
-	cmd := authYouTubeCmd()
+	cmd := authYouTubeCmd(defaultAuthIODeps())
 	callbackFlag := cmd.Flags().Lookup("callback-addr")
 	require.NotNil(t, callbackFlag, "callback-addr flag must exist")
 	assert.Equal(t, "127.0.0.1:53682", callbackFlag.DefValue,
@@ -221,7 +221,7 @@ func TestAuthYouTube_RG6_SecondAuthUpdatesInPlace(t *testing.T) {
 
 	// Override the seam to return a different token for the second auth.
 	origFn := runYouTubeLoopbackAuthFn
-	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer) (*oauth2.Token, error) {
+	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
 		return fakeToken("rt_second"), nil
 	}
 	defer func() { runYouTubeLoopbackAuthFn = origFn }()
