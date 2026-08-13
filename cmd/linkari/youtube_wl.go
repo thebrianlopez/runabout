@@ -24,10 +24,6 @@ type ytPlaylistItem struct {
 	Title   string
 }
 
-// execYouTubePlaylistItems is the injectable seam for testing.
-// In production it calls execYouTubePlaylistItemsReal.
-var execYouTubePlaylistItems = execYouTubePlaylistItemsReal
-
 // execYouTubePlaylistItemsReal fetches one page of items from a YouTube playlist
 // using the Data API v3 (playlistItems.list).
 func execYouTubePlaylistItemsReal(ctx context.Context, ts oauth2.TokenSource, playlistID, pageToken string) (items []ytPlaylistItem, nextPageToken string, err error) {
@@ -83,7 +79,7 @@ func (s *YouTubeWatchLaterSource) Start(ctx context.Context, q *Queue, emit func
 		case <-time.After(interval):
 		}
 		// EPIC-098 F3: pass autoEnqueue flag to control queue writes
-		syncWatchLaterAsync("default", slot, q, s.events, s.clientID, s.clientSecret, s.autoEnqueue)
+		syncWatchLaterAsync("default", slot, q, s.events, s.clientID, s.clientSecret, s.autoEnqueue, nil)
 	}
 }
 
@@ -93,7 +89,8 @@ func (s *YouTubeWatchLaterSource) Start(ctx context.Context, q *Queue, emit func
 // EPIC-098 F3: autoEnqueue gates queue.Enqueue() calls; when false, videos are
 // tracked in dedup but not enqueued for scoring (observe-only mode).
 // EPIC-181 F4: slot routes credential lookup to the configured OAuth slot.
-func syncWatchLaterAsync(profile string, slot string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool) {
+func syncWatchLaterAsync(profile string, slot string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool, deps *ytListDeps) {
+	deps = deps.resolve()
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("syncWatchLaterAsync panic", "recover", r)
@@ -161,7 +158,7 @@ func syncWatchLaterAsync(profile string, slot string, q *Queue, events *EventLog
 
 	for {
 		pageNum++
-		items, next, err := execYouTubePlaylistItems(ctx, ts, "WL", nextPageToken)
+		items, next, err := deps.PlaylistItems(ctx, ts, "WL", nextPageToken)
 		if err != nil {
 			lastErr = err
 			errClass, remediation := classifyYouTubeAPIError(err)

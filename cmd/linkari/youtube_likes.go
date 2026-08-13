@@ -38,7 +38,7 @@ func (s *YouTubeLikedSource) Start(ctx context.Context, q *Queue, emit func(*Sha
 		case <-time.After(interval):
 		}
 		// EPIC-098 F3: pass autoEnqueue flag (currently always true for yt_liked)
-		syncLikedVideosAsync("default", slot, q, s.events, s.clientID, s.clientSecret, s.autoEnqueue)
+		syncLikedVideosAsync("default", slot, q, s.events, s.clientID, s.clientSecret, s.autoEnqueue, nil)
 	}
 }
 
@@ -46,7 +46,8 @@ func (s *YouTubeLikedSource) Start(ctx context.Context, q *Queue, emit func(*Sha
 // videos for scoring. Runs in a goroutine; errors are logged, not returned.
 // EPIC-098 F3: autoEnqueue gates queue.Enqueue() calls.
 // EPIC-181 F4: slot routes credential lookup to the configured OAuth slot.
-func syncLikedVideosAsync(profile string, slot string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool) {
+func syncLikedVideosAsync(profile string, slot string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool, deps *ytListDeps) {
+	deps = deps.resolve()
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("syncLikedVideosAsync panic", "recover", r)
@@ -112,7 +113,7 @@ func syncLikedVideosAsync(profile string, slot string, q *Queue, events *EventLo
 
 	for {
 		pageNum++
-		items, next, err := execYouTubePlaylistItems(ctx, ts, "LL", nextPageToken)
+		items, next, err := deps.PlaylistItems(ctx, ts, "LL", nextPageToken)
 		if err != nil {
 			errClass, remediation := classifyYouTubeAPIError(err)
 			if errClass == "quota_exhausted" {

@@ -23,12 +23,44 @@ type ytSubscription struct {
 	Title     string
 }
 
-// Injectable API seams — replaced in tests.
-var (
-	execYouTubeSubscriptionsList = execYouTubeSubscriptionsListReal
-	execYouTubeChannelsList      = execYouTubeChannelsListReal
-	execYouTubePlaylistItemsList = execYouTubePlaylistItemsListReal
-)
+// ytListDeps carries the YouTube Data API list calls used by the polled
+// source workers (subscriptions, Watch Later, liked videos), so tests inject
+// stubs per call instead of swapping package globals. nil fields resolve to
+// production implementations; a nil *ytListDeps is valid. EPIC-258 M2: was
+// package vars execYouTubeSubscriptionsList, execYouTubeChannelsList,
+// execYouTubePlaylistItemsList, execYouTubePlaylistItems.
+type ytListDeps struct {
+	// SubscriptionsList fetches all subscription channels.
+	SubscriptionsList func(ctx context.Context, ts oauth2.TokenSource) ([]ytSubscription, error)
+	// ChannelsList fetches the uploads playlist ID for each channel.
+	ChannelsList func(ctx context.Context, ts oauth2.TokenSource, channelIDs []string) (map[string]string, error)
+	// PlaylistItemsList fetches the most recent items from an uploads playlist.
+	PlaylistItemsList func(ctx context.Context, ts oauth2.TokenSource, playlistID string) ([]ytPlaylistItem, error)
+	// PlaylistItems fetches one page of a playlist (WL/LL pagination variant).
+	PlaylistItems func(ctx context.Context, ts oauth2.TokenSource, playlistID, pageToken string) ([]ytPlaylistItem, string, error)
+}
+
+// resolve returns d with any nil field filled from production defaults.
+// Accepts a nil receiver.
+func (d *ytListDeps) resolve() *ytListDeps {
+	out := ytListDeps{}
+	if d != nil {
+		out = *d
+	}
+	if out.SubscriptionsList == nil {
+		out.SubscriptionsList = execYouTubeSubscriptionsListReal
+	}
+	if out.ChannelsList == nil {
+		out.ChannelsList = execYouTubeChannelsListReal
+	}
+	if out.PlaylistItemsList == nil {
+		out.PlaylistItemsList = execYouTubePlaylistItemsListReal
+	}
+	if out.PlaylistItems == nil {
+		out.PlaylistItems = execYouTubePlaylistItemsReal
+	}
+	return &out
+}
 
 // execYouTubeSubscriptionsListReal fetches all subscription channels for the
 // authenticated user via subscriptions.list(mine=true).
@@ -156,7 +188,7 @@ func (s *YouTubeSubsSource) Start(ctx context.Context, q *Queue, emit func(*Shar
 		case <-time.After(delay):
 		}
 		// EPIC-098 F3: pass autoEnqueue flag to control queue writes
-		if err := watchSubscriptionsAsync("default", q, s.events, s.clientID, s.clientSecret, s.autoEnqueue); err != nil {
+		if err := watchSubscriptionsAsync("default", q, s.events, s.clientID, s.clientSecret, s.autoEnqueue, nil); err != nil {
 			consecutive++
 			slog.Warn(
 				"yt_monitored source error",
@@ -174,7 +206,8 @@ func (s *YouTubeSubsSource) Start(ctx context.Context, q *Queue, emit func(*Shar
 // EPIC-019 M6 + M10.
 // EPIC-098 F3: autoEnqueue gates queue.Enqueue() calls; when false, videos are
 // tracked in dedup but not enqueued for scoring (observe-only mode).
-func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool) (retErr error) {
+func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clientID, clientSecret string, autoEnqueue bool, deps *ytListDeps) (retErr error) {
+	deps = deps.resolve()
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("watchSubscriptionsAsync panic", "recover", r)
@@ -214,7 +247,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 	}
 
 	// Step 1: fetch all subscription channels.
-	subs, err := execYouTubeSubscriptionsList(ctx, ts)
+	subs, err := deps.SubscriptionsList(ctx, ts)
 	if err != nil {
 		errClass, remediation := classifyYouTubeAPIError(err)
 		evType := "subscriptions_api_error"
@@ -256,7 +289,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 	for i, s := range subs {
 		channelIDs[i] = s.ChannelID
 	}
-	uploadsPlaylists, err := execYouTubeChannelsList(ctx, ts, channelIDs)
+	uploadsPlaylists, err := deps.ChannelsList(ctx, ts, channelIDs)
 	if err != nil {
 		slog.Warn(
 			"watchSubscriptionsAsync: channels.list failed",
@@ -286,7 +319,7 @@ func watchSubscriptionsAsync(profile string, q *Queue, events *EventLogger, clie
 			continue
 		}
 
-		items, err := execYouTubePlaylistItemsList(ctx, ts, uploadsID)
+		items, err := deps.PlaylistItemsList(ctx, ts, uploadsID)
 		if err != nil {
 			slog.Warn(
 				"watchSubscriptionsAsync: playlistItems.list failed",

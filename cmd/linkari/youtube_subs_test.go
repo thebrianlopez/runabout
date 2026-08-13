@@ -100,26 +100,19 @@ func TestSubsCT3_WatchEnqueues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origSubs := execYouTubeSubscriptionsList
-	origChs := execYouTubeChannelsList
-	origItems := execYouTubePlaylistItemsList
-	defer func() {
-		execYouTubeSubscriptionsList = origSubs
-		execYouTubeChannelsList = origChs
-		execYouTubePlaylistItemsList = origItems
-	}()
+	deps := &ytListDeps{}
 
-	execYouTubeSubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
+	deps.SubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
 		return []ytSubscription{{ChannelID: "ch1", Title: "Channel One"}}, nil
 	}
-	execYouTubeChannelsList = func(_ context.Context, _ oauth2.TokenSource, ids []string) (map[string]string, error) {
+	deps.ChannelsList = func(_ context.Context, _ oauth2.TokenSource, ids []string) (map[string]string, error) {
 		return map[string]string{"ch1": "PL_uploads_ch1"}, nil
 	}
-	execYouTubePlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, _ string) ([]ytPlaylistItem, error) {
+	deps.PlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, _ string) ([]ytPlaylistItem, error) {
 		return []ytPlaylistItem{{VideoID: "newvid1", Title: "New Video"}}, nil
 	}
 
-	watchSubscriptionsAsync("default", q, nil, "", "", true)
+	watchSubscriptionsAsync("default", q, nil, "", "", true, deps)
 
 	items, err := q.Pending()
 	if err != nil {
@@ -186,35 +179,28 @@ func TestSubsCT5_ChannelErrorSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origSubs := execYouTubeSubscriptionsList
-	origChs := execYouTubeChannelsList
-	origItems := execYouTubePlaylistItemsList
-	defer func() {
-		execYouTubeSubscriptionsList = origSubs
-		execYouTubeChannelsList = origChs
-		execYouTubePlaylistItemsList = origItems
-	}()
+	deps := &ytListDeps{}
 
-	execYouTubeSubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
+	deps.SubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
 		return []ytSubscription{
 			{ChannelID: "ch_fail", Title: "Failing Channel"},
 			{ChannelID: "ch_ok", Title: "OK Channel"},
 		}, nil
 	}
-	execYouTubeChannelsList = func(_ context.Context, _ oauth2.TokenSource, ids []string) (map[string]string, error) {
+	deps.ChannelsList = func(_ context.Context, _ oauth2.TokenSource, ids []string) (map[string]string, error) {
 		return map[string]string{
 			"ch_fail": "PL_fail",
 			"ch_ok":   "PL_ok",
 		}, nil
 	}
-	execYouTubePlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, playlistID string) ([]ytPlaylistItem, error) {
+	deps.PlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, playlistID string) ([]ytPlaylistItem, error) {
 		if playlistID == "PL_fail" {
 			return nil, fmt.Errorf("simulated API error for ch_fail")
 		}
 		return []ytPlaylistItem{{VideoID: "ok-vid1"}}, nil
 	}
 
-	watchSubscriptionsAsync("default", q, nil, "", "", true)
+	watchSubscriptionsAsync("default", q, nil, "", "", true, deps)
 
 	// ch_ok videos should still be enqueued.
 	items, err := q.Pending()
@@ -240,29 +226,22 @@ func TestSubsBT1_APICallOrder(t *testing.T) {
 
 	var callOrder []string
 
-	origSubs := execYouTubeSubscriptionsList
-	origChs := execYouTubeChannelsList
-	origItems := execYouTubePlaylistItemsList
-	defer func() {
-		execYouTubeSubscriptionsList = origSubs
-		execYouTubeChannelsList = origChs
-		execYouTubePlaylistItemsList = origItems
-	}()
+	deps := &ytListDeps{}
 
-	execYouTubeSubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
+	deps.SubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
 		callOrder = append(callOrder, "subscriptions")
 		return []ytSubscription{{ChannelID: "ch1"}}, nil
 	}
-	execYouTubeChannelsList = func(_ context.Context, _ oauth2.TokenSource, _ []string) (map[string]string, error) {
+	deps.ChannelsList = func(_ context.Context, _ oauth2.TokenSource, _ []string) (map[string]string, error) {
 		callOrder = append(callOrder, "channels")
 		return map[string]string{"ch1": "PL_ch1"}, nil
 	}
-	execYouTubePlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, _ string) ([]ytPlaylistItem, error) {
+	deps.PlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, _ string) ([]ytPlaylistItem, error) {
 		callOrder = append(callOrder, "playlistItems")
 		return nil, nil
 	}
 
-	watchSubscriptionsAsync("default", q, nil, "", "", true)
+	watchSubscriptionsAsync("default", q, nil, "", "", true, deps)
 
 	if len(callOrder) < 3 {
 		t.Fatalf("expected 3 API calls, got %d: %v", len(callOrder), callOrder)
@@ -300,19 +279,12 @@ func TestSubsBT2_ChannelBatching(t *testing.T) {
 
 	var receivedIDs []string
 
-	origSubs := execYouTubeSubscriptionsList
-	origChs := execYouTubeChannelsList
-	origItems := execYouTubePlaylistItemsList
-	defer func() {
-		execYouTubeSubscriptionsList = origSubs
-		execYouTubeChannelsList = origChs
-		execYouTubePlaylistItemsList = origItems
-	}()
+	deps := &ytListDeps{}
 
-	execYouTubeSubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
+	deps.SubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
 		return subs100, nil
 	}
-	execYouTubeChannelsList = func(_ context.Context, _ oauth2.TokenSource, ids []string) (map[string]string, error) {
+	deps.ChannelsList = func(_ context.Context, _ oauth2.TokenSource, ids []string) (map[string]string, error) {
 		receivedIDs = append(receivedIDs, ids...)
 		result := make(map[string]string, len(ids))
 		for _, id := range ids {
@@ -320,11 +292,11 @@ func TestSubsBT2_ChannelBatching(t *testing.T) {
 		}
 		return result, nil
 	}
-	execYouTubePlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, _ string) ([]ytPlaylistItem, error) {
+	deps.PlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, _ string) ([]ytPlaylistItem, error) {
 		return nil, nil
 	}
 
-	watchSubscriptionsAsync("default", q, nil, "", "", true)
+	watchSubscriptionsAsync("default", q, nil, "", "", true, deps)
 
 	// All 100 channel IDs must have been passed to the channels list seam.
 	if len(receivedIDs) != 100 {
@@ -346,17 +318,12 @@ func TestSubsBT3_SubscriptionsQuotaExceeded(t *testing.T) {
 
 	var channelsCallCount int
 
-	origSubs := execYouTubeSubscriptionsList
-	origChs := execYouTubeChannelsList
-	defer func() {
-		execYouTubeSubscriptionsList = origSubs
-		execYouTubeChannelsList = origChs
-	}()
+	deps := &ytListDeps{}
 
-	execYouTubeSubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
+	deps.SubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
 		return nil, fmt.Errorf("googleapi: Error 403: quotaExceeded")
 	}
-	execYouTubeChannelsList = func(_ context.Context, _ oauth2.TokenSource, _ []string) (map[string]string, error) {
+	deps.ChannelsList = func(_ context.Context, _ oauth2.TokenSource, _ []string) (map[string]string, error) {
 		channelsCallCount++
 		return nil, nil
 	}
@@ -368,7 +335,7 @@ func TestSubsBT3_SubscriptionsQuotaExceeded(t *testing.T) {
 	}
 	defer el.Close()
 
-	watchSubscriptionsAsync("default", q, el, "", "", true)
+	watchSubscriptionsAsync("default", q, el, "", "", true, deps)
 
 	if channelsCallCount != 0 {
 		t.Fatalf("expected 0 channels.list calls, got %d", channelsCallCount)
@@ -504,26 +471,19 @@ func TestSubscriptionIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origSubs := execYouTubeSubscriptionsList
-	origChs := execYouTubeChannelsList
-	origItems := execYouTubePlaylistItemsList
-	defer func() {
-		execYouTubeSubscriptionsList = origSubs
-		execYouTubeChannelsList = origChs
-		execYouTubePlaylistItemsList = origItems
-	}()
+	deps := &ytListDeps{}
 
-	execYouTubeSubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
+	deps.SubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
 		return []ytSubscription{{ChannelID: "integ-ch1", Title: "Integration Channel"}}, nil
 	}
-	execYouTubeChannelsList = func(_ context.Context, _ oauth2.TokenSource, _ []string) (map[string]string, error) {
+	deps.ChannelsList = func(_ context.Context, _ oauth2.TokenSource, _ []string) (map[string]string, error) {
 		return map[string]string{"integ-ch1": "PL_integ_uploads"}, nil
 	}
-	execYouTubePlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, _ string) ([]ytPlaylistItem, error) {
+	deps.PlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, _ string) ([]ytPlaylistItem, error) {
 		return []ytPlaylistItem{{VideoID: "integ-sub-vid1", Title: "Integration Sub Video"}}, nil
 	}
 
-	watchSubscriptionsAsync("default", q, nil, "", "", true)
+	watchSubscriptionsAsync("default", q, nil, "", "", true, deps)
 
 	// Assert seen_content row inserted.
 	var count int
@@ -550,10 +510,10 @@ func TestSubscriptionIntegration(t *testing.T) {
 	}
 
 	// Run watchSubscriptionsAsync again — it should detect the scored video and fire digest.
-	execYouTubePlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, _ string) ([]ytPlaylistItem, error) {
+	deps.PlaylistItemsList = func(_ context.Context, _ oauth2.TokenSource, _ string) ([]ytPlaylistItem, error) {
 		return nil, nil // no new videos
 	}
-	watchSubscriptionsAsync("default", q, nil, "", "", true)
+	watchSubscriptionsAsync("default", q, nil, "", "", true, deps)
 
 	// Assert push_outbox row with kind='subscription_digest'.
 	var digestCount int

@@ -88,13 +88,12 @@ func TestWLSlot_CT7_SlotPersonalRoutesPersonalToken(t *testing.T) {
 	el, readEvents := slotTestEventLogger(t)
 
 	// Override execYouTubePlaylistItems to return empty - we only care about slot routing.
-	origExec := execYouTubePlaylistItems
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps := &ytListDeps{}
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return nil, "", nil
 	}
-	defer func() { execYouTubePlaylistItems = origExec }()
 
-	syncWatchLaterAsync("default", "personal", q, el, "cid", "csec", false)
+	syncWatchLaterAsync("default", "personal", q, el, "cid", "csec", false, deps)
 
 	events := readEvents()
 	// source_start must include slot="personal"
@@ -115,13 +114,12 @@ func TestWLSlot_CT7b_SlotDefaultRoutesDefaultToken(t *testing.T) {
 
 	el, readEvents := slotTestEventLogger(t)
 
-	origExec := execYouTubePlaylistItems
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps := &ytListDeps{}
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return nil, "", nil
 	}
-	defer func() { execYouTubePlaylistItems = origExec }()
 
-	syncWatchLaterAsync("default", "default", q, el, "cid", "csec", false)
+	syncWatchLaterAsync("default", "default", q, el, "cid", "csec", false, deps)
 
 	events := readEvents()
 	for _, ev := range events {
@@ -140,16 +138,15 @@ func TestWLSlot_CT8_SlotNoTokenEmitsSourceDisabled(t *testing.T) {
 
 	el, readEvents := slotTestEventLogger(t)
 
-	origExec := execYouTubePlaylistItems
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps := &ytListDeps{}
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return nil, "", nil
 	}
-	defer func() { execYouTubePlaylistItems = origExec }()
 
 	// Watch Later with "personal" slot - no token stored.
-	syncWatchLaterAsync("default", "personal", q, el, "cid", "csec", false)
+	syncWatchLaterAsync("default", "personal", q, el, "cid", "csec", false, deps)
 	// Liked with "default" slot - has a token.
-	syncLikedVideosAsync("default", "default", q, el, "cid", "csec", false)
+	syncLikedVideosAsync("default", "default", q, el, "cid", "csec", false, deps)
 
 	events := readEvents()
 
@@ -181,13 +178,12 @@ func TestWLSlot_CT8b_SourceStartContainsSlot(t *testing.T) {
 
 	el, readEvents := slotTestEventLogger(t)
 
-	origExec := execYouTubePlaylistItems
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps := &ytListDeps{}
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return nil, "", nil
 	}
-	defer func() { execYouTubePlaylistItems = origExec }()
 
-	syncWatchLaterAsync("default", "personal", q, el, "cid", "csec", false)
+	syncWatchLaterAsync("default", "personal", q, el, "cid", "csec", false, deps)
 
 	events := readEvents()
 	for _, ev := range events {
@@ -208,13 +204,12 @@ func TestWLSlot_CT8c_SourceCompleteContainsSlot(t *testing.T) {
 
 	el, readEvents := slotTestEventLogger(t)
 
-	origExec := execYouTubePlaylistItems
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps := &ytListDeps{}
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return nil, "", nil
 	}
-	defer func() { execYouTubePlaylistItems = origExec }()
 
-	syncWatchLaterAsync("default", "personal", q, el, "cid", "csec", false)
+	syncWatchLaterAsync("default", "personal", q, el, "cid", "csec", false, deps)
 
 	events := readEvents()
 	for _, ev := range events {
@@ -237,7 +232,7 @@ func TestWLSlot_RG9_SlotNoTokenNoPanic(t *testing.T) {
 	el, readEvents := slotTestEventLogger(t)
 
 	assert.NotPanics(t, func() {
-		syncWatchLaterAsync("default", "someSlot", q, el, "cid", "csec", false)
+		syncWatchLaterAsync("default", "someSlot", q, el, "cid", "csec", false, nil)
 	})
 
 	events := readEvents()

@@ -13,8 +13,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"golang.org/x/oauth2"
 )
 
 // newSubbehaviorTestServer creates a test server with specified YouTube sub-behavior config
@@ -263,13 +261,10 @@ func TestYouTube_BT1_TranscribeWatchLaterDisabled_NoWhisper(t *testing.T) {
 func TestYouTube_BT2_ReenableViaConfigChange(t *testing.T) {
 	q := newTestQueue(t)
 
-	// Phase 1: autoEnqueue=false — should NOT enqueue
+	// Phase 1: autoEnqueue=false — should NOT enqueue.
+	// EPIC-258 M2: the former execYouTubeSubscriptionsList defensive stub is
+	// gone; this test never invokes the sync workers, so no API stub is needed.
 	var enqueueCount atomic.Int32
-	prevEnqueue := execYouTubeSubscriptionsList
-	execYouTubeSubscriptionsList = func(_ context.Context, _ oauth2.TokenSource) ([]ytSubscription, error) {
-		return nil, fmt.Errorf("skip: testing config gate only")
-	}
-	t.Cleanup(func() { execYouTubeSubscriptionsList = prevEnqueue })
 
 	// Directly test the enqueue behavior via config flag check
 	cfg1 := YouTubeConfig{

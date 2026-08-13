@@ -54,10 +54,9 @@ func TestLikedVideosCT2_SyncOnePage(t *testing.T) {
 	}
 
 	called := false
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
+	deps := &ytListDeps{}
 
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, playlistID, _ string) ([]ytPlaylistItem, string, error) {
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, playlistID, _ string) ([]ytPlaylistItem, string, error) {
 		called = true
 		if playlistID != "LL" {
 			return nil, "", fmt.Errorf("unexpected playlistID: %q", playlistID)
@@ -68,7 +67,7 @@ func TestLikedVideosCT2_SyncOnePage(t *testing.T) {
 		}, "", nil
 	}
 
-	syncLikedVideosAsync("default", "default", q, nil, "", "", true)
+	syncLikedVideosAsync("default", "default", q, nil, "", "", true, deps)
 
 	if !called {
 		t.Fatal("execYouTubePlaylistItems was not called")
@@ -95,13 +94,12 @@ func TestLikedVideosCT3_HandlerReturns202(t *testing.T) {
 	likedVideosSyncing = false
 	likedVideosSyncMu.Unlock()
 
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps := &ytListDeps{}
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return nil, "", nil
 	}
 
-	srv := &Server{queue: q}
+	srv := &Server{queue: q, ytListDeps: deps}
 	req := httptest.NewRequest(http.MethodPost, "/sync/youtube-likedvideos", nil)
 	rr := httptest.NewRecorder()
 
@@ -163,10 +161,9 @@ func TestLikedVideosCT5_Pagination(t *testing.T) {
 	}
 
 	var pageCount int32
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
+	deps := &ytListDeps{}
 
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, pageToken string) ([]ytPlaylistItem, string, error) {
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, pageToken string) ([]ytPlaylistItem, string, error) {
 		n := atomic.AddInt32(&pageCount, 1)
 		switch n {
 		case 1:
@@ -181,7 +178,7 @@ func TestLikedVideosCT5_Pagination(t *testing.T) {
 		}
 	}
 
-	syncLikedVideosAsync("default", "default", q, nil, "", "", true)
+	syncLikedVideosAsync("default", "default", q, nil, "", "", true, deps)
 
 	if pageCount != 2 {
 		t.Fatalf("expected 2 pages fetched, got %d", pageCount)
@@ -209,15 +206,14 @@ func TestLikedVideosBT1_PlaylistIDIsLL(t *testing.T) {
 	}
 
 	var gotPlaylistID string
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
+	deps := &ytListDeps{}
 
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, playlistID, _ string) ([]ytPlaylistItem, string, error) {
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, playlistID, _ string) ([]ytPlaylistItem, string, error) {
 		gotPlaylistID = playlistID
 		return nil, "", nil
 	}
 
-	syncLikedVideosAsync("default", "default", q, nil, "", "", true)
+	syncLikedVideosAsync("default", "default", q, nil, "", "", true, deps)
 
 	if gotPlaylistID != "LL" {
 		t.Fatalf("expected PlaylistId=LL, got %q", gotPlaylistID)
@@ -245,10 +241,9 @@ func TestLikedVideosBT3_QuotaExhaustion(t *testing.T) {
 	}
 
 	var callCount int32
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
+	deps := &ytListDeps{}
 
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		n := atomic.AddInt32(&callCount, 1)
 		if n == 1 {
 			return []ytPlaylistItem{{VideoID: "quota-vid1"}}, "tok2", nil
@@ -263,7 +258,7 @@ func TestLikedVideosBT3_QuotaExhaustion(t *testing.T) {
 	}
 	defer el.Close()
 
-	syncLikedVideosAsync("default", "default", q, el, "", "", true)
+	syncLikedVideosAsync("default", "default", q, el, "", "", true, deps)
 
 	items, err := q.Pending()
 	if err != nil {
@@ -302,14 +297,13 @@ func TestLikedVideosRG1_HandlerReturns202NoRace(t *testing.T) {
 	likedVideosSyncing = false
 	likedVideosSyncMu.Unlock()
 
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps := &ytListDeps{}
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		time.Sleep(5 * time.Millisecond)
 		return nil, "", nil
 	}
 
-	srv := &Server{queue: q}
+	srv := &Server{queue: q, ytListDeps: deps}
 	req := httptest.NewRequest(http.MethodPost, "/sync/youtube-likedvideos", nil)
 	rr := httptest.NewRecorder()
 
@@ -363,13 +357,12 @@ func TestLikedVideosRG3_ActionIsUinitAuto(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps := &ytListDeps{}
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return []ytPlaylistItem{{VideoID: "rg3-vid", Title: "RG-3 Video"}}, "", nil
 	}
 
-	syncLikedVideosAsync("default", "default", q, nil, "", "", true)
+	syncLikedVideosAsync("default", "default", q, nil, "", "", true, deps)
 
 	items, err := q.Pending()
 	if err != nil {
@@ -398,13 +391,12 @@ func TestLikedVideosRG4_DefaultProfileFallsBackToEng(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps := &ytListDeps{}
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return []ytPlaylistItem{{VideoID: "rg4-vid", Title: "RG-4 Video"}}, "", nil
 	}
 
-	syncLikedVideosAsync("default", "default", q, nil, "", "", true)
+	syncLikedVideosAsync("default", "default", q, nil, "", "", true, deps)
 
 	items, err := q.Pending()
 	if err != nil {
@@ -433,10 +425,9 @@ func TestLikedVideosIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
+	deps := &ytListDeps{}
 
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return []ytPlaylistItem{
 			{VideoID: "integ-vid1", Title: "Integration Video"},
 		}, "", nil
@@ -446,7 +437,7 @@ func TestLikedVideosIntegration(t *testing.T) {
 	likedVideosSyncing = false
 	likedVideosSyncMu.Unlock()
 
-	srv := &Server{queue: q}
+	srv := &Server{queue: q, ytListDeps: deps}
 	req := httptest.NewRequest(http.MethodPost, "/sync/youtube-likedvideos", nil)
 	rr := httptest.NewRecorder()
 	srv.handleSyncLikedVideos(rr, req)

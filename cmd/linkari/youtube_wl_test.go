@@ -55,10 +55,9 @@ func TestWatchLaterCT2_SyncOnePage(t *testing.T) {
 	}
 
 	called := false
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
+	deps := &ytListDeps{}
 
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, playlistID, _ string) ([]ytPlaylistItem, string, error) {
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, playlistID, _ string) ([]ytPlaylistItem, string, error) {
 		called = true
 		if playlistID != "WL" {
 			return nil, "", fmt.Errorf("unexpected playlistID: %q", playlistID)
@@ -69,7 +68,7 @@ func TestWatchLaterCT2_SyncOnePage(t *testing.T) {
 		}, "", nil
 	}
 
-	syncWatchLaterAsync("default", "default", q, nil, "", "", true)
+	syncWatchLaterAsync("default", "default", q, nil, "", "", true, deps)
 
 	if !called {
 		t.Fatal("execYouTubePlaylistItems was not called")
@@ -98,13 +97,12 @@ func TestWatchLaterCT3_HandlerReturns202(t *testing.T) {
 	watchLaterSyncing = false
 	watchLaterSyncMu.Unlock()
 
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps := &ytListDeps{}
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return nil, "", nil // empty, no-op
 	}
 
-	srv := &Server{queue: q}
+	srv := &Server{queue: q, ytListDeps: deps}
 	req := httptest.NewRequest(http.MethodPost, "/sync/youtube-watchlater", nil)
 	rr := httptest.NewRecorder()
 
@@ -167,10 +165,9 @@ func TestWatchLaterCT5_Pagination(t *testing.T) {
 	}
 
 	var pageCount int32
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
+	deps := &ytListDeps{}
 
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, pageToken string) ([]ytPlaylistItem, string, error) {
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, pageToken string) ([]ytPlaylistItem, string, error) {
 		n := atomic.AddInt32(&pageCount, 1)
 		switch n {
 		case 1:
@@ -185,7 +182,7 @@ func TestWatchLaterCT5_Pagination(t *testing.T) {
 		}
 	}
 
-	syncWatchLaterAsync("default", "default", q, nil, "", "", true)
+	syncWatchLaterAsync("default", "default", q, nil, "", "", true, deps)
 
 	if pageCount != 2 {
 		t.Fatalf("expected 2 pages fetched, got %d", pageCount)
@@ -213,15 +210,14 @@ func TestWatchLaterBT1_PlaylistIDIsWL(t *testing.T) {
 	}
 
 	var gotPlaylistID string
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
+	deps := &ytListDeps{}
 
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, playlistID, _ string) ([]ytPlaylistItem, string, error) {
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, playlistID, _ string) ([]ytPlaylistItem, string, error) {
 		gotPlaylistID = playlistID
 		return nil, "", nil
 	}
 
-	syncWatchLaterAsync("default", "default", q, nil, "", "", true)
+	syncWatchLaterAsync("default", "default", q, nil, "", "", true, deps)
 
 	if gotPlaylistID != "WL" {
 		t.Fatalf("expected PlaylistId=WL, got %q", gotPlaylistID)
@@ -250,10 +246,9 @@ func TestWatchLaterBT3_QuotaExhaustion(t *testing.T) {
 	}
 
 	var callCount int32
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
+	deps := &ytListDeps{}
 
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		n := atomic.AddInt32(&callCount, 1)
 		if n == 1 {
 			return []ytPlaylistItem{{VideoID: "quota-vid1"}}, "tok2", nil
@@ -270,7 +265,7 @@ func TestWatchLaterBT3_QuotaExhaustion(t *testing.T) {
 	}
 	defer el.Close()
 
-	syncWatchLaterAsync("default", "default", q, el, "", "", true)
+	syncWatchLaterAsync("default", "default", q, el, "", "", true, deps)
 
 	// Page 1 item should be enqueued.
 	items, err := q.Pending()
@@ -311,14 +306,13 @@ func TestWatchLaterRG1_HandlerReturns202NoRace(t *testing.T) {
 	watchLaterSyncing = false
 	watchLaterSyncMu.Unlock()
 
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps := &ytListDeps{}
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		time.Sleep(5 * time.Millisecond)
 		return nil, "", nil
 	}
 
-	srv := &Server{queue: q}
+	srv := &Server{queue: q, ytListDeps: deps}
 	req := httptest.NewRequest(http.MethodPost, "/sync/youtube-watchlater", nil)
 	rr := httptest.NewRecorder()
 
@@ -372,10 +366,9 @@ func TestWatchLaterRG3_InvalidGrant_EmitsErrorClass(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
+	deps := &ytListDeps{}
 
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return nil, "", fmt.Errorf("oauth2: cannot fetch token: 400 Bad Request\nResponse: {\"error\":\"invalid_grant\"}")
 	}
 
@@ -386,7 +379,7 @@ func TestWatchLaterRG3_InvalidGrant_EmitsErrorClass(t *testing.T) {
 	}
 	defer el.Close()
 
-	syncWatchLaterAsync("default", "default", q, el, "", "", true)
+	syncWatchLaterAsync("default", "default", q, el, "", "", true, deps)
 
 	content, err := os.ReadFile(evPath)
 	if err != nil {
@@ -422,10 +415,9 @@ func TestWatchLaterIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	orig := execYouTubePlaylistItems
-	defer func() { execYouTubePlaylistItems = orig }()
+	deps := &ytListDeps{}
 
-	execYouTubePlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
+	deps.PlaylistItems = func(_ context.Context, _ oauth2.TokenSource, _, _ string) ([]ytPlaylistItem, string, error) {
 		return []ytPlaylistItem{
 			{VideoID: "integ-vid1", Title: "Integration Video"},
 		}, "", nil
@@ -436,7 +428,7 @@ func TestWatchLaterIntegration(t *testing.T) {
 	watchLaterSyncing = false
 	watchLaterSyncMu.Unlock()
 
-	srv := &Server{queue: q}
+	srv := &Server{queue: q, ytListDeps: deps}
 	req := httptest.NewRequest(http.MethodPost, "/sync/youtube-watchlater", nil)
 	rr := httptest.NewRecorder()
 	srv.handleSyncWatchLater(rr, req)

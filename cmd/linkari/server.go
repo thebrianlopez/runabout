@@ -251,12 +251,15 @@ type Server struct {
 	pagerDutyToken  string // PagerDuty API token
 	router          *Router
 	queue           *Queue
-	limiter         *rateLimiter
-	ring            *RingLog
-	events          *EventLogger // nil when event logging is not configured
-	debug           bool
-	startAt         time.Time
-	tsnetAddr       string // Funnel FQDN; empty when tsnet is not enabled
+	// ytListDeps carries YouTube Data API list dependencies for the sync
+	// handlers. nil resolves to production implementations. EPIC-258 M2.
+	ytListDeps *ytListDeps
+	limiter    *rateLimiter
+	ring       *RingLog
+	events     *EventLogger // nil when event logging is not configured
+	debug      bool
+	startAt    time.Time
+	tsnetAddr  string // Funnel FQDN; empty when tsnet is not enabled
 
 	// EPIC-097 F1: server config for source enable/disable flags.
 	serverConfig ServerConfig
@@ -2848,7 +2851,7 @@ func (s *Server) handleSyncWatchLater(w http.ResponseWriter, r *http.Request) {
 			watchLaterSyncing = false
 			watchLaterSyncMu.Unlock()
 		}()
-		syncWatchLaterAsync(profile, wlSlot, s.queue, s.events, s.googleClientID, s.googleClientSecret, true)
+		syncWatchLaterAsync(profile, wlSlot, s.queue, s.events, s.googleClientID, s.googleClientSecret, true, s.ytListDeps)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
@@ -2883,7 +2886,7 @@ func (s *Server) handleSyncLikedVideos(w http.ResponseWriter, r *http.Request) {
 			likedVideosSyncing = false
 			likedVideosSyncMu.Unlock()
 		}()
-		syncLikedVideosAsync(profile, likedSlot, s.queue, s.events, s.googleClientID, s.googleClientSecret, true)
+		syncLikedVideosAsync(profile, likedSlot, s.queue, s.events, s.googleClientID, s.googleClientSecret, true, s.ytListDeps)
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
