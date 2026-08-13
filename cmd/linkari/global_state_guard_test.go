@@ -108,7 +108,6 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"awsDoctorProbeFn":                true,
 	"configRefResolverFactory":        true,
 	"domainRouteOverrideEmitter":      true,
-	"execNormalizeURL":                true,
 	"execYouTubeChannelsList":         true,
 	"execYouTubePlaylistItems":        true,
 	"execYouTubePlaylistItemsList":    true,

@@ -195,10 +195,6 @@ func TestShortsAsync_M12_Integration(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	installTestProfileDir(t, "eng")
 
-	prevNorm := execNormalizeURL
-	execNormalizeURL = func(_ context.Context, u string) (string, error) { return u, nil }
-	t.Cleanup(func() { execNormalizeURL = prevNorm })
-
 	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "Short: quick and fun video transcript content", ytVideoMeta{
 			Title:        "Fun Short",
@@ -209,6 +205,7 @@ func TestShortsAsync_M12_Integration(t *testing.T) {
 		}, nil
 	}
 	deps := &ytDeps{Ytdlp: ytdlpStub}
+	deps.NormalizeURL = func(_ context.Context, u string) (string, error) { return u, nil }
 
 	deps.Backend = &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
 		v := TriageVerdict{Score: 80, Verdict: "Entertaining Short", Tags: "shorts", RubricScores: map[string]int{"overall": 80}}

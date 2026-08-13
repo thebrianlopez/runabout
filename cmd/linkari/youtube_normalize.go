@@ -13,10 +13,6 @@ import (
 	"time"
 )
 
-// execNormalizeURL is the test seam for URL normalization. Replace in tests to
-// inject a custom normalizer without spawning HTTP requests. EPIC-006 M3.
-var execNormalizeURL = normalizeYouTubeURL
-
 // maxNormalizeRedirects is the maximum number of redirect hops normalizeYouTubeURL
 // will follow before giving up and returning the original URL unchanged.
 const maxNormalizeRedirects = 10

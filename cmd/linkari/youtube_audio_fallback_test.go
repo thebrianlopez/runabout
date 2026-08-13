@@ -73,12 +73,11 @@ func installFfmpegNoopStub(t *testing.T, deps *ytDeps) {
 	deps.FfmpegConvert = func(_ context.Context, _, _ string) error { return nil }
 }
 
-// installNormalizeURLNoopStub makes execNormalizeURL pass through the URL unchanged.
-func installNormalizeURLNoopStub(t *testing.T) {
+// installNormalizeURLNoopStub makes URL normalization pass through unchanged
+// via the injected ytDeps (EPIC-258 M2: was execNormalizeURL package-var swap).
+func installNormalizeURLNoopStub(t *testing.T, deps *ytDeps) {
 	t.Helper()
-	prev := execNormalizeURL
-	execNormalizeURL = func(_ context.Context, u string) (string, error) { return u, nil }
-	t.Cleanup(func() { execNormalizeURL = prev })
+	deps.NormalizeURL = func(_ context.Context, u string) (string, error) { return u, nil }
 }
 
 // enqueueAudioFallbackReq enqueues a minimal URL share row and returns the req with QueueRowID set.
@@ -115,7 +114,7 @@ func TestAudioFallback_CT1_SemaphoreCap1(t *testing.T) {
 	deps := installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
 	installFfmpegNoopStub(t, deps)
-	installNormalizeURLNoopStub(t)
+	installNormalizeURLNoopStub(t, deps)
 	installPushStub(t, deps, nil)
 
 	var activeCount, peakActive int32
@@ -197,7 +196,7 @@ func TestAudioFallback_CT2_TimeoutEmitsEvent(t *testing.T) {
 	deps := installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
 	installFfmpegNoopStub(t, deps)
-	installNormalizeURLNoopStub(t)
+	installNormalizeURLNoopStub(t, deps)
 
 	deps.Whisper = func(ctx context.Context, _, _ string) (string, error) {
 		select {
@@ -261,7 +260,7 @@ func TestAudioFallback_CT3_DeadLetterOnFailure(t *testing.T) {
 	deps := installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
 	installFfmpegNoopStub(t, deps)
-	installNormalizeURLNoopStub(t)
+	installNormalizeURLNoopStub(t, deps)
 
 	deps.Whisper = func(_ context.Context, _, _ string) (string, error) {
 		return "", fmt.Errorf("whisper-cli: exit status 1: decode error")
@@ -313,7 +312,7 @@ func TestAudioFallback_CT4_TerminalFailure(t *testing.T) {
 	deps := installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
 	installFfmpegNoopStub(t, deps)
-	installNormalizeURLNoopStub(t)
+	installNormalizeURLNoopStub(t, deps)
 
 	deps.Whisper = func(_ context.Context, _, _ string) (string, error) {
 		return "", fmt.Errorf("whisper-cli: exit status 1: persistent failure")
@@ -369,7 +368,7 @@ func TestAudioFallback_CT5_SemaphoreReleasedOnError(t *testing.T) {
 	deps := installNoSubtitlesStub(t)
 	installAudioDownloadStub(t)
 	installFfmpegNoopStub(t, deps)
-	installNormalizeURLNoopStub(t)
+	installNormalizeURLNoopStub(t, deps)
 	installPushStub(t, deps, nil)
 
 	var callCount int32

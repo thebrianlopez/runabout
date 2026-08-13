@@ -177,13 +177,16 @@ func stripSRT(raw string) string {
 // reader youtube.go:203.
 //
 // A nil *ytDeps is valid and resolves to production defaults, so call sites
-// with nothing to inject may pass nil. Sibling seams (execYtdlpAudio,
-// execNormalizeURL, whisper/ffmpeg) belong here too and are scheduled for
-// later commits in this milestone.
+// with nothing to inject may pass nil. Sibling seams (execYtdlpAudio)
+// belong here too and are scheduled for later commits in this milestone.
 type ytDeps struct {
 	// Ytdlp extracts subtitles for a video URL.
 	// EPIC-090 M4: returns ytVideoMeta (title + id + duration + subtitle_type).
 	Ytdlp func(ctx context.Context, ytdlpPath, videoURL string) (transcript string, meta ytVideoMeta, err error)
+	// NormalizeURL resolves redirect wrappers to the canonical YouTube URL.
+	// nil selects the production normalizeYouTubeURL. EPIC-258 M2: was package
+	// var execNormalizeURL.
+	NormalizeURL func(ctx context.Context, rawURL string) (string, error)
 	// Backend is the scoring backend for rubric scoring. nil uses the process
 	// default (activeScoringBackend). EPIC-258 M2.
 	Backend ScoringBackend
@@ -209,6 +212,9 @@ func (d *ytDeps) resolve() *ytDeps {
 	}
 	if out.Ytdlp == nil {
 		out.Ytdlp = runYtdlpExtract
+	}
+	if out.NormalizeURL == nil {
+		out.NormalizeURL = normalizeYouTubeURL
 	}
 	if out.FfmpegConvert == nil {
 		out.FfmpegConvert = runFfmpegConvert
@@ -670,7 +676,7 @@ func scoreYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *EventL
 
 	// Step 1: normalize URL (resolve redirect wrappers to canonical YouTube form).
 	// EPIC-006 M3: inserted before execYtdlp so yt-dlp always receives a canonical URL.
-	if normalized, normErr := execNormalizeURL(ctx, videoURL); normErr == nil {
+	if normalized, normErr := deps.NormalizeURL(ctx, videoURL); normErr == nil {
 		videoURL = normalized
 	}
 
@@ -1031,7 +1037,7 @@ func transcribeYouTubeAsync(req ShareRequest, q *Queue, ytPath string, events *E
 
 	// Step 1: normalize URL (resolve redirect wrappers to canonical YouTube form).
 	// EPIC-006 M3: inserted before execYtdlp so yt-dlp always receives a canonical URL.
-	if normalized, normErr := execNormalizeURL(ctx, videoURL); normErr == nil {
+	if normalized, normErr := deps.NormalizeURL(ctx, videoURL); normErr == nil {
 		videoURL = normalized
 	}
 

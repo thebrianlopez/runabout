@@ -697,15 +697,13 @@ func TestScoreYouTubeAsync_BT1_NormalizationWired(t *testing.T) {
 	canonical := "https://www.youtube.com/watch?v=bt1test"
 	redirectURL := "https://redirect.example.com/url?url=" + canonical
 
-	// Stub normalizer: maps redirectURL → canonical.
-	prevNorm := execNormalizeURL
-	execNormalizeURL = func(_ context.Context, rawURL string) (string, error) {
+	// Stub normalizer: maps redirectURL → canonical (EPIC-258 M2: injected).
+	normStub := func(_ context.Context, rawURL string) (string, error) {
 		if rawURL == redirectURL {
 			return canonical, nil
 		}
 		return rawURL, nil
 	}
-	t.Cleanup(func() { execNormalizeURL = prevNorm })
 
 	// Capture the URL that execYtdlp actually receives.
 	var capturedURL string
@@ -713,7 +711,7 @@ func TestScoreYouTubeAsync_BT1_NormalizationWired(t *testing.T) {
 		capturedURL = videoURL
 		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles")
 	}
-	deps := &ytDeps{Ytdlp: ytdlpStub}
+	deps := &ytDeps{Ytdlp: ytdlpStub, NormalizeURL: normStub}
 
 	q := newTestQueue(t)
 	req := ShareRequest{
@@ -752,21 +750,19 @@ func TestTranscribeYouTubeAsync_BT2_NormalizationWired(t *testing.T) {
 	canonical := "https://www.youtube.com/watch?v=bt2test"
 	redirectURL := "https://redirect.example.com/url?url=" + canonical
 
-	prevNorm := execNormalizeURL
-	execNormalizeURL = func(_ context.Context, rawURL string) (string, error) {
+	normStub := func(_ context.Context, rawURL string) (string, error) {
 		if rawURL == redirectURL {
 			return canonical, nil
 		}
 		return rawURL, nil
 	}
-	t.Cleanup(func() { execNormalizeURL = prevNorm })
 
 	var capturedURL string
 	ytdlpStub := func(_ context.Context, _, videoURL string) (string, ytVideoMeta, error) {
 		capturedURL = videoURL
 		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles")
 	}
-	deps := &ytDeps{Ytdlp: ytdlpStub}
+	deps := &ytDeps{Ytdlp: ytdlpStub, NormalizeURL: normStub}
 
 	q := newTestQueue(t)
 	req := ShareRequest{
