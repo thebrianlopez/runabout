@@ -52,14 +52,17 @@ jobs:
       # documented quarantine owner and remediation epic.
       - name: Test linkari module
         working-directory: cmd/linkari
-        run: go test -race -shuffle=on -coverprofile=../../coverage-linkari.out ./...
+        # -timeout 20m: the -race suite runs ~5m locally but ~10m on hosted
+        # runners; the go test default of 10m produced a spurious alarm panic
+        # mid-test (run 31669681789).
+        run: go test -race -shuffle=on -timeout 20m -coverprofile=../../coverage-linkari.out ./...
 
       # EPIC-258 M4: goroutine-leak gate. Runs the linkari module under the
       # leakcheck build tag (goleak.Find after m.Run; see main_leakcheck_test.go).
       # Gating from day one: the suite was verified 5x clean at enablement.
       - name: Leakcheck linkari module
         working-directory: cmd/linkari
-        run: go test -tags leakcheck -count=1 ./...
+        run: go test -tags leakcheck -count=1 -timeout 20m ./...
 
       - name: Build all
         run: make build
