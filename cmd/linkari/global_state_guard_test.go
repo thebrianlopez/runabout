@@ -131,7 +131,6 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"profilePathOverride":             true,
 	"refreshScorerFn":                 true,
 	"registeredScorerFn":              true,
-	"renameFile":                      true,
 	"runYouTubeLoopbackAuthFn":        true,
 	"scoreAsyncDoneHook":              true,
 	"sensitivePatterns":               true,

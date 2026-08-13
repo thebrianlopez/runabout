@@ -29,11 +29,7 @@ func TestDBRestore_RenameFailureLeavesLiveDBUntouched(t *testing.T) {
 		t.Fatalf("snapshot: %v", err)
 	}
 
-	origRename := renameFile
-	renameFile = func(oldpath, newpath string) error { return os.ErrPermission }
-	defer func() { renameFile = origRename }()
-
-	cmd := dbCmd()
+	cmd := dbCmdWith(func(oldpath, newpath string) error { return os.ErrPermission })
 	cmd.SetArgs([]string{"restore", "--queue-db", targetPath, "--src", backupPath})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected rename failure")

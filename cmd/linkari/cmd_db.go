@@ -23,9 +23,15 @@ type dbBackupMeta struct {
 }
 
 func dbCmd() *cobra.Command {
+	return dbCmdWith(os.Rename)
+}
+
+// dbCmdWith threads the rename operation explicitly so tests can inject a
+// failing rename without writing a package-level seam (EPIC-258 M2).
+func dbCmdWith(rename func(oldpath, newpath string) error) *cobra.Command {
 	cmd := &cobra.Command{Use: "db", Short: "SQLite backup and restore utilities"}
 	cmd.AddCommand(dbBackupCmd())
-	cmd.AddCommand(dbRestoreCmd())
+	cmd.AddCommand(dbRestoreCmd(rename))
 	return cmd
 }
 
@@ -113,7 +119,7 @@ func doBackupOnce(q *Queue, queueDB, dest string) error {
 	return nil
 }
 
-func dbRestoreCmd() *cobra.Command {
+func dbRestoreCmd(rename func(oldpath, newpath string) error) *cobra.Command {
 	var queueDB, src string
 	var force bool
 	cmd := &cobra.Command{
@@ -156,7 +162,7 @@ func dbRestoreCmd() *cobra.Command {
 				os.Remove(tmpPath)
 				return err
 			}
-			if err := renameFile(tmpPath, queueDB); err != nil {
+			if err := rename(tmpPath, queueDB); err != nil {
 				os.Remove(tmpPath)
 				return fmt.Errorf("atomic restore rename: %w", err)
 			}
@@ -265,5 +271,3 @@ func copyFileAtomic(src, dst string) error {
 	}
 	return nil
 }
-
-var renameFile = os.Rename
