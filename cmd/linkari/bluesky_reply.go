@@ -18,12 +18,32 @@ import (
 	"time"
 )
 
-// execPublishReply and execGetRecord are package-level seams for testing.
-// Production code uses defaultExecPublishReply / defaultExecGetRecord.
-var (
-	execPublishReply = defaultExecPublishReply
-	execGetRecord    = defaultExecGetRecord
-)
+// bskyReplyDeps carries the XRPC calls publishVerdictReply performs, so tests
+// inject stubs per call instead of swapping package globals (EPIC-258 M2: was
+// package vars execPublishReply / execGetRecord).
+type bskyReplyDeps struct {
+	// GetRecord fetches the CID of the post being replied to. nil selects the
+	// production XRPC call.
+	GetRecord func(ctx context.Context, client *BlueskyClient, atURI string) (string, error)
+	// PublishReply creates the reply record. nil selects the production XRPC call.
+	PublishReply func(ctx context.Context, client *BlueskyClient, atURI, cid, verdict, rationale string, score int) error
+}
+
+// resolve returns d with any nil field filled from production defaults.
+// Accepts a nil receiver.
+func (d *bskyReplyDeps) resolve() *bskyReplyDeps {
+	out := bskyReplyDeps{}
+	if d != nil {
+		out = *d
+	}
+	if out.GetRecord == nil {
+		out.GetRecord = defaultExecGetRecord
+	}
+	if out.PublishReply == nil {
+		out.PublishReply = defaultExecPublishReply
+	}
+	return &out
+}
 
 type bskyReplyRef struct {
 	URI string `json:"uri"`
@@ -65,7 +85,8 @@ func isATURI(url string) bool {
 // publishVerdictReply posts a Linkari verdict as a Bluesky reply.
 // All failure paths log and return nil — this function never blocks FCM delivery.
 // EPIC-015 M3.
-func publishVerdictReply(ctx context.Context, client *BlueskyClient, atURI string, score int, verdict string, q *Queue, userID int64) error {
+func publishVerdictReply(ctx context.Context, client *BlueskyClient, atURI string, score int, verdict string, q *Queue, userID int64, deps *bskyReplyDeps) error {
+	deps = deps.resolve()
 	if !isATURI(atURI) {
 		slog.Debug(
 			"bluesky reply skipped: not at:// URI",
@@ -93,7 +114,7 @@ func publishVerdictReply(ctx context.Context, client *BlueskyClient, atURI strin
 		return nil
 	}
 
-	cid, err := execGetRecord(ctx, client, atURI)
+	cid, err := deps.GetRecord(ctx, client, atURI)
 	if err != nil {
 		if strings.Contains(err.Error(), "bluesky_post_not_found") {
 			slog.Warn(
@@ -115,7 +136,7 @@ func publishVerdictReply(ctx context.Context, client *BlueskyClient, atURI strin
 		return nil
 	}
 
-	if err := execPublishReply(ctx, client, atURI, cid, verdict, "", score); err != nil {
+	if err := deps.PublishReply(ctx, client, atURI, cid, verdict, "", score); err != nil {
 		if strings.Contains(err.Error(), "RateLimitExceeded") {
 			slog.Warn(
 				"bluesky reply rate limited",

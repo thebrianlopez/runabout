@@ -504,10 +504,6 @@ func (s *BlueskyFirehoseSource) Start(ctx context.Context, q *Queue, emit func(*
 	return nil
 }
 
-// execConnectAndRead is the production WebSocket connect+read function,
-// exposed as a variable so tests can inject a stub (RG-2 seam).
-var execConnectAndRead = connectAndRead
-
 // connectAndRead opens a WebSocket connection to url and reads messages until
 // the context is cancelled or an error occurs.
 func connectAndRead(ctx context.Context, fsc *firehoseScoreContext, url string) error {
@@ -584,6 +580,11 @@ func runFirehoseWorker(ctx context.Context, fsc *firehoseScoreContext, logger *s
 		"cursor", lastSeq,
 	)
 
+	connect := fsc.ConnectAndRead
+	if connect == nil {
+		connect = connectAndRead
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -591,7 +592,7 @@ func runFirehoseWorker(ctx context.Context, fsc *firehoseScoreContext, logger *s
 		default:
 		}
 
-		err := execConnectAndRead(ctx, fsc, connectURL)
+		err := connect(ctx, fsc, connectURL)
 		if ctx.Err() != nil {
 			return // context cancelled  -  normal shutdown
 		}

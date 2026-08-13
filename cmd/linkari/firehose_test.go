@@ -230,18 +230,17 @@ func TestFirehoseRG2_NoExitOnError(t *testing.T) {
 	calls := 0
 	connectErr := fmt.Errorf("transient error")
 
-	// Override connectAndRead with a test version
-	origConnect := execConnectAndRead
-	execConnectAndRead = func(ctx context.Context, fsc *firehoseScoreContext, url string) error {
+	// Inject a connect stub via the fsc dependency (EPIC-258 M2).
+	fsc := testFSC(q)
+	fsc.ConnectAndRead = func(ctx context.Context, fsc *firehoseScoreContext, url string) error {
 		calls++
 		if calls >= 2 {
 			cancel()
 		}
 		return connectErr
 	}
-	defer func() { execConnectAndRead = origConnect }()
 
-	runFirehoseWorker(ctx, testFSC(q), nil)
+	runFirehoseWorker(ctx, fsc, nil)
 
 	if calls < 2 {
 		t.Fatalf("expected at least 2 connect attempts, got %d", calls)

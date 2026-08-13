@@ -1,6 +1,9 @@
 package main
 
-import "log/slog"
+import (
+	"context"
+	"log/slog"
+)
 
 // firehoseScoreContext carries the dependencies needed to call scoreAsync
 // from handleFirehosePost. Separating these from the queue allows M3 to
@@ -14,6 +17,10 @@ type firehoseScoreContext struct {
 	// Deps carries scoring dependencies (transcript dir, domain router, Jina
 	// client). nil resolves to production defaults. EPIC-258 M2.
 	Deps *scoringDeps
+	// ConnectAndRead opens the firehose WebSocket and reads until error or
+	// cancellation. nil selects the production connectAndRead. EPIC-258 M2:
+	// was package var execConnectAndRead.
+	ConnectAndRead func(ctx context.Context, fsc *firehoseScoreContext, url string) error
 }
 
 // resolveFirehoseProfile maps a firehose subscription profile to a valid

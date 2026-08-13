@@ -1640,7 +1640,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 				sc.GapSummary(3), "", classifySource, contentWarning)
 		}
 		// EPIC-015 M4: Bluesky verdict reply  -  fire-and-forget; never blocks FCM.
-		_ = publishVerdictReply(context.Background(), bskyClient, itemURL, *itemScore, itemVerdict, q, 1)
+		_ = publishVerdictReply(context.Background(), bskyClient, itemURL, *itemScore, itemVerdict, q, 1, nil)
 	}
 
 	slog.Info(

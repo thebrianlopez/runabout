@@ -14,12 +14,10 @@ func TestBlueskyReplyCT1_FCMNotBlocked(t *testing.T) {
 	q.db.Exec("INSERT OR IGNORE INTO users (id, google_sub, email, name, created_at, updated_at) VALUES (1,'sub','e@e.com','T',1,1)")
 	q.db.Exec("UPDATE users SET bluesky_publish_opt_in=1 WHERE id=1")
 
-	// Wire a failing execPublishReply
-	oldExec := execPublishReply
-	execPublishReply = func(_ context.Context, _ *BlueskyClient, _, _, _, _ string, _ int) error {
+	// Wire a failing PublishReply (EPIC-258 M2: injected deps, not package seam)
+	deps := &bskyReplyDeps{PublishReply: func(_ context.Context, _ *BlueskyClient, _, _, _, _ string, _ int) error {
 		return errors.New("bluesky_unreachable")
-	}
-	defer func() { execPublishReply = oldExec }()
+	}}
 
 	// Simulate scoreAsync calling FCM + reply
 	req := &ShareRequest{URL: "at://did:plc:abc/app.bsky.feed.post/xyz", Profile: "default", Type: "url"}
@@ -27,7 +25,7 @@ func TestBlueskyReplyCT1_FCMNotBlocked(t *testing.T) {
 
 	// Simulate EnqueueDigestIfDue (FCM) + reply
 	_, _ = q.EnqueueDigestIfDue(context.Background(), "default", 80, "slug1", "Strong Yes", req.URL)
-	_ = publishVerdictReply(context.Background(), nil, req.URL, 80, "Strong Yes", q, 1)
+	_ = publishVerdictReply(context.Background(), nil, req.URL, 80, "Strong Yes", q, 1, deps)
 
 	// FCM row must be present regardless of reply failure
 	pushes, err := q.PendingPushes(10)
@@ -55,14 +53,12 @@ func TestBlueskyReplyCT2_OptOut(t *testing.T) {
 	// opt-in = 0 (default)
 
 	calls := 0
-	oldExec := execPublishReply
-	execPublishReply = func(_ context.Context, _ *BlueskyClient, _, _, _, _ string, _ int) error {
+	deps := &bskyReplyDeps{PublishReply: func(_ context.Context, _ *BlueskyClient, _, _, _, _ string, _ int) error {
 		calls++
 		return nil
-	}
-	defer func() { execPublishReply = oldExec }()
+	}}
 
-	_ = publishVerdictReply(context.Background(), nil, "at://did:plc:abc/app.bsky.feed.post/xyz", 80, "Strong Yes", q, 1)
+	_ = publishVerdictReply(context.Background(), nil, "at://did:plc:abc/app.bsky.feed.post/xyz", 80, "Strong Yes", q, 1, deps)
 	if calls != 0 {
 		t.Fatalf("expected 0 XRPC calls for opted-out user, got %d", calls)
 	}
@@ -76,23 +72,19 @@ func TestBlueskyReplyCT3_CreateRecord(t *testing.T) {
 	q.db.Exec("UPDATE users SET bluesky_publish_opt_in=1 WHERE id=1")
 
 	var capturedURI, capturedCID string
-	oldExec := execPublishReply
-	execPublishReply = func(_ context.Context, _ *BlueskyClient, atURI, cid, _, _ string, _ int) error {
-		capturedURI = atURI
-		capturedCID = cid
-		return nil
+	deps := &bskyReplyDeps{
+		PublishReply: func(_ context.Context, _ *BlueskyClient, atURI, cid, _, _ string, _ int) error {
+			capturedURI = atURI
+			capturedCID = cid
+			return nil
+		},
+		GetRecord: func(_ context.Context, _ *BlueskyClient, atURI string) (string, error) {
+			return "bafyreidummy", nil
+		},
 	}
-	defer func() { execPublishReply = oldExec }()
-
-	// Stub getRecord to return a known CID
-	oldGet := execGetRecord
-	execGetRecord = func(_ context.Context, _ *BlueskyClient, atURI string) (string, error) {
-		return "bafyreidummy", nil
-	}
-	defer func() { execGetRecord = oldGet }()
 
 	const testURI = "at://did:plc:abc/app.bsky.feed.post/xyz"
-	_ = publishVerdictReply(context.Background(), &BlueskyClient{}, testURI, 80, "Strong Yes", q, 1)
+	_ = publishVerdictReply(context.Background(), &BlueskyClient{}, testURI, 80, "Strong Yes", q, 1, deps)
 
 	if capturedURI != testURI {
 		t.Fatalf("expected URI %q, got %q", testURI, capturedURI)
@@ -137,19 +129,17 @@ func TestBlueskyReplyBT2_RateLimit(t *testing.T) {
 	q.db.Exec("UPDATE users SET bluesky_publish_opt_in=1 WHERE id=1")
 
 	calls := 0
-	oldExec := execPublishReply
-	execPublishReply = func(_ context.Context, _ *BlueskyClient, _, _, _, _ string, _ int) error {
-		calls++
-		return errors.New("RateLimitExceeded")
+	deps := &bskyReplyDeps{
+		PublishReply: func(_ context.Context, _ *BlueskyClient, _, _, _, _ string, _ int) error {
+			calls++
+			return errors.New("RateLimitExceeded")
+		},
+		GetRecord: func(_ context.Context, _ *BlueskyClient, _ string) (string, error) {
+			return "cid123", nil
+		},
 	}
-	defer func() { execPublishReply = oldExec }()
-	oldGet := execGetRecord
-	execGetRecord = func(_ context.Context, _ *BlueskyClient, _ string) (string, error) {
-		return "cid123", nil
-	}
-	defer func() { execGetRecord = oldGet }()
 
-	_ = publishVerdictReply(context.Background(), &BlueskyClient{}, "at://did/col/rkey", 80, "Strong Yes", q, 1)
+	_ = publishVerdictReply(context.Background(), &BlueskyClient{}, "at://did/col/rkey", 80, "Strong Yes", q, 1, deps)
 	// On rate limit, we log WARN and return nil (no panic, no propagation)
 	if calls != 1 {
 		t.Fatalf("expected 1 call, got %d", calls)
@@ -162,21 +152,18 @@ func TestBlueskyReplyBT3_PostNotFound(t *testing.T) {
 	q.db.Exec("INSERT OR IGNORE INTO users (id, google_sub, email, name, created_at, updated_at) VALUES (1,'sub','e@e.com','T',1,1)")
 	q.db.Exec("UPDATE users SET bluesky_publish_opt_in=1 WHERE id=1")
 
-	oldGet := execGetRecord
-	execGetRecord = func(_ context.Context, _ *BlueskyClient, _ string) (string, error) {
-		return "", errors.New("bluesky_post_not_found")
-	}
-	defer func() { execGetRecord = oldGet }()
-
 	calls := 0
-	oldExec := execPublishReply
-	execPublishReply = func(_ context.Context, _ *BlueskyClient, _, _, _, _ string, _ int) error {
-		calls++
-		return nil
+	deps := &bskyReplyDeps{
+		GetRecord: func(_ context.Context, _ *BlueskyClient, _ string) (string, error) {
+			return "", errors.New("bluesky_post_not_found")
+		},
+		PublishReply: func(_ context.Context, _ *BlueskyClient, _, _, _, _ string, _ int) error {
+			calls++
+			return nil
+		},
 	}
-	defer func() { execPublishReply = oldExec }()
 
-	_ = publishVerdictReply(context.Background(), &BlueskyClient{}, "at://did/col/rkey", 80, "Strong Yes", q, 1)
+	_ = publishVerdictReply(context.Background(), &BlueskyClient{}, "at://did/col/rkey", 80, "Strong Yes", q, 1, deps)
 	if calls != 0 {
 		t.Fatal("createRecord must not be called when getRecord returns not-found")
 	}
@@ -224,17 +211,15 @@ func TestBlueskyReplyRG1_PanicSafe(t *testing.T) {
 	// publishVerdictReply should recover from panic (wrap in goroutine with recover)
 	func() {
 		defer func() { recover() }()
-		oldExec := execPublishReply
-		execPublishReply = func(_ context.Context, _ *BlueskyClient, _, _, _, _ string, _ int) error {
-			panic("simulated panic")
+		deps := &bskyReplyDeps{
+			PublishReply: func(_ context.Context, _ *BlueskyClient, _, _, _, _ string, _ int) error {
+				panic("simulated panic")
+			},
+			GetRecord: func(_ context.Context, _ *BlueskyClient, _ string) (string, error) {
+				return "cid", nil
+			},
 		}
-		defer func() { execPublishReply = oldExec }()
-		oldGet := execGetRecord
-		execGetRecord = func(_ context.Context, _ *BlueskyClient, _ string) (string, error) {
-			return "cid", nil
-		}
-		defer func() { execGetRecord = oldGet }()
-		_ = publishVerdictReply(context.Background(), &BlueskyClient{}, "at://did/col/rkey", 80, "Strong Yes", q, 1)
+		_ = publishVerdictReply(context.Background(), &BlueskyClient{}, "at://did/col/rkey", 80, "Strong Yes", q, 1, deps)
 	}()
 
 	pushes, _ := q.PendingPushes(10)
@@ -284,21 +269,19 @@ func TestBlueskyReplyIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Wire test seams
+	// Wire test seams via injected deps (EPIC-258 M2)
 	var publishedURI string
-	oldGet := execGetRecord
-	execGetRecord = func(_ context.Context, _ *BlueskyClient, atURI string) (string, error) {
-		return "bafyreid123", nil
+	deps := &bskyReplyDeps{
+		GetRecord: func(_ context.Context, _ *BlueskyClient, atURI string) (string, error) {
+			return "bafyreid123", nil
+		},
+		PublishReply: func(_ context.Context, _ *BlueskyClient, atURI, cid, _, _ string, _ int) error {
+			publishedURI = atURI
+			return nil
+		},
 	}
-	defer func() { execGetRecord = oldGet }()
-	oldExec := execPublishReply
-	execPublishReply = func(_ context.Context, _ *BlueskyClient, atURI, cid, _, _ string, _ int) error {
-		publishedURI = atURI
-		return nil
-	}
-	defer func() { execPublishReply = oldExec }()
 
-	_ = publishVerdictReply(context.Background(), &BlueskyClient{Session: BlueskySessionData{DID: "did:plc:abc", AccessJWT: "tok"}}, req.URL, 80, "Strong Yes", q, 1)
+	_ = publishVerdictReply(context.Background(), &BlueskyClient{Session: BlueskySessionData{DID: "did:plc:abc", AccessJWT: "tok"}}, req.URL, 80, "Strong Yes", q, 1, deps)
 
 	// FCM row present
 	pushes, _ := q.PendingPushes(10)
