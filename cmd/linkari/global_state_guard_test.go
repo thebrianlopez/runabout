@@ -112,7 +112,6 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"execYouTubePlaylistItems":        true,
 	"execYouTubePlaylistItemsList":    true,
 	"execYouTubeSubscriptionsList":    true,
-	"execYtdlpAudio":                  true,
 	"firecrawlClient":                 true,
 	"imageNoiseGateMinBytes":          true,
 	"imageShortCircuitBypassMinChars": true,

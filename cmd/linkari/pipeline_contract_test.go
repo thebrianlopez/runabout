@@ -441,11 +441,9 @@ func TestTranscribeYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	if err := os.WriteFile(fakeAudio, []byte("FAKE-M4A"), 0o644); err != nil {
 		t.Fatalf("write fake audio: %v", err)
 	}
-	prevAudio := execYtdlpAudio
-	execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	deps.YtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return fakeAudio, ytVideoMeta{Title: "Test Video", ID: "abc123"}, nil
 	}
-	t.Cleanup(func() { execYtdlpAudio = prevAudio })
 
 	// ffmpeg converts audio to wav (EPIC-258 M2: injected via ytDeps).
 	deps.FfmpegConvert = func(_ context.Context, _, outputPath string) error {

@@ -175,11 +175,11 @@ func installYtdlpNoSubtitlesStub(t *testing.T) *ytDeps {
 	return deps
 }
 
-// installYtdlpAudioStub makes execYtdlpAudio write a fake audio file and return its path.
-func installYtdlpAudioStub(t *testing.T) {
+// installYtdlpAudioStub makes the audio download write a fake audio file and
+// return its path. EPIC-258 M2: injected via ytDeps instead of a package-var swap.
+func installYtdlpAudioStub(t *testing.T, deps *ytDeps) {
 	t.Helper()
-	prev := execYtdlpAudio
-	execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	deps.YtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		dir := t.TempDir()
 		p := filepath.Join(dir, "audio.m4a")
 		if err := os.WriteFile(p, []byte("FAKE-M4A"), 0o644); err != nil {
@@ -187,7 +187,6 @@ func installYtdlpAudioStub(t *testing.T) {
 		}
 		return p, ytVideoMeta{Title: "Test Video", ID: "test123", Duration: 60}, nil
 	}
-	t.Cleanup(func() { execYtdlpAudio = prev })
 }
 
 // installWhisperStubYT wires a whisper stub returning tx (or err if non-nil)
@@ -215,7 +214,7 @@ func TestScoreYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	// Stub yt-dlp subtitle extraction → no subtitles.
 	deps := installYtdlpNoSubtitlesStub(t)
 	// Stub audio download → fake file.
-	installYtdlpAudioStub(t)
+	installYtdlpAudioStub(t, deps)
 
 	// Stub ffmpeg → write fake wav (EPIC-258 M2: injected via ytDeps).
 	deps.FfmpegConvert = func(_ context.Context, _, outputPath string) error {
@@ -308,21 +307,19 @@ func TestScoreYouTubeAsync_FallbackStepFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Stub execYtdlp → no subtitles.
 			deps := installYtdlpNoSubtitlesStub(t)
-			// Stub audio download.
-			prevAudio := execYtdlpAudio
+			// Stub audio download (EPIC-258 M2: injected via ytDeps).
 			if tc.audioErr != nil {
-				execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+				deps.YtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 					return "", ytVideoMeta{}, tc.audioErr
 				}
 			} else {
-				execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+				deps.YtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 					dir := t.TempDir()
 					p := filepath.Join(dir, "audio.m4a")
 					_ = os.WriteFile(p, []byte("FAKE-M4A"), 0o644)
 					return p, ytVideoMeta{Title: "Test", Duration: 30}, nil
 				}
 			}
-			t.Cleanup(func() { execYtdlpAudio = prevAudio })
 
 			// Stub ffmpeg (EPIC-258 M2: injected via ytDeps).
 			if tc.audioErr == nil {
@@ -383,25 +380,24 @@ func TestScoreYouTubeAsync_FallbackStepFailures(t *testing.T) {
 func TestYtAudioFallback_TempDirCleanup(t *testing.T) {
 	var capturedDir string
 
-	prev := execYtdlpAudio
-	execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
-		// Create a real temp dir to verify cleanup.
-		dir, err := os.MkdirTemp("", "linkari-ytaudio-test-*")
-		if err != nil {
-			return "", ytVideoMeta{}, err
-		}
-		capturedDir = dir
-		p := filepath.Join(dir, "audio.m4a")
-		_ = os.WriteFile(p, []byte("FAKE"), 0o644)
-		return p, ytVideoMeta{}, nil
-	}
-	t.Cleanup(func() { execYtdlpAudio = prev })
-
 	// Stub ffmpeg to fail so cleanup logic in ytAudioFallback triggers.
-	// EPIC-258 M2: injected via ytDeps.
-	ytFallbackDeps := &ytDeps{FfmpegConvert: func(_ context.Context, _, _ string) error {
-		return fmt.Errorf("ffmpeg: injected failure")
-	}}
+	// EPIC-258 M2: audio download + ffmpeg injected via ytDeps.
+	ytFallbackDeps := &ytDeps{
+		YtdlpAudio: func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+			// Create a real temp dir to verify cleanup.
+			dir, err := os.MkdirTemp("", "linkari-ytaudio-test-*")
+			if err != nil {
+				return "", ytVideoMeta{}, err
+			}
+			capturedDir = dir
+			p := filepath.Join(dir, "audio.m4a")
+			_ = os.WriteFile(p, []byte("FAKE"), 0o644)
+			return p, ytVideoMeta{}, nil
+		},
+		FfmpegConvert: func(_ context.Context, _, _ string) error {
+			return fmt.Errorf("ffmpeg: injected failure")
+		},
+	}
 
 	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
 	evtLogger, evtErr := NewEventLogger(evtPath)
@@ -442,25 +438,23 @@ func TestYtAudioFallback_TempDirCleanup(t *testing.T) {
 func TestYtAudioFallback_TimeoutExpiry(t *testing.T) {
 	var capturedDir string
 
-	// Stub audio download — create a real temp dir so we can verify cleanup.
-	prev := execYtdlpAudio
-	execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
-		dir, err := os.MkdirTemp("", "linkari-ytaudio-timeout-*")
-		if err != nil {
-			return "", ytVideoMeta{}, err
-		}
-		capturedDir = dir
-		p := filepath.Join(dir, "audio.m4a")
-		if err := os.WriteFile(p, []byte("FAKE-M4A"), 0o644); err != nil {
-			return "", ytVideoMeta{}, err
-		}
-		return p, ytVideoMeta{Title: "Timeout Test", ID: "tout1", Duration: 30}, nil
-	}
-	t.Cleanup(func() { execYtdlpAudio = prev })
-
 	// EPIC-258 M2: ffmpeg no-op + blocking whisper injected via ytDeps so the
 	// whisper step is reached and blocks until the context is cancelled.
 	ytFallbackDeps := &ytDeps{
+		// Stub audio download — create a real temp dir so we can verify cleanup.
+		// EPIC-258 M2: injected via ytDeps.
+		YtdlpAudio: func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+			dir, err := os.MkdirTemp("", "linkari-ytaudio-timeout-*")
+			if err != nil {
+				return "", ytVideoMeta{}, err
+			}
+			capturedDir = dir
+			p := filepath.Join(dir, "audio.m4a")
+			if err := os.WriteFile(p, []byte("FAKE-M4A"), 0o644); err != nil {
+				return "", ytVideoMeta{}, err
+			}
+			return p, ytVideoMeta{Title: "Timeout Test", ID: "tout1", Duration: 30}, nil
+		},
 		FfmpegConvert: func(_ context.Context, _, outputPath string) error {
 			return os.WriteFile(outputPath, []byte("RIFF-fake"), 0o644)
 		},
@@ -526,7 +520,7 @@ func TestScoreYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
 	deps := installYtdlpNoSubtitlesStub(t)
-	installYtdlpAudioStub(t)
+	installYtdlpAudioStub(t, deps)
 
 	deps.FfmpegConvert = func(_ context.Context, _, outputPath string) error {
 		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
@@ -592,7 +586,7 @@ func TestTranscribeYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
 	deps := installYtdlpNoSubtitlesStub(t)
-	installYtdlpAudioStub(t)
+	installYtdlpAudioStub(t, deps)
 
 	deps.FfmpegConvert = func(_ context.Context, _, outputPath string) error {
 		return os.WriteFile(outputPath, []byte("RIFF-fake-wav"), 0o644)
@@ -815,15 +809,13 @@ func TestAudioFallback_SemaphoreCap1(t *testing.T) {
 	// the test releases it. This keeps the semaphore occupied while we launch a
 	// second job and verify it blocks.
 	hold := make(chan struct{})
-	prevAudio := execYtdlpAudio
 	var audioCallCount int32
-	execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	deps.YtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		atomic.AddInt32(&audioCallCount, 1)
 		// Block until released (only the first call enters; second waits on semaphore).
 		<-hold
 		return "", ytVideoMeta{}, fmt.Errorf("stub: released")
 	}
-	t.Cleanup(func() { execYtdlpAudio = prevAudio })
 
 	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
 	evtLogger, err := NewEventLogger(evtPath)

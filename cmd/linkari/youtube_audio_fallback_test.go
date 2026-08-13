@@ -49,12 +49,12 @@ func installNoSubtitlesStub(t *testing.T) *ytDeps {
 	return deps
 }
 
-// installAudioDownloadStub makes execYtdlpAudio return a real temp file so
+// installAudioDownloadStub makes the audio download return a real temp file so
 // os.RemoveAll(filepath.Dir(audioPath)) in ytAudioFallback cleans up safely.
-func installAudioDownloadStub(t *testing.T) {
+// EPIC-258 M2: injected via ytDeps instead of the execYtdlpAudio package-var swap.
+func installAudioDownloadStub(t *testing.T, deps *ytDeps) {
 	t.Helper()
-	prev := execYtdlpAudio
-	execYtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
+	deps.YtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		dir := t.TempDir()
 		p := filepath.Join(dir, "audio.m4a")
 		if err := os.WriteFile(p, []byte("fake audio"), 0o644); err != nil {
@@ -62,7 +62,6 @@ func installAudioDownloadStub(t *testing.T) {
 		}
 		return p, ytVideoMeta{Title: "Test Video", ID: "testv1", Duration: 60}, nil
 	}
-	t.Cleanup(func() { execYtdlpAudio = prev })
 }
 
 // installFfmpegNoopStub wires a no-op ffmpeg conversion into deps.
@@ -112,7 +111,7 @@ func TestAudioFallback_CT1_SemaphoreCap1(t *testing.T) {
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installNoSubtitlesStub(t)
-	installAudioDownloadStub(t)
+	installAudioDownloadStub(t, deps)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t, deps)
 	installPushStub(t, deps, nil)
@@ -194,7 +193,7 @@ func TestAudioFallback_CT2_TimeoutEmitsEvent(t *testing.T) {
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installNoSubtitlesStub(t)
-	installAudioDownloadStub(t)
+	installAudioDownloadStub(t, deps)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t, deps)
 
@@ -258,7 +257,7 @@ func TestAudioFallback_CT3_DeadLetterOnFailure(t *testing.T) {
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installNoSubtitlesStub(t)
-	installAudioDownloadStub(t)
+	installAudioDownloadStub(t, deps)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t, deps)
 
@@ -310,7 +309,7 @@ func TestAudioFallback_CT4_TerminalFailure(t *testing.T) {
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installNoSubtitlesStub(t)
-	installAudioDownloadStub(t)
+	installAudioDownloadStub(t, deps)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t, deps)
 
@@ -366,7 +365,7 @@ func TestAudioFallback_CT5_SemaphoreReleasedOnError(t *testing.T) {
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installNoSubtitlesStub(t)
-	installAudioDownloadStub(t)
+	installAudioDownloadStub(t, deps)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t, deps)
 	installPushStub(t, deps, nil)

@@ -73,11 +73,6 @@ func whisperDeadlineSecs(audioDurationSecs, configSecs int) int {
 	return d
 }
 
-// execYtdlpAudio is the test seam for yt-dlp audio download invocation.
-// Replace in tests to inject mock output without spawning a real subprocess.
-// EPIC-001 M3.
-var execYtdlpAudio = runYtdlpAudioDownload
-
 // enqueueTranscriptPush is the production FCM transcript push delivery.
 // EPIC-110 M1. EPIC-258 M2: was the package var enqueueTranscriptPushFn;
 // now threaded through ytDeps.TranscriptPush.
@@ -177,12 +172,15 @@ func stripSRT(raw string) string {
 // reader youtube.go:203.
 //
 // A nil *ytDeps is valid and resolves to production defaults, so call sites
-// with nothing to inject may pass nil. Sibling seams (execYtdlpAudio)
-// belong here too and are scheduled for later commits in this milestone.
+// with nothing to inject may pass nil.
 type ytDeps struct {
 	// Ytdlp extracts subtitles for a video URL.
 	// EPIC-090 M4: returns ytVideoMeta (title + id + duration + subtitle_type).
 	Ytdlp func(ctx context.Context, ytdlpPath, videoURL string) (transcript string, meta ytVideoMeta, err error)
+	// YtdlpAudio downloads the audio track for a video URL. nil selects the
+	// production runYtdlpAudioDownload. EPIC-258 M2: was package var
+	// execYtdlpAudio.
+	YtdlpAudio func(ctx context.Context, ytdlpPath, videoURL string) (audioPath string, meta ytVideoMeta, err error)
 	// NormalizeURL resolves redirect wrappers to the canonical YouTube URL.
 	// nil selects the production normalizeYouTubeURL. EPIC-258 M2: was package
 	// var execNormalizeURL.
@@ -215,6 +213,9 @@ func (d *ytDeps) resolve() *ytDeps {
 	}
 	if out.NormalizeURL == nil {
 		out.NormalizeURL = normalizeYouTubeURL
+	}
+	if out.YtdlpAudio == nil {
+		out.YtdlpAudio = runYtdlpAudioDownload
 	}
 	if out.FfmpegConvert == nil {
 		out.FfmpegConvert = runFfmpegConvert
@@ -511,7 +512,7 @@ func ytAudioFallback(ctx context.Context, ytPath, videoURL string, rowID int64, 
 	}
 
 	// Step 1: download audio via yt-dlp.
-	audioPath, meta, dlErr := execYtdlpAudio(ctx, ytPath, videoURL)
+	audioPath, meta, dlErr := deps.YtdlpAudio(ctx, ytPath, videoURL)
 	if dlErr != nil {
 		slog.Warn(
 			"yt_audio_fallback_failed",
