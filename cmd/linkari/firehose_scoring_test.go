@@ -324,6 +324,7 @@ func TestFirehoseScoring_F1CT3_ScoredPushReplaces(t *testing.T) {
 
 // F1-CT-5: At most 3 concurrent firehose scoring goroutines (semaphore cap).
 func TestFirehoseScoring_F1CT5_SemaphoreCap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -337,6 +338,15 @@ func TestFirehoseScoring_F1CT5_SemaphoreCap(t *testing.T) {
 	}
 	fsc := testFSCWithEval(t, q, eval)
 	fsc.Deps = deps
+
+	// Drain every scoreAsync before returning: the CI leakcheck run caught
+	// this test's TempDir cleanup racing the 3 evaluations it never waited
+	// for ("directory not empty"). scoreAsyncDoneHook fires at every
+	// scoreAsync return, after transcript persistence and queue writes.
+	asyncDone := make(chan struct{}, n)
+	prevHook := scoreAsyncDoneHook
+	scoreAsyncDoneHook = func() { asyncDone <- struct{}{} }
+	t.Cleanup(func() { scoreAsyncDoneHook = prevHook })
 
 	for i := 0; i < n; i++ {
 		post := &firehosePost{
@@ -368,6 +378,17 @@ func TestFirehoseScoring_F1CT5_SemaphoreCap(t *testing.T) {
 	}
 	if atomic.LoadInt32(&eval.peak) == 0 {
 		t.Fatal("F1-CT-5: Evaluate never called - scoreAsync did not run")
+	}
+
+	// Wait for all n scoreAsync returns so nothing writes into the TempDir
+	// after this test ends.
+	drainDeadline := time.After(10 * time.Second)
+	for i := 0; i < n; i++ {
+		select {
+		case <-asyncDone:
+		case <-drainDeadline:
+			t.Fatalf("F1-CT-5: only %d of %d scoreAsync completions before drain deadline", i, n)
+		}
 	}
 }
 
