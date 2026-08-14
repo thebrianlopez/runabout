@@ -121,8 +121,10 @@ func (r xdgPathResolver) Resolve(server ServerConfig) (EffectivePaths, error) {
 	}
 	if server.TranscriptsDir != "" {
 		paths.TranscriptsDir = expandTilde(server.TranscriptsDir)
+	} else if docsDir := os.Getenv("WS_ORG_DOCS"); docsDir != "" {
+		paths.TranscriptsDir = filepath.Join(expandTilde(docsDir), "transcripts")
 	} else {
-		paths.TranscriptsDir = filepath.Join(paths.DataDir, "transcripts")
+		paths.TranscriptsDir = filepath.Join(expandTilde("~/docs"), "transcripts")
 	}
 	return paths, nil
 }

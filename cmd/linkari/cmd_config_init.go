@@ -142,6 +142,9 @@ image_text_extraction_enabled = false
 # Path to the yt-dlp binary. Defaults to "yt-dlp" on PATH.
 # ytdlp_path = ""
 
+# Directory for transcript markdown files. Defaults to "$WS_ORG_DOCS/transcripts" or "~/docs/transcripts".
+# transcripts_dir = ""
+
 # Path to the ffmpeg binary. Defaults to "ffmpeg" on PATH.
 # ffmpeg_path = ""
 

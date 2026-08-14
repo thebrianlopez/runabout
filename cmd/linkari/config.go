@@ -514,7 +514,7 @@ type ServerConfig struct {
 	ProfilePath string `toml:"profile_path"`
 
 	// EPIC-009: YouTube transcription config.
-	TranscriptsDir string `toml:"transcripts_dir"` // directory for transcript markdown files (default: ~/code/personal/docs/transcripts)
+	TranscriptsDir string `toml:"transcripts_dir"` // directory for transcript markdown files (default: ~/docs/transcripts)
 	YtdlpPath      string `toml:"ytdlp_path"`      // path to yt-dlp binary (default: yt-dlp on PATH)
 
 	// EPIC-007: PDF document content extraction via LiteParse.
