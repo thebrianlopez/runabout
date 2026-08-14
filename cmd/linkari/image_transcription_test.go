@@ -416,16 +416,6 @@ func TestF2_CT8_RG1_ChromeScreenshot_ScoresAboveZero(t *testing.T) {
 		t.Fatalf("write fixture image: %v", err)
 	}
 
-	// Enable image text extraction for this test.
-	origEnabled := imageTextExtractionEnabled
-	origThreshold := imageShortCircuitBypassMinChars
-	imageTextExtractionEnabled = true
-	imageShortCircuitBypassMinChars = 20
-	t.Cleanup(func() {
-		imageTextExtractionEnabled = origEnabled
-		imageShortCircuitBypassMinChars = origThreshold
-	})
-
 	// Mock the claude CLI for F1 text extraction: returns extracted text JSON.
 	extractedTextJSON := `{"type":"result","result":"{\"text\":\"Important article: Go 1.22 release notes and memory improvements\"}","is_error":false,"total_cost_usd":0.001}`
 	mockClaudeScript(t, extractedTextJSON, 0)
@@ -445,7 +435,13 @@ func TestF2_CT8_RG1_ChromeScreenshot_ScoresAboveZero(t *testing.T) {
 
 	// Set transcripts dir to a temp dir.
 	transcriptDir := t.TempDir()
-	deps := &scoringDeps{TranscriptsDir: transcriptDir, Backend: backend}
+	// Enable image text extraction for this test (EPIC-258 M2: injected).
+	deps := &scoringDeps{
+		TranscriptsDir:                  transcriptDir,
+		Backend:                         backend,
+		ImageTextExtractionEnabled:      boolPtr(true),
+		ImageShortCircuitBypassMinChars: 20,
+	}
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})

@@ -37,10 +37,6 @@ func TestF1_BT1_Semaphore_MaxConcurrencyOne(t *testing.T) {
 	var calls int64
 	var maxConcurrent int64
 	var mu sync.Mutex
-	origSem := imageTextExtractionSem
-	// Replace semaphore to measure concurrency (use a wrapper that counts).
-	// We restore after the test.
-	t.Cleanup(func() { imageTextExtractionSem = origSem })
 
 	ctx := context.Background()
 	var wg sync.WaitGroup

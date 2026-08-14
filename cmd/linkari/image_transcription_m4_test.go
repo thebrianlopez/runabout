@@ -25,10 +25,7 @@ func TestFeatureFlag_Disabled_Fallthrough(t *testing.T) {
 	isolateEventsDir(t)
 	installTestProfileDir(t, "image_triage")
 
-	// Ensure feature flag is off.
-	origEnabled := imageTextExtractionEnabled
-	imageTextExtractionEnabled = false
-	t.Cleanup(func() { imageTextExtractionEnabled = origEnabled })
+	// Feature flag off via injected deps below (EPIC-258 M2).
 
 	// Create a test image file.
 	imgPath := makeTestImage(t)
@@ -61,7 +58,11 @@ func TestFeatureFlag_Disabled_Fallthrough(t *testing.T) {
 	}}
 
 	transcriptDir := t.TempDir()
-	deps := &scoringDeps{TranscriptsDir: transcriptDir, Backend: backend}
+	deps := &scoringDeps{
+		TranscriptsDir:             transcriptDir,
+		Backend:                    backend,
+		ImageTextExtractionEnabled: boolPtr(false),
+	}
 
 	q := newTestQueue(t)
 	q.SetPushConfig(&PushConfig{DigestThrottleDefault: time.Hour})
@@ -157,18 +158,6 @@ func TestFeatureFlag_Enabled_EmitsEvents(t *testing.T) {
 	eventsDir := isolateEventsDir(t)
 	installTestProfileDir(t, "image_triage")
 
-	origEnabled := imageTextExtractionEnabled
-	origThreshold := imageShortCircuitBypassMinChars
-	origNoiseGate := imageNoiseGateMinBytes
-	imageTextExtractionEnabled = true
-	imageShortCircuitBypassMinChars = 20
-	imageNoiseGateMinBytes = 1
-	t.Cleanup(func() {
-		imageTextExtractionEnabled = origEnabled
-		imageShortCircuitBypassMinChars = origThreshold
-		imageNoiseGateMinBytes = origNoiseGate
-	})
-
 	imgPath := makeTestImage(t)
 	imgBytes, err := os.ReadFile(imgPath)
 	if err != nil {
@@ -188,7 +177,14 @@ func TestFeatureFlag_Enabled_EmitsEvents(t *testing.T) {
 	}}
 
 	transcriptDir := t.TempDir()
-	deps := &scoringDeps{TranscriptsDir: transcriptDir, Backend: backend}
+	// EPIC-258 M2: image knobs injected instead of package-var writes.
+	deps := &scoringDeps{
+		TranscriptsDir:                  transcriptDir,
+		Backend:                         backend,
+		ImageTextExtractionEnabled:      boolPtr(true),
+		ImageShortCircuitBypassMinChars: 20,
+		ImageNoiseGateMinBytes:          1,
+	}
 
 	// Create the events directory and a JSONL file for the event logger.
 	if err := os.MkdirAll(eventsDir, 0o755); err != nil {

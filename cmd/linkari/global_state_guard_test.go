@@ -109,10 +109,7 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"configRefResolverFactory":        true,
 	"domainRouteOverrideEmitter":      true,
 	"firecrawlClient":                 true,
-	"imageNoiseGateMinBytes":          true,
-	"imageShortCircuitBypassMinChars": true,
-	"imageTextExtractionEnabled":      true,
-	"imageTextExtractionSem":          true,
+	"imageShortCircuitBypassMinChars": true, // image_transcription_bt_test.go F3-BT-2 tests the startup config writer itself
 	"likedVideosSyncing":              true,
 	"normalizeHTTPClient":             true,
 	"piBinaryPath":                    true,

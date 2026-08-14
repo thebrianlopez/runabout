@@ -191,6 +191,19 @@ type scoringDeps struct {
 	// production invocation. EPIC-258 M2: was package var execLiteParse, which
 	// tests swapped while scoreAsync goroutines read it.
 	LiteParse func(ctx context.Context, path string, cfg LiteParseConfig) (string, float64, error)
+
+	// Image transcription knobs. Zero values resolve to the package-level
+	// startup defaults (written once by initImageTranscriptionConfig before
+	// any scoring goroutine). EPIC-258 M2: tests previously wrote the package
+	// vars directly while scoreAsync goroutines read them.
+
+	// ImageTextExtractionEnabled gates F1/F2/F3. nil = package default.
+	ImageTextExtractionEnabled *bool
+	// ImageShortCircuitBypassMinChars overrides the short-circuit suppression
+	// threshold when > 0.
+	ImageShortCircuitBypassMinChars int
+	// ImageNoiseGateMinBytes overrides the vision noise gate when > 0.
+	ImageNoiseGateMinBytes int64
 }
 
 // defaultTranscriptsDir is the transcript location used when ServerConfig
@@ -243,6 +256,16 @@ func (d *scoringDeps) resolve() *scoringDeps {
 	}
 	if out.LiteParse == nil {
 		out.LiteParse = defaultLiteParse
+	}
+	if out.ImageTextExtractionEnabled == nil {
+		v := imageTextExtractionEnabled
+		out.ImageTextExtractionEnabled = &v
+	}
+	if out.ImageShortCircuitBypassMinChars <= 0 {
+		out.ImageShortCircuitBypassMinChars = imageShortCircuitBypassMinChars
+	}
+	if out.ImageNoiseGateMinBytes <= 0 {
+		out.ImageNoiseGateMinBytes = imageNoiseGateMinBytes
 	}
 	return &out
 }
@@ -1059,7 +1082,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 					// Run before the camera-photo gate so extracted text can suppress
 					// the short-circuit for text-rich screenshots.
 					var imageExtractedText string
-					if imageTextExtractionEnabled {
+					if *deps.ImageTextExtractionEnabled {
 						extractStart := time.Now()
 						var extractErr error
 						imageExtractedText, extractErr = extractImageText(ctx, deps.Backend, req.AudioPath, visionModelName)
@@ -1210,7 +1233,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 					}
 
 					// F3: camera photo gate  -  suppressed when extracted text > threshold.
-					if isCameraPhoto(req) && !shouldSuppressShortCircuit(imageExtractedText, imageShortCircuitBypassMinChars) {
+					if isCameraPhoto(req) && !shouldSuppressShortCircuit(imageExtractedText, deps.ImageShortCircuitBypassMinChars) {
 						// EPIC-083 M1-2: camera photo noise gate  -  gallery app +
 						// camera timestamp filename + no text context + not screenshot.
 						slog.Info(
@@ -1230,7 +1253,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 						}
 						// Skip vision  -  fall through to metadata-only eval below.
 					} else {
-						if isCameraPhoto(req) && shouldSuppressShortCircuit(imageExtractedText, imageShortCircuitBypassMinChars) {
+						if isCameraPhoto(req) && shouldSuppressShortCircuit(imageExtractedText, deps.ImageShortCircuitBypassMinChars) {
 							// F3: short-circuit bypassed because extracted text exceeds threshold.
 							slog.Info(
 								"score_async: camera photo short-circuit bypassed",
@@ -1250,14 +1273,14 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 						// EPIC-083 M1-4: renamed from image_noise_gate_skip to
 						// score_prefilter_skip with stage field.
 						hasMetadata := req.ExtraText != "" || req.ExtraSubject != "" || imageExtractedText != ""
-						if req.FileSize > 0 && req.FileSize < imageNoiseGateMinBytes && !hasMetadata {
+						if req.FileSize > 0 && req.FileSize < deps.ImageNoiseGateMinBytes && !hasMetadata {
 							slog.Info(
 								"score_async: image noise gate  -  skipping vision",
 								"event_type", "score_prefilter_skip",
 								"row_id", req.QueueRowID,
 								"file_size", req.FileSize,
 								"filename", req.Filename,
-								"min_bytes", imageNoiseGateMinBytes,
+								"min_bytes", deps.ImageNoiseGateMinBytes,
 								"stage", "noise_gate_min_size",
 							)
 							if events != nil {
