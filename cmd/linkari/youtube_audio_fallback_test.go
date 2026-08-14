@@ -100,17 +100,11 @@ func enqueueAudioFallbackReq(t *testing.T, q *Queue, url string) ShareRequest {
 //
 // RG-F2-1: guards against regression where concurrent audio jobs exhaust RAM.
 func TestAudioFallback_CT1_SemaphoreCap1(t *testing.T) {
-	prevSem := ytAudioSem
-	ytAudioSem = make(chan struct{}, 1)
-	t.Cleanup(func() { ytAudioSem = prevSem })
-
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installNoSubtitlesStub(t)
+	deps.AudioSem = make(chan struct{}, 1)
+	deps.FallbackToAudio = boolPtr(true)
 	installAudioDownloadStub(t, deps)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t, deps)
@@ -181,18 +175,13 @@ func TestAudioFallback_CT1_SemaphoreCap1(t *testing.T) {
 // RG-F2-2: guards against regression where timeout is silently swallowed or
 // misclassified as yt_audio_fallback_failed.
 func TestAudioFallback_CT2_TimeoutEmitsEvent(t *testing.T) {
-	prevTimeout := ytWhisperTimeoutSecs
-	ytWhisperTimeoutSecs = 1 // 1-second deadline
-	t.Cleanup(func() { ytWhisperTimeoutSecs = prevTimeout })
-
 	// With default retries, a timeout → EnqueueAudioRetry → row = pending.
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installNoSubtitlesStub(t)
+	deps.WhisperTimeoutSecs = 1 // 1-second deadline
+	deps.FallbackToAudio = boolPtr(true)
 	installAudioDownloadStub(t, deps)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t, deps)
@@ -250,13 +239,10 @@ func TestAudioFallback_CT2_TimeoutEmitsEvent(t *testing.T) {
 // RG-F2-3: guards against regression where a first whisper failure permanently
 // fails the row instead of queuing a retry.
 func TestAudioFallback_CT3_DeadLetterOnFailure(t *testing.T) {
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installNoSubtitlesStub(t)
+	deps.FallbackToAudio = boolPtr(true)
 	installAudioDownloadStub(t, deps)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t, deps)
@@ -298,17 +284,11 @@ func TestAudioFallback_CT3_DeadLetterOnFailure(t *testing.T) {
 //
 // RG-F2-4: guards against regression where a row retries indefinitely.
 func TestAudioFallback_CT4_TerminalFailure(t *testing.T) {
-	prevMaxRetries := ytAudioMaxRetries
-	ytAudioMaxRetries = 0 // any failure → immediate terminal
-	t.Cleanup(func() { ytAudioMaxRetries = prevMaxRetries })
-
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installNoSubtitlesStub(t)
+	deps.AudioMaxRetries = intPtr(0) // any failure → immediate terminal
+	deps.FallbackToAudio = boolPtr(true)
 	installAudioDownloadStub(t, deps)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t, deps)
@@ -350,21 +330,13 @@ func TestAudioFallback_CT4_TerminalFailure(t *testing.T) {
 // RG-F2-5: guards against regression where a failed job leaks the semaphore,
 // causing all subsequent audio fallback jobs to deadlock.
 func TestAudioFallback_CT5_SemaphoreReleasedOnError(t *testing.T) {
-	prevSem := ytAudioSem
-	ytAudioSem = make(chan struct{}, 1)
-	t.Cleanup(func() { ytAudioSem = prevSem })
-
-	prevMaxRetries := ytAudioMaxRetries
-	ytAudioMaxRetries = 0 // fail fast to terminal; no retry loop
-	t.Cleanup(func() { ytAudioMaxRetries = prevMaxRetries })
-
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
 	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
 
 	deps := installNoSubtitlesStub(t)
+	deps.AudioSem = make(chan struct{}, 1)
+	deps.AudioMaxRetries = intPtr(0) // fail fast to terminal; no retry loop
+	deps.FallbackToAudio = boolPtr(true)
+	deps.AudioMaxRetries = intPtr(3) // allow second job to succeed normally
 	installAudioDownloadStub(t, deps)
 	installFfmpegNoopStub(t, deps)
 	installNormalizeURLNoopStub(t, deps)
@@ -387,9 +359,6 @@ func TestAudioFallback_CT5_SemaphoreReleasedOnError(t *testing.T) {
 	transcribeYouTubeAsync(req1, q, "yt-dlp", el, "", &ServerConfig{TranscriptsDir: transcriptDir}, deps)
 
 	// Second job: should run immediately — not block on semaphore.
-	prevMaxRetries2 := ytAudioMaxRetries
-	ytAudioMaxRetries = 3 // allow second job to succeed normally
-	t.Cleanup(func() { ytAudioMaxRetries = prevMaxRetries2 })
 
 	req2 := enqueueAudioFallbackReq(t, q, "https://www.youtube.com/watch?v=sem2")
 	secondStart := time.Now()

@@ -181,15 +181,12 @@ func TestYouTubeConfig_StructFields(t *testing.T) {
 func TestYouTube_BT1_TranscribeWatchLaterDisabled_NoWhisper(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
 	// Stub yt-dlp subtitle extraction → no subtitles.
 	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: no subtitles found for test-url")
 	}
 	deps := &ytDeps{Ytdlp: ytdlpStub}
+	deps.FallbackToAudio = boolPtr(true)
 
 	// Whisper must NOT be called — track invocations.
 	// EPIC-258 M2: injected via ytDeps instead of a package-var swap.

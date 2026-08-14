@@ -207,12 +207,10 @@ func TestScoreYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	installTestProfileDir(t, "eng")
 
 	// Enable fallback and restore on cleanup.
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
 	// Stub yt-dlp subtitle extraction → no subtitles.
 	deps := installYtdlpNoSubtitlesStub(t)
+	deps.FallbackToAudio = boolPtr(true)
 	// Stub audio download → fake file.
 	installYtdlpAudioStub(t, deps)
 
@@ -270,14 +268,6 @@ func TestScoreYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 // ytAudioMaxRetries is set to 0 so the dead-letter path terminates immediately
 // rather than putting the row in "pending" retry state.
 func TestScoreYouTubeAsync_FallbackStepFailures(t *testing.T) {
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
-	prevRetries := ytAudioMaxRetries
-	ytAudioMaxRetries = 0
-	t.Cleanup(func() { ytAudioMaxRetries = prevRetries })
-
 	cases := []struct {
 		name       string
 		audioErr   error
@@ -307,6 +297,10 @@ func TestScoreYouTubeAsync_FallbackStepFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Stub execYtdlp → no subtitles.
 			deps := installYtdlpNoSubtitlesStub(t)
+			// Enable fallback; max_retries=0 so the dead-letter path terminates
+			// immediately (EPIC-258 M2: injected via ytDeps).
+			deps.FallbackToAudio = boolPtr(true)
+			deps.AudioMaxRetries = intPtr(0)
 			// Stub audio download (EPIC-258 M2: injected via ytDeps).
 			if tc.audioErr != nil {
 				deps.YtdlpAudio = func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
@@ -515,11 +509,8 @@ func TestScoreYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	installTestProfileDir(t, "eng")
 
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
 	deps := installYtdlpNoSubtitlesStub(t)
+	deps.FallbackToAudio = boolPtr(true)
 	installYtdlpAudioStub(t, deps)
 
 	deps.FfmpegConvert = func(_ context.Context, _, outputPath string) error {
@@ -581,11 +572,8 @@ func TestScoreYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
 // yt-dlp finds no subtitles and the audio fallback succeeds,
 // transcribeYouTubeAsync emits subtitle_type="audio" in events. EPIC-006 M3.
 func TestTranscribeYouTubeAsync_AudioFallbackSubtitleType(t *testing.T) {
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
 	deps := installYtdlpNoSubtitlesStub(t)
+	deps.FallbackToAudio = boolPtr(true)
 	installYtdlpAudioStub(t, deps)
 
 	deps.FfmpegConvert = func(_ context.Context, _, outputPath string) error {
@@ -794,17 +782,12 @@ func TestTranscribeYouTubeAsync_BT2_NormalizationWired(t *testing.T) {
 // When the semaphore is held, a second job emits yt_audio_queued_pending_semaphore
 // and waits rather than spawning a second whisper-cli instance.
 func TestAudioFallback_SemaphoreCap1(t *testing.T) {
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
-	// Reset semaphore to a clean state and set max_retries=0 so failures are terminal.
-	ytAudioSem = make(chan struct{}, 1)
-	prevRetries := ytAudioMaxRetries
-	ytAudioMaxRetries = 0
-	t.Cleanup(func() { ytAudioMaxRetries = prevRetries })
-
 	deps := installYtdlpNoSubtitlesStub(t)
+	deps.FallbackToAudio = boolPtr(true)
+	deps.AudioMaxRetries = intPtr(0)
+	// Fresh cap-1 semaphore on this test's deps so failures are terminal and
+	// the process-wide semaphore is untouched (EPIC-258 M2).
+	deps.AudioSem = make(chan struct{}, 1)
 	// hold gates the download stub: the first job holds the channel open until
 	// the test releases it. This keeps the semaphore occupied while we launch a
 	// second job and verify it blocks.

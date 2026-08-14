@@ -426,15 +426,13 @@ func TestTranscribeYouTubeAsync_NoSubtitlesFallback(t *testing.T) {
 	isolateEventsDir(t)
 
 	// Enable the fallback gate for this test.
-	prev := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prev })
 
 	// Subtitle extraction always fails with "no subtitles".
 	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "", ytVideoMeta{Title: "Test Video"}, fmt.Errorf("no subtitles found for url")
 	}
 	deps := &ytDeps{Ytdlp: ytdlpStub}
+	deps.FallbackToAudio = boolPtr(true)
 
 	// Audio download succeeds — returns a fake audio file path.
 	fakeAudio := filepath.Join(t.TempDir(), "audio.m4a")
@@ -589,11 +587,9 @@ func TestHandleShare_YouTubeURL_EmptyType(t *testing.T) {
 		return "", ytVideoMeta{}, fmt.Errorf("stub: no subtitles — stop here")
 	}
 	deps := &ytDeps{Ytdlp: ytdlpStub}
+	deps.FallbackToAudio = boolPtr(false)
 
 	// Disable audio fallback so the goroutine terminates quickly after yt-dlp.
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = false
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
 
 	cfg := builtinConfig()
 	tmux := &TmuxRunner{}

@@ -80,11 +80,8 @@ func TestNormalizeYouTubeURL_RG1_Integration(t *testing.T) {
 	// Step 2: verify full pipeline produces a transcript (not yt_no_subtitles).
 	// Uses ytFallbackToAudio=true to exercise the audio fallback path for
 	// caption-free videos.
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = true
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
-	transcript, meta, fallbackErr := ytAudioFallback(ctx, ytPath, canonical, 0, nil, nil, "", nil)
+	// EPIC-258 M2: fallback gate injected via ytDeps.
+	transcript, meta, fallbackErr := ytAudioFallback(ctx, ytPath, canonical, 0, nil, nil, "", &ytDeps{FallbackToAudio: boolPtr(true)})
 	if fallbackErr != nil {
 		t.Fatalf("ytAudioFallback: %v (RG-1: canonical URL %q must produce a transcript, not yt_no_subtitles)", fallbackErr, canonical)
 	}

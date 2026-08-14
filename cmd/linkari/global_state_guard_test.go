@@ -128,11 +128,5 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"visionModelName":                 true,
 	"watchLaterSyncing":               true,
 	"youtubeOAuthEndpoint":            true,
-	"ytAudioMaxRetries":               true,
-	"ytAudioSem":                      true,
 	"ytFallbackToAudio":               true,
-	"ytSubtitleMaxRetries":            true,
-	"ytSubtitleSem":                   true,
-	"ytSubtitleTimeoutSecs":           true,
-	"ytWhisperTimeoutSecs":            true,
 }

@@ -174,14 +174,6 @@ func TestSubtitleExtraction_CT5_DeadLetterRetrySucceeds(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	installTestProfileDir(t, "eng")
 
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = false
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
-	prevSubRetries := ytSubtitleMaxRetries
-	ytSubtitleMaxRetries = 2
-	t.Cleanup(func() { ytSubtitleMaxRetries = prevSubRetries })
-
 	var callCount int32
 	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		n := atomic.AddInt32(&callCount, 1)
@@ -191,6 +183,8 @@ func TestSubtitleExtraction_CT5_DeadLetterRetrySucceeds(t *testing.T) {
 		return "Subtitle text on retry.", ytVideoMeta{Title: "Retry Video", ID: "retry1", Duration: 60, SubtitleType: "auto"}, nil
 	}
 	deps := &ytDeps{Ytdlp: ytdlpStub}
+	deps.FallbackToAudio = boolPtr(false)
+	deps.SubtitleMaxRetries = intPtr(2)
 
 	deps.Backend = &funcScoringBackend{completeJSON: func(_ context.Context, _, _, _ string) ([]byte, error) {
 		v := TriageVerdict{Score: 70, Verdict: "interesting", Tags: "test", RubricScores: map[string]int{"overall": 70}}
@@ -238,18 +232,12 @@ func TestSubtitleExtraction_CT5_DeadLetterRetrySucceeds(t *testing.T) {
 // Tests via scoreYouTubeAsync once M3 wires subtitle dead-letter retry.
 
 func TestSubtitleExtraction_CT6_TerminalFailure(t *testing.T) {
-	prevFallback := ytFallbackToAudio
-	ytFallbackToAudio = false
-	t.Cleanup(func() { ytFallbackToAudio = prevFallback })
-
-	prevSubRetries := ytSubtitleMaxRetries
-	ytSubtitleMaxRetries = 2
-	t.Cleanup(func() { ytSubtitleMaxRetries = prevSubRetries })
-
 	ytdlpStub := func(_ context.Context, _, _ string) (string, ytVideoMeta, error) {
 		return "", ytVideoMeta{}, fmt.Errorf("yt-dlp: exit status 1: persistent failure")
 	}
 	deps := &ytDeps{Ytdlp: ytdlpStub}
+	deps.FallbackToAudio = boolPtr(false)
+	deps.SubtitleMaxRetries = intPtr(2)
 
 	evtPath := filepath.Join(t.TempDir(), "events.jsonl")
 	el, err := NewEventLogger(evtPath)
@@ -295,10 +283,6 @@ func TestSubtitleExtraction_CT6_TerminalFailure(t *testing.T) {
 // ─── CT-7: subtitle timeout config is wired (ytSubtitleTimeoutSecs respected) ─
 
 func TestSubtitleExtraction_CT7_TimeoutConfigWired(t *testing.T) {
-	prevSecs := ytSubtitleTimeoutSecs
-	ytSubtitleTimeoutSecs = 5 // generous — stub completes in 10ms
-	t.Cleanup(func() { ytSubtitleTimeoutSecs = prevSecs })
-
 	el, _ := newSubtitleEventLogger(t)
 
 	ytdlpStub := func(ctx context.Context, _, _ string) (string, ytVideoMeta, error) {
@@ -311,6 +295,7 @@ func TestSubtitleExtraction_CT7_TimeoutConfigWired(t *testing.T) {
 		}
 	}
 	deps := &ytDeps{Ytdlp: ytdlpStub}
+	deps.SubtitleTimeoutSecs = 5 // generous — stub completes in 10ms
 
 	subtitleEvent, transcript, _, err := extractYTSubtitles(context.Background(), "yt-dlp", "https://www.youtube.com/watch?v=cfg1", 7, el, nil, deps)
 	// Must succeed — 10ms is well within the 5s config limit.
@@ -328,10 +313,6 @@ func TestSubtitleExtraction_CT7_TimeoutConfigWired(t *testing.T) {
 // ─── CT-8: concurrency — at most max_concurrency=3 subtitle jobs simultaneously ─
 
 func TestSubtitleExtraction_CT8_ConcurrencyCap3(t *testing.T) {
-	prevCap := cap(ytSubtitleSem)
-	ytSubtitleSem = make(chan struct{}, 3)
-	t.Cleanup(func() { ytSubtitleSem = make(chan struct{}, prevCap) })
-
 	var active int32
 	var peakActive int32
 
@@ -349,6 +330,7 @@ func TestSubtitleExtraction_CT8_ConcurrencyCap3(t *testing.T) {
 		return "Subtitle text.", ytVideoMeta{ID: fmt.Sprintf("vid-%d", cur)}, nil
 	}
 	deps := &ytDeps{Ytdlp: ytdlpStub}
+	deps.SubtitleSem = make(chan struct{}, 3)
 
 	const numJobs = 5
 	var wg [numJobs]chan struct{}
