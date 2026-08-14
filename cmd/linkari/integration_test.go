@@ -162,8 +162,6 @@ func (b *syncBuffer) String() string {
 }
 
 func TestBareServeNoYamlFallbackToLocal(t *testing.T) {
-	prevFirecrawl := firecrawlClient
-	t.Cleanup(func() { firecrawlClient = prevFirecrawl })
 	// Capture pre-SetOutput log (where fallback WARN lives) without timestamps.
 	var warnBuf syncBuffer
 	origWriter := log.Default().Writer()
@@ -221,8 +219,6 @@ func TestBareServeNoYamlFallbackToLocal(t *testing.T) {
 // config.toml (tsnet: true, tsnet_authkey: literal) boots without any CLI flags.
 // tsnet bring-up is mocked — no real Tailscale node is started.
 func TestBareServeBootsFromYaml(t *testing.T) {
-	prevFirecrawl := firecrawlClient
-	t.Cleanup(func() { firecrawlClient = prevFirecrawl })
 	swapTsnetStart(t, mockTsnetStart(t))
 
 	tmpHome := t.TempDir()
@@ -270,8 +266,6 @@ tsnet_hostname = "linkari-test"
 }
 
 func TestBareServePropagatesTsnetClientSecret(t *testing.T) {
-	prevFirecrawl := firecrawlClient
-	t.Cleanup(func() { firecrawlClient = prevFirecrawl })
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("LINKARI_QUEUE_DB", filepath.Join(tmpHome, "queue.db"))

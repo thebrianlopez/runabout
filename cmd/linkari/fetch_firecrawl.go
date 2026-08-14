@@ -9,6 +9,10 @@ import (
 
 // firecrawlClient is the process-level Firecrawl client. nil until
 // initFirecrawlClient is called successfully.
+//
+// EPIC-258: startup-writer pattern. Written exactly once from main.go during
+// serve bring-up, before any scoring goroutine exists, and never afterwards.
+// No test writes it, so it carries no allowlist entry in the global-state guard.
 var firecrawlClient *firecrawl.FirecrawlApp
 
 // initFirecrawlClient initializes the singleton Firecrawl client from cfg.
