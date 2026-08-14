@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -138,11 +139,33 @@ func swapTsnetStart(t *testing.T, fn tsnetStartFunc) {
 //  1. emits the pinned WARN fallback message.
 //  2. starts a local HTTP listener (does NOT attempt tsnet).
 //  3. exits 0 on context cancellation.
+//
+// syncBuffer is a mutex-synchronised bytes.Buffer for capturing log output
+// that concurrent goroutines write while the test body reads. EPIC-258: the
+// bare bytes.Buffer form raced (heap bytes.Buffer write vs String read) when a
+// serve goroutine logged while the test asserted on the captured output.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func TestBareServeNoYamlFallbackToLocal(t *testing.T) {
 	prevFirecrawl := firecrawlClient
 	t.Cleanup(func() { firecrawlClient = prevFirecrawl })
 	// Capture pre-SetOutput log (where fallback WARN lives) without timestamps.
-	var warnBuf bytes.Buffer
+	var warnBuf syncBuffer
 	origWriter := log.Default().Writer()
 	origFlags := log.Flags()
 	log.SetOutput(&warnBuf)

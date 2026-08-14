@@ -65,6 +65,11 @@ func TestEPIC258GlobalStateGuard(t *testing.T) {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.AssignStmt:
+				if x.Tok == token.DEFINE {
+					// := declares new locals; a name matching a package var is a
+					// shadow, not a write.
+					break
+				}
 				for _, lhs := range x.Lhs {
 					if ident, ok := lhs.(*ast.Ident); ok && ident.Name != "_" && packageVars[ident.Name] {
 						writes[ident.Name] = fset.Position(ident.Pos()).String()
@@ -119,10 +124,7 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"registeredScorerFn":              true,
 	"runYouTubeLoopbackAuthFn":        true,
 	"scoreAsyncDoneHook":              true,
-	"sensitivePatterns":               true,
 	"tsnetStart":                      true,
-	"validStatuses":                   true,
-	"visionModelName":                 true,
 	"watchLaterSyncing":               true,
 	"youtubeOAuthEndpoint":            true,
 	"ytFallbackToAudio":               true,

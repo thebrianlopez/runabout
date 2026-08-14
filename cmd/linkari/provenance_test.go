@@ -14,9 +14,15 @@ import (
 //	linkari: secret <field> resolved from <source> fp=<8-hex> tier=<tier>
 func TestProvenanceLogFormat(t *testing.T) {
 	var buf bytes.Buffer
+	origWriter := log.Default().Writer()
 	log.SetOutput(&buf)
 	log.SetFlags(0)
-	defer log.SetFlags(log.LstdFlags)
+	// EPIC-258: restore the output writer too — leaving the global default
+	// logger pointed at this test's dead buffer leaked writes across tests.
+	t.Cleanup(func() {
+		log.SetOutput(origWriter)
+		log.SetFlags(log.LstdFlags)
+	})
 
 	entries := []provenanceEntry{
 		{field: "token", source: "secretsmanager://linkari/bearer-token", fp: secrets.Fingerprint("hunter2"), tier: "toml-sm"},
