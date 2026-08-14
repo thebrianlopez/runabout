@@ -236,7 +236,10 @@ func (d *ytDeps) resolve() *ytDeps {
 		out.Ytdlp = runYtdlpExtract
 	}
 	if out.NormalizeURL == nil {
-		out.NormalizeURL = normalizeYouTubeURL
+		normalizeClient := newNormalizeHTTPClient()
+		out.NormalizeURL = func(ctx context.Context, rawURL string) (string, error) {
+			return normalizeYouTubeURL(ctx, rawURL, normalizeClient)
+		}
 	}
 	if out.YtdlpAudio == nil {
 		out.YtdlpAudio = runYtdlpAudioDownload

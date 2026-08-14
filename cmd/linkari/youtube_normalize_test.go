@@ -112,12 +112,11 @@ func (c *logCapture) eventHasKeys(msg string, keys ...string) bool {
 
 // ─── TLS client helper ────────────────────────────────────────────────────────
 
-// installInsecureTLSClient swaps normalizeHTTPClient for one that accepts
-// self-signed TLS certificates (for httptest.NewTLSServer). Restored on cleanup.
-func installInsecureTLSClient(t *testing.T) {
+// installInsecureTLSClient builds an HTTP client that accepts self-signed TLS
+// certificates (for httptest.NewTLSServer).
+func installInsecureTLSClient(t *testing.T) *http.Client {
 	t.Helper()
-	orig := normalizeHTTPClient
-	normalizeHTTPClient = &http.Client{
+	return &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
 		},
@@ -125,7 +124,6 @@ func installInsecureTLSClient(t *testing.T) {
 			return http.ErrUseLastResponse
 		},
 	}
-	t.Cleanup(func() { normalizeHTTPClient = orig })
 }
 
 // ─── CT-1: Google redirect resolves ──────────────────────────────────────────
@@ -141,7 +139,7 @@ func TestNormalizeYouTubeURL_CT1_GoogleRedirect(t *testing.T) {
 	defer srv.Close()
 
 	rawURL := srv.URL + "/url?sa=t&url=" + canonical
-	got, err := normalizeYouTubeURL(context.Background(), rawURL)
+	got, err := normalizeYouTubeURL(context.Background(), rawURL, nil)
 	if err != nil {
 		t.Fatalf("CT-1: unexpected error: %v", err)
 	}
@@ -163,7 +161,7 @@ func TestNormalizeYouTubeURL_CT2_CanonicalShortCircuit(t *testing.T) {
 	defer srv.Close()
 
 	canonical := "https://www.youtube.com/watch?v=shortcircuit"
-	got, err := normalizeYouTubeURL(context.Background(), canonical)
+	got, err := normalizeYouTubeURL(context.Background(), canonical, nil)
 	if err != nil {
 		t.Fatalf("CT-2: unexpected error: %v", err)
 	}
@@ -189,7 +187,7 @@ func TestNormalizeYouTubeURL_CT3_YoutuBeShortCircuit(t *testing.T) {
 	defer srv.Close()
 
 	youtubeURL := "https://youtu.be/dQw4w9WgXcQ"
-	got, err := normalizeYouTubeURL(context.Background(), youtubeURL)
+	got, err := normalizeYouTubeURL(context.Background(), youtubeURL, nil)
 	if err != nil {
 		t.Fatalf("CT-3: unexpected error: %v", err)
 	}
@@ -221,7 +219,7 @@ func TestNormalizeYouTubeURL_CT4_TimeoutFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	got, err := normalizeYouTubeURL(ctx, rawURL)
+	got, err := normalizeYouTubeURL(ctx, rawURL, nil)
 	if err != nil {
 		t.Fatalf("CT-4: unexpected error: %v", err)
 	}
@@ -244,11 +242,11 @@ func TestNormalizeYouTubeURL_CT5_Idempotent(t *testing.T) {
 	rawURL := srv.URL + "/url?src=idempotent"
 	ctx := context.Background()
 
-	first, err := normalizeYouTubeURL(ctx, rawURL)
+	first, err := normalizeYouTubeURL(ctx, rawURL, nil)
 	if err != nil {
 		t.Fatalf("CT-5: first call error: %v", err)
 	}
-	second, err := normalizeYouTubeURL(ctx, first)
+	second, err := normalizeYouTubeURL(ctx, first, nil)
 	if err != nil {
 		t.Fatalf("CT-5: second call error: %v", err)
 	}
@@ -277,7 +275,7 @@ func TestNormalizeYouTubeURL_CT6_NonYouTubeRedirectPreserved(t *testing.T) {
 	defer redir.Close()
 
 	rawURL := redir.URL + "/url?sa=t"
-	got, err := normalizeYouTubeURL(context.Background(), rawURL)
+	got, err := normalizeYouTubeURL(context.Background(), rawURL, nil)
 	if err != nil {
 		t.Fatalf("CT-6: unexpected error: %v", err)
 	}
@@ -305,7 +303,7 @@ func TestNormalizeYouTubeURL_CT7_MultiHopRedirect(t *testing.T) {
 	defer hop1.Close()
 
 	rawURL := hop1.URL + "/short/abc"
-	got, err := normalizeYouTubeURL(context.Background(), rawURL)
+	got, err := normalizeYouTubeURL(context.Background(), rawURL, nil)
 	if err != nil {
 		t.Fatalf("CT-7: unexpected error: %v", err)
 	}
@@ -330,7 +328,7 @@ func TestNormalizeYouTubeURL_CT8_MaxRedirects(t *testing.T) {
 	defer srv.Close()
 
 	rawURL := srv.URL + "/loop"
-	got, err := normalizeYouTubeURL(context.Background(), rawURL)
+	got, err := normalizeYouTubeURL(context.Background(), rawURL, nil)
 	if err != nil {
 		t.Fatalf("CT-8: unexpected error: %v", err)
 	}
@@ -350,7 +348,7 @@ func TestNormalizeYouTubeURL_CT8_MaxRedirects(t *testing.T) {
 // EPIC-006 M1.
 func TestNormalizeYouTubeURL_CT9_NonHTTPSBailOut(t *testing.T) {
 	lc := installLogCapture(t)
-	installInsecureTLSClient(t)
+	client := installInsecureTLSClient(t)
 
 	// HTTPS server (TLS) that redirects to a plain-HTTP target.
 	httpTarget := "http://plain.example.com/page"
@@ -360,7 +358,7 @@ func TestNormalizeYouTubeURL_CT9_NonHTTPSBailOut(t *testing.T) {
 	defer srv.Close()
 
 	rawURL := srv.URL + "/url?sa=t"
-	got, err := normalizeYouTubeURL(context.Background(), rawURL)
+	got, err := normalizeYouTubeURL(context.Background(), rawURL, client)
 	if err != nil {
 		t.Fatalf("CT-9: unexpected error: %v", err)
 	}
@@ -389,7 +387,7 @@ func TestNormalizeYouTubeURL_BT3_NormalizedEventEmitted(t *testing.T) {
 	defer srv.Close()
 
 	rawURL := srv.URL + "/url?bt3=1"
-	_, err := normalizeYouTubeURL(context.Background(), rawURL)
+	_, err := normalizeYouTubeURL(context.Background(), rawURL, nil)
 	if err != nil {
 		t.Fatalf("BT-3: unexpected error: %v", err)
 	}
@@ -421,7 +419,7 @@ func TestNormalizeYouTubeURL_BT4_TimeoutFallbackEvent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err := normalizeYouTubeURL(ctx, rawURL)
+	_, err := normalizeYouTubeURL(ctx, rawURL, nil)
 	if err != nil {
 		t.Fatalf("BT-4: unexpected error: %v", err)
 	}
@@ -449,7 +447,7 @@ func TestNormalizeYouTubeURL_CT10_PerHopLogging(t *testing.T) {
 	defer hop1.Close()
 
 	rawURL := hop1.URL + "/start"
-	got, err := normalizeYouTubeURL(context.Background(), rawURL)
+	got, err := normalizeYouTubeURL(context.Background(), rawURL, nil)
 	if err != nil {
 		t.Fatalf("CT-10: unexpected error: %v", err)
 	}

@@ -115,7 +115,6 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"domainRouteOverrideEmitter":      true,
 	"imageShortCircuitBypassMinChars": true, // image_transcription_bt_test.go F3-BT-2 tests the startup config writer itself
 	"likedVideosSyncing":              true,
-	"normalizeHTTPClient":             true,
 	"piBinaryPath":                    true,
 	"probeYouTubeSlotFn":              true,
 	"profilePathOverride":             true,

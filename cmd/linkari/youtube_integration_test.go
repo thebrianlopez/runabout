@@ -65,7 +65,7 @@ func TestNormalizeYouTubeURL_RG1_Integration(t *testing.T) {
 	defer cancel()
 
 	// Step 1: verify normalizeYouTubeURL resolves to canonical form.
-	canonical, err := normalizeYouTubeURL(ctx, redirectURL)
+	canonical, err := normalizeYouTubeURL(ctx, redirectURL, nil)
 	if err != nil {
 		t.Fatalf("normalizeYouTubeURL error: %v", err)
 	}

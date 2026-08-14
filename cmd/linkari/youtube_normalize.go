@@ -17,14 +17,12 @@ import (
 // will follow before giving up and returning the original URL unchanged.
 const maxNormalizeRedirects = 10
 
-// normalizeHTTPClient is the HTTP client used by normalizeYouTubeURL for manual
-// redirect walking. CheckRedirect is set to noFollow so each hop is inspected and
-// logged individually. Replaced in tests to accept self-signed TLS certificates
-// from httptest.NewTLSServer.
-var normalizeHTTPClient = &http.Client{
-	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
+func newNormalizeHTTPClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 // isCanonicalYouTubeURL reports whether rawURL's host is youtube.com (or a
@@ -56,7 +54,7 @@ func isCanonicalYouTubeURL(rawURL string) bool {
 // Returns the original URL unchanged on timeout, network error, max redirects,
 // non-HTTPS downgrade, or if no hop resolves to a canonical YouTube URL.
 // Only returns a non-nil error for malformed input URL parse failures.
-func normalizeYouTubeURL(ctx context.Context, rawURL string) (string, error) {
+func normalizeYouTubeURL(ctx context.Context, rawURL string, client *http.Client) (string, error) {
 	// Short-circuit: already canonical, no HTTP call needed.
 	if isCanonicalYouTubeURL(rawURL) {
 		slog.Debug(
@@ -70,6 +68,9 @@ func normalizeYouTubeURL(ctx context.Context, rawURL string) (string, error) {
 	// Per-call timeout: 5s or parent deadline, whichever is shorter.
 	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	if client == nil {
+		client = newNormalizeHTTPClient()
+	}
 
 	start := time.Now()
 	currentURL := rawURL
@@ -90,7 +91,7 @@ func normalizeYouTubeURL(ctx context.Context, rawURL string) (string, error) {
 			return rawURL, nil
 		}
 
-		resp, doErr := normalizeHTTPClient.Do(req)
+		resp, doErr := client.Do(req)
 		if doErr != nil {
 			reason := "network"
 			if errors.Is(callCtx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
