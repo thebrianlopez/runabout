@@ -9,10 +9,6 @@ import (
 	"strings"
 )
 
-// piBinaryPath is the resolved path to the pi binary. Tests replace it via
-// t.Cleanup to inject a stub without live subprocess calls. EPIC-217 F3.
-var piBinaryPath = "pi"
-
 // PiScoringBackend implements ScoringBackend by delegating single-turn LLM
 // calls to the `pi` binary in --print mode. EPIC-217 F3.
 //
@@ -28,15 +24,20 @@ var piBinaryPath = "pi"
 // Dir:    os.TempDir() - prevents pi from discovering workspace .pi/ config
 // Env:    piEnv() - strips CLAUDE_* and PI_* vars; sets neutral HOME
 type PiScoringBackend struct {
-	model string // "provider/model" combined syntax, e.g. "openai-codex/gpt-5.4-mini"
+	model      string // "provider/model" combined syntax, e.g. "openai-codex/gpt-5.4-mini"
+	BinaryPath string // path to pi binary; "" defaults to "pi" (EPIC-258: injected instead of package global)
 }
 
 // Complete sends systemPrompt + content to pi and returns the trimmed text
 // response. Errors are classified as PE-001 (exec failure), PE-002 (empty
 // output), or PE-003 (context timeout/cancel).
 func (b PiScoringBackend) Complete(ctx context.Context, systemPrompt, content string) (string, error) {
+	binaryPath := b.BinaryPath
+	if binaryPath == "" {
+		binaryPath = "pi"
+	}
 	cmd := exec.CommandContext(
-		ctx, piBinaryPath,
+		ctx, binaryPath,
 		"--print",
 		"--no-session",
 		"--no-builtin-tools",
@@ -67,7 +68,7 @@ func (b PiScoringBackend) Name() string { return "pi" }
 // the model knows the required shape; pi --print emits only the final text
 // block (no JSONL events). parseHaikuEnvelope handles bare JSON from Pi.
 func (b PiScoringBackend) CompleteJSON(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
-	// Inject JSON schema constraint into the system prompt — mirrors the
+	// Inject JSON schema constraint into the system prompt  -  mirrors the
 	// IMPORTANT suffix that runClaudeHaikuJSON adds for the claude_cli path.
 	// Without this, pi returns free prose and parseHaikuEnvelope rejects it.
 	if schema != "" {
@@ -75,8 +76,12 @@ func (b PiScoringBackend) CompleteJSON(ctx context.Context, systemPrompt, conten
 			"No markdown, no fences, no commentary. For skipped/noise content return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
 			"\n\nSchema:\n" + schema
 	}
+	binaryPath := b.BinaryPath
+	if binaryPath == "" {
+		binaryPath = "pi"
+	}
 	cmd := exec.CommandContext(
-		ctx, piBinaryPath,
+		ctx, binaryPath,
 		"--print",
 		"--no-session",
 		"--no-builtin-tools",
@@ -106,8 +111,12 @@ func (b PiScoringBackend) CompleteVision(ctx context.Context, systemPrompt, text
 	if _, err := os.Stat(imagePath); err != nil {
 		return nil, fmt.Errorf("pi vision: image file not readable: %w", err)
 	}
+	binaryPath := b.BinaryPath
+	if binaryPath == "" {
+		binaryPath = "pi"
+	}
 	cmd := exec.CommandContext(
-		ctx, piBinaryPath,
+		ctx, binaryPath,
 		"--print",
 		"--no-session",
 		"--model", b.model,

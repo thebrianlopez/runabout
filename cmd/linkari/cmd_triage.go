@@ -333,7 +333,7 @@ func profileTemplateLookup(profile string, render func(*ProfileManifest) (string
 // ok=false means the profile is absent from the embedded supply entirely
 // (caller renders the not-found error with its checked list). EPIC-264:
 // an INVALID embedded manifest is now a distinct, surfaced error instead of
-// being swallowed into not-found — a corrupt shipped artifact must be
+// being swallowed into not-found  -  a corrupt shipped artifact must be
 // distinguishable from an absent one (Instance 2 silence).
 func embeddedProfileLookup(profile string, render func(*ProfileManifest) (string, error)) (path, content string, err error, ok bool) {
 	if b, rerr := fs.ReadFile(EmbeddedProfileFS(), profile+".yaml"); rerr == nil {
@@ -427,30 +427,32 @@ func orDefault(val, def string) string {
 // initScoringBackend sets activeScoringBackend based on cfg.Backend.
 // Called at server startup after initClaudeConfig. EPIC-217 F4.
 // Default (empty or "claude_cli"): ClaudeCLIScoringBackend - zero behavioral change.
-// "pi": PiScoringBackend using piBinaryPath, cfg.Provider/cfg.Model combined.
+// "pi": PiScoringBackend using cfg.Provider/cfg.Model combined.
 func initScoringBackend(cfg ScoringConfig) {
 	switch cfg.Backend {
 	case "pi":
-		if cfg.PiPath != "" {
-			piBinaryPath = cfg.PiPath
+		piPath := cfg.PiPath
+		if piPath == "" {
+			piPath = "pi"
 		}
 		piModel := piModelString(cfg.Provider, cfg.Model)
 		activeScoringBackend = PiScoringBackend{
-			model: piModel,
+			model:      piModel,
+			BinaryPath: piPath,
 		}
 		slog.Info(
 			"scoring backend set",
 			"event_type", "scoring_backend_init",
 			"backend", "pi",
-			"pi_path", piBinaryPath,
+			"pi_path", piPath,
 			"model", piModel,
 		)
 		// F5: validate pi binary at startup (non-fatal; mirrors claude_cli check).
-		if err := validatePiCLI(); err != nil {
+		if err := validatePiCLI(piPath); err != nil {
 			slog.Warn(
 				"pi CLI validation failed - scoring will not work with backend=pi",
 				"event_type", "pi_cli_validation_failed",
-				"pi_path", piBinaryPath,
+				"pi_path", piPath,
 				"error", err,
 			)
 		}
@@ -617,21 +619,21 @@ func validateClaudeCLI() error {
 // the binary is accessible and executable when backend="pi". Non-fatal:
 // emits pi_cli_validation_failed warning but does not abort startup.
 // Mirrors the validateClaudeCLI pattern exactly. EPIC-217 F5.
-func validatePiCLI() error {
+func validatePiCLI(piPath string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, piBinaryPath, "--version")
+	cmd := exec.CommandContext(ctx, piPath, "--version")
 	cmd.Env = piEnv()
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("pi --version failed: %w (is %q in PATH?)", err, piBinaryPath)
+		return fmt.Errorf("pi --version failed: %w (is %q in PATH?)", err, piPath)
 	}
 	version := strings.TrimSpace(string(out))
 	slog.Info(
 		"pi CLI validated",
 		"event_type", "pi_cli_validated",
-		"pi_path", piBinaryPath,
+		"pi_path", piPath,
 		"version", version,
 	)
 	return nil
