@@ -33,19 +33,17 @@ var runYouTubeLoopbackAuthFn = runYouTubeLoopbackAuth
 // paste race (EPIC-253), threaded as parameters instead of package-level
 // seams (EPIC-258 M2). isTerminal reports whether stdin is an interactive
 // TTY; pasteReader returns the reader used to collect pasted redirect
-// URLs/codes.
+// URLs/codes; Endpoint is the OAuth token exchange endpoint (nil resolves to
+// Google's endpoint, allowing tests to inject a fake httptest.Server).
 type authIODeps struct {
 	isTerminal  func(fd int) bool
 	pasteReader func() io.Reader
+	Endpoint    *oauth2.Endpoint
 }
 
 func defaultAuthIODeps() authIODeps {
-	return authIODeps{isTerminal: defaultIsTerminal, pasteReader: defaultPasteReader}
+	return authIODeps{isTerminal: defaultIsTerminal, pasteReader: defaultPasteReader, Endpoint: nil}
 }
-
-// youtubeOAuthEndpoint is an injectable seam so tests can point token
-// exchange at a fake httptest.Server instead of Google's real endpoint.
-var youtubeOAuthEndpoint = google.Endpoint
 
 var youtubeSlotNameRe = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
 
@@ -301,6 +299,10 @@ func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbac
 		defer ln.Close()
 	}
 
+	endpoint := ioDeps.Endpoint
+	if endpoint == nil {
+		endpoint = &google.Endpoint
+	}
 	cfg := &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -308,7 +310,7 @@ func runYouTubeLoopbackAuth(ctx context.Context, clientID, clientSecret, callbac
 			"https://www.googleapis.com/auth/youtube.readonly",
 			"https://www.googleapis.com/auth/youtube",
 		},
-		Endpoint:    youtubeOAuthEndpoint,
+		Endpoint:    *endpoint,
 		RedirectURL: redirectURL,
 	}
 

@@ -124,6 +124,5 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"scoreAsyncDoneHook":              true,
 	"tsnetStart":                      true,
 	"watchLaterSyncing":               true,
-	"youtubeOAuthEndpoint":            true,
 	"ytFallbackToAudio":               true,
 }
