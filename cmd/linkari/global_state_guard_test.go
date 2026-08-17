@@ -168,7 +168,6 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"archiveThresholdCfg":             true,
 	"imageShortCircuitBypassMinChars": true, // image_transcription_bt_test.go F3-BT-2 tests the startup config writer itself
 	"likedVideosSyncing":              true,
-	"profilePathOverride":             true,
 	"watchLaterSyncing":               true,
 	"ytFallbackToAudio":               true,
 }

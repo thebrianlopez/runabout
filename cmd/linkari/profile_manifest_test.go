@@ -435,9 +435,9 @@ func TestEmbeddedProfilesLoadAndRender(t *testing.T) {
 // lookup path (profileTemplateForModeLookup) when no filesystem profiles
 // exist. Regression guard for POMO_audio-scoring-embedded-profile-fallback.
 func TestEmbeddedProfilesFallbackForModeLookup(t *testing.T) {
-	prev := profilePathOverride
-	profilePathOverride = t.TempDir()
-	t.Cleanup(func() { profilePathOverride = prev })
+	prev := profilePathOverrideValue()
+	SetProfilePathOverride(t.TempDir())
+	t.Cleanup(func() { SetProfilePathOverride(prev) })
 
 	origDir, _ := os.Getwd()
 	t.Cleanup(func() { os.Chdir(origDir) })

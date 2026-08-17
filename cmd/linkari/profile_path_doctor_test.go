@@ -20,7 +20,7 @@ func TestProfileDoctorCT1_SectionRendersAllTiers(t *testing.T) {
 	}
 	_ = os.WriteFile(filepath.Join(xdg, "eng.yaml"), []byte("x"), 0o600)
 	_ = os.WriteFile(filepath.Join(embed, "default.yaml"), []byte("x"), 0o600)
-	orig := profilePathOverride
+	orig := profilePathOverrideValue()
 	SetProfilePathOverride(toml)
 	t.Cleanup(func() { SetProfilePathOverride(orig) })
 	t.Setenv("LINKARI_PROFILE_PATH", "")
@@ -44,7 +44,7 @@ func TestProfileDoctorCT2_WinningTierResolution(t *testing.T) {
 	}
 	_ = os.WriteFile(filepath.Join(xdg, "eng.yaml"), []byte("x"), 0o600)
 	_ = os.WriteFile(filepath.Join(embed, "eng.yaml"), []byte("x"), 0o600)
-	orig := profilePathOverride
+	orig := profilePathOverrideValue()
 	SetProfilePathOverride("")
 	t.Cleanup(func() { SetProfilePathOverride(orig) })
 	t.Setenv("LINKARI_PROFILE_PATH", "")
@@ -57,7 +57,7 @@ func TestProfileDoctorCT2_WinningTierResolution(t *testing.T) {
 }
 
 func TestProfileDoctorCT3_ConfigAuthority(t *testing.T) {
-	orig := profilePathOverride
+	orig := profilePathOverrideValue()
 	SetProfilePathOverride("/tmp/configured")
 	t.Cleanup(func() { SetProfilePathOverride(orig) })
 	t.Setenv("LINKARI_PROFILE_PATH", "")
