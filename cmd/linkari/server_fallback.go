@@ -10,7 +10,7 @@ import (
 // tsnetFallbackWarn is the WARN message emitted when tsnet is default-enabled
 // but no tsnet_authkey is resolvable and the operator did not explicitly opt in.
 //
-// Format is golden-tested in EPIC-048 M3 — do not change wording.
+// Format is golden-tested in EPIC-048 M3  -  do not change wording.
 const tsnetFallbackWarn = "WARN: tsnet default enabled but no tsnet_authkey resolvable; " +
 	"falling back to --local. Set tsnet_authkey in server.yaml or pass --tsnet-authkey to force tsnet."
 
@@ -40,9 +40,21 @@ func applyTsnetFallback(tsnetEnabled, tsnetExplicit bool, authKey, clientSecret 
 // swap it for a local TCP listener to avoid the real Tailscale control plane.
 type tsnetStartFunc func(ctx context.Context, cfg TsnetConfig) (ln net.Listener, cleanup func() error, fqdn string, err error)
 
-// tsnetStart is the package-level seam. Production code uses realTsnetStart;
-// integration tests override it with a no-op that returns a local listener.
-var tsnetStart tsnetStartFunc = realTsnetStart
+// serveDeps carries the injectable dependencies of `linkari serve`, threaded
+// through serveCmdWith instead of package-level seams (EPIC-258 M2). A zero
+// serveDeps is the production configuration: resolve() fills every nil field
+// with its real implementation.
+type serveDeps struct {
+	tsnetStart tsnetStartFunc
+}
+
+// resolve returns a copy with production defaults substituted for nil fields.
+func (d serveDeps) resolve() serveDeps {
+	if d.tsnetStart == nil {
+		d.tsnetStart = realTsnetStart
+	}
+	return d
+}
 
 // realTsnetStart is the production implementation: creates a TsnetServer,
 // starts it, and returns the Funnel listener, a Close func, and the FQDN.

@@ -121,7 +121,6 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"registeredScorerFn":              true,
 	"runYouTubeLoopbackAuthFn":        true,
 	"scoreAsyncDoneHook":              true,
-	"tsnetStart":                      true,
 	"watchLaterSyncing":               true,
 	"ytFallbackToAudio":               true,
 }

@@ -1,8 +1,9 @@
 // EPIC-048 M3: integration tests for the tsnet default-flip and fallback rule.
 //
 // These tests start a real linkari serve process (using the cobra RunE path)
-// and verify end-to-end behavior. They do NOT run in parallel because they
-// set global log output and package-level vars (tsnetStart seam).
+// and verify end-to-end behavior. They do NOT run in parallel because they set
+// global log output. tsnet bring-up is injected per-test via
+// serveCmdWith(serveDeps{...}), not a package-level seam (EPIC-258 M2).
 package main
 
 import (
@@ -123,15 +124,6 @@ func mockTsnetStart(t *testing.T) tsnetStartFunc {
 	}
 }
 
-// swapTsnetStart replaces the package-level tsnetStart seam for the test and
-// restores the original on cleanup.
-func swapTsnetStart(t *testing.T, fn tsnetStartFunc) {
-	t.Helper()
-	orig := tsnetStart
-	tsnetStart = fn
-	t.Cleanup(func() { tsnetStart = orig })
-}
-
 // ── Integration tests ────────────────────────────────────────────────────────
 
 // TestBareServeNoYamlFallbackToLocal asserts that bare `linkari serve` on a
@@ -173,7 +165,7 @@ func TestBareServeNoYamlFallbackToLocal(t *testing.T) {
 		log.SetFlags(origFlags)
 	})
 
-	// Clean HOME — no server.yaml, no env authkey.
+	// Clean HOME  -  no server.yaml, no env authkey.
 	// Explicitly clear tsnet-related env vars so no real TS_AUTHKEY leaks in.
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
@@ -217,10 +209,8 @@ func TestBareServeNoYamlFallbackToLocal(t *testing.T) {
 
 // TestBareServeBootsFromYaml asserts that `linkari serve` with a fully-populated
 // config.toml (tsnet: true, tsnet_authkey: literal) boots without any CLI flags.
-// tsnet bring-up is mocked — no real Tailscale node is started.
+// tsnet bring-up is mocked  -  no real Tailscale node is started.
 func TestBareServeBootsFromYaml(t *testing.T) {
-	swapTsnetStart(t, mockTsnetStart(t))
-
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
@@ -241,7 +231,7 @@ tsnet_hostname = "linkari-test"
 	t.Setenv("LINKARI_QUEUE_DB", filepath.Join(tmpHome, "queue.db"))
 
 	port := findFreePort(t)
-	cmd := serveCmd()
+	cmd := serveCmdWith(serveDeps{tsnetStart: mockTsnetStart(t)})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs([]string{"--port", strconv.Itoa(port)})
@@ -285,17 +275,17 @@ tsnet_client_secret = "test-client-secret-from-yaml"
 	}
 
 	var captured TsnetConfig
-	swapTsnetStart(t, func(_ context.Context, cfg TsnetConfig) (net.Listener, func() error, string, error) {
+	captureTsnetStart := func(_ context.Context, cfg TsnetConfig) (net.Listener, func() error, string, error) {
 		captured = cfg
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return nil, nil, "", err
 		}
 		return ln, func() error { return ln.Close() }, "linkari.test.ts.net", nil
-	})
+	}
 
 	port := findFreePort(t)
-	cmd := serveCmd()
+	cmd := serveCmdWith(serveDeps{tsnetStart: captureTsnetStart})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs([]string{"--port", strconv.Itoa(port)})
@@ -331,14 +321,12 @@ tsnet_client_secret = "test-client-secret-from-yaml"
 //
 // tsnet is mocked; no real Tailscale node required.
 func TestCanonicalCommandByteIdentical(t *testing.T) {
-	swapTsnetStart(t, mockTsnetStart(t))
-
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("LINKARI_QUEUE_DB", filepath.Join(tmpHome, "queue.db"))
 
 	port := findFreePort(t)
-	cmd := serveCmd()
+	cmd := serveCmdWith(serveDeps{tsnetStart: mockTsnetStart(t)})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs([]string{

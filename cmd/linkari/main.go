@@ -96,7 +96,12 @@ func main() {
 	}
 }
 
-func serveCmd() *cobra.Command {
+func serveCmd() *cobra.Command { return serveCmdWith(serveDeps{}) }
+
+// serveCmdWith threads serve-path dependencies explicitly so tests can inject
+// a mock tsnet bring-up without writing package globals (EPIC-258 M2).
+func serveCmdWith(deps serveDeps) *cobra.Command {
+	deps = deps.resolve()
 	var (
 		port            int
 		token           string
@@ -766,12 +771,12 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// search path before serving traffic. Catches both an incomplete
 			// embedded supply (build defect the closure test should have
 			// caught) and an invalid user override shadowing a valid embed
-			// (runtime-only — unreachable by any build-time gate). Refuse to
+			// (runtime-only  -  unreachable by any build-time gate). Refuse to
 			// start: a deterministic precondition failure must not degrade
 			// into per-row silent drops at scoring time.
 			if cerr := ValidateProfileClosure(); cerr != nil {
 				slog.Error(
-					"profile closure violation — refusing to serve",
+					"profile closure violation  -  refusing to serve",
 					"event_type", "profile_closure_violation",
 					"error", cerr,
 				)
@@ -895,7 +900,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			var tsnetHTTPServer *http.Server
 
 			if tsnetEnabled {
-				ln, cleanup, fqdn, err := tsnetStart(cmd.Context(), TsnetConfig{
+				ln, cleanup, fqdn, err := deps.tsnetStart(cmd.Context(), TsnetConfig{
 					Hostname:     tsnetHostname,
 					StateDir:     tsnetStateDir,
 					AuthKey:      tsnetAuthKey,
