@@ -23,7 +23,7 @@ func TestEPIC258GlobalStateGuard(t *testing.T) {
 
 	packageVars := map[string]bool{}
 	funcVars := map[string]string{}
-	var testFiles []*ast.File
+	var testFiles, srcFiles []*ast.File
 	for _, path := range files {
 		parsed, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
@@ -33,7 +33,61 @@ func TestEPIC258GlobalStateGuard(t *testing.T) {
 			testFiles = append(testFiles, parsed)
 			continue
 		}
-		for _, decl := range parsed.Decls {
+		srcFiles = append(srcFiles, parsed)
+	}
+
+	// Pass 1: collect names that make a var func-typed by reference rather than
+	// by syntax - named func types (`type tsnetStartFunc func(...)`) and
+	// top-level funcs usable as an initializer (`var f = realTsnetStart`).
+	// Without this pass both forms are invisible to the classifier below, which
+	// is how the tsnetStart seam went uncounted until EPIC-258 M2.
+	funcTypeNames := map[string]bool{}
+	funcDeclNames := map[string]bool{}
+	for _, file := range srcFiles {
+		for _, decl := range file.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil {
+					funcDeclNames[d.Name.Name] = true
+				}
+			case *ast.GenDecl:
+				if d.Tok != token.TYPE {
+					continue
+				}
+				for _, spec := range d.Specs {
+					ts, ok := spec.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					if _, isFunc := ts.Type.(*ast.FuncType); isFunc {
+						funcTypeNames[ts.Name.Name] = true
+					}
+				}
+			}
+		}
+	}
+
+	// Pass 2: classify package vars.
+	isFuncTyped := func(expr ast.Expr) bool {
+		switch t := expr.(type) {
+		case *ast.FuncType:
+			return true
+		case *ast.Ident:
+			return funcTypeNames[t.Name]
+		}
+		return false
+	}
+	isFuncValued := func(expr ast.Expr) bool {
+		switch v := expr.(type) {
+		case *ast.FuncLit:
+			return true
+		case *ast.Ident:
+			return funcDeclNames[v.Name]
+		}
+		return false
+	}
+	for _, file := range srcFiles {
+		for _, decl := range file.Decls {
 			gen, ok := decl.(*ast.GenDecl)
 			if !ok || gen.Tok != token.VAR {
 				continue
@@ -42,14 +96,12 @@ func TestEPIC258GlobalStateGuard(t *testing.T) {
 				vs := spec.(*ast.ValueSpec)
 				for i, name := range vs.Names {
 					packageVars[name.Name] = true
-					if _, ok := vs.Type.(*ast.FuncType); ok {
+					if vs.Type != nil && isFuncTyped(vs.Type) {
 						funcVars[name.Name] = fset.Position(name.Pos()).String()
 						continue
 					}
-					if i < len(vs.Values) {
-						if _, ok := vs.Values[i].(*ast.FuncLit); ok {
-							funcVars[name.Name] = fset.Position(name.Pos()).String()
-						}
+					if i < len(vs.Values) && isFuncValued(vs.Values[i]) {
+						funcVars[name.Name] = fset.Position(name.Pos()).String()
 					}
 				}
 			}
@@ -103,6 +155,10 @@ var legacyFuncVarAllowlist = map[string]bool{
 	"awsDoctorProbeFn":         true,
 	"configRefResolverFactory": true,
 	"probeYouTubeSlotFn":       true,
+	// Surfaced by the tightened classifier: declared `var x = someFunc`, a form
+	// the old FuncType/FuncLit-only check could not see. Retire with the rest of
+	// the *Fn cluster; listed here so it is counted rather than invisible.
+	"runYouTubeLoopbackAuthFn": true,
 	"refreshScorerFn":          true,
 	"registeredScorerFn":       true,
 	"scoreAsyncDoneHook":       true,
