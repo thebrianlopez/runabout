@@ -6,14 +6,15 @@ import (
 	"strings"
 )
 
-// domainRouteOverrideEmitter is the function called when resolveDomainRoute
-// successfully overrides req.Action. It is a package-level variable so tests
-// can inject a mock sink (RG-2). Production code uses emitDomainRouteOverride.
-var domainRouteOverrideEmitter = emitDomainRouteOverride
+// domainRouteEmitFunc is the sink called when resolveDomainRoute successfully
+// overrides req.Action. Injected per call (EPIC-258 M2) rather than swapped on
+// a package variable, so a test's capture sink can never be read by a scoring
+// goroutine belonging to another test.
+type domainRouteEmitFunc func(url, originalAction, resolvedAction, pattern string)
 
 // emitDomainRouteOverride writes a domain_route_override event to the telemetry
 // bus. Called on every successful domain route match so operators can observe
-// silent action overrides in the SSE/JSONL stream (TDD §3 — always log override).
+// silent action overrides in the SSE/JSONL stream (TDD §3  -  always log override).
 func emitDomainRouteOverride(url, originalAction, resolvedAction, pattern string) {
 	emitPushEvent("domain_route_override", map[string]interface{}{
 		"url":             url,
@@ -35,7 +36,19 @@ func emitDomainRouteOverride(url, originalAction, resolvedAction, pattern string
 //   - routes nil/empty → no-op, return nil.
 //
 // Pure function except for the event emit side effect. No IO, no network.
+//
+// Emits via emitDomainRouteOverride. Callers needing a different sink (tests
+// capturing events) use resolveDomainRouteWith.
 func resolveDomainRoute(req *ShareRequest, routes []DomainRoute, cfgIndex map[string]*ActionConfig) error {
+	return resolveDomainRouteWith(req, routes, cfgIndex, nil)
+}
+
+// resolveDomainRouteWith is resolveDomainRoute with an injectable override
+// sink. A nil emit uses emitDomainRouteOverride (EPIC-258 M2).
+func resolveDomainRouteWith(req *ShareRequest, routes []DomainRoute, cfgIndex map[string]*ActionConfig, emit domainRouteEmitFunc) error {
+	if emit == nil {
+		emit = emitDomainRouteOverride
+	}
 	for _, rule := range routes {
 		if !strings.Contains(req.URL, rule.Pattern) {
 			continue
@@ -51,7 +64,7 @@ func resolveDomainRoute(req *ShareRequest, routes []DomainRoute, cfgIndex map[st
 		}
 		originalAction := req.Action
 		req.Action = rule.OverrideAction
-		domainRouteOverrideEmitter(req.URL, originalAction, req.Action, rule.Pattern)
+		emit(req.URL, originalAction, req.Action, rule.Pattern)
 		return nil
 	}
 	return nil

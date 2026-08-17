@@ -112,7 +112,6 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"archiveThresholdCfg":             true,
 	"awsDoctorProbeFn":                true,
 	"configRefResolverFactory":        true,
-	"domainRouteOverrideEmitter":      true,
 	"imageShortCircuitBypassMinChars": true, // image_transcription_bt_test.go F3-BT-2 tests the startup config writer itself
 	"likedVideosSyncing":              true,
 	"probeYouTubeSlotFn":              true,

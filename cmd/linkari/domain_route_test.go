@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// F1 Domain-Aware Action Routing — Contract Tests (CT-1 through CT-8) and
+// F1 Domain-Aware Action Routing  -  Contract Tests (CT-1 through CT-8) and
 // Regression Guards (RG-1, RG-2).
 //
-// Written first (M1) as failing tests — resolveDomainRoute does not exist yet.
+// Written first (M1) as failing tests  -  resolveDomainRoute does not exist yet.
 // All tests must pass green after M3 lands.
 //
 // FIRST constraints: pure function, no IO, no network, no shared state.
@@ -134,9 +134,9 @@ func TestDomainRoute_CT6_NilRoutes(t *testing.T) {
 	}
 }
 
-// CT-7: URL matches two rules — first-match wins.
+// CT-7: URL matches two rules  -  first-match wins.
 func TestDomainRoute_CT7_FirstMatchWins(t *testing.T) {
-	// Both patterns match "atlassian.net/browse/" — first rule is jira, second is confluence.
+	// Both patterns match "atlassian.net/browse/"  -  first rule is jira, second is confluence.
 	// Use distinct patterns so they both trigger.
 	routes := []DomainRoute{
 		{Pattern: "atlassian.net/browse/", OverrideAction: "capture_jira_auto"},
@@ -157,7 +157,7 @@ func TestDomainRoute_CT7_FirstMatchWins(t *testing.T) {
 // This is a compile-time check. The test file will fail to compile if
 // routeJiraURL is still present. We verify its absence by not calling it here
 // and asserting the symbol is unavailable via build tag.
-// The compile check is satisfied in M4 when routeJiraURL is deleted — before
+// The compile check is satisfied in M4 when routeJiraURL is deleted  -  before
 // that milestone this test is a no-op placeholder that documents the intent.
 func TestDomainRoute_CT8_RouteJiraURLRemoved(t *testing.T) {
 	// After M4: routeJiraURL must not exist in the package.
@@ -165,7 +165,7 @@ func TestDomainRoute_CT8_RouteJiraURLRemoved(t *testing.T) {
 	// Until M4, the symbol still exists and this test is a documentation stub.
 	//
 	// The authoritative compile check is: the build must succeed after M4.
-	// No call to routeJiraURL appears in this file — if routeJiraURL is removed
+	// No call to routeJiraURL appears in this file  -  if routeJiraURL is removed
 	// and any other file still references it, the build fails (which is CT-8's
 	// assertion).
 	t.Log("CT-8: routeJiraURL removal verified by successful package build")
@@ -183,7 +183,7 @@ func TestDomainRoute_RG1_NotGinitAuto(t *testing.T) {
 		t.Fatalf("RG-1: unexpected error: %v", err)
 	}
 	if req.Action == "ginit_auto" {
-		t.Errorf("RG-1: req.Action = %q — Jira browse URL must NOT route to ginit_auto post-F1", req.Action)
+		t.Errorf("RG-1: req.Action = %q  -  Jira browse URL must NOT route to ginit_auto post-F1", req.Action)
 	}
 	if req.Action != "capture_jira_auto" {
 		t.Errorf("RG-1: req.Action = %q, want %q", req.Action, "capture_jira_auto")
@@ -191,12 +191,10 @@ func TestDomainRoute_RG1_NotGinitAuto(t *testing.T) {
 }
 
 // RG-2: domain_route_override event is emitted on every match with correct fields.
-// Uses a package-level override sink (domainRouteOverrideEmitter) to capture events.
+// The capture sink is passed per call (EPIC-258 M2), not installed on a package var.
 func TestDomainRoute_RG2_OverrideEventEmitted(t *testing.T) {
 	var captured []capturedOverrideEvent
-	// Install a test-local emitter that records events.
-	prev := domainRouteOverrideEmitter
-	domainRouteOverrideEmitter = func(url, originalAction, resolvedAction, pattern string) {
+	capture := func(url, originalAction, resolvedAction, pattern string) {
 		captured = append(captured, capturedOverrideEvent{
 			url:            url,
 			originalAction: originalAction,
@@ -204,13 +202,12 @@ func TestDomainRoute_RG2_OverrideEventEmitted(t *testing.T) {
 			pattern:        pattern,
 		})
 	}
-	defer func() { domainRouteOverrideEmitter = prev }()
 
 	req := &ShareRequest{Action: "uinit_auto", URL: "https://org.atlassian.net/browse/KEY-1"}
 	routes := testRoutes()
 	cfgIndex := domainRouteCfgIndex()
 
-	if err := resolveDomainRoute(req, routes, cfgIndex); err != nil {
+	if err := resolveDomainRouteWith(req, routes, cfgIndex, capture); err != nil {
 		t.Fatalf("RG-2: unexpected error: %v", err)
 	}
 
