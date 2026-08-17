@@ -40,7 +40,7 @@ type PathResolver interface {
 // pathResolverMu: tests swap it (withPathResolver, newDoctorCmdForTest) while
 // scoring goroutines read it on the post-scoring push tail
 // (resolvePushConfigOnce -> LoadConfig -> nativeConfigPath), which runs after
-// scoreAsyncDoneHook fires by design - so goroutine-lifetime discipline alone
+// scoringDeps.DoneHook fires by design - so goroutine-lifetime discipline alone
 // cannot prevent the race (EPIC-258 M2, observed at shuffle seed 6).
 var (
 	pathResolverMu     sync.RWMutex

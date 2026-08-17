@@ -341,12 +341,10 @@ func TestFirehoseScoring_F1CT5_SemaphoreCap(t *testing.T) {
 
 	// Drain every scoreAsync before returning: the CI leakcheck run caught
 	// this test's TempDir cleanup racing the 3 evaluations it never waited
-	// for ("directory not empty"). scoreAsyncDoneHook fires at every
+	// for ("directory not empty"). deps.DoneHook fires at every
 	// scoreAsync return, after transcript persistence and queue writes.
 	asyncDone := make(chan struct{}, n)
-	prevHook := scoreAsyncDoneHook
-	scoreAsyncDoneHook = func() { asyncDone <- struct{}{} }
-	t.Cleanup(func() { scoreAsyncDoneHook = prevHook })
+	deps.DoneHook = func() { asyncDone <- struct{}{} }
 
 	for i := 0; i < n; i++ {
 		post := &firehosePost{
@@ -469,13 +467,12 @@ func TestFirehoseScoring_F3CT3_ScoreAsyncUsesText(t *testing.T) {
 
 	// Async-test convention (EPIC-250): block on scoreAsync fully returning,
 	// not just Evaluate. Otherwise this test's scoring goroutine outlives the
-	// test and fires the *next* test's freshly installed scoreAsyncDoneHook,
-	// which made TestFirehoseScoring_Integration read its queue row too early
-	// (pre-existing at 2799ac6; surfaced during EPIC-258 M2).
+	// test outlives it. EPIC-258 M2: the hook is now a scoringDeps field, so it is
+	// reachable only by the scoreAsync call this test started - as a package
+	// global it fired the *next* test's hook, which made
+	// TestFirehoseScoring_Integration read its queue row too early (2799ac6).
 	scoreDone := make(chan struct{})
-	prevHook := scoreAsyncDoneHook
-	scoreAsyncDoneHook = func() { close(scoreDone) }
-	t.Cleanup(func() { scoreAsyncDoneHook = prevHook })
+	deps.DoneHook = func() { close(scoreDone) }
 
 	postText := "transformer architecture improvements in 2026"
 	post := &firehosePost{
@@ -521,7 +518,7 @@ func TestFirehoseScoring_F3CT3_ScoreAsyncUsesText(t *testing.T) {
 // *after* Evaluate returns, in the same goroutine. That let the test return with work still
 // in flight, which then landed in whatever transcriptDir a later test had installed  -  see
 // POMO_firehose-transcript-goroutine-leak-suite-order. AC-3/AC-4: this test now isolates its
-// own transcriptDir and blocks on scoreAsyncDoneHook (fired once transcript persistence and queue writes complete)
+// own transcriptDir and blocks on deps.DoneHook (fired once transcript persistence and queue writes complete)
 // before returning, so no goroutine can outlive it.
 func TestFirehoseScoring_F3RG1_TextReachesPrompt(t *testing.T) {
 	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
@@ -533,9 +530,7 @@ func TestFirehoseScoring_F3RG1_TextReachesPrompt(t *testing.T) {
 	deps.TranscriptsDir = transcriptDir
 
 	scoreDone := make(chan struct{})
-	prevHook := scoreAsyncDoneHook
-	scoreAsyncDoneHook = func() { close(scoreDone) }
-	t.Cleanup(func() { scoreAsyncDoneHook = prevHook })
+	deps.DoneHook = func() { close(scoreDone) }
 
 	done := make(chan struct{})
 	capturing := &contentCapturingEval{inner: &stubEvaluator{score: 65, verdict: "Interesting"}}
@@ -786,7 +781,7 @@ func TestFirehoseF6RG1_AllRowsHaveAction(t *testing.T) {
 // channel) plus a fixed sleep, then read queue status and let deferred cleanup() close the
 // DB. Under -shuffle=on the sleep was occasionally not enough, so scoreAsync's own queue
 // status write (which happens after Evaluate returns) raced against cleanup() closing the
-// DB, surfacing as "sql: database is closed". Waiting on scoreAsyncDoneHook (fired once the
+// DB, surfacing as "sql: database is closed". Waiting on deps.DoneHook (fired once the
 // queue status write completes, before the push/FCM tail that can block on real on-disk
 // config in dev environments) instead of a sleep removes the timing dependency  -  see
 // POMO_firehose-transcript-goroutine-leak-suite-order for the same underlying goroutine-leak
@@ -798,9 +793,7 @@ func TestFirehoseScoring_Integration(t *testing.T) {
 	_ = q.AddFirehoseSubscription("eng", "mixture")
 
 	scoreDone := make(chan struct{})
-	prevHook := scoreAsyncDoneHook
-	scoreAsyncDoneHook = func() { close(scoreDone) }
-	t.Cleanup(func() { scoreAsyncDoneHook = prevHook })
+	deps.DoneHook = func() { close(scoreDone) }
 
 	done := make(chan struct{})
 	eval := &onceDoneEval{inner: &stubEvaluator{score: 75, verdict: "Strong Yes"}, done: done}
@@ -832,11 +825,12 @@ func TestFirehoseScoring_Integration(t *testing.T) {
 		t.Fatal("integration: scoreAsync did not complete within 5s")
 	}
 
-	// scoreAsyncDoneHook is a shared package global: a scoring goroutine leaked
-	// by an earlier test can fire the hook this test just installed, waking the
-	// wait above before *this* test's scoreAsync has persisted its status
-	// (observed at 2799ac6 in full-suite order; EPIC-258 M2). Poll to a
-	// deadline for a terminal status instead of trusting a single firing.
+	// The cross-test hazard this poll was added for is gone as of EPIC-258 M2:
+	// DoneHook is a scoringDeps field, so a goroutine leaked by an earlier test
+	// can no longer fire the hook this test installed (that was the 2799ac6
+	// full-suite failure). The poll is retained as cheap insurance - scoreAsync
+	// also fires DoneHook on its two persist-failure returns, so a single firing
+	// is not by itself proof that a terminal status was written.
 	var status string
 	deadline := time.Now().Add(5 * time.Second)
 	for {

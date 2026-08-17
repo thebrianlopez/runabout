@@ -22,6 +22,14 @@ var ErrActionNotFound = errors.New("action not found")
 // preceded this holder required a full server restart to pick up a
 // threshold change  -  the 15-minute diagnostic detour documented in the
 // EPIC-050 PoMo timeline. Now a `kill -HUP $(cat linkari.pid)` is enough.
+//
+// EPIC-258: this pair intentionally stays package-level. It is the documented
+// process-wide-singleton exception, not an unretired seam - every read and
+// write goes through archiveThresholdMu, so it is not a data race, and the
+// SIGHUP swap needs a single process-wide cell to swap. Do not "fix" it by
+// moving it onto Router or scoringDeps: archiveThreshold() is a free function
+// reached from cobra RunE loops (cmd_score.go, cmd_triage.go) that have
+// neither in scope. Tests that write it must hold the mutex and restore.
 var (
 	archiveThresholdMu  sync.RWMutex
 	archiveThresholdCfg *Config

@@ -204,6 +204,20 @@ type scoringDeps struct {
 	ImageShortCircuitBypassMinChars int
 	// ImageNoiseGateMinBytes overrides the vision noise gate when > 0.
 	ImageNoiseGateMinBytes int64
+
+	// DoneHook fires (via defer) at every return path of scoreAsync, after
+	// transcript persistence and queue status writes and before the push/FCM
+	// tail. nil in production. Tests that must observe scoreAsync's full
+	// completion set it instead of racing on sleeps (EPIC-250).
+	//
+	// EPIC-258 M2: was the package var scoreAsyncDoneHook. As a global it was
+	// itself an instance of the bug it was built to fix - a scoring goroutine
+	// leaked by an earlier test fired the *next* test's freshly installed hook,
+	// waking that test before its own scoreAsync had persisted. Both
+	// firehose_scoring_test.go:472 and :835 carry comments describing that
+	// interference. Per-deps, a hook is reachable only by the scoreAsync call
+	// its own test started.
+	DoneHook func()
 }
 
 // defaultTranscriptsDir is the transcript location used when ServerConfig
@@ -1525,8 +1539,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			if req.QueueRowID > 0 {
 				_ = q.MarkFailedWithReason(req.QueueRowID, "score_persist_failed")
 			}
-			if scoreAsyncDoneHook != nil {
-				scoreAsyncDoneHook()
+			if deps.DoneHook != nil {
+				deps.DoneHook()
 			}
 			return
 		}
@@ -1543,8 +1557,8 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		if err != nil {
 			slog.Warn("score_async: ScoreByID failed", "row_id", req.QueueRowID, "error", err)
 			_ = q.MarkFailedWithReason(req.QueueRowID, "score_persist_failed")
-			if scoreAsyncDoneHook != nil {
-				scoreAsyncDoneHook()
+			if deps.DoneHook != nil {
+				deps.DoneHook()
 			}
 			return
 		}
@@ -1609,15 +1623,15 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		}
 	}
 
-	// scoreAsyncDoneHook is a test-only synchronization point (nil in production),
+	// deps.DoneHook is a test-only synchronization point (nil in production),
 	// fired once transcript persistence and the queue status/db writes above have
 	// completed  -  i.e. everything a test would assert on. It deliberately fires
 	// before resolvePushConfigOnce below, which can block on real on-disk config
 	// (secretsmanager refs) in dev environments lacking AWS credentials; tests
 	// must not depend on the push-config/FCM tail of scoreAsync completing. See
-	// EPIC-250 and scoreAsyncDoneHook's doc comment.
-	if scoreAsyncDoneHook != nil {
-		scoreAsyncDoneHook()
+	// EPIC-250 and scoringDeps.DoneHook's doc comment.
+	if deps.DoneHook != nil {
+		deps.DoneHook()
 	}
 
 	// URL-only: cluster detection.
@@ -2732,7 +2746,7 @@ func processVoiceNoteAsync(audioPath string, profile string, q *Queue, rowID int
 	if err != nil {
 		// EPIC-264 M5: handling inversion fix. A missing synopsis template
 		// (deterministic precondition) was terminal at WARN while a failed
-		// LLM call (probabilistic) degraded gracefully 30 lines below —
+		// LLM call (probabilistic) degraded gracefully 30 lines below  -
 		// backwards. Now: ERROR (deterministic → ERROR contract) and
 		// degrade exactly like the LLM-failure path: persist rubric score,
 		// empty synopsis, still archive and push. The row must never be
@@ -2853,20 +2867,6 @@ var ffmpegBinaryPath = "ffmpeg"
 // liteparseBinaryPath is the path to the lit binary. Defaults to "lit" (PATH lookup).
 // Overridden by ServerConfig.LiteParseePath via initClaudeConfig() at startup. EPIC-007 M2.
 var liteparseBinaryPath = "lit"
-
-// scoreAsyncDoneHook is a test-only hook invoked (via defer) at every return
-// path of scoreAsync, i.e. exactly when the scoring goroutine actually
-// finishes  -  not merely when Evaluate() was called. Always nil in production.
-//
-// EPIC-250: introduced because several tests synchronized only on Evaluate()
-// invocation (onceDoneEval's done channel) and then returned, letting
-// scoreAsync's remaining work (transcript persistence, queue status writes)
-// continue in a goroutine that outlives the test. That leaked writes into
-// whatever transcriptDir/db a later test had installed. See
-// POMO_firehose-transcript-goroutine-leak-suite-order. Tests that need to
-// observe scoreAsync's full completion should set this hook (saving/restoring
-// the previous value with t.Cleanup) instead of racing on sleeps.
-var scoreAsyncDoneHook func()
 
 // saveTranscriptFile writes a transcript to docs/transcripts/ with YAML
 // frontmatter containing metadata. Returns the written file path or error.

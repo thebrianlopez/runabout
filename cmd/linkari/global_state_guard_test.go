@@ -161,10 +161,20 @@ var legacyFuncVarAllowlist = map[string]bool{
 	"runYouTubeLoopbackAuthFn": true,
 	"refreshScorerFn":          true,
 	"registeredScorerFn":       true,
-	"scoreAsyncDoneHook":       true,
 }
 
 var legacyTestGlobalWriteAllowlist = map[string]bool{
+	// PERMANENT, by design - not debt. archiveThresholdCfg is a genuine
+	// process-wide singleton: every access (production and test) is guarded by
+	// archiveThresholdMu, and it backs the SIGHUP hot-reload contract added in
+	// EPIC-051 M6 (ReloadArchiveThresholdConfig, wired at main.go). It is not a
+	// race, and it has no reachable owner - archiveThreshold() is a free
+	// function called from 8 sites including cobra RunE loops in cmd_score.go
+	// and cmd_triage.go that have neither a Router nor scoringDeps in scope.
+	// EPIC-258 M1 explicitly carves out this case: inject for the scoring path,
+	// keep mutex-guarded globals "only where a genuine process-wide singleton
+	// exists". It trips this guard only because the guard bans any test write to
+	// a package var, synchronized or not. Decision recorded 20260817.
 	"archiveThresholdCfg":             true,
 	"awsDoctorProbeFn":                true,
 	"configRefResolverFactory":        true,
@@ -175,7 +185,6 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	"refreshScorerFn":                 true,
 	"registeredScorerFn":              true,
 	"runYouTubeLoopbackAuthFn":        true,
-	"scoreAsyncDoneHook":              true,
 	"watchLaterSyncing":               true,
 	"ytFallbackToAudio":               true,
 }
