@@ -50,11 +50,11 @@ func writeConfigFile(t *testing.T, content string) string {
 	return path
 }
 
-func withConfigRefResolver(t *testing.T, fn func(secrets.AWSConfig) *secrets.Resolver) {
+// withConfigRefResolver returns the resolver factory to pass to LoadConfigWith.
+// EPIC-258 M2: was a package-var swap; now the caller threads it explicitly.
+func withConfigRefResolver(t *testing.T, fn func(secrets.AWSConfig) *secrets.Resolver) configRefResolverFunc {
 	t.Helper()
-	orig := configRefResolverFactory
-	configRefResolverFactory = fn
-	t.Cleanup(func() { configRefResolverFactory = orig })
+	return fn
 }
 
 func TestLoadConfig(t *testing.T) {
@@ -306,7 +306,7 @@ func TestPostCaptureConfig_CT9_NonCaptureKind_ValidationError(t *testing.T) {
 
 func TestExpandConfigRefsEnvScheme(t *testing.T) {
 	t.Setenv("EXPAND_TEST_FOO", "bar")
-	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${env:EXPAND_TEST_FOO}")
+	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${env:EXPAND_TEST_FOO}", nil)
 	if got != "bar" {
 		t.Errorf("got %q want %q", got, "bar")
 	}
@@ -314,7 +314,7 @@ func TestExpandConfigRefsEnvScheme(t *testing.T) {
 
 func TestExpandConfigRefsPlainEnvCompat(t *testing.T) {
 	t.Setenv("EXPAND_TEST_PLAIN", "plain_val")
-	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${EXPAND_TEST_PLAIN}")
+	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${EXPAND_TEST_PLAIN}", nil)
 	if got != "plain_val" {
 		t.Errorf("got %q want %q", got, "plain_val")
 	}
@@ -327,14 +327,14 @@ func TestExpandConfigRefsFileScheme(t *testing.T) {
 	}
 	f.WriteString("  file_content  \n")
 	f.Close()
-	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${file:"+f.Name()+"}")
+	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${file:"+f.Name()+"}", nil)
 	if got != "file_content" {
 		t.Errorf("got %q want %q", got, "file_content")
 	}
 }
 
 func TestExpandConfigRefsUnknownScheme(t *testing.T) {
-	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${unknown:val}")
+	got := expandConfigRefs(context.Background(), secrets.AWSConfig{}, "${unknown:val}", nil)
 	if got != "" {
 		t.Errorf("got %q want empty string for unknown scheme", got)
 	}
@@ -505,7 +505,7 @@ func TestServerConfig_MissingAWSBlockZeroValue(t *testing.T) {
 }
 
 func TestLoadConfig_CT1_ServerAWSPreparseFeedsResolverFactory(t *testing.T) {
-	withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+	resolverFn := withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
 		if awsCfg != (secrets.AWSConfig{Region: "us-east-2", Profile: "alpine", RoleARN: "arn:aws:iam::123456789012:role/linkari"}) {
 			t.Fatalf("resolver factory awsCfg = %#v, want declared server.aws block", awsCfg)
 		}
@@ -514,7 +514,7 @@ func TestLoadConfig_CT1_ServerAWSPreparseFeedsResolverFactory(t *testing.T) {
 		})
 	})
 	path := writeConfigFile(t, "[server]\ntoken = \"${secretsmanager:linkari/bearer-token}\"\n\n[server.aws]\nregion = \"us-east-2\"\nprofile = \"alpine\"\nrole_arn = \"arn:aws:iam::123456789012:role/linkari\"\n")
-	cfg, err := LoadConfig(context.Background(), path)
+	cfg, err := LoadConfigWith(context.Background(), path, resolverFn)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -524,13 +524,13 @@ func TestLoadConfig_CT1_ServerAWSPreparseFeedsResolverFactory(t *testing.T) {
 }
 
 func TestLoadConfig_CT2_SecretsManagerReferenceExpandsIntoFinalConfig(t *testing.T) {
-	withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+	resolverFn := withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
 		return secrets.New(func(context.Context) (secrets.SecretsManagerAPI, error) {
 			return secretsManagerStub("ct2-client-id"), nil
 		})
 	})
 	path := writeConfigFile(t, "[server]\ngoogle_client_id = \"${secretsmanager:linkari/google-client-id}\"\n\n[server.aws]\nregion = \"us-east-2\"\n")
-	cfg, err := LoadConfig(context.Background(), path)
+	cfg, err := LoadConfigWith(context.Background(), path, resolverFn)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -541,7 +541,7 @@ func TestLoadConfig_CT2_SecretsManagerReferenceExpandsIntoFinalConfig(t *testing
 
 func TestLoadConfig_CT3_NoSecretManagerReferenceSkipsResolverFactory(t *testing.T) {
 	called := false
-	withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+	resolverFn := withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
 		called = true
 		return secrets.New(func(context.Context) (secrets.SecretsManagerAPI, error) {
 			return secretsManagerStub("unused"), nil
@@ -554,7 +554,7 @@ func TestLoadConfig_CT3_NoSecretManagerReferenceSkipsResolverFactory(t *testing.
 	t.Setenv("CT3_TOKEN", "env-val")
 	t.Setenv("CT3_PLAIN", "plain-val")
 	path := writeConfigFile(t, "[server]\ntoken = \"${env:CT3_TOKEN}\"\ngithub_token = \"${CT3_PLAIN}\"\natlassian_confluence_token = \"${file:"+file+"}\"\n\n[server.aws]\nregion = \"us-east-2\"\n")
-	cfg, err := LoadConfig(context.Background(), path)
+	cfg, err := LoadConfigWith(context.Background(), path, resolverFn)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -574,14 +574,14 @@ func TestLoadConfig_CT3_NoSecretManagerReferenceSkipsResolverFactory(t *testing.
 
 func TestLoadConfig_CT4_InvalidRawTOMLDoesNotInvokeResolverFactory(t *testing.T) {
 	called := false
-	withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+	resolverFn := withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
 		called = true
 		return secrets.New(func(context.Context) (secrets.SecretsManagerAPI, error) {
 			return secretsManagerStub("unused"), nil
 		})
 	})
 	path := writeConfigFile(t, "[server\ntoken = \"${secretsmanager:linkari/bearer-token}\"\n")
-	if _, err := LoadConfig(context.Background(), path); err == nil {
+	if _, err := LoadConfigWith(context.Background(), path, resolverFn); err == nil {
 		t.Fatal("expected invalid TOML to fail before resolver invocation")
 	}
 	if called {
@@ -591,14 +591,14 @@ func TestLoadConfig_CT4_InvalidRawTOMLDoesNotInvokeResolverFactory(t *testing.T)
 
 func TestLoadConfig_RG3_AlpineTemplateUsesDeclaredAWSRegion(t *testing.T) {
 	var captured secrets.AWSConfig
-	withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+	resolverFn := withConfigRefResolver(t, func(awsCfg secrets.AWSConfig) *secrets.Resolver {
 		captured = awsCfg
 		return secrets.New(func(context.Context) (secrets.SecretsManagerAPI, error) {
 			return secretsManagerStub("rg3-secret"), nil
 		})
 	})
 	path := writeConfigFile(t, serverYAMLTemplate)
-	cfg, err := LoadConfig(context.Background(), path)
+	cfg, err := LoadConfigWith(context.Background(), path, resolverFn)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}

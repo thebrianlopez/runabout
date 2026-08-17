@@ -354,14 +354,10 @@ func TestAuthYouTube_RG4_FailedAuthLeavesSlotUntouched(t *testing.T) {
 	// Garbage paste x3 forces a fatal error without ever reaching exchange.
 	reader := strings.NewReader("bad1\nbad2\nbad3\n")
 
-	queueDB, restore := setupAuthYouTubeTest(t, "unused")
-	// setupAuthYouTubeTest overrides runYouTubeLoopbackAuthFn to a stub; we
-	// want the real function here, so restore its default first and re-point
-	// it at the real implementation. The paste seams travel through
-	// authCmdWith rather than package globals (EPIC-258 M2).
-	restore()
-	runYouTubeLoopbackAuthFn = runYouTubeLoopbackAuth
-	defer func() { runYouTubeLoopbackAuthFn = runYouTubeLoopbackAuth }()
+	// setupAuthYouTubeTest's deps carry a stubbed RunLoopbackAuth; this test
+	// wants the real flow, so it builds its own deps below via ioSeams (whose
+	// defaultAuthIODeps base points RunLoopbackAuth at runYouTubeLoopbackAuth).
+	queueDB, _ := setupAuthYouTubeTest(t, "unused")
 
 	q, err := NewQueue(queueDB, false)
 	require.NoError(t, err)

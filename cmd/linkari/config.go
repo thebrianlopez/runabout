@@ -754,15 +754,22 @@ func (d TemplateData) ShellQuoted() TemplateData {
 // defaultConfigPath returns the native config.toml path for the current platform.
 func defaultConfigPath() string { return nativeConfigPath() }
 
-// configRefResolverFactory builds the resolver used for ${secretsmanager:...}
-// expansion. Tests override it with t.Cleanup to keep LoadConfig hermetic.
-var configRefResolverFactory = func(awsCfg secrets.AWSConfig) *secrets.Resolver {
+// configRefResolverFunc builds the resolver used for ${secretsmanager:...}
+// expansion. Injected through LoadConfigWith (EPIC-258 M2) rather than swapped
+// on a package var, so a test resolver is never visible to another test.
+type configRefResolverFunc func(awsCfg secrets.AWSConfig) *secrets.Resolver
+
+// defaultConfigRefResolver is the production resolver factory.
+func defaultConfigRefResolver(awsCfg secrets.AWSConfig) *secrets.Resolver {
 	return secrets.New(secrets.DefaultAWSFactory(awsCfg))
 }
 
 // expandConfigRefs resolves ${env:VAR}, ${file:/path}, ${secretsmanager:name#field},
 // and bare ${VAR} references in the raw config string before TOML parsing.
-func expandConfigRefs(ctx context.Context, awsCfg secrets.AWSConfig, s string) string {
+func expandConfigRefs(ctx context.Context, awsCfg secrets.AWSConfig, s string, newResolver configRefResolverFunc) string {
+	if newResolver == nil {
+		newResolver = defaultConfigRefResolver
+	}
 	cache := make(map[string]string)
 	var resolver *secrets.Resolver
 
@@ -783,7 +790,7 @@ func expandConfigRefs(ctx context.Context, awsCfg secrets.AWSConfig, s string) s
 				return extractJSONField(cached, field, hasField)
 			}
 			if resolver == nil {
-				resolver = configRefResolverFactory(awsCfg)
+				resolver = newResolver(awsCfg)
 			}
 			raw, _, err := resolver.Resolve(ctx, "secretsmanager://"+secretName)
 			if err != nil {
@@ -815,6 +822,12 @@ func extractJSONField(raw, field string, hasField bool) string {
 
 // LoadConfig reads, expands refs, and validates the TOML config file.
 func LoadConfig(ctx context.Context, path string) (*Config, error) {
+	return LoadConfigWith(ctx, path, nil)
+}
+
+// LoadConfigWith is LoadConfig with an injectable secretsmanager resolver
+// factory. A nil newResolver uses defaultConfigRefResolver (EPIC-258 M2).
+func LoadConfigWith(ctx context.Context, path string, newResolver configRefResolverFunc) (*Config, error) {
 	if path == "" {
 		path = resolveConfigPath("").Path
 	}
@@ -826,7 +839,7 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 	if _, err := toml.Decode(string(data), &preparse); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	expanded := expandConfigRefs(ctx, secrets.AWSConfig(preparse.Server.AWS), string(data))
+	expanded := expandConfigRefs(ctx, secrets.AWSConfig(preparse.Server.AWS), string(data), newResolver)
 	var cfg Config
 	if _, err := toml.Decode(expanded, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)

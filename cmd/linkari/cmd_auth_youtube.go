@@ -26,9 +26,6 @@ import (
 	"github.com/thebrianlopez/runabout/internal/secrets"
 )
 
-// runYouTubeLoopbackAuthFn is the injectable seam for testing.
-var runYouTubeLoopbackAuthFn = runYouTubeLoopbackAuth
-
 // authIODeps carries the terminal probe and paste reader for the headless
 // paste race (EPIC-253), threaded as parameters instead of package-level
 // seams (EPIC-258 M2). isTerminal reports whether stdin is an interactive
@@ -39,10 +36,14 @@ type authIODeps struct {
 	isTerminal  func(fd int) bool
 	pasteReader func() io.Reader
 	Endpoint    *oauth2.Endpoint
+	// RunLoopbackAuth performs the OAuth loopback/paste flow. nil selects
+	// runYouTubeLoopbackAuth (EPIC-258 M2: was the runYouTubeLoopbackAuthFn
+	// package seam).
+	RunLoopbackAuth func(ctx context.Context, clientID, clientSecret, callbackAddr string, noBrowser bool, out io.Writer, ioDeps authIODeps) (*oauth2.Token, error)
 }
 
 func defaultAuthIODeps() authIODeps {
-	return authIODeps{isTerminal: defaultIsTerminal, pasteReader: defaultPasteReader, Endpoint: nil}
+	return authIODeps{isTerminal: defaultIsTerminal, pasteReader: defaultPasteReader, Endpoint: nil, RunLoopbackAuth: runYouTubeLoopbackAuth}
 }
 
 var youtubeSlotNameRe = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
@@ -143,7 +144,11 @@ func authYouTubeCmd(ioDeps authIODeps) *cobra.Command {
 			defer q.Close()
 
 			ctx = context.WithValue(ctx, ctxKeyYouTubeSlot{}, slotFlag)
-			tok, err := runYouTubeLoopbackAuthFn(ctx, clientID, clientSecret, callbackAddr, noBrowser, nil, ioDeps)
+			runAuth := ioDeps.RunLoopbackAuth
+			if runAuth == nil {
+				runAuth = runYouTubeLoopbackAuth
+			}
+			tok, err := runAuth(ctx, clientID, clientSecret, callbackAddr, noBrowser, nil, ioDeps)
 			if err != nil {
 				return err
 			}

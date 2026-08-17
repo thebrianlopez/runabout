@@ -26,7 +26,7 @@ func fakeToken(refreshToken string) *oauth2.Token {
 
 // setupAuthYouTubeTest creates a temp queue DB and config file, overrides the
 // OAuth seam to return the given token, and returns a cleanup func.
-func setupAuthYouTubeTest(t *testing.T, refreshToken string) (queueDB string, restore func()) {
+func setupAuthYouTubeTest(t *testing.T, refreshToken string) (queueDB string, deps authIODeps) {
 	t.Helper()
 	dir := t.TempDir()
 	queueDB = filepath.Join(dir, "queue.db")
@@ -40,20 +40,18 @@ google_client_secret = "test_client_secret"
 	require.NoError(t, os.WriteFile(cfgPath, []byte(cfgContent), 0o600))
 	t.Setenv("LINKARI_CONFIG", cfgPath)
 
-	// Override OAuth seam.
-	orig := runYouTubeLoopbackAuthFn
-	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
+	// Inject the OAuth stub through deps (EPIC-258 M2), not a package seam.
+	deps = defaultAuthIODeps()
+	deps.RunLoopbackAuth = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
 		return fakeToken(refreshToken), nil
 	}
-	restore = func() { runYouTubeLoopbackAuthFn = orig }
-	return queueDB, restore
+	return queueDB, deps
 }
 
 // CT-4: --slot personal writes to youtube_oauth_slots with slot_name="personal";
 // "default" slot is unaffected.
 func TestAuthYouTube_CT4_SlotPersonalWritesPersonalSlot(t *testing.T) {
-	queueDB, restore := setupAuthYouTubeTest(t, "rt_personal")
-	defer restore()
+	queueDB, authDeps := setupAuthYouTubeTest(t, "rt_personal")
 
 	// Pre-seed a "default" slot so we can verify isolation.
 	q, err := NewQueue(queueDB, false)
@@ -61,7 +59,7 @@ func TestAuthYouTube_CT4_SlotPersonalWritesPersonalSlot(t *testing.T) {
 	require.NoError(t, q.SetYouTubeSlotToken(1, "default", "original_default", 999))
 	q.Close()
 
-	cmd := authCmd()
+	cmd := authCmdWith(authDeps)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -87,10 +85,9 @@ func TestAuthYouTube_CT4_SlotPersonalWritesPersonalSlot(t *testing.T) {
 
 // CT-4b: no --slot flag writes to slot "default" (backward-compat).
 func TestAuthYouTube_CT4b_DefaultSlotBackwardCompat(t *testing.T) {
-	queueDB, restore := setupAuthYouTubeTest(t, "rt_default")
-	defer restore()
+	queueDB, authDeps := setupAuthYouTubeTest(t, "rt_default")
 
-	cmd := authCmd()
+	cmd := authCmdWith(authDeps)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -108,13 +105,12 @@ func TestAuthYouTube_CT4b_DefaultSlotBackwardCompat(t *testing.T) {
 
 // CT-4c: --slot "" returns non-zero exit and error before OAuth flow.
 func TestAuthYouTube_CT4c_EmptySlotRejected(t *testing.T) {
-	origFn := runYouTubeLoopbackAuthFn
 	oauthCalled := false
-	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
+	authDeps := defaultAuthIODeps()
+	authDeps.RunLoopbackAuth = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
 		oauthCalled = true
 		return fakeToken("should_not_reach"), nil
 	}
-	defer func() { runYouTubeLoopbackAuthFn = origFn }()
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.toml")
@@ -125,7 +121,7 @@ google_client_secret = "secret"
 	t.Setenv("LINKARI_CONFIG", cfgPath)
 	queueDB := filepath.Join(dir, "queue.db")
 
-	cmd := authCmd()
+	cmd := authCmdWith(authDeps)
 	cmd.SetArgs([]string{"youtube", "--queue-db", queueDB, "--slot", "", "--no-browser"})
 	err := cmd.Execute()
 	require.Error(t, err, "empty slot name should fail")
@@ -135,13 +131,12 @@ google_client_secret = "secret"
 
 // CT-4d: --slot "my slot" (space in name) returns non-zero exit before OAuth.
 func TestAuthYouTube_CT4d_SpaceInSlotRejected(t *testing.T) {
-	origFn := runYouTubeLoopbackAuthFn
 	oauthCalled := false
-	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
+	authDeps := defaultAuthIODeps()
+	authDeps.RunLoopbackAuth = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
 		oauthCalled = true
 		return fakeToken("nope"), nil
 	}
-	defer func() { runYouTubeLoopbackAuthFn = origFn }()
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.toml")
@@ -152,7 +147,7 @@ google_client_secret = "secret"
 	t.Setenv("LINKARI_CONFIG", cfgPath)
 	queueDB := filepath.Join(dir, "queue.db")
 
-	cmd := authCmd()
+	cmd := authCmdWith(authDeps)
 	cmd.SetArgs([]string{"youtube", "--queue-db", queueDB, "--slot", "my slot", "--no-browser"})
 	err := cmd.Execute()
 	require.Error(t, err, "slot name with space should fail")
@@ -182,8 +177,7 @@ func TestAuthYouTube_RG4_RedirectURIFixed(t *testing.T) {
 
 // RG-5: --slot personal does not modify slot "default".
 func TestAuthYouTube_RG5_PersonalSlotDoesNotTouchDefault(t *testing.T) {
-	queueDB, restore := setupAuthYouTubeTest(t, "rt_personal_v2")
-	defer restore()
+	queueDB, authDeps := setupAuthYouTubeTest(t, "rt_personal_v2")
 
 	// Pre-seed default slot.
 	q, err := NewQueue(queueDB, false)
@@ -191,7 +185,7 @@ func TestAuthYouTube_RG5_PersonalSlotDoesNotTouchDefault(t *testing.T) {
 	require.NoError(t, q.SetYouTubeSlotToken(1, "default", "original_default_v2", 500))
 	q.Close()
 
-	cmd := authCmd()
+	cmd := authCmdWith(authDeps)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -209,25 +203,24 @@ func TestAuthYouTube_RG5_PersonalSlotDoesNotTouchDefault(t *testing.T) {
 
 // RG-6: Second auth for same slot updates token in place (no duplicate row).
 func TestAuthYouTube_RG6_SecondAuthUpdatesInPlace(t *testing.T) {
-	queueDB, restore := setupAuthYouTubeTest(t, "rt_first")
-	defer restore()
+	queueDB, authDeps := setupAuthYouTubeTest(t, "rt_first")
 
 	// First auth.
-	cmd := authCmd()
+	cmd := authCmdWith(authDeps)
 	cmd.SetOut(new(bytes.Buffer))
 	cmd.SetErr(new(bytes.Buffer))
 	cmd.SetArgs([]string{"youtube", "--queue-db", queueDB, "--slot", "personal", "--no-browser"})
 	require.NoError(t, cmd.Execute())
 
-	// Override the seam to return a different token for the second auth.
-	origFn := runYouTubeLoopbackAuthFn
-	runYouTubeLoopbackAuthFn = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
+	// Second auth returns a different token; build separate deps for it rather
+	// than mutating the first command's (EPIC-258 M2).
+	secondDeps := authDeps
+	secondDeps.RunLoopbackAuth = func(_ context.Context, _, _, _ string, _ bool, _ io.Writer, _ authIODeps) (*oauth2.Token, error) {
 		return fakeToken("rt_second"), nil
 	}
-	defer func() { runYouTubeLoopbackAuthFn = origFn }()
 
 	// Second auth.
-	cmd2 := authCmd()
+	cmd2 := authCmdWith(secondDeps)
 	cmd2.SetOut(new(bytes.Buffer))
 	cmd2.SetErr(new(bytes.Buffer))
 	cmd2.SetArgs([]string{"youtube", "--queue-db", queueDB, "--slot", "personal", "--no-browser"})

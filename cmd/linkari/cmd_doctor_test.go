@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -38,7 +37,14 @@ func newDoctorCmdForTest(t *testing.T, tmpDir string, extraArgs []string) (*byte
 	t.Setenv("LINKARI_JIRA_DOMAIN", "")
 	t.Setenv("LINKARI_PAGERDUTY_TOKEN", "")
 
-	cmd := doctorCmd()
+	return newDoctorCmdForTestWith(t, tmpDir, extraArgs, doctorDeps{})
+}
+
+// newDoctorCmdForTestWith is newDoctorCmdForTest with injectable doctor probes
+// (EPIC-258 M2). The env/HOME isolation above has already run.
+func newDoctorCmdForTestWith(t *testing.T, tmpDir string, extraArgs []string, deps doctorDeps) (*bytes.Buffer, func() error) {
+	t.Helper()
+	cmd := doctorCmdWith(deps)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -1051,14 +1057,9 @@ func TestResolveDataDir_ConfigFirst(t *testing.T) {
 
 // CT-1: Doctor reports credential source type when profile configured.
 func TestAWSDoctorCT1_CredentialSourceLabel(t *testing.T) {
-	orig := awsDoctorProbeFn
-	defer func() { awsDoctorProbeFn = orig }()
-
-	awsDoctorProbeFn = func(_ context.Context, awsCfg secrets.AWSConfig) awsDoctorResult {
-		return awsDoctorResult{Source: awsCfg.Profile}
-	}
-
-	// Use formatAWSCheck directly with a hand-crafted result.
+	// formatAWSCheck is called directly with a hand-crafted result; this test
+	// never invokes the probe, so it injects nothing (EPIC-258 M2 removed a
+	// dead awsDoctorProbeFn override here).
 	result := awsDoctorResult{
 		Source:  "shared-credentials-file",
 		ARN:     "arn:aws:iam::082515828319:user/brian",

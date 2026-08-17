@@ -31,18 +31,22 @@ const (
 	fixtureWarnThreshold = 5
 )
 
-func profileCmd() *cobra.Command {
+func profileCmd() *cobra.Command { return profileCmdWith(scorerDeps{}) }
+
+// profileCmdWith threads scorer dependencies explicitly (EPIC-258 M2).
+func profileCmdWith(deps scorerDeps) *cobra.Command {
+	deps = deps.resolve()
 	cmd := &cobra.Command{
 		Use:   "profile",
 		Short: "Profile manifest tooling (EPIC-044 M3)",
 	}
 	cmd.AddCommand(profileLintCmd())
-	cmd.AddCommand(profileTestCmd())
+	cmd.AddCommand(profileTestCmd(deps))
 	return cmd
 }
 
 // profileTestCmd implements `linkari profile test <profile.yaml> [--fixtures <dir>] [--tolerance N]`
-func profileTestCmd() *cobra.Command {
+func profileTestCmd(deps scorerDeps) *cobra.Command {
 	var (
 		fixturesDir string
 		tolerance   int
@@ -56,7 +60,7 @@ func profileTestCmd() *cobra.Command {
 			if fixturesDir == "" {
 				fixturesDir = defaultFixturesDir()
 			}
-			scorer := registeredScorerFn()
+			scorer := deps.RegisteredScorer()
 			result, err := RunProfileTest(profilePath, fixturesDir, tolerance, scorer, nil)
 			if err != nil {
 				return err

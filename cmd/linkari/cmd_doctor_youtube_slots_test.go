@@ -43,13 +43,9 @@ slot = "work"
 sources = ["liked"]
 `)
 
-	orig := probeYouTubeSlotFn
-	t.Cleanup(func() { probeYouTubeSlotFn = orig })
-	probeYouTubeSlotFn = func(_ context.Context, _ string, _ int64, _ *Queue, _, _ string) error {
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath}, doctorDeps{ProbeYouTubeSlot: func(_ context.Context, _ string, _ int64, _ *Queue, _, _ string) error {
 		return nil
-	}
-
-	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
+	}})
 	_ = run()
 	got := out.String()
 
@@ -76,13 +72,9 @@ slot = "work"
 sources = ["liked"]
 `)
 
-	orig := probeYouTubeSlotFn
-	t.Cleanup(func() { probeYouTubeSlotFn = orig })
-	probeYouTubeSlotFn = func(_ context.Context, _ string, _ int64, _ *Queue, _, _ string) error {
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath}, doctorDeps{ProbeYouTubeSlot: func(_ context.Context, _ string, _ int64, _ *Queue, _, _ string) error {
 		return nil
-	}
-
-	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
+	}})
 	_ = run()
 	got := out.String()
 
@@ -109,16 +101,12 @@ slot = "expired"
 sources = ["liked"]
 `)
 
-	orig := probeYouTubeSlotFn
-	t.Cleanup(func() { probeYouTubeSlotFn = orig })
-	probeYouTubeSlotFn = func(_ context.Context, slot string, _ int64, _ *Queue, _, _ string) error {
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath}, doctorDeps{ProbeYouTubeSlot: func(_ context.Context, slot string, _ int64, _ *Queue, _, _ string) error {
 		if slot == "expired" {
 			return fmt.Errorf("oauth2: token refresh failed: invalid_grant")
 		}
 		return nil
-	}
-
-	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
+	}})
 	_ = run()
 	got := out.String()
 
@@ -165,13 +153,9 @@ slot = "personal"
 sources = ["watch_later"]
 `)
 
-	orig := probeYouTubeSlotFn
-	t.Cleanup(func() { probeYouTubeSlotFn = orig })
-	probeYouTubeSlotFn = func(_ context.Context, _ string, _ int64, _ *Queue, _, _ string) error {
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath}, doctorDeps{ProbeYouTubeSlot: func(_ context.Context, _ string, _ int64, _ *Queue, _, _ string) error {
 		return sql.ErrNoRows
-	}
-
-	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
+	}})
 	_ = run()
 	got := out.String()
 
@@ -198,13 +182,9 @@ slot = "work"
 sources = ["watch_later"]
 `)
 
-	orig := probeYouTubeSlotFn
-	t.Cleanup(func() { probeYouTubeSlotFn = orig })
-	probeYouTubeSlotFn = func(_ context.Context, _ string, _ int64, _ *Queue, _, _ string) error {
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath}, doctorDeps{ProbeYouTubeSlot: func(_ context.Context, _ string, _ int64, _ *Queue, _, _ string) error {
 		return nil
-	}
-
-	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
+	}})
 	_ = run()
 	got := out.String()
 
@@ -224,13 +204,9 @@ slot = "personal"
 sources = ["watch_later"]
 `)
 
-	orig := probeYouTubeSlotFn
-	t.Cleanup(func() { probeYouTubeSlotFn = orig })
-	probeYouTubeSlotFn = func(_ context.Context, _ string, _ int64, _ *Queue, _, _ string) error {
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath}, doctorDeps{ProbeYouTubeSlot: func(_ context.Context, _ string, _ int64, _ *Queue, _, _ string) error {
 		return fmt.Errorf("oauth2: token refresh failed: invalid_grant")
-	}
-
-	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
+	}})
 	_ = run()
 	got := out.String()
 
@@ -254,16 +230,12 @@ slot = "default"
 sources = ["liked"]
 `)
 
-	orig := probeYouTubeSlotFn
-	t.Cleanup(func() { probeYouTubeSlotFn = orig })
-	probeYouTubeSlotFn = func(_ context.Context, slot string, _ int64, _ *Queue, _, _ string) error {
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath}, doctorDeps{ProbeYouTubeSlot: func(_ context.Context, slot string, _ int64, _ *Queue, _, _ string) error {
 		if slot == "personal" {
 			return fmt.Errorf("oauth2: token refresh failed: invalid_grant")
 		}
 		return nil // default slot ok
-	}
-
-	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
+	}})
 	_ = run()
 	got := out.String()
 

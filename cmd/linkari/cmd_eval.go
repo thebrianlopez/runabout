@@ -109,7 +109,11 @@ func (identityScorer) Score(f Fixture) (Golden, error) { return f.Golden, nil }
 
 // --- Subcommand wiring ---
 
-func evalCmd() *cobra.Command {
+func evalCmd() *cobra.Command { return evalCmdWith(scorerDeps{}) }
+
+// evalCmdWith threads scorer dependencies explicitly (EPIC-258 M2).
+func evalCmdWith(deps scorerDeps) *cobra.Command {
+	deps = deps.resolve()
 	cmd := &cobra.Command{
 		Use:   "eval",
 		Short: "Triage eval harness  -  capture fixtures and replay them (EPIC-043 M1)",
@@ -132,8 +136,8 @@ Default fixtures directory (both subcommands), in priority order:
   4. ./testdata/triage            (final fallback for clean checkouts / CI seed corpus)`,
 	}
 	cmd.AddCommand(evalCaptureCmd())
-	cmd.AddCommand(evalRunCmd())
-	cmd.AddCommand(evalRefreshGoldensCmd())
+	cmd.AddCommand(evalRunCmd(deps))
+	cmd.AddCommand(evalRefreshGoldensCmd(deps))
 	cmd.AddCommand(evalStatsCmd())
 	return cmd
 }
@@ -196,11 +200,32 @@ func evalStatsCmd() *cobra.Command {
 	return cmd
 }
 
-// refreshScorerFn is the indirection point tests stub for
-// `linkari eval refresh-goldens`. Production path loads the profile
-// manifest and calls the JSON Haiku contract via Evaluator (EPIC-058 M2).
-// Tests swap in a deterministic fake.
-var refreshScorerFn = func(ctx context.Context, profile, content string) (*Scorecard, error) {
+// refreshScorer is the production scorer for
+// scorerDeps carries the injectable scorers used by `linkari eval` and
+// `linkari profile`, threaded through evalCmdWith/profileCmdWith instead of
+// package-level seams (EPIC-258 M2). A zero scorerDeps is the production
+// configuration: resolve() fills every nil field with its real implementation.
+type scorerDeps struct {
+	// RefreshScorer scores one fixture for `eval refresh-goldens`.
+	RefreshScorer func(ctx context.Context, profile, content string) (*Scorecard, error)
+	// RegisteredScorer returns the active Scorer.
+	RegisteredScorer func() Scorer
+}
+
+// resolve returns a copy with production defaults substituted for nil fields.
+func (d scorerDeps) resolve() scorerDeps {
+	if d.RefreshScorer == nil {
+		d.RefreshScorer = refreshScorer
+	}
+	if d.RegisteredScorer == nil {
+		d.RegisteredScorer = registeredScorer
+	}
+	return d
+}
+
+// refreshScorer backs `linkari eval refresh-goldens`. Production path loads the
+// profile manifest and calls the JSON Haiku contract via Evaluator (EPIC-058 M2).
+func refreshScorer(ctx context.Context, profile, content string) (*Scorecard, error) {
 	tmplPath, sysPrompt, err := loadProfileTemplateJSON(profile)
 	if err != nil {
 		return nil, fmt.Errorf("load template: %w", err)
@@ -217,7 +242,7 @@ var refreshScorerFn = func(ctx context.Context, profile, content string) (*Score
 	return sc, nil
 }
 
-func evalRefreshGoldensCmd() *cobra.Command {
+func evalRefreshGoldensCmd(deps scorerDeps) *cobra.Command {
 	var (
 		fixturesDir string
 		profileFlag string
@@ -267,7 +292,7 @@ is bumped to the refresh timestamp.`,
 			}
 			var refreshed []pending
 			for _, fix := range fixtures {
-				sc, err := refreshScorerFn(ctx, fix.Profile, fix.Content)
+				sc, err := deps.RefreshScorer(ctx, fix.Profile, fix.Content)
 				if err != nil {
 					return fmt.Errorf("rescore %s: %w", fix.ID, err)
 				}
@@ -386,7 +411,7 @@ func evalCaptureCmd() *cobra.Command {
 	return cmd
 }
 
-func evalRunCmd() *cobra.Command {
+func evalRunCmd(deps scorerDeps) *cobra.Command {
 	var (
 		fixturesDir string
 		tolerance   int
@@ -418,7 +443,7 @@ func evalRunCmd() *cobra.Command {
 				return fmt.Errorf("no fixtures in %s  -  capture some first", fixturesDir)
 			}
 
-			scorer := registeredScorerFn()
+			scorer := deps.RegisteredScorer()
 			fmt.Fprintf(os.Stderr, "eval: scorer=%s tolerance=±%d fixtures=%d\n",
 				scorer.Name(), tolerance, len(fixtures))
 
@@ -703,11 +728,11 @@ func defaultFixturesDirForWrite() string {
 	return filepath.Join("testdata", "triage")
 }
 
-// registeredScorerFn returns the active Scorer. EPIC-043 M2 swapped the
+// registeredScorer returns the active Scorer. EPIC-043 M2 swapped the
 // identity scorer for the real Go triage path (cmd_triage.go). identityScorer
 // is still exercised directly by the harness self-test in cmd_eval_test.go.
-// Indirection (var not func) lets cmd_eval_test.go stub it with a fake.
-var registeredScorerFn = func() Scorer {
+// Injected via scorerDeps so tests stub it without writing a package global.
+func registeredScorer() Scorer {
 	return triageScorer{}
 }
 

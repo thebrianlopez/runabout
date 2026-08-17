@@ -151,17 +151,7 @@ func unexpectedKeys(found map[string]string, allowed map[string]bool) []string {
 	return out
 }
 
-var legacyFuncVarAllowlist = map[string]bool{
-	"awsDoctorProbeFn":         true,
-	"configRefResolverFactory": true,
-	"probeYouTubeSlotFn":       true,
-	// Surfaced by the tightened classifier: declared `var x = someFunc`, a form
-	// the old FuncType/FuncLit-only check could not see. Retire with the rest of
-	// the *Fn cluster; listed here so it is counted rather than invisible.
-	"runYouTubeLoopbackAuthFn": true,
-	"refreshScorerFn":          true,
-	"registeredScorerFn":       true,
-}
+var legacyFuncVarAllowlist = map[string]bool{}
 
 var legacyTestGlobalWriteAllowlist = map[string]bool{
 	// PERMANENT, by design - not debt. archiveThresholdCfg is a genuine
@@ -176,15 +166,9 @@ var legacyTestGlobalWriteAllowlist = map[string]bool{
 	// exists". It trips this guard only because the guard bans any test write to
 	// a package var, synchronized or not. Decision recorded 20260817.
 	"archiveThresholdCfg":             true,
-	"awsDoctorProbeFn":                true,
-	"configRefResolverFactory":        true,
 	"imageShortCircuitBypassMinChars": true, // image_transcription_bt_test.go F3-BT-2 tests the startup config writer itself
 	"likedVideosSyncing":              true,
-	"probeYouTubeSlotFn":              true,
 	"profilePathOverride":             true,
-	"refreshScorerFn":                 true,
-	"registeredScorerFn":              true,
-	"runYouTubeLoopbackAuthFn":        true,
 	"watchLaterSyncing":               true,
 	"ytFallbackToAudio":               true,
 }

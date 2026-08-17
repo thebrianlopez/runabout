@@ -27,9 +27,7 @@ func TestRefreshGoldensRewritesAndAudits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prev := refreshScorerFn
-	t.Cleanup(func() { refreshScorerFn = prev })
-	refreshScorerFn = func(ctx context.Context, profile, content string) (*Scorecard, error) {
+	cmd := evalRefreshGoldensCmd(scorerDeps{RefreshScorer: func(ctx context.Context, profile, content string) (*Scorecard, error) {
 		return &Scorecard{
 			Score:        82,
 			Verdict:      "fresh",
@@ -37,9 +35,7 @@ func TestRefreshGoldensRewritesAndAudits(t *testing.T) {
 			RawMarkdown:  "## Score: 82/100\n\n## Verdict\nfresh\n",
 			Backend:      "test",
 		}, nil
-	}
-
-	cmd := evalRefreshGoldensCmd()
+	}}.resolve())
 	cmd.SetArgs([]string{"--fixtures", dir, "--yes"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
@@ -229,11 +225,7 @@ func TestEvalRunTreatsSkipAndScorerErrorAsSkip(t *testing.T) {
 		}
 	}
 
-	prev := registeredScorerFn
-	t.Cleanup(func() { registeredScorerFn = prev })
-	registeredScorerFn = func() Scorer { return fakeScorer{} }
-
-	cmd := evalRunCmd()
+	cmd := evalRunCmd(scorerDeps{RegisteredScorer: func() Scorer { return fakeScorer{} }}.resolve())
 	cmd.SetArgs([]string{"--fixtures", dir})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("eval run: %v (skips must not redline the run)", err)

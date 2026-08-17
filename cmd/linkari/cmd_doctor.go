@@ -48,10 +48,32 @@ func okCheck(name, msg string) doctorCheck   { return doctorCheck{name, statusOK
 func warnCheck(name, msg string) doctorCheck { return doctorCheck{name, statusWarn, msg} }
 func failCheck(name, msg string) doctorCheck { return doctorCheck{name, statusFail, msg} }
 
-// probeYouTubeSlotFn probes a single YouTube OAuth slot for credential health.
+// doctorDeps carries the injectable probes of `linkari doctor`, threaded
+// through doctorCmdWith instead of package-level seams (EPIC-258 M2). A zero
+// doctorDeps is the production configuration: resolve() fills every nil field
+// with its real implementation.
+type doctorDeps struct {
+	// ProbeYouTubeSlot probes one YouTube OAuth slot for credential health.
+	ProbeYouTubeSlot func(ctx context.Context, slot string, userID int64, q *Queue, clientID, clientSecret string) error
+	// AWSProbe reports AWS credential and Secrets Manager reachability.
+	AWSProbe func(ctx context.Context, awsCfg secrets.AWSConfig) awsDoctorResult
+}
+
+// resolve returns a copy with production defaults substituted for nil fields.
+func (d doctorDeps) resolve() doctorDeps {
+	if d.ProbeYouTubeSlot == nil {
+		d.ProbeYouTubeSlot = probeYouTubeSlot
+	}
+	if d.AWSProbe == nil {
+		d.AWSProbe = awsDoctorProbe
+	}
+	return d
+}
+
+// probeYouTubeSlot probes a single YouTube OAuth slot for credential health.
 // Returns nil on success, sql.ErrNoRows if no token is stored for the slot,
-// or an error with "invalid_grant" for expired tokens. Injectable for tests.
-var probeYouTubeSlotFn = func(ctx context.Context, slot string, userID int64, q *Queue, clientID, clientSecret string) error {
+// or an error with "invalid_grant" for expired tokens.
+func probeYouTubeSlot(ctx context.Context, slot string, userID int64, q *Queue, clientID, clientSecret string) error {
 	ts, err := youtubeTokenSourceForSlot(ctx, slot, userID, q, clientID, clientSecret)
 	if err != nil {
 		return err
@@ -188,7 +210,12 @@ func checkProfiles(tiers []ProfileSearchTier) ([]doctorCheck, string) {
 	return out, strings.Join(parts, ", ")
 }
 
-func doctorCmd() *cobra.Command {
+func doctorCmd() *cobra.Command { return doctorCmdWith(doctorDeps{}) }
+
+// doctorCmdWith threads doctor probe dependencies explicitly so tests can inject
+// stubs without writing package globals (EPIC-258 M2).
+func doctorCmdWith(deps doctorDeps) *cobra.Command {
+	deps = deps.resolve()
 	var (
 		serverYAMLPath string
 		jsonOutput     bool
@@ -328,7 +355,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 								slot = "default"
 							}
 							checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-							probeErr := probeYouTubeSlotFn(checkCtx, slot, 1, q, serverCfg.GoogleClientID, serverCfg.GoogleClientSecret)
+							probeErr := deps.ProbeYouTubeSlot(checkCtx, slot, 1, q, serverCfg.GoogleClientID, serverCfg.GoogleClientSecret)
 							cancel()
 							checkName := fmt.Sprintf("youtube_oauth[slot=%s]", slot)
 							if errors.Is(probeErr, sql.ErrNoRows) {
@@ -417,7 +444,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 						RoleARN: serverCfg.AWS.RoleARN,
 					}
 				}
-				result := awsDoctorProbeFn(ctx, awsDocCfg)
+				result := deps.AWSProbe(ctx, awsDocCfg)
 				addCheck(formatAWSCheck(result))
 			}
 
@@ -851,7 +878,7 @@ type awsDoctorResult struct {
 	Err     error
 }
 
-var awsDoctorProbeFn = func(ctx context.Context, awsCfg secrets.AWSConfig) awsDoctorResult {
+func awsDoctorProbe(ctx context.Context, awsCfg secrets.AWSConfig) awsDoctorResult {
 	var opts []func(*config.LoadOptions) error
 	if awsCfg.Region != "" {
 		opts = append(opts, config.WithRegion(awsCfg.Region))
