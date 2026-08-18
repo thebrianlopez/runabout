@@ -165,6 +165,88 @@ echo "$@"
 	}
 }
 
+// RG-6: every pi invocation must be hermetic - no extension tools, no skills,
+// no ambient context files. Regression guard for the defect where
+// --no-builtin-tools was assumed sufficient: it disables built-ins only, so a
+// host with a web-access extension installed had scoring calls invoking
+// web_search/fetch_content mid-score (cost inflation, network dependency, and
+// non-reproducible scores that undermine the golden-set eval harness).
+//
+// Covers all three entry points. CompleteVision is already protected by the
+// --tools allowlist, but is asserted here so the guarantee is uniform and
+// cannot regress if that allowlist is ever widened.
+func TestPiScoringBackend_RG6_InvocationsAreHermetic(t *testing.T) {
+	stub := writePiStub(t, `#!/bin/sh
+echo "$@"
+`, 0)
+
+	imgFile := filepath.Join(t.TempDir(), "test.png")
+	if err := os.WriteFile(imgFile, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	b := PiScoringBackend{model: "openai-codex/gpt-5.4-mini", BinaryPath: stub}
+
+	complete, err := b.Complete(context.Background(), "sys", "content")
+	if err != nil {
+		t.Fatalf("RG-6 Complete: unexpected error: %v", err)
+	}
+	completeJSON, err := b.CompleteJSON(context.Background(), "sys", "content", "{}")
+	if err != nil {
+		t.Fatalf("RG-6 CompleteJSON: unexpected error: %v", err)
+	}
+	vision, err := b.CompleteVision(context.Background(), "sys", "meta", imgFile, "{}")
+	if err != nil {
+		t.Fatalf("RG-6 CompleteVision: unexpected error: %v", err)
+	}
+
+	cases := []struct {
+		method string
+		args   string
+	}{
+		{"Complete", complete},
+		{"CompleteJSON", string(completeJSON)},
+		{"CompleteVision", string(vision)},
+	}
+	// Literal, not piHermeticFlags() - asserting against the helper would pass
+	// vacuously if it ever returned an empty slice, which is precisely the
+	// regression this guards.
+	required := []string{"--no-extensions", "--no-skills", "--no-context-files"}
+	for _, tc := range cases {
+		for _, flag := range required {
+			if !strings.Contains(tc.args, flag) {
+				t.Errorf("RG-6 %s: expected hermetic flag %q in args, got: %s", tc.method, flag, tc.args)
+			}
+		}
+	}
+
+	if diff := len(required) - len(piHermeticFlags()); diff != 0 {
+		t.Errorf("RG-6: piHermeticFlags() returned %d flags, guard pins %d - update both together",
+			len(piHermeticFlags()), len(required))
+	}
+}
+
+// RG-7: piEnv must retain HOME. pi resolves auth from ~/.config/pi/agent/auth.json,
+// so stripping HOME breaks scoring entirely. This pins the property that a stale
+// comment once denied (it claimed HOME was overridden to a neutral path) and makes
+// the dependency explicit: because HOME is live, hermeticity is enforced by
+// piHermeticFlags, not by environment scrubbing.
+func TestPiScoringBackend_RG7_EnvRetainsHome(t *testing.T) {
+	if os.Getenv("HOME") == "" {
+		t.Skip("HOME unset in this environment")
+	}
+	var found bool
+	for _, kv := range piEnv() {
+		if strings.HasPrefix(kv, "HOME=") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("RG-7: piEnv() must retain HOME for pi auth resolution")
+	}
+}
+
 // RG-4: --provider must NOT appear in the args (combined syntax uses --model only).
 func TestPiScoringBackend_RG4_NoProviderFlag(t *testing.T) {
 	stub := writePiStub(t, `#!/bin/sh
