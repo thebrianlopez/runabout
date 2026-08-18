@@ -222,9 +222,25 @@ type scoringDeps struct {
 
 // defaultTranscriptsDir is the transcript location used when ServerConfig
 // supplies none. EPIC-009 M1.
+//
+// POMO PERSONAL_20260817T223458Z (linkari-transcript-dir-file-collision):
+// this used to hardcode ~/code/personal/docs/transcripts directly, which
+// silently broke every transcript save once ~/code was decommissioned
+// (EPIC-248 P5, "rm -rf ~/code"). EPIC-259/EPIC-260 already shipped
+// resolveEffectivePaths()/xdgPathResolver with the correct portable default
+// (WS_ORG_DOCS-aware, falling back to ~/docs/transcripts) but this call site
+// was never migrated to use it. Route through the shared resolver instead of
+// re-deriving the legacy path here, so doctor and the scoring path always
+// agree.
 func defaultTranscriptsDir() string {
+	if paths, err := resolveEffectivePaths(nil); err == nil && paths.TranscriptsDir != "" {
+		return paths.TranscriptsDir
+	}
+	// Resolver failure fallback (should not happen in practice - Roots() only
+	// errors on xdg internals). Keep a portable, non-~/code default rather
+	// than silently reintroducing the decommissioned path.
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "code", "personal", "docs", "transcripts")
+	return filepath.Join(home, "docs", "transcripts")
 }
 
 // resolveTranscriptsDir picks the transcript directory from config, falling

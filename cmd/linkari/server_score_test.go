@@ -1309,6 +1309,52 @@ func TestSaveTranscriptFile(t *testing.T) {
 	}
 }
 
+// TestDefaultTranscriptsDir_NotUnderLegacyCodePath is a regression guard for
+// POMO PERSONAL_20260817T223458Z (linkari-transcript-dir-file-collision):
+// ~/code was decommissioned by EPIC-248 P5 ("rm -rf ~/code"), but
+// defaultTranscriptsDir() kept hardcoding ~/code/personal/docs/transcripts
+// as its fallback, so a stray ~/code file (or the intentionally-deleted
+// directory) broke every transcript save silently. defaultTranscriptsDir()
+// must resolve through resolveEffectivePaths() (same portable default as
+// doctor and startup use) and must never derive a path through "code".
+func TestDefaultTranscriptsDir_NotUnderLegacyCodePath(t *testing.T) {
+	got := defaultTranscriptsDir()
+	if strings.Contains(got, string(filepath.Separator)+"code"+string(filepath.Separator)) {
+		t.Fatalf("defaultTranscriptsDir() = %q still derives through a /code/ path segment - the decommissioned ~/code tree must never be reintroduced", got)
+	}
+
+	want, err := resolveEffectivePaths(nil)
+	if err != nil {
+		t.Fatalf("resolveEffectivePaths(nil) error: %v", err)
+	}
+	if got != want.TranscriptsDir {
+		t.Errorf("defaultTranscriptsDir() = %q, want it to match resolveEffectivePaths(nil).TranscriptsDir = %q (doctor and the scoring path must agree)", got, want.TranscriptsDir)
+	}
+}
+
+// TestSaveTranscriptFile_ParentPathSegmentIsFile is a regression guard for the
+// exact failure mode named in PlatformDataLayout_F2_DataRoot_TDD.md §4 Error
+// Taxonomy ("data_dir_not_directory": root exists as file) and POMO
+// PERSONAL_20260817T223458Z. It asserts saveTranscriptFile surfaces a clear
+// "create transcript dir" error - never a silent success or a panic - when a
+// path component of the configured transcript directory is a regular file.
+func TestSaveTranscriptFile_ParentPathSegmentIsFile(t *testing.T) {
+	base := t.TempDir()
+	blocker := filepath.Join(base, "blocker")
+	if err := os.WriteFile(blocker, []byte("not-a-directory"), 0o644); err != nil {
+		t.Fatalf("seed blocker file: %v", err)
+	}
+	transcriptDir := filepath.Join(blocker, "transcripts") // blocker is a file, not a dir
+
+	_, err := saveTranscriptFile(transcriptDir, 1, "default", "", "hello", "url", "https://example.com", "", "", 0, "")
+	if err == nil {
+		t.Fatal("saveTranscriptFile returned nil error when a parent path segment is a file - expected create transcript dir error")
+	}
+	if !strings.Contains(err.Error(), "create transcript dir") {
+		t.Errorf("error = %q, want it to mention \"create transcript dir\" so operators can diagnose data_dir_not_directory", err.Error())
+	}
+}
+
 // EPIC-008 M3: transcript persistence tests for PDF, URL, and image share types.
 
 func TestScoreAsync_PDFTranscriptSaved(t *testing.T) {

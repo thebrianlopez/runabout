@@ -1008,6 +1008,70 @@ func TestBackupFreshness_RG1_NoFalsePositive(t *testing.T) {
 	}
 }
 
+// TestCheckTranscriptsDirType covers the data_dir_not_directory taxonomy
+// entry from PlatformDataLayout_F2_DataRoot_TDD.md §4, added by POMO
+// PERSONAL_20260817T223458Z (linkari-transcript-dir-file-collision): doctor
+// previously had no check at all for TranscriptsDir, so a path segment
+// collision only ever surfaced as a per-request scoring WARN.
+func TestCheckTranscriptsDirType(t *testing.T) {
+	t.Run("missing dir - created and ok", func(t *testing.T) {
+		base := t.TempDir()
+		dir := filepath.Join(base, "transcripts")
+		checks := checkTranscriptsDirType(dir)
+		if len(checks) != 1 || checks[0].Status != statusOK {
+			t.Fatalf("expected single ok check, got %#v", checks)
+		}
+		if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+			t.Fatalf("expected dir to be created, stat: %v, err: %v", st, err)
+		}
+	})
+
+	t.Run("existing dir - ok", func(t *testing.T) {
+		dir := t.TempDir()
+		checks := checkTranscriptsDirType(dir)
+		if len(checks) != 1 || checks[0].Status != statusOK {
+			t.Fatalf("expected single ok check, got %#v", checks)
+		}
+	})
+
+	t.Run("path segment is a file - data_dir_not_directory fail", func(t *testing.T) {
+		base := t.TempDir()
+		blocker := filepath.Join(base, "code")
+		if err := os.WriteFile(blocker, []byte("code"), 0o644); err != nil {
+			t.Fatalf("seed blocker file: %v", err)
+		}
+		dir := filepath.Join(blocker, "transcripts")
+		checks := checkTranscriptsDirType(dir)
+		if len(checks) != 1 || checks[0].Status != statusFail {
+			t.Fatalf("expected single fail check, got %#v", checks)
+		}
+		if !strings.Contains(checks[0].Message, "data_dir_not_directory") {
+			t.Errorf("message = %q, want it to name data_dir_not_directory", checks[0].Message)
+		}
+	})
+
+	t.Run("empty dir - no checks", func(t *testing.T) {
+		if got := checkTranscriptsDirType(""); got != nil {
+			t.Fatalf("expected nil checks for empty dir, got %#v", got)
+		}
+	})
+
+	t.Run("dir itself is a file - data_dir_not_directory fail", func(t *testing.T) {
+		base := t.TempDir()
+		f := filepath.Join(base, "transcripts")
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatalf("seed file: %v", err)
+		}
+		checks := checkTranscriptsDirType(f)
+		if len(checks) != 1 || checks[0].Status != statusFail {
+			t.Fatalf("expected single fail check, got %#v", checks)
+		}
+		if !strings.Contains(checks[0].Message, "data_dir_not_directory") {
+			t.Errorf("message = %q, want it to name data_dir_not_directory", checks[0].Message)
+		}
+	})
+}
+
 func TestK8sVolumeChecks_ModeDisabled(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("LINKARI_K8S_MODE", "")

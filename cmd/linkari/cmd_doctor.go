@@ -470,6 +470,17 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
+			// --- Check 8b: transcripts_dir (F2 DataRoot data_dir_not_directory taxonomy) ---
+			// POMO PERSONAL_20260817T223458Z (linkari-transcript-dir-file-collision):
+			// doctor previously never validated TranscriptsDir at all, so a path
+			// segment collision (e.g. a stray file where a directory should be)
+			// only surfaced as a per-request WARN in the scoring pipeline, never
+			// here. This distinguishes "exists as a file" (data_dir_not_directory,
+			// per F2 §4 Error Taxonomy) from a generic unwritable/create failure.
+			for _, c := range checkTranscriptsDirType(effectivePaths.TranscriptsDir) {
+				addCheck(c)
+			}
+
 			// --- Check 9: whisper-cli and model (EPIC-067) ---
 			{
 				if _, err := exec.LookPath("whisper-cli"); err != nil {
@@ -985,6 +996,40 @@ func resolveDataDir(cfg *ServerConfig) string {
 		return filepath.Dir(cfg.QueueDB)
 	}
 	return filepath.Dir(resolveQueueDB(""))
+}
+
+// checkTranscriptsDirType implements the data_dir_not_directory check named
+// in PlatformDataLayout_F2_DataRoot_TDD.md §4 Error Taxonomy. Unlike the
+// xdg_*_dir checks above (which lump "not a directory" and "not writable"
+// into one create/access failure message), this distinguishes the specific
+// path-segment-is-a-file case so operators get the same actionable signal
+// doctor was designed to surface, instead of the silent per-request WARN
+// this check exists because of (POMO PERSONAL_20260817T223458Z).
+func checkTranscriptsDirType(dir string) []doctorCheck {
+	if dir == "" {
+		return nil
+	}
+	if st, err := os.Stat(dir); err == nil {
+		if !st.IsDir() {
+			return []doctorCheck{failCheck("transcripts_dir", fmt.Sprintf("%s exists but is not a directory (data_dir_not_directory) - remove or rename it, or set transcripts_dir to a different path", dir))}
+		}
+	} else if errors.Is(err, syscall.ENOTDIR) {
+		// A parent path segment (not the leaf) is a regular file - same
+		// data_dir_not_directory class, just detected one level up. This is
+		// the exact shape of POMO PERSONAL_20260817T223458Z: ~/code existed
+		// as a file, so stat(~/code/personal/docs/transcripts) failed here.
+		return []doctorCheck{failCheck("transcripts_dir", fmt.Sprintf("%s unavailable: a parent path segment is not a directory (data_dir_not_directory): %v", dir, err))}
+	} else if !os.IsNotExist(err) {
+		return []doctorCheck{failCheck("transcripts_dir", fmt.Sprintf("%s unavailable: %v", dir, err))}
+	}
+
+	if err := ensureDir(dir); err != nil {
+		return []doctorCheck{failCheck("transcripts_dir", fmt.Sprintf("create/access failed: %v", err))}
+	}
+	if wErr := probeWritable(dir); wErr != nil {
+		return []doctorCheck{failCheck("transcripts_dir", fmt.Sprintf("%s exists but is not writable: %v", dir, wErr))}
+	}
+	return []doctorCheck{okCheck("transcripts_dir", dir)}
 }
 
 func checkK8sVolume(dir string) []doctorCheck {
