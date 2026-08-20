@@ -89,9 +89,10 @@ func runIndex(_ *cobra.Command, cfg indexRunConfig) int {
 		return 1
 	}
 
-	// Build chain index.
-	idx := chainindex.Build(records, docsRoot, cfg.includeLegacy)
-	idx.IndexedAt = time.Now().UTC().Format(time.RFC3339)
+	// Build chain index. One clock read covers indexed_at and gate satisfied_at.
+	now := time.Now().UTC()
+	idx := chainindex.Build(records, docsRoot, cfg.includeLegacy, chainindex.WithNow(now))
+	idx.IndexedAt = now.Format(time.RFC3339)
 
 	// Compute content hash.
 	hash, err := chainindex.ComputeContentHash(docsRoot)
@@ -140,7 +141,23 @@ func runIndex(_ *cobra.Command, cfg indexRunConfig) int {
 
 	fmt.Fprintf(os.Stderr, "chain-eval index: wrote %d artifacts, %d chains, %d orphans → %s\n",
 		len(idx.Artifacts), len(idx.Chains), len(idx.Orphans), outputPath)
+	if !cfg.quiet {
+		satisfied, unsatisfied := countGateStatuses(idx.GateRecords)
+		fmt.Fprintf(os.Stderr, "chain-eval index: gate records: %d satisfied, %d unsatisfied\n", satisfied, unsatisfied)
+	}
 	return 0
+}
+
+// countGateStatuses summarizes emitted gate records for the build report (F6 §9).
+func countGateStatuses(records []chainindex.ChainGateRecord) (satisfied, unsatisfied int) {
+	for _, r := range records {
+		if r.Status == chainindex.GateStatusSatisfied {
+			satisfied++
+			continue
+		}
+		unsatisfied++
+	}
+	return satisfied, unsatisfied
 }
 
 // resolveDocsRoot returns the docs root using the priority order from the TDD:

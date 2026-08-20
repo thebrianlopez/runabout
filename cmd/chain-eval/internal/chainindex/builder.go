@@ -1,20 +1,46 @@
 package chainindex
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // orphanThreshold: artifacts created before this date are excluded from the
 // orphan list by default (pre-chain legacy artifacts).
 const orphanThreshold = "20260421T000000Z"
 
+// gateTimestampLayout is the compact UTC form required by #Timestamp in
+// core/schemas/cue/workspace.cue (YYYYMMDDTHHMMSSZ).
+const gateTimestampLayout = "20060102T150405Z"
+
+// nowFunc is injectable so gate timestamps are deterministic in tests.
+var nowFunc = func() time.Time { return time.Now().UTC() }
+
+// BuildOption customizes a Build call.
+type BuildOption func(*buildOptions)
+
+type buildOptions struct {
+	now time.Time
+}
+
+// WithNow pins the build instant so gate timestamps share a single clock read
+// with the index's indexed_at field.
+func WithNow(t time.Time) BuildOption {
+	return func(o *buildOptions) { o.now = t.UTC() }
+}
+
 // Build constructs a ChainIndex from a flat ArtifactRecord slice.
 // Chain key = FDD filename stem normalized (lowercase, underscores, prefix stripped).
 // Pass includeLegacy=true to include pre-orphanThreshold artifacts in the orphan list.
-func Build(records []ArtifactRecord, docsRoot string, includeLegacy bool) ChainIndex {
+func Build(records []ArtifactRecord, docsRoot string, includeLegacy bool, opts ...BuildOption) ChainIndex {
+	cfg := buildOptions{now: nowFunc()}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	idx := ChainIndex{
 		SchemaVersion:  "1.0",
 		DocsRoot:       docsRoot,
@@ -26,6 +52,7 @@ func Build(records []ArtifactRecord, docsRoot string, includeLegacy bool) ChainI
 	}
 	if len(records) == 0 {
 		idx.Artifacts = []ArtifactRecord{}
+		warnGateRecordsEmpty()
 		return idx
 	}
 
@@ -52,11 +79,40 @@ func Build(records []ArtifactRecord, docsRoot string, includeLegacy bool) ChainI
 		chainKeyByFDDPath[r.Path] = key
 	}
 
-	// Pass 2: Assign TDDs, Epics, Releases, Sidecars to chains via UpstreamField.
-	// UpstreamField holds the most specific upstream reference (TDD > FDD > PRD).
+	// Pass 1.5: Link each chain's root PRD via the FDD's Source PRD reference.
+	prds := make([]ArtifactRecord, 0, len(records))
+	for _, r := range records {
+		if r.Type == ArtifactPRD {
+			prds = append(prds, r)
+		}
+	}
+	sort.Slice(prds, func(i, j int) bool { return prds[i].Path < prds[j].Path })
+	for _, r := range records {
+		if r.Type != ArtifactFDD || r.UpstreamField == "" {
+			continue
+		}
+		key, ok := chainKeyByFDDPath[r.Path]
+		if !ok {
+			continue
+		}
+		for _, p := range prds {
+			if !upstreamMatches(r.UpstreamField, p.Path) {
+				continue
+			}
+			entry := idx.Chains[key]
+			node := ChainNode{Path: p.Path, Status: p.Status, FeatureID: p.FeatureID}
+			entry.PRD = &node
+			idx.Chains[key] = entry
+			break
+		}
+	}
+
+	// Pass 2: Assign TDDs, Epics, Releases, POMOs and Sidecars to chains via
+	// UpstreamField. UpstreamField holds the most specific upstream reference
+	// (TDD > FDD > PRD).
 	assigned := map[string]bool{}
 	for _, r := range records {
-		if r.Type == ArtifactFDD || r.Type == ArtifactPRD || r.Type == ArtifactPOMO {
+		if r.Type == ArtifactFDD || r.Type == ArtifactPRD {
 			assigned[r.Path] = true
 			continue
 		}
@@ -75,6 +131,8 @@ func Build(records []ArtifactRecord, docsRoot string, includeLegacy bool) ChainI
 				entry.Epics = append(entry.Epics, node)
 			case ArtifactRelease:
 				entry.Release = &node
+			case ArtifactPOMO:
+				entry.POMOs = append(entry.POMOs, node)
 			case ArtifactSidecar:
 				entry.Sidecars = append(entry.Sidecars, node)
 			}
@@ -82,6 +140,34 @@ func Build(records []ArtifactRecord, docsRoot string, includeLegacy bool) ChainI
 			assigned[r.Path] = true
 			break
 		}
+	}
+
+	// Pass 2.5: Evaluate upstream_field gates over every gateable artifact and
+	// attach each record to its owning chain. Runs after assignment so every
+	// artifact's outcome is known, and before orphan collection.
+	idx.GateRecords = EvaluateUpstreamGates(records, idx.Chains, assigned, includeLegacy, cfg.now.UTC().Format(gateTimestampLayout))
+	chainKeyByArtifact := map[string]string{}
+	for chainKey, entry := range idx.Chains {
+		for _, group := range [][]ChainNode{entry.TDDs, entry.Epics, entry.POMOs, entry.Sidecars} {
+			for _, n := range group {
+				chainKeyByArtifact[n.Path] = chainKey
+			}
+		}
+		if entry.Release != nil {
+			chainKeyByArtifact[entry.Release.Path] = chainKey
+		}
+	}
+	for _, rec := range idx.GateRecords {
+		chainKey, ok := chainKeyByArtifact[rec.ArtifactPath]
+		if !ok {
+			continue // unsatisfied records belong to no chain
+		}
+		entry := idx.Chains[chainKey]
+		entry.GateRecords = append(entry.GateRecords, rec)
+		idx.Chains[chainKey] = entry
+	}
+	if len(idx.GateRecords) == 0 {
+		warnGateRecordsEmpty()
 	}
 
 	// Pass 3: Collect orphans.
@@ -101,6 +187,13 @@ func Build(records []ArtifactRecord, docsRoot string, includeLegacy bool) ChainI
 	sort.Strings(idx.Orphans)
 
 	return idx
+}
+
+// warnGateRecordsEmpty reports the silence that hid the F6 regression for 77
+// days: absence of gate records must never be indistinguishable from a clean
+// result. Warning-class only - the indexer stays fail-open.
+func warnGateRecordsEmpty() {
+	fmt.Fprintf(gateStderr, "chain-eval index: WARN: gate_records_empty - 0 gate records produced\n")
 }
 
 // normalizeChainKey converts an FDD filename to a normalized chain key.
