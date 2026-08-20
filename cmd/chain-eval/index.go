@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -44,7 +45,7 @@ No LLM is invoked. Exit 0 on success, 1 on fatal error, 2 on CUE validation fail
 
 	cmd.Flags().StringVar(&flagDocsRoot, "docs-root", "", "Absolute path to docs root (overrides $CHAIN_DOCS_ROOT)")
 	cmd.Flags().StringVar(&flagOutput, "output", "", "Index output path (default: {docs-root}/.chain-index.json)")
-	cmd.Flags().StringVar(&flagSchemaDir, "schema-dir", "", "CUE schemas dir (default: {docs-root}/core/schemas/)")
+	cmd.Flags().StringVar(&flagSchemaDir, "schema-dir", "", "CUE schemas dir (default: $CHAIN_SCHEMA_DIR, then $WS_ORG_CORE/schemas/cue, then {docs-root}/core/schemas[/cue], then ~/core/schemas/cue)")
 	cmd.Flags().BoolVar(&flagIncludeLegacy, "include-legacy", false, "Include pre-2026-04-21 artifacts in orphan detection")
 	cmd.Flags().BoolVar(&flagQuiet, "quiet", false, "Suppress non-fatal warnings")
 
@@ -75,12 +76,16 @@ func runIndex(_ *cobra.Command, cfg indexRunConfig) int {
 	}
 
 	// Resolve schema dir.
-	schemaDir := cfg.schemaDir
-	if schemaDir == "" {
-		schemaDir = filepath.Join(docsRoot, "core/schemas")
+	schemaDir, schemaResolved := resolveSchemaDir(cfg.schemaDir, docsRoot)
+	if !schemaResolved && !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "chain-eval index: WARN: schema_not_found - no chain_gate.cue under any candidate dir (tried: %s); output validation will be skipped\n",
+			strings.Join(schemaDirCandidates(cfg.schemaDir, docsRoot), ", "))
 	}
 
 	fmt.Fprintf(os.Stderr, "chain-eval index: scanning %s\n", docsRoot)
+	if schemaResolved && !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "chain-eval index: schemas %s\n", schemaDir)
+	}
 
 	// Scan artifacts.
 	records, err := chainindex.Scan(docsRoot, time.Now)
@@ -158,6 +163,60 @@ func countGateStatuses(records []chainindex.ChainGateRecord) (satisfied, unsatis
 		unsatisfied++
 	}
 	return satisfied, unsatisfied
+}
+
+// resolveSchemaDir returns the first candidate directory that actually contains
+// chain_gate.cue, plus whether such a directory was found.
+//
+// The previous default was {docs-root}/core/schemas unconditionally. On a
+// machine where the docs repo carries no embedded core/ copy, that path does not
+// exist, so validation degraded to schema_not_found without saying so - the same
+// silent-skip shape as the F6 regression (EPIC-266 release checklist section 3).
+// An explicit --schema-dir is always honored verbatim so an operator can point at
+// a schema set on purpose and get a real error if it is wrong.
+func resolveSchemaDir(flag, docsRoot string) (string, bool) {
+	if flag != "" {
+		return flag, hasGateSchema(flag)
+	}
+	candidates := schemaDirCandidates(flag, docsRoot)
+	for _, c := range candidates {
+		if hasGateSchema(c) {
+			return c, true
+		}
+	}
+	// Nothing resolved: keep the historical default so behavior stays fail-open.
+	return filepath.Join(docsRoot, "core/schemas"), false
+}
+
+// schemaDirCandidates lists schema dirs in priority order.
+func schemaDirCandidates(flag, docsRoot string) []string {
+	if flag != "" {
+		return []string{flag}
+	}
+	candidates := []string{}
+	if env := os.Getenv("CHAIN_SCHEMA_DIR"); env != "" {
+		candidates = append(candidates, env)
+	}
+	if core := os.Getenv("WS_ORG_CORE"); core != "" {
+		candidates = append(candidates, filepath.Join(core, "schemas", "cue"))
+	}
+	candidates = append(
+		candidates,
+		filepath.Join(docsRoot, "core", "schemas", "cue"),
+		filepath.Join(docsRoot, "core", "schemas"),
+	)
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, "core", "schemas", "cue"))
+	}
+	return candidates
+}
+
+func hasGateSchema(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(dir, "chain_gate.cue"))
+	return err == nil
 }
 
 // resolveDocsRoot returns the docs root using the priority order from the TDD:
