@@ -109,3 +109,58 @@ jobs:
             --tolerance 10 \
           && echo "eval gate: PASS" \
           || echo "WARN: eval gate failed  -  check fixture corpus or scorer availability"
+
+  module-surface:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache: true
+
+      # Published modules keep explicit test coverage. Retained modules stay
+      # outside the aggregate build, but still get an explicit compile check so
+      # CI notices breakage without reviving the shipping surface.
+      - name: Test ghwatch
+        working-directory: cmd/ghwatch
+        run: go test -shuffle=on ./...
+
+      - name: Test jira-poller
+        working-directory: cmd/jira-poller
+        run: go test -shuffle=on ./...
+
+      - name: Test linkari-labeler
+        working-directory: cmd/linkari-labeler
+        run: go test -shuffle=on ./...
+
+      - name: Test runway
+        working-directory: cmd/runway
+        run: go test -shuffle=on ./...
+
+      - name: Test ts-go
+        working-directory: cmd/ts-go
+        run: go test -shuffle=on ./...
+
+      - name: Build bmux (retained)
+        working-directory: cmd/bmux
+        run: go build ./...
+
+      - name: Build plaid-service (retained)
+        working-directory: cmd/plaid-service
+        run: go build ./...
+
+      - name: Build protonexport (retained)
+        working-directory: cmd/protonexport
+        run: go build ./...
+
+      - name: Build protonexport/go-proton-api (retained)
+        working-directory: cmd/protonexport/go-proton-api
+        env:
+          GOWORK: off
+        run: go build ./...
+
+      - name: Build wasend (retained)
+        working-directory: cmd/wasend
+        run: go build ./...

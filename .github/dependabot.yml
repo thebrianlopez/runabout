@@ -1,0 +1,37 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /cmd/linkari
+    target-branch: main
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      cmd-linkari-patch:
+        patterns:
+          - "*"
+        update-types:
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+
+  - package-ecosystem: gomod
+    directory: /cmd/linkari-labeler
+    target-branch: main
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      cmd-linkari-labeler-patch:
+        patterns:
+          - "*"
+        update-types:
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major

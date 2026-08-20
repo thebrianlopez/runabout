@@ -1,0 +1,38 @@
+name: Dependabot Auto-Merge
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - labeled
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  manage-auto-merge:
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/') &&
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disable auto-merge for security updates
+        if: "contains(github.event.pull_request.labels.*.name, 'security')"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr merge --disable-auto ${{ github.event.pull_request.number }} || true
+
+      - name: Approve eligible Dependabot patch PRs
+        if: "!contains(github.event.pull_request.labels.*.name, 'security')"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr review --approve --body 'Auto-approved Dependabot patch update.' ${{ github.event.pull_request.number }}
+          gh pr merge --auto --squash ${{ github.event.pull_request.number }}
