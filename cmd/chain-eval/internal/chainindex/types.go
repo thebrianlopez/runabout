@@ -14,6 +14,11 @@ const (
 )
 
 // ArtifactRecord is one scanned pipeline document.
+//
+// The trailing conformance fields (F7) are carried in memory only, marked
+// `json:"-"`. They are validation input, not index output: serializing them
+// would widen the .chain-index.json contract with command_chain.md for no
+// consumer. Schema breaches surface in ChainIndex.SchemaViolations instead.
 type ArtifactRecord struct {
 	Path               string          `json:"path"` // relative to docs_root
 	Type               ArtifactType    `json:"type"`
@@ -24,6 +29,29 @@ type ArtifactRecord struct {
 	IsProtocol         bool            `json:"is_protocol"`
 	StatusSurfaceDrift bool            `json:"status_surface_drift"`      // F4
 	StatusSurfaces     *StatusSurfaces `json:"status_surfaces,omitempty"` // F4
+
+	// UpstreamState classifies upstream extraction: "extracted", "absent" or
+	// "declared_unextractable" (F7).
+	UpstreamState string `json:"-"`
+	// RuntimeVersion is the declared Chain Runtime Version, "" when absent (F7).
+	RuntimeVersion string `json:"-"`
+	// HasFrontmatter reports whether a YAML frontmatter block was parsed (F7).
+	HasFrontmatter bool `json:"-"`
+	// EpicAgents holds the epic frontmatter `agents:` block that epic-dispatch
+	// consumes. Nil for non-epics and for epics without a frontmatter block (F7).
+	EpicAgents []EpicAgentAssignment `json:"-"`
+}
+
+// EpicAgentAssignment is one entry of an epic's frontmatter `agents:` block.
+//
+// Milestones is deliberately `any` rather than []string: a malformed shape
+// (a bare scalar where a list belongs) must survive parsing and reach the
+// validator, which is the breach CT-12 exercises. Typing it would silently
+// discard exactly the defect being looked for.
+type EpicAgentAssignment struct {
+	ID         string `yaml:"id"`
+	CWD        string `yaml:"cwd"`
+	Milestones any    `yaml:"milestones"`
 }
 
 // StatusSurfaces captures per-surface status values for drift detection (F4).
@@ -82,6 +110,7 @@ type ChainIndex struct {
 	LegacyExcludedCount int                   `json:"legacy_excluded_count"`
 	GateRecords         []ChainGateRecord     `json:"gate_records"`
 	WorkspaceLinks      []WorkspaceChainLink  `json:"workspace_links"`
+	SchemaViolations    []SchemaViolation     `json:"schema_violations"` // F7
 }
 
 // StatusExtractionResult holds the output of ExtractStatus (F4).
