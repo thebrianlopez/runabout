@@ -9,6 +9,10 @@ on:
       - ready_for_review
       - labeled
 
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
@@ -23,16 +27,23 @@ jobs:
       github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
+      - name: Check out repository context
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Disable auto-merge for security updates
         if: "contains(github.event.pull_request.labels.*.name, 'security')"
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr merge --disable-auto ${{ github.event.pull_request.number }} || true
+        run: gh pr merge --repo "${{ github.repository }}" --disable-auto ${{ github.event.pull_request.number }} || true
 
       - name: Approve eligible Dependabot patch PRs
         if: "!contains(github.event.pull_request.labels.*.name, 'security')"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh pr review --approve --body 'Auto-approved Dependabot patch update.' ${{ github.event.pull_request.number }}
-          gh pr merge --auto --squash ${{ github.event.pull_request.number }}
+          gh pr review --repo "${{ github.repository }}" --approve --body 'Auto-approved Dependabot patch update.' ${{ github.event.pull_request.number }}
+          gh pr merge --repo "${{ github.repository }}" --auto --squash ${{ github.event.pull_request.number }}
