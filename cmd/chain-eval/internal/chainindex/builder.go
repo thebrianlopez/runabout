@@ -42,13 +42,14 @@ func Build(records []ArtifactRecord, docsRoot string, includeLegacy bool, opts .
 		opt(&cfg)
 	}
 	idx := ChainIndex{
-		SchemaVersion:  "1.0",
-		DocsRoot:       docsRoot,
-		Artifacts:      records,
-		Chains:         make(map[string]ChainEntry),
-		Orphans:        []string{},
-		GateRecords:    []ChainGateRecord{},
-		WorkspaceLinks: []WorkspaceChainLink{},
+		SchemaVersion:    "1.0",
+		DocsRoot:         docsRoot,
+		Artifacts:        records,
+		Chains:           make(map[string]ChainEntry),
+		Orphans:          []string{},
+		GateRecords:      []ChainGateRecord{},
+		WorkspaceLinks:   []WorkspaceChainLink{},
+		SchemaViolations: []SchemaViolation{},
 	}
 	if len(records) == 0 {
 		idx.Artifacts = []ArtifactRecord{}

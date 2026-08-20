@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // scannerStderr receives warning messages; overridden in tests.
@@ -90,6 +92,8 @@ func parseArtifact(rel string, typ ArtifactType, content string) ArtifactRecord 
 		upstreamField = extractEpicFDD(content)
 	}
 
+	fm, _ := splitFrontmatter(content)
+
 	record := ArtifactRecord{
 		Path:               rel,
 		Type:               typ,
@@ -99,12 +103,55 @@ func parseArtifact(rel string, typ ArtifactType, content string) ArtifactRecord 
 		FeatureID:          extractTableField(content, "Feature ID"),
 		UpstreamField:      upstreamField,
 		IsProtocol:         extractIsProtocol(content),
+		UpstreamState:      classifyUpstreamState(content, upstreamField),
+		RuntimeVersion:     strings.Trim(extractTableField(content, "Chain Runtime Version"), "`"),
+		HasFrontmatter:     strings.TrimSpace(fm) != "",
+	}
+	if typ == ArtifactEpic && record.HasFrontmatter {
+		record.EpicAgents = extractEpicAgents(fm)
 	}
 	if result.SurfaceDrift {
 		s := result.Surfaces
 		record.StatusSurfaces = &s
 	}
 	return record
+}
+
+// upstreamDeclaredRe matches a line that names an upstream source field in any
+// human-readable form - bolded or not, table row or list item.
+var upstreamDeclaredRe = regexp.MustCompile(`(?mi)^\s*[|*+-]?\s*\*{0,2}Source\s+(?:PRD|FDD|TDD)\*{0,2}\s*[|:]`)
+
+// classifyUpstreamState distinguishes an artifact that never declared an
+// upstream link from one that declared a link the extractor could not read.
+//
+// The second class is the dangerous one, and the reason this classification
+// exists at all: EPIC-266 declared `Source FDD` legibly, was reviewed by a
+// human who agreed it was linked, and was an orphan for its entire lifetime
+// including its own release, because the row was not in the exact form
+// extractTableField requires. "absent" and "declared_unextractable" need
+// different repairs - author a missing link, versus reformat an existing one -
+// so they are reported as different classes.
+func classifyUpstreamState(content, upstreamField string) string {
+	if strings.TrimSpace(upstreamField) != "" {
+		return UpstreamExtracted
+	}
+	if upstreamDeclaredRe.MatchString(content) {
+		return UpstreamDeclaredUnextractable
+	}
+	return UpstreamAbsent
+}
+
+// extractEpicAgents parses the `agents:` block from epic frontmatter. A block
+// that does not parse yields no assignments; the missing-frontmatter and
+// agent-shape rules in artifact.cue report the consequence.
+func extractEpicAgents(fm string) []EpicAgentAssignment {
+	var parsed struct {
+		Agents []EpicAgentAssignment `yaml:"agents"`
+	}
+	if err := yaml.Unmarshal([]byte(fm), &parsed); err != nil {
+		return nil
+	}
+	return parsed.Agents
 }
 
 // extractCreatedAt returns the created timestamp from the markdown table or

@@ -131,6 +131,31 @@ func runIndex(_ *cobra.Command, cfg indexRunConfig) int {
 		}
 	}
 
+	// F7 artifact schema conformance. Deliberately fail-open: unlike the gate
+	// record and workspace link checks above, a schema violation never changes
+	// the exit code and never withholds the index. The indexer is a read-only
+	// reporting tool, and one that refuses to run leaves the operator with no
+	// data about the very drift it just found. Enforcement is the gate's job.
+	violations, valErr := chainindex.ValidateArtifacts(idx.Artifacts, schemaDir)
+	switch {
+	case errors.Is(valErr, chainindex.ErrCUENotFound):
+		if !cfg.quiet {
+			fmt.Fprintf(os.Stderr, "chain-eval index: WARN: cue or artifact.cue unavailable - skipping artifact schema validation\n")
+		}
+	case valErr != nil:
+		if !cfg.quiet {
+			fmt.Fprintf(os.Stderr, "chain-eval index: WARN: artifact schema validation failed: %v\n", valErr)
+		}
+	default:
+		idx.SchemaViolations = violations
+		if len(violations) == 0 && len(idx.Artifacts) > 0 {
+			chainindex.WarnSchemaViolationsEmpty(len(idx.Artifacts))
+		}
+		if emitErr := chainindex.EmitSchemaEvents(violations, idx.Artifacts); emitErr != nil && !cfg.quiet {
+			fmt.Fprintf(os.Stderr, "chain-eval index: WARN: event emission failed: %v\n", emitErr)
+		}
+	}
+
 	// Serialize.
 	data, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
@@ -149,6 +174,9 @@ func runIndex(_ *cobra.Command, cfg indexRunConfig) int {
 	if !cfg.quiet {
 		satisfied, unsatisfied := countGateStatuses(idx.GateRecords)
 		fmt.Fprintf(os.Stderr, "chain-eval index: gate records: %d satisfied, %d unsatisfied\n", satisfied, unsatisfied)
+		schemaErrors, schemaWarnings := chainindex.CountSeverities(idx.SchemaViolations)
+		fmt.Fprintf(os.Stderr, "chain-eval index: schema violations: %d error, %d warning across %d artifacts\n",
+			schemaErrors, schemaWarnings, len(idx.Artifacts))
 	}
 	return 0
 }
