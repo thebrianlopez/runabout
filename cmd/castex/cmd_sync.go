@@ -36,6 +36,12 @@ type SyncConfig struct {
 	Timeout         time.Duration
 	LocalDir        string // ~/.automation-metrics/events
 	ConflictLogPath string
+	// Peer is an optional identity for the sync counterparty, recorded in the
+	// provenance envelope of every event ingested during this run.
+	Peer string
+	// ProvenanceFilter gates which remote origins may be ingested. Nil means
+	// AllowAllProvenance; see resolveProvenanceFilter.
+	ProvenanceFilter ProvenanceFilter
 }
 
 // SyncResult is the output of a sync run.
@@ -43,7 +49,9 @@ type SyncResult struct {
 	Uploaded   int
 	Downloaded int
 	Conflicts  int
-	Duration   time.Duration
+	// Rejected counts remote objects refused by the provenance filter.
+	Rejected int
+	Duration time.Duration
 }
 
 // SyncConflictEntry is one row in sync-conflicts.jsonl.
@@ -102,8 +110,8 @@ func newSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "sync complete: uploaded=%d downloaded=%d conflicts=%d duration=%s\n",
-				result.Uploaded, result.Downloaded, result.Conflicts, result.Duration.Round(time.Millisecond))
+			fmt.Fprintf(cmd.OutOrStdout(), "sync complete: uploaded=%d downloaded=%d conflicts=%d rejected=%d duration=%s\n",
+				result.Uploaded, result.Downloaded, result.Conflicts, result.Rejected, result.Duration.Round(time.Millisecond))
 			return nil
 		},
 	}
@@ -113,6 +121,7 @@ func newSyncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&cfg.DryRun, "dry-run", false, "print sync plan without transferring")
 	cmd.Flags().DurationVar(&cfg.Timeout, "timeout", 30*time.Second, "sync timeout deadline")
 	cmd.Flags().StringVar(&cfg.LocalDir, "local-dir", filepath.Join(home, ".automation-metrics", "events"), "local events directory")
+	cmd.Flags().StringVar(&cfg.Peer, "peer", "", "peer identity recorded in the provenance envelope of downloaded events")
 	return cmd
 }
 
@@ -182,12 +191,34 @@ func doSync(ctx context.Context, cmd *cobra.Command, cfg SyncConfig, client S3Cl
 		}
 	}
 
-	// Determine download plan: remote files not local.
-	var toDownload []string
+	// Determine download plan: remote files not local, subject to provenance
+	// policy. The filter runs at plan time - before any fetch - so a rejecting
+	// policy costs no transfer and the dry-run plan reflects it accurately.
+	filter := resolveProvenanceFilter(cfg.ProvenanceFilter)
+	syncedAt := time.Now().UTC().Format("20060102T150405Z")
+	type downloadPlan struct {
+		key  string
+		info ProvenanceInfo
+	}
+	var toDownload []downloadPlan
 	for _, obj := range remoteObjects {
-		if _, ok := localIndex[obj.Key]; !ok {
-			toDownload = append(toDownload, obj.Key)
+		if _, ok := localIndex[obj.Key]; ok {
+			continue
 		}
+		info := ProvenanceInfo{
+			Source:    ProvenanceRemote,
+			Remote:    cfg.Remote,
+			Peer:      cfg.Peer,
+			ObjectKey: obj.Key,
+			ETag:      obj.ETag,
+			SyncedAt:  syncedAt,
+		}
+		if decision := filter(info); !decision.Allow {
+			result.Rejected++
+			fmt.Fprintf(cmd.ErrOrStderr(), "[E407] provenance_rejected: %s: %s\n", obj.Key, decision.Reason)
+			continue
+		}
+		toDownload = append(toDownload, downloadPlan{key: obj.Key, info: info})
 	}
 
 	// Handle conflicts: files present in both - check dedup keys.
@@ -195,8 +226,8 @@ func doSync(ctx context.Context, cmd *cobra.Command, cfg SyncConfig, client S3Cl
 	result.Conflicts = conflicts
 
 	if cfg.DryRun {
-		fmt.Fprintf(cmd.OutOrStdout(), "sync plan: %d to upload, %d to download, %d conflicts\n",
-			len(toUpload), len(toDownload), conflicts)
+		fmt.Fprintf(cmd.OutOrStdout(), "sync plan: %d to upload, %d to download, %d conflicts, %d rejected\n",
+			len(toUpload), len(toDownload), conflicts, result.Rejected)
 		return result, nil
 	}
 
@@ -214,16 +245,28 @@ func doSync(ctx context.Context, cmd *cobra.Command, cfg SyncConfig, client S3Cl
 	}
 
 	// Download remote-only files (append-only: never delete local).
-	for _, remoteKey := range toDownload {
-		data, err := client.GetObject(ctx, remoteKey)
+	//
+	// Every ingested line is stamped with its provenance before it touches disk,
+	// so a remote-sourced event is never written in a form indistinguishable
+	// from a locally produced one.
+	for _, plan := range toDownload {
+		data, err := client.GetObject(ctx, plan.key)
 		if err != nil {
 			continue
 		}
-		localPath := filepath.Join(cfg.LocalDir, remoteKey)
+		tagged, kept, dropped := tagEventLines(data, plan.info)
+		if dropped > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "[E408] untaggable_lines_dropped: %s: %d line(s) were not JSON objects\n",
+				plan.key, dropped)
+		}
+		if kept == 0 {
+			continue
+		}
+		localPath := filepath.Join(cfg.LocalDir, plan.key)
 		if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 			continue
 		}
-		if err := os.WriteFile(localPath, data, 0o644); err != nil {
+		if err := os.WriteFile(localPath, tagged, 0o644); err != nil {
 			continue
 		}
 		result.Downloaded++
@@ -311,9 +354,11 @@ func detectConflicts(ctx context.Context, cfg SyncConfig, client S3Client,
 			if !exists {
 				continue
 			}
-			// Same key in both - check for content conflict.
-			if string(localEv.raw) == string(remoteEv.raw) {
-				continue // identical - no conflict
+			// Same key in both - check for content conflict. Compared blind to
+			// provenance: a previously downloaded event carries an envelope the
+			// remote copy does not, and that difference is not a conflict.
+			if sameEventContent(localEv.raw, remoteEv.raw) {
+				continue // identical payload - no conflict
 			}
 			// Conflict: pick winner by earlier created_at.
 			resolution := "local_wins"
@@ -327,7 +372,9 @@ func detectConflicts(ctx context.Context, cfg SyncConfig, client S3Client,
 				EventID:   localEv.EventID,
 				LocalVersion: conflictVersion{
 					CreatedAt: localEv.CreatedAt,
-					Source:    "local",
+					// Report the local copy's true origin: a local file may itself
+					// have been ingested from a remote on an earlier sync.
+					Source: string(provenanceOf(localEv.raw).Source),
 				},
 				RemoteVersion: conflictVersion{
 					CreatedAt: remoteEv.CreatedAt,
