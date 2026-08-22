@@ -204,9 +204,17 @@ mode = "enforce"
 
 # --- Telemetry ---
 
-# [server.telemetry]
-# enabled = false
-# automation_metrics = false
+# Server-side operational events (push_outbox_idle_metric, share_action_resolved,
+# etc.) are isolated to ~/.automation-metrics/events/linkari/ by default for new
+# installs, keeping the shared main bus free of Linkari-specific noise. Set
+# emit_to_automation_metrics = true to opt back into the pre-EPIC-229 main-bus
+# behavior (the Go-level fallback used when no [server.telemetry] block is present
+# at all, preserved for installs with a hand-authored config.toml predating this
+# template).
+[server.telemetry]
+enabled = true
+emit_to_automation_metrics = false
+verbose = true
 
 # --- LiteParse (PDF extraction) ---
 

@@ -204,6 +204,8 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 
 **Shield:** `X-Linkari-Client` header validation on the Funnel mux. Two modes: `log` (default, debug logging) and `enforce` (403 on invalid/missing headers). CORS preflight (OPTIONS) is always exempt.
 
+**Telemetry routing (`[server.telemetry]`):** Server-side operational events (`push_outbox_idle_metric`, `share_action_resolved`, etc.) can be isolated from the shared `~/.automation-metrics/events/` bus into `~/.automation-metrics/events/linkari/` via `emit_to_automation_metrics = false`. `linkari config init` writes this as the default for new installs, since Linkari's own operational noise otherwise dominates a shared observability bus. Installs with no `[server.telemetry]` block at all (hand-authored `config.toml` predating this, or a flag-only break-glass boot) keep the old main-bus behavior unchanged - `enabled` and `emit_to_automation_metrics` both default to `true` when absent, per the original backward-compatibility guarantee. CLI invocation tracking (`tracker.emit`, developer-tool usage) is unaffected and always goes to the main bus.
+
 **Integration source control (`[server.sources]`):** Each ingestion source can be independently enabled or disabled via `config.toml`. All flags default to `true` - omitting the block is identical to all-enabled. SIGHUP reloads the flags; a toggled-off source stops on its next poll tick. Disabled sources emit a `source_disabled` event.
 
 | Flag | Default | Controls |

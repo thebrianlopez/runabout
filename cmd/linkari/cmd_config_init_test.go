@@ -90,6 +90,21 @@ func TestConfigInit_RoundTrip(t *testing.T) {
 	if !got.Sources.YouTubeLikedEnabled {
 		t.Error("Sources.YouTubeLikedEnabled = false, want true")
 	}
+
+	// Telemetry: new installs isolate server-side events from the main bus by
+	// default (emit_to_automation_metrics = false), while staying enabled.
+	// This intentionally diverges from the Go-level nil-pointer default (true),
+	// which remains untouched for installs with no [server.telemetry] block at
+	// all - see TestTelemetryConfig_AllNil.
+	if got.Telemetry.Enabled == nil || !*got.Telemetry.Enabled {
+		t.Error("Telemetry.Enabled = nil/false, want *true")
+	}
+	if got.Telemetry.EmitToAutomationMetrics == nil || *got.Telemetry.EmitToAutomationMetrics {
+		t.Error("Telemetry.EmitToAutomationMetrics = nil/true, want *false (isolated by default for new installs)")
+	}
+	if got.Telemetry.Verbose == nil || !*got.Telemetry.Verbose {
+		t.Error("Telemetry.Verbose = nil/false, want *true")
+	}
 }
 
 // TestConfigInit_WritesFile covers the default write path.

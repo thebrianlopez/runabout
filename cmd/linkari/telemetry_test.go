@@ -241,6 +241,45 @@ func TestEmitServerEvent_IsolatedStream(t *testing.T) {
 	assertEventWritten(t, dir, filepath.Join("events", "linkari"))
 }
 
+// TestEmitServerEvent_FreshInstall_IsIsolated covers the actual zero-config new
+// install path: `linkari config init` writes the real serverYAMLTemplate (not a
+// hand-authored test fixture), and a subsequent server-side event must land in
+// the isolated linkari/ subdirectory, not the shared main bus. This is the
+// mechanism Brian's instruction targets - isolation as the default for any NEW
+// install that goes through the documented `config init` -> `serve` flow.
+//
+// This deliberately does not cover the *truly* zero-config case (no config.toml
+// file at all, e.g. --break-glass flag-only boot per README): loadTelemetryConfig
+// falls through to TelemetryConfig{} there, which resolves to the main bus per
+// F4's stated backward-compatibility default (TestTelemetryConfig_AllNil). Only
+// installs that go through the shipped template get the isolated default; see
+// handoff notes for why changing the Go-level nil default was rejected.
+func TestEmitServerEvent_FreshInstall_IsIsolated(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+
+	cmd := configInitCmd()
+	cmd.SetArgs([]string{"--path", configPath})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("config init: %v", err)
+	}
+	t.Setenv("LINKARI_CONFIG", configPath)
+
+	eventsRoot := t.TempDir()
+	t.Setenv("AUTOMATION_METRICS_DIR", eventsRoot)
+
+	emitServerEvent(event{EventType: "push_outbox_sent", Timestamp: time.Now().UTC().Format("20060102T150405Z")})
+
+	// Isolated subdirectory must receive the event.
+	assertEventWritten(t, eventsRoot, filepath.Join("events", "linkari"))
+
+	// Main bus must NOT receive it.
+	dateStr := time.Now().Format("2006-01-02")
+	if _, err := os.Stat(filepath.Join(eventsRoot, "events", dateStr+".jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("expected no main-bus event file for a fresh install, got err=%v", err)
+	}
+}
+
 func withTelemetryConfig(t *testing.T, body string) {
 	t.Helper()
 	dir := t.TempDir()
