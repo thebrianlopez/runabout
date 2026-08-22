@@ -4,6 +4,7 @@ bin/
 *.out
 /linkari
 /linkari-labeler
+/castex
 .claude/worktrees/
 cmd/plaid-service/plaid-service
 cmd/linkari/linkari
