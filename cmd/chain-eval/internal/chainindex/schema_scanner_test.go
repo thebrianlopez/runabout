@@ -59,6 +59,50 @@ func TestClassifyUpstreamState(t *testing.T) {
 			extracted: "",
 			want:      UpstreamAbsent,
 		},
+		{
+			// EPIC-268 Q1a/Q1b: exact-match sentinel, entire trimmed cell content.
+			name:      "NO-UPSTREAM exact match is the chain-root sentinel",
+			content:   "| **Source FDD** | NO-UPSTREAM |\n",
+			extracted: "NO-UPSTREAM",
+			want:      UpstreamDeclaredNone,
+		},
+		{
+			// Whitespace around the token is trimmed before comparison, same as
+			// extractTableField already trims the raw cell.
+			name:      "NO-UPSTREAM with surrounding whitespace still matches",
+			content:   "| **Source FDD** |  NO-UPSTREAM  |\n",
+			extracted: "  NO-UPSTREAM  ",
+			want:      UpstreamDeclaredNone,
+		},
+		{
+			// Near-miss: trailing reason text disqualifies the sentinel. Falls
+			// through to the ordinary non-empty-cell path, not declared_none.
+			name:      "NO-UPSTREAM with trailing reason text does not match",
+			content:   "| **Source FDD** | NO-UPSTREAM: predates chain workflow |\n",
+			extracted: "NO-UPSTREAM: predates chain workflow",
+			want:      UpstreamExtracted,
+		},
+		{
+			// Near-miss: wrong case. Match is case-sensitive per Q1b ruling.
+			name:      "NO-UPSTREAM wrong case does not match",
+			content:   "| **Source FDD** | no-upstream |\n",
+			extracted: "no-upstream",
+			want:      UpstreamExtracted,
+		},
+		{
+			// Near-miss: token embedded as a substring of longer prose.
+			name:      "NO-UPSTREAM as substring of prose does not match",
+			content:   "| **Source FDD** | This is NO-UPSTREAM applicable here |\n",
+			extracted: "This is NO-UPSTREAM applicable here",
+			want:      UpstreamExtracted,
+		},
+		{
+			// Near-miss: underscore variant is a different token entirely.
+			name:      "NO_UPSTREAM underscore variant does not match",
+			content:   "| **Source FDD** | NO_UPSTREAM |\n",
+			extracted: "NO_UPSTREAM",
+			want:      UpstreamExtracted,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,6 +145,21 @@ agents:
 	}
 	if rec.EpicAgents[0].ID != "runabout-agent" {
 		t.Errorf("agent id = %q", rec.EpicAgents[0].ID)
+	}
+}
+
+// EPIC-268 M2b: an FDD declaring the NO-UPSTREAM sentinel classifies as
+// declared_none end-to-end through parseArtifact, not just the unit-level
+// classifyUpstreamState helper.
+func TestParseArtifact_NoUpstreamSentinel(t *testing.T) {
+	content := "# FDD: Chain Root Example\n\n| Field | Value |\n|-------|-------|\n| **Source PRD** | NO-UPSTREAM |\n"
+	rec := parseArtifact("design/x_FDD.md", ArtifactFDD, content)
+
+	if rec.UpstreamField != "NO-UPSTREAM" {
+		t.Errorf("UpstreamField = %q, want %q", rec.UpstreamField, "NO-UPSTREAM")
+	}
+	if rec.UpstreamState != UpstreamDeclaredNone {
+		t.Errorf("UpstreamState = %q, want %q", rec.UpstreamState, UpstreamDeclaredNone)
 	}
 }
 

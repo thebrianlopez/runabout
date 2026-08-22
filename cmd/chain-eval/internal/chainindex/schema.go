@@ -16,6 +16,7 @@ const (
 	UpstreamExtracted             = "extracted"
 	UpstreamAbsent                = "absent"
 	UpstreamDeclaredUnextractable = "declared_unextractable"
+	UpstreamDeclaredNone          = "declared_none"
 )
 
 // Violation severities.

@@ -121,18 +121,36 @@ func parseArtifact(rel string, typ ArtifactType, content string) ArtifactRecord 
 // human-readable form - bolded or not, table row or list item.
 var upstreamDeclaredRe = regexp.MustCompile(`(?mi)^\s*[|*+-]?\s*\*{0,2}Source\s+(?:PRD|FDD|TDD)\*{0,2}\s*[|:]`)
 
+// noUpstreamToken is EPIC-268's chain-root sentinel (Q1a/Q1b, ratified
+// 2026-08-22): the literal, case-sensitive string that, when it is the ENTIRE
+// trimmed content of the `Source PRD`/`Source FDD` cell, marks an artifact
+// whose author correctly asserts it has no upstream. Anything else in the
+// cell - a prefix, a suffix, a trailing reason, different case - is not the
+// sentinel and falls through to the existing declared/extracted handling.
+// This file owns recognising the token in raw cell text; artifact.cue owns
+// only the resulting `declared_none` enum value (RG-3) - the token string
+// itself is not restated there.
+const noUpstreamToken = "NO-UPSTREAM"
+
 // classifyUpstreamState distinguishes an artifact that never declared an
-// upstream link from one that declared a link the extractor could not read.
+// upstream link from one that declared a link the extractor could not read,
+// and from one that declares - via the exact NO-UPSTREAM sentinel - that it
+// legitimately has none.
 //
-// The second class is the dangerous one, and the reason this classification
-// exists at all: EPIC-266 declared `Source FDD` legibly, was reviewed by a
-// human who agreed it was linked, and was an orphan for its entire lifetime
-// including its own release, because the row was not in the exact form
-// extractTableField requires. "absent" and "declared_unextractable" need
-// different repairs - author a missing link, versus reformat an existing one -
-// so they are reported as different classes.
+// The declared-unextractable class is the dangerous one, and the reason this
+// classification exists at all: EPIC-266 declared `Source FDD` legibly, was
+// reviewed by a human who agreed it was linked, and was an orphan for its
+// entire lifetime including its own release, because the row was not in the
+// exact form extractTableField requires. "absent" and "declared_unextractable"
+// need different repairs - author a missing link, versus reformat an existing
+// one - so they are reported as different classes. "declared_none" is a third,
+// unrelated repair: none, because the artifact is legitimately chain-root.
 func classifyUpstreamState(content, upstreamField string) string {
-	if strings.TrimSpace(upstreamField) != "" {
+	trimmed := strings.TrimSpace(upstreamField)
+	if trimmed == noUpstreamToken {
+		return UpstreamDeclaredNone
+	}
+	if trimmed != "" {
 		return UpstreamExtracted
 	}
 	if upstreamDeclaredRe.MatchString(content) {
