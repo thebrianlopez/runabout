@@ -13,6 +13,11 @@ import (
 const (
 	EventSchemaViolation     = "schema_violation"
 	EventStatusValueObserved = "status_value_observed"
+	// EventUpstreamReferentResolution is V2's (EPIC-268) emission. Registered in
+	// core/schemas/event-schema.yaml alongside this constant - chain-eval-assess
+	// found that the two event types above were never registered there, and this
+	// one must not repeat that gap.
+	EventUpstreamReferentResolution = "upstream_referent_resolution"
 )
 
 const (
@@ -41,7 +46,10 @@ type busEvent struct {
 	Expected     string `json:"expected,omitempty"`
 	Value        string `json:"value,omitempty"`
 	Conformant   *bool  `json:"conformant,omitempty"`
-	Count        int    `json:"count"`
+	// Outcome carries V2's (EPIC-268) resolved | unresolved | severed result.
+	// Only used by upstream_referent_resolution events; empty otherwise.
+	Outcome string `json:"outcome,omitempty"`
+	Count   int    `json:"count"`
 }
 
 // EventsDir returns the automation-metrics events directory. The
@@ -198,4 +206,72 @@ func appendEvents(dir string, events []busEvent) error {
 		}
 	}
 	return nil
+}
+
+// EmitUpstreamReferentEvents appends upstream_referent_resolution events for
+// one V2 (EPIC-268) resolve run.
+//
+// Only the actionable outcomes - unresolved and severed - are emitted, never
+// resolved or the declared_none exclusion. This mirrors EmitSchemaEvents'
+// error-only filter immediately above: the signal this event exists to carry
+// is "needs a look", and a resolved referent needs no look. Aggregated by
+// (artifact_type, outcome) with a count, same shape and same rationale as
+// buildSchemaEvents - no artifact identifier field, so per-artifact emission
+// would add volume without adding attributable signal.
+//
+// Failure to emit never fails the resolve run (same contract as
+// EmitSchemaEvents).
+func EmitUpstreamReferentEvents(results []UpstreamResolution, command string) error {
+	dir := EventsDir()
+	if dir == "" {
+		return nil
+	}
+	events := buildUpstreamReferentEvents(results, command, nowFunc())
+	if len(events) == 0 {
+		return nil
+	}
+	return appendEvents(dir, events)
+}
+
+// buildUpstreamReferentEvents is pure so ordering and aggregation are testable
+// without touching a filesystem.
+func buildUpstreamReferentEvents(results []UpstreamResolution, command string, now time.Time) []busEvent {
+	ts := now.UTC().Format(eventTimeLayout)
+	user := os.Getenv("USER")
+
+	type outcomeKeyAgg struct {
+		artifactType, outcome string
+	}
+	counts := map[outcomeKeyAgg]int{}
+	for _, r := range results {
+		if r.Outcome != ResolutionUnresolved && r.Outcome != ResolutionSevered {
+			continue
+		}
+		counts[outcomeKeyAgg{r.ArtifactType, r.Outcome}]++
+	}
+
+	events := make([]busEvent, 0, len(counts))
+	for k, count := range counts {
+		events = append(events, busEvent{
+			SchemaVersion: eventSchemaVersion,
+			Timestamp:     ts,
+			Layer:         eventLayer,
+			EventType:     EventUpstreamReferentResolution,
+			EventClass:    eventClass,
+			Command:       command,
+			User:          user,
+			ArtifactType:  k.artifactType,
+			Outcome:       k.outcome,
+			Count:         count,
+		})
+	}
+
+	sort.SliceStable(events, func(i, j int) bool {
+		a, b := events[i], events[j]
+		if a.ArtifactType != b.ArtifactType {
+			return a.ArtifactType < b.ArtifactType
+		}
+		return a.Outcome < b.Outcome
+	})
+	return events
 }
