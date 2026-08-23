@@ -20,6 +20,81 @@ import (
 	"time"
 )
 
+// errYTNoSubtitles marks the benign outcome where yt-dlp ran to completion but
+// the video exposes no usable subtitle track. Callers treat this as a normal
+// signal that triggers the audio fallback, not as an error to dead-letter.
+//
+// This is a sentinel rather than a substring match on purpose. The previous
+// implementation classified outcomes with strings.Contains(err, "no subtitles"),
+// and the hard-failure message itself read "yt-dlp extraction failed (no
+// subtitles, exit: ...)" - so genuine yt-dlp failures (HTTP 403, geo-block,
+// private video) were silently reported as yt_no_subtitles and diverted into
+// the expensive audio path instead of dead-lettering as yt_dlp_failed.
+var errYTNoSubtitles = errors.New("yt-dlp: no subtitle track available")
+
+// errYTExtractFailed marks a hard yt-dlp failure during subtitle extraction.
+// It takes classification precedence over errYTNoSubtitles so that a stderr
+// tail folded into the message can never re-trigger the benign path.
+var errYTExtractFailed = errors.New("yt-dlp: subtitle extraction failed")
+
+// ytStderrMaxChars bounds how much yt-dlp stderr is folded into an error
+// message. yt-dlp can emit long warning preambles, and these strings reach both
+// the structured log and the events table, so the tail is capped.
+const ytStderrMaxChars = 512
+
+// ytdlpStderrTail extracts a bounded, human-useful tail of yt-dlp's stderr from
+// an *exec.ExitError. exec.Cmd.Output() captures stderr into ExitError.Stderr
+// when Cmd.Stderr is nil, but the error's own Error() renders only "exit status
+// 1" - which is what made an upstream HTTP 403 undiagnosable from the logs.
+//
+// ERROR:-prefixed lines are preferred when present, since yt-dlp puts the
+// actionable cause there and pads the rest with WARNING noise.
+func ytdlpStderrTail(err error) string {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || len(exitErr.Stderr) == 0 {
+		return ""
+	}
+
+	var errorLines []string
+	var allLines []string
+	for _, line := range strings.Split(string(exitErr.Stderr), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		allLines = append(allLines, line)
+		if strings.HasPrefix(line, "ERROR:") {
+			errorLines = append(errorLines, line)
+		}
+	}
+
+	lines := errorLines
+	if len(lines) == 0 {
+		lines = allLines
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+
+	detail := strings.Join(lines, "; ")
+	if len(detail) > ytStderrMaxChars {
+		detail = detail[len(detail)-ytStderrMaxChars:]
+	}
+	return detail
+}
+
+// ytdlpExitDetail renders a yt-dlp exec error with its stderr tail appended,
+// falling back to the bare exit status when no stderr was captured.
+func ytdlpExitDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	if tail := ytdlpStderrTail(err); tail != "" {
+		return fmt.Sprintf("%v: %s", err, tail)
+	}
+	return err.Error()
+}
+
 // ytSubtitleLangs is the yt-dlp --sub-langs value. Defaults to "en.*,en".
 // Overridden by ServerConfig.YouTube.SubtitleLangs via initClaudeConfig().
 var ytSubtitleLangs = "en.*,en"
@@ -329,7 +404,22 @@ func extractYTSubtitles(ctx context.Context, ytPath, videoURL string, rowID int6
 		return "yt_dlp_failed", "", meta, fmt.Errorf("yt_dlp_failed: timeout")
 	}
 
-	if strings.Contains(errStr, "no subtitles") {
+	// Hard failures are checked first and win outright. This ordering is what
+	// keeps a stderr tail folded into the message (which may itself mention
+	// subtitles) from re-triggering the benign path below.
+	if errors.Is(err, errYTExtractFailed) {
+		if events != nil {
+			_ = events.Emit("yt_dlp_failed", map[string]interface{}{
+				"row_id": rowID, "url": videoURL, "step": "subtitle", "error_reason": errStr,
+			})
+		}
+		return "yt_dlp_failed", "", meta, err
+	}
+
+	// errYTNoSubtitles is the canonical signal. The substring check is a
+	// compatibility shim for callers and test stubs that still return a plain
+	// "no subtitles" error rather than wrapping the sentinel.
+	if errors.Is(err, errYTNoSubtitles) || strings.Contains(errStr, "no subtitles") {
 		if events != nil {
 			_ = events.Emit("yt_no_subtitles", map[string]interface{}{"row_id": rowID, "url": videoURL})
 		}
@@ -355,8 +445,14 @@ func extractYTSubtitles(ctx context.Context, ytPath, videoURL string, rowID int6
 //   - --sub-langs           : from ytSubtitleLangs (default "en.*,en")
 //   - --convert-subs srt    : normalize to SRT format
 //   - --no-playlist         : process single video only (never a playlist)
-//   - -j                    : dump JSON metadata to stdout
+//   - --print-json          : dump JSON metadata to stdout after the run
 //   - -o <template>         : write subtitle files to a temp dir
+//
+// NOTE: this must be --print-json, never -j. -j is an alias for --dump-json,
+// which implies --simulate, so yt-dlp resolves metadata and writes no subtitle
+// files at all. That made every extraction report "no subtitles" regardless of
+// the video: production logs showed 80 yt_no_subtitles events and zero
+// yt_subtitles_ok, on videos whose captions --list-subs reported as present.
 func runYtdlpExtract(ctx context.Context, ytdlpPath, videoURL string) (transcript string, meta ytVideoMeta, err error) {
 	if ytdlpPath == "" {
 		ytdlpPath = "yt-dlp"
@@ -391,7 +487,7 @@ func runYtdlpExtract(ctx context.Context, ytdlpPath, videoURL string) (transcrip
 		"--sub-langs", langs,
 		"--convert-subs", "srt",
 		"--no-playlist",
-		"-j",
+		"--print-json",
 		"-o", outTemplate,
 		videoURL,
 	)
@@ -422,7 +518,7 @@ func runYtdlpExtract(ctx context.Context, ytdlpPath, videoURL string) (transcrip
 	entries, dirErr := os.ReadDir(tmpDir)
 	if dirErr != nil {
 		if runErr != nil {
-			return "", meta, fmt.Errorf("yt-dlp: %w", runErr)
+			return "", meta, fmt.Errorf("%w: %s", errYTExtractFailed, ytdlpExitDetail(runErr))
 		}
 		return "", meta, fmt.Errorf("read temp dir: %w", dirErr)
 	}
@@ -436,10 +532,15 @@ func runYtdlpExtract(ctx context.Context, ytdlpPath, videoURL string) (transcrip
 	}
 
 	if srtPath == "" {
+		// yt-dlp exited non-zero AND wrote nothing: a hard failure (403,
+		// geo-block, private video), not an absent caption track. Marked with
+		// errYTExtractFailed so the caller dead-letters instead of burning the
+		// audio fallback on a video that yt-dlp cannot reach at all.
 		if runErr != nil {
-			return "", meta, fmt.Errorf("yt-dlp extraction failed (no subtitles, exit: %w)", runErr)
+			return "", meta, fmt.Errorf("%w: %s", errYTExtractFailed, ytdlpExitDetail(runErr))
 		}
-		return "", meta, fmt.Errorf("yt-dlp: no subtitles found for %s", videoURL)
+		// Clean exit with no subtitle file: the video genuinely has no track.
+		return "", meta, fmt.Errorf("%w for %s", errYTNoSubtitles, videoURL)
 	}
 
 	rawSRT, readErr := os.ReadFile(srtPath)
@@ -520,7 +621,10 @@ func runYtdlpAudioDownload(ctx context.Context, ytdlpPath, videoURL string) (aud
 	entries, dirErr := os.ReadDir(tmpDir)
 	if dirErr != nil || len(entries) == 0 {
 		if runErr != nil {
-			return "", meta, fmt.Errorf("yt-dlp audio download failed: %w", runErr)
+			// Fold the stderr tail in: without it this collapses to "exit
+			// status 1", which is what left an upstream "HTTP Error 403:
+			// Forbidden" invisible across 20 failed downloads in production.
+			return "", meta, fmt.Errorf("yt-dlp audio download failed: %s", ytdlpExitDetail(runErr))
 		}
 		return "", meta, fmt.Errorf("yt-dlp audio download: no file written to %s", tmpDir)
 	}
