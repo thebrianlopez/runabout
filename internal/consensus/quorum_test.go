@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,6 +170,14 @@ func TestRG1_HMACBindsAgentID(t *testing.T) {
 	require.False(t, ok, "HMAC must bind to agentID")
 }
 
+func pathWithin(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // RG-2: Dispatch files must be written to agent's registered CWD.
 func TestRG2_DispatchWrittenToAgentCWD(t *testing.T) {
 	agentCWD := t.TempDir()
@@ -176,8 +185,8 @@ func TestRG2_DispatchWrittenToAgentCWD(t *testing.T) {
 
 	path, err := WriteVoteDispatch(agentCWD, "agent-a", "round1", "/tmp/art.md", "hash1", "epic", "promotion", nil, time.Now().Add(time.Hour))
 	require.NoError(t, err)
-	require.True(t, filepath.HasPrefix(path, agentCWD), "dispatch must be in agent CWD")
-	require.False(t, filepath.HasPrefix(path, wrongCWD), "dispatch must not be in wrong CWD")
+	require.True(t, pathWithin(path, agentCWD), "dispatch must be in agent CWD")
+	require.False(t, pathWithin(path, wrongCWD), "dispatch must not be in wrong CWD")
 }
 
 // QuorumRequired helper tests.

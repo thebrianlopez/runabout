@@ -255,8 +255,8 @@ func TestRegistry_BT1_ProductionOrgYAML(t *testing.T) {
 		t.Skip("cannot determine home dir")
 	}
 	path := filepath.Join(home, "code/personal/docs/org.yaml")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		t.Skipf("production org.yaml not found at %s", path)
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("production org.yaml not readable at %s: %v", path, err)
 	}
 	r, err := registry.Load(path)
 	if err != nil {

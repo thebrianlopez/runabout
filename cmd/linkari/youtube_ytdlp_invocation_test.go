@@ -14,26 +14,6 @@ import (
 	"testing"
 )
 
-// Regression coverage for the 20260823 YouTube pipeline outage.
-//
-// Two independent defects combined to make every YouTube share fail:
-//
-//  1. runYtdlpExtract passed -j, an alias for --dump-json, which implies
-//     --simulate. yt-dlp therefore resolved metadata and wrote no subtitle
-//     files, so extraction reported "no subtitles" for every video. Production
-//     logs carried 80 yt_no_subtitles events and zero yt_subtitles_ok.
-//  2. The hard-failure message read "yt-dlp extraction failed (no subtitles,
-//     exit: ...)", which the classifier's strings.Contains(err, "no subtitles")
-//     matched - so real failures (HTTP 403) were reported as the benign signal
-//     and diverted into the audio fallback instead of dead-lettering.
-//
-// A third issue made both undiagnosable: cmd.Output() errors render as bare
-// "exit status 1", hiding yt-dlp's actual stderr.
-
-// ─── RG-1: -j must never reappear in the subtitle invocation ─────────────────
-//
-// AST-based rather than a grep for a flag string, so the guard survives
-// refactors of the surrounding call and fails by property.
 func TestYTDLPGuard_SubtitleExtractionMustNotUseDumpJSON(t *testing.T) {
 	fset := token.NewFileSet()
 	parsed, err := parser.ParseFile(fset, "youtube.go", nil, 0)
@@ -75,7 +55,6 @@ func TestYTDLPGuard_SubtitleExtractionMustNotUseDumpJSON(t *testing.T) {
 	}
 
 	for _, a := range args {
-		// -j and --dump-json both imply --simulate: no files are written.
 		if a == "-j" || a == "--dump-json" || a == "--simulate" || a == "-s" {
 			t.Errorf("RG-1: runYtdlpExtract passes %q, which implies --simulate; "+
 				"yt-dlp writes no subtitle files and every extraction reports "+
@@ -94,7 +73,6 @@ func TestYTDLPGuard_SubtitleExtractionMustNotUseDumpJSON(t *testing.T) {
 	}
 }
 
-// fakeYtdlp writes an executable stub script and returns its path.
 func fakeYtdlp(t *testing.T, script string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -105,10 +83,6 @@ func fakeYtdlp(t *testing.T, script string) string {
 	return path
 }
 
-// outDirShell extracts the directory of the -o template and, critically,
-// emulates yt-dlp's real --simulate semantics: -j / --dump-json / -s suppress
-// all file output. Without this fidelity the stub would happily write a
-// subtitle file under -j and the CT-1 regression could not fail.
 const outDirShell = `
 outdir=""
 prev=""
@@ -126,10 +100,6 @@ if [ "$simulate" = "1" ]; then
 fi
 `
 
-// ─── CT-1: a stub that writes an .srt yields a transcript ────────────────────
-//
-// This is the case the -j bug broke: yt-dlp wrote nothing, so the code fell
-// through to the "no subtitles" return even for captioned videos.
 func TestYTDLP_CT1_ExtractReturnsTranscriptWhenSubtitleFileWritten(t *testing.T) {
 	stub := fakeYtdlp(t, outDirShell+`
 printf '1\n00:00:00,000 --> 00:00:02,000\nhello world\n\n' > "$outdir/vid.en.srt"
@@ -152,7 +122,6 @@ exit 0
 	}
 }
 
-// ─── CT-2: clean exit with no file is the benign no-subtitles signal ─────────
 func TestYTDLP_CT2_CleanExitWithNoFileIsNoSubtitles(t *testing.T) {
 	stub := fakeYtdlp(t, `echo '{"title":"Silent","id":"vid"}'
 exit 0
@@ -170,9 +139,6 @@ exit 0
 	}
 }
 
-// ─── CT-3: non-zero exit with no file is a hard failure, not "no subtitles" ──
-//
-// The 20260823 outage case: HTTP 403 was reported as yt_no_subtitles.
 func TestYTDLP_CT3_NonZeroExitIsHardFailureNotNoSubtitles(t *testing.T) {
 	stub := fakeYtdlp(t, `echo 'ERROR: unable to download video data: HTTP Error 403: Forbidden' >&2
 exit 1
@@ -188,19 +154,15 @@ exit 1
 	if errors.Is(err, errYTNoSubtitles) {
 		t.Errorf("CT-3: hard failure must not classify as errYTNoSubtitles: %v", err)
 	}
-	// The message must not contain the legacy substring, or the compatibility
-	// shim in extractYTSubtitles would reclassify it as benign.
 	if strings.Contains(err.Error(), "no subtitles") {
 		t.Errorf("CT-3: hard-failure message must not contain %q (collides with "+
 			"the classifier's compatibility substring match): %v", "no subtitles", err)
 	}
-	// And the operator must be able to see why.
 	if !strings.Contains(err.Error(), "403") {
 		t.Errorf("CT-3: stderr detail lost - err = %v, want it to surface the 403", err)
 	}
 }
 
-// ─── CT-4: extractYTSubtitles classifies a hard failure as yt_dlp_failed ─────
 func TestYTDLP_CT4_ClassifierRoutesHardFailureToDeadLetter(t *testing.T) {
 	deps := (&ytDeps{
 		Ytdlp: func(ctx context.Context, ytPath, url string) (string, ytVideoMeta, error) {
@@ -221,10 +183,6 @@ func TestYTDLP_CT4_ClassifierRoutesHardFailureToDeadLetter(t *testing.T) {
 	}
 }
 
-// ─── CT-5: legacy plain-string stubs still classify as no-subtitles ──────────
-//
-// Guards the compatibility shim: existing callers and stubs return a bare
-// "no subtitles" error rather than wrapping the sentinel.
 func TestYTDLP_CT5_LegacyNoSubtitlesStringStillClassifies(t *testing.T) {
 	deps := (&ytDeps{
 		Ytdlp: func(ctx context.Context, ytPath, url string) (string, ytVideoMeta, error) {
@@ -245,7 +203,6 @@ func TestYTDLP_CT5_LegacyNoSubtitlesStringStillClassifies(t *testing.T) {
 	}
 }
 
-// ─── CT-6: stderr tail extraction ────────────────────────────────────────────
 func TestYTDLP_CT6_StderrTailSurfacesErrorLines(t *testing.T) {
 	cmd := exec.Command("/bin/sh", "-c",
 		`echo 'WARNING: noise' >&2; echo 'ERROR: unable to download video data: HTTP Error 403: Forbidden' >&2; exit 1`)
@@ -258,7 +215,6 @@ func TestYTDLP_CT6_StderrTailSurfacesErrorLines(t *testing.T) {
 	if !strings.Contains(tail, "403: Forbidden") {
 		t.Errorf("CT-6: tail = %q, want it to contain the 403", tail)
 	}
-	// ERROR: lines are preferred over WARNING noise.
 	if strings.Contains(tail, "WARNING: noise") {
 		t.Errorf("CT-6: tail should prefer ERROR: lines, got %q", tail)
 	}
@@ -269,7 +225,6 @@ func TestYTDLP_CT6_StderrTailSurfacesErrorLines(t *testing.T) {
 	}
 }
 
-// ─── CT-7: stderr tail is bounded ────────────────────────────────────────────
 func TestYTDLP_CT7_StderrTailIsBounded(t *testing.T) {
 	cmd := exec.Command("/bin/sh", "-c",
 		`i=0; while [ $i -lt 500 ]; do echo "ERROR: padding line $i"; i=$((i+1)); done >&2; exit 1`)
@@ -284,7 +239,6 @@ func TestYTDLP_CT7_StderrTailIsBounded(t *testing.T) {
 	}
 }
 
-// ─── CT-8: nil and non-exec errors are handled ───────────────────────────────
 func TestYTDLP_CT8_StderrHelpersToleratePlainErrors(t *testing.T) {
 	if got := ytdlpStderrTail(nil); got != "" {
 		t.Errorf("CT-8: ytdlpStderrTail(nil) = %q, want empty", got)

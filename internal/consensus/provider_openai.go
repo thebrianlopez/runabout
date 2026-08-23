@@ -74,7 +74,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req CompletionRequest) (C
 		})
 	}
 	for _, m := range req.Messages {
-		msgs = append(msgs, openAIMessage{Role: m.Role, Content: m.Content})
+		msgs = append(msgs, openAIMessage(m))
 	}
 
 	body := openAIRequest{
