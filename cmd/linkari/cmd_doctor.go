@@ -57,6 +57,8 @@ type doctorDeps struct {
 	ProbeYouTubeSlot func(ctx context.Context, slot string, userID int64, q *Queue, clientID, clientSecret string) error
 	// AWSProbe reports AWS credential and Secrets Manager reachability.
 	AWSProbe func(ctx context.Context, awsCfg secrets.AWSConfig) awsDoctorResult
+	// LatestYtdlpVersion reports the newest published yt-dlp release tag.
+	LatestYtdlpVersion func(ctx context.Context) (string, error)
 }
 
 // resolve returns a copy with production defaults substituted for nil fields.
@@ -67,7 +69,83 @@ func (d doctorDeps) resolve() doctorDeps {
 	if d.AWSProbe == nil {
 		d.AWSProbe = awsDoctorProbe
 	}
+	if d.LatestYtdlpVersion == nil {
+		d.LatestYtdlpVersion = latestYtdlpVersion
+	}
 	return d
+}
+
+const ytdlpReleasesURL = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+
+func latestYtdlpVersion(ctx context.Context) (string, error) {
+	return fetchLatestYtdlpVersion(ctx, ytdlpReleasesURL)
+}
+
+func fetchLatestYtdlpVersion(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github api returned %s", resp.Status)
+	}
+
+	var payload struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	if payload.TagName == "" {
+		return "", errors.New("github api returned no tag_name")
+	}
+	return payload.TagName, nil
+}
+
+func parseYtdlpVersion(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	fields := strings.Split(s, ".")
+	if len(fields) < 3 {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("2006.01.02", strings.Join(fields[:3], "."))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+func ytdlpVersionCheck(installed, latest string, latestErr error) doctorCheck {
+	if latestErr != nil || latest == "" {
+		return okCheck("ytdlp", fmt.Sprintf("%s  -  upstream version check skipped (%v)", installed, latestErr))
+	}
+
+	installedAt, okInstalled := parseYtdlpVersion(installed)
+	latestAt, okLatest := parseYtdlpVersion(latest)
+	if !okInstalled || !okLatest {
+		return okCheck("ytdlp", fmt.Sprintf("%s  -  latest is %s", installed, latest))
+	}
+
+	if installedAt.Before(latestAt) {
+		days := int(latestAt.Sub(installedAt).Hours() / 24)
+		return warnCheck("ytdlp", fmt.Sprintf(
+			"%s is %d days behind %s  -  YouTube breaks yt-dlp regularly and stale builds fail with HTTP 403 on audio download (upgrade: brew upgrade yt-dlp / pip install -U yt-dlp)",
+			installed, days, latest,
+		))
+	}
+
+	return okCheck("ytdlp", fmt.Sprintf("%s (latest)", installed))
 }
 
 // probeYouTubeSlot probes a single YouTube OAuth slot for credential health.
@@ -512,10 +590,19 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 						fmt.Sprintf("yt-dlp not found at %q  -  YouTube URL transcription will fail (install yt-dlp or set ytdlp_path in server.yaml)", ytPath)))
 				} else {
 					ver := resolved
+					versionKnown := false
 					if out, verErr := exec.Command(resolved, "--version").Output(); verErr == nil {
 						ver = strings.TrimSpace(string(out))
+						versionKnown = true
 					}
-					addCheck(okCheck("ytdlp", ver))
+					if !versionKnown {
+						addCheck(okCheck("ytdlp", ver))
+					} else {
+						verCtx, verCancel := context.WithTimeout(ctx, 3*time.Second)
+						latest, latestErr := deps.LatestYtdlpVersion(verCtx)
+						verCancel()
+						addCheck(ytdlpVersionCheck(ver, latest, latestErr))
+					}
 				}
 			}
 

@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +46,11 @@ func newDoctorCmdForTest(t *testing.T, tmpDir string, extraArgs []string) (*byte
 // (EPIC-258 M2). The env/HOME isolation above has already run.
 func newDoctorCmdForTestWith(t *testing.T, tmpDir string, extraArgs []string, deps doctorDeps) (*bytes.Buffer, func() error) {
 	t.Helper()
+	if deps.LatestYtdlpVersion == nil {
+		deps.LatestYtdlpVersion = func(context.Context) (string, error) {
+			return "", errors.New("stubbed: no network in tests")
+		}
+	}
 	cmd := doctorCmdWith(deps)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
