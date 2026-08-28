@@ -95,6 +95,7 @@ func rootCmd() *cobra.Command {
 	cmd.AddCommand(pushFixturesCmd())
 	cmd.AddCommand(indexCmd())
 	cmd.AddCommand(resolveCmd())
+	cmd.AddCommand(checkCmd())
 
 	return cmd
 }
