@@ -59,6 +59,9 @@ type doctorDeps struct {
 	AWSProbe func(ctx context.Context, awsCfg secrets.AWSConfig) awsDoctorResult
 	// LatestYtdlpVersion reports the newest published yt-dlp release tag.
 	LatestYtdlpVersion func(ctx context.Context) (string, error)
+	// PiAuthCheck reports whether the pi CLI has usable credentials for the
+	// given combined "provider/model" string, via `pi auth check --json`.
+	PiAuthCheck func(ctx context.Context, piPath, model string) (piAuthCheckResult, error)
 }
 
 // resolve returns a copy with production defaults substituted for nil fields.
@@ -71,6 +74,9 @@ func (d doctorDeps) resolve() doctorDeps {
 	}
 	if d.LatestYtdlpVersion == nil {
 		d.LatestYtdlpVersion = latestYtdlpVersion
+	}
+	if d.PiAuthCheck == nil {
+		d.PiAuthCheck = piAuthCheckProbe
 	}
 	return d
 }
@@ -303,7 +309,18 @@ func doctorCmdWith(deps doctorDeps) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Validate linkari configuration and secrets without starting the server",
+		// gateErr()'s error is deliberate flow control (exit-code signaling for
+		// --require/--strict/plain failure gating), not an unexpected cobra
+		// parse/runtime error. Without these, cobra's default error handler
+		// appends "Error: ..." plus full usage text to stdout/stderr AFTER the
+		// JSON body already written in --json mode, corrupting it for any
+		// downstream JSON consumer the moment a single check fails - exactly
+		// the case a scoring-backend auth check (or any other gated check) is
+		// meant to surface. Text-mode output already prints its own gateErr
+		// via a returned error for the exit code; nothing here changes that.
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Short:         "Validate linkari configuration and secrets without starting the server",
 		Long: `Run all pre-flight checks against ~/.config/linkari/server.yaml without
 binding any listeners, starting the tsnet engine, or opening tmux sessions.
 
@@ -617,6 +634,38 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 						fmt.Sprintf("ffmpeg not found at %q  -  audio conversion for YouTube fallback will fail (install ffmpeg or set ffmpeg_path in server.yaml)", ffPath)))
 				} else {
 					addCheck(okCheck("ffmpeg", resolved))
+				}
+			}
+
+			// --- Check: scoring backend pi auth (EPIC-217 F4; catches the
+			// "No API key found for <provider>" failure mode that otherwise only
+			// surfaces per-row in scoring_call_complete_json errors). Only
+			// relevant when [server.scoring] backend = "pi"; claude_cli backend
+			// has its own separate startup CLI validation and is unaffected. ---
+			if serverCfg != nil && serverCfg.Scoring.Backend == "pi" {
+				piPath := serverCfg.Scoring.PiPath
+				if piPath == "" {
+					piPath = "pi"
+				}
+				model := piModelString(serverCfg.Scoring.Provider, serverCfg.Scoring.Model)
+				probeCtx, probeCancel := context.WithTimeout(ctx, 12*time.Second)
+				result, probeErr := deps.PiAuthCheck(probeCtx, piPath, model)
+				probeCancel()
+				switch {
+				case probeErr != nil:
+					addCheck(warnCheck("scoring_backend_pi_auth",
+						fmt.Sprintf("could not run 'pi auth check' for model %q: %v  -  scoring backend readiness unknown", model, probeErr)))
+				case result.Status == "ready":
+					addCheck(okCheck("scoring_backend_pi_auth", fmt.Sprintf("%s ready (provider=%s authType=%s)", model, result.Provider, result.AuthType)))
+				case result.Status == "not_ready":
+					addCheck(failCheck("scoring_backend_pi_auth",
+						fmt.Sprintf("%s not authenticated (reason=%s)  -  scoring will fail for every row until fixed; run: pi, then /login to authenticate provider %q", model, result.Reason, result.Provider)))
+				case result.Status == "invalid":
+					addCheck(failCheck("scoring_backend_pi_auth",
+						fmt.Sprintf("%s is not a recognized provider/model for pi (reason=%s)  -  check [server.scoring] provider/model in config.toml", model, result.Reason)))
+				default:
+					addCheck(warnCheck("scoring_backend_pi_auth",
+						fmt.Sprintf("%s returned unexpected status %q (reason=%s)", model, result.Status, result.Reason)))
 				}
 			}
 

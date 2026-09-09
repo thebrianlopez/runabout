@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // PiScoringBackend implements ScoringBackend by delegating single-turn LLM
@@ -172,6 +174,57 @@ func piModelString(provider, model string) string {
 		return m
 	}
 	return p + "/" + m
+}
+
+// piAuthCheckResult mirrors the JSON shape of `pi auth check --json`:
+//
+//	{"status":"ready","provider":"anthropic","authType":"oauth"}
+//	{"status":"not_ready","provider":"openai-codex","reason":"credentials_not_configured"}
+//	{"status":"invalid","provider":"bogus/bogus","reason":"invalid_state"}
+type piAuthCheckResult struct {
+	Status   string `json:"status"`
+	Provider string `json:"provider"`
+	Reason   string `json:"reason"`
+	AuthType string `json:"authType"`
+}
+
+// piAuthCheckProbe runs `pi auth check --model <model> --json` and reports
+// whether the model's provider is authenticated. This is what `linkari
+// doctor` uses to catch the failure mode observed in production: config.toml
+// pointed [server.scoring] at a model (e.g. openai-codex/gpt-5.4-mini) whose
+// provider had never been through `pi`'s OAuth device flow, so every scoring
+// call failed at runtime with "No API key found for openai-codex" - silently,
+// per-row, only visible in scoring_call_complete_json error logs. `pi auth
+// check` surfaces the same gap at startup, before any queue row pays for it.
+//
+// `--model` alone is enough; pi derives the provider from the combined
+// "provider/model" string. A malformed/unknown provider or model reports
+// status="invalid" (reason="invalid_state") rather than "not_ready", which
+// the caller should treat as distinct from an auth gap.
+func piAuthCheckProbe(ctx context.Context, piPath, model string) (piAuthCheckResult, error) {
+	if piPath == "" {
+		piPath = "pi"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, piPath, "auth", "check", "--model", model, "--json")
+	cmd.Env = piEnv()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	// `pi auth check` exits non-zero for both "not_ready" and "invalid"
+	// results while still emitting valid JSON on stdout, so parse first and
+	// only treat it as a hard exec failure if stdout didn't parse.
+	var result piAuthCheckResult
+	if jsonErr := json.Unmarshal(stdout.Bytes(), &result); jsonErr != nil {
+		if err != nil {
+			return piAuthCheckResult{}, fmt.Errorf("pi auth check failed: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
+		}
+		return piAuthCheckResult{}, fmt.Errorf("pi auth check: unparseable output: %w (stdout=%s stderr=%s)", jsonErr, strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()))
+	}
+	return result, nil
 }
 
 // piHermeticFlags returns the flags that keep a scoring call hermetic - free of

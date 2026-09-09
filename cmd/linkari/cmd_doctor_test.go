@@ -51,6 +51,11 @@ func newDoctorCmdForTestWith(t *testing.T, tmpDir string, extraArgs []string, de
 			return "", errors.New("stubbed: no network in tests")
 		}
 	}
+	if deps.PiAuthCheck == nil {
+		deps.PiAuthCheck = func(context.Context, string, string) (piAuthCheckResult, error) {
+			return piAuthCheckResult{}, errors.New("stubbed: no pi subprocess in tests")
+		}
+	}
 	cmd := doctorCmdWith(deps)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -472,6 +477,163 @@ func TestDoctorTessdata_BothAbsent(t *testing.T) {
 		}
 	}
 	t.Error("RG-2: tessdata_prefix check not present in output")
+}
+
+// piDoctorConfig writes a config.toml with [server.scoring] backend = "pi"
+// pointed at the given model, and returns its path.
+func piDoctorConfig(t *testing.T, dir, model string) string {
+	t.Helper()
+	cfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	content := fmt.Sprintf("[server]\ntoken = \"test-token\"\n\n[server.scoring]\nbackend = \"pi\"\nmodel = %q\n", model)
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+	return tomlPath
+}
+
+func doctorCheckByName(t *testing.T, out *bytes.Buffer, name string) doctorCheck {
+	t.Helper()
+	var result struct {
+		Checks []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("JSON parse: %v\noutput:\n%s", err, out.String())
+	}
+	for _, c := range result.Checks {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("%s check not present in output\noutput:\n%s", name, out.String())
+	return doctorCheck{}
+}
+
+// TestDoctorPiAuth_Ready verifies a "ready" pi auth check reports okCheck.
+// Regression coverage for the openai-codex/gpt-5.4-mini incident: config.toml
+// pointed at a model whose provider had no stored credentials, and nothing
+// caught it until scoring failed per-row at runtime.
+func TestDoctorPiAuth_Ready(t *testing.T) {
+	dir := t.TempDir()
+	tomlPath := piDoctorConfig(t, dir, "openai-codex/gpt-5.6-luna")
+
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath, "--json"}, doctorDeps{
+		PiAuthCheck: func(_ context.Context, piPath, model string) (piAuthCheckResult, error) {
+			if model != "openai-codex/gpt-5.6-luna" {
+				t.Errorf("PiAuthCheck model = %q, want openai-codex/gpt-5.6-luna", model)
+			}
+			return piAuthCheckResult{Status: "ready", Provider: "openai-codex", AuthType: "oauth"}, nil
+		},
+	})
+	_ = run()
+
+	c := doctorCheckByName(t, out, "scoring_backend_pi_auth")
+	if c.Status != statusOK {
+		t.Errorf("status = %q, want %q; message=%q", c.Status, statusOK, c.Message)
+	}
+}
+
+// TestDoctorPiAuth_NotReady is the production incident this check exists
+// for: provider has no credentials configured in pi's auth.json.
+func TestDoctorPiAuth_NotReady(t *testing.T) {
+	dir := t.TempDir()
+	tomlPath := piDoctorConfig(t, dir, "openai-codex/gpt-5.4-mini")
+
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath, "--json"}, doctorDeps{
+		PiAuthCheck: func(context.Context, string, string) (piAuthCheckResult, error) {
+			return piAuthCheckResult{Status: "not_ready", Provider: "openai-codex", Reason: "credentials_not_configured"}, nil
+		},
+	})
+	_ = run()
+
+	c := doctorCheckByName(t, out, "scoring_backend_pi_auth")
+	if c.Status != statusFail {
+		t.Errorf("status = %q, want %q; message=%q", c.Status, statusFail, c.Message)
+	}
+	if !strings.Contains(c.Message, "credentials_not_configured") {
+		t.Errorf("message = %q, want it to mention the reason", c.Message)
+	}
+}
+
+// TestDoctorPiAuth_InvalidModel covers a config.toml model string pi doesn't
+// recognize at all (typo, retired model id) - distinct from an auth gap.
+func TestDoctorPiAuth_InvalidModel(t *testing.T) {
+	dir := t.TempDir()
+	tomlPath := piDoctorConfig(t, dir, "openai-codex/not-a-real-model")
+
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath, "--json"}, doctorDeps{
+		PiAuthCheck: func(context.Context, string, string) (piAuthCheckResult, error) {
+			return piAuthCheckResult{Status: "invalid", Provider: "openai-codex/not-a-real-model", Reason: "invalid_state"}, nil
+		},
+	})
+	_ = run()
+
+	c := doctorCheckByName(t, out, "scoring_backend_pi_auth")
+	if c.Status != statusFail {
+		t.Errorf("status = %q, want %q; message=%q", c.Status, statusFail, c.Message)
+	}
+}
+
+// TestDoctorPiAuth_ProbeError covers the pi binary itself being unreachable
+// (missing from PATH, timeout) - degrade to warn, matching the non-fatal
+// pattern validatePiCLI uses at server startup.
+func TestDoctorPiAuth_ProbeError(t *testing.T) {
+	dir := t.TempDir()
+	tomlPath := piDoctorConfig(t, dir, "openai-codex/gpt-5.6-luna")
+
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath, "--json"}, doctorDeps{
+		PiAuthCheck: func(context.Context, string, string) (piAuthCheckResult, error) {
+			return piAuthCheckResult{}, errors.New("exec: \"pi\": executable file not found in $PATH")
+		},
+	})
+	_ = run()
+
+	c := doctorCheckByName(t, out, "scoring_backend_pi_auth")
+	if c.Status != statusWarn {
+		t.Errorf("status = %q, want %q; message=%q", c.Status, statusWarn, c.Message)
+	}
+}
+
+// TestDoctorPiAuth_SkippedForClaudeCLIBackend verifies the check is absent
+// entirely when backend is not "pi" (default/claude_cli), so it never fires a
+// false positive against a pi-less deployment.
+func TestDoctorPiAuth_SkippedForClaudeCLIBackend(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	if err := os.WriteFile(tomlPath, []byte("[server]\ntoken = \"test-token\"\n"), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	called := false
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath, "--json"}, doctorDeps{
+		PiAuthCheck: func(context.Context, string, string) (piAuthCheckResult, error) {
+			called = true
+			return piAuthCheckResult{Status: "ready"}, nil
+		},
+	})
+	_ = run()
+
+	if called {
+		t.Error("PiAuthCheck was invoked despite backend != \"pi\"")
+	}
+	var result struct {
+		Checks []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("JSON parse: %v\noutput:\n%s", err, out.String())
+	}
+	for _, c := range result.Checks {
+		if c.Name == "scoring_backend_pi_auth" {
+			t.Errorf("scoring_backend_pi_auth present despite backend != \"pi\": %+v", c)
+		}
+	}
 }
 
 // RG-3 (CT-3): only env var set (no config) → okCheck.
