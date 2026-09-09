@@ -308,7 +308,7 @@ func doctorCmdWith(deps doctorDeps) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "doctor",
+		Use: "doctor",
 		// gateErr()'s error is deliberate flow control (exit-code signaling for
 		// --require/--strict/plain failure gating), not an unexpected cobra
 		// parse/runtime error. Without these, cobra's default error handler
