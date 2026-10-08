@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -307,6 +308,9 @@ tsnet_client_secret = "test-client-secret-from-yaml"
 	}
 	if captured.ClientSecret != "test-client-secret-from-yaml" {
 		t.Fatalf("ClientSecret = %q, want %q", captured.ClientSecret, "test-client-secret-from-yaml")
+	}
+	if !slices.Equal(captured.AdvertiseTags, []string{"tag:linkari"}) {
+		t.Fatalf("AdvertiseTags = %v, want [tag:linkari]", captured.AdvertiseTags)
 	}
 }
 

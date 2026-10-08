@@ -901,11 +901,12 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 
 			if tsnetEnabled {
 				ln, cleanup, fqdn, err := deps.tsnetStart(cmd.Context(), TsnetConfig{
-					Hostname:     tsnetHostname,
-					StateDir:     tsnetStateDir,
-					AuthKey:      tsnetAuthKey,
-					ClientSecret: tsnetClientSecret,
-					Debug:        debug,
+					Hostname:      tsnetHostname,
+					StateDir:      tsnetStateDir,
+					AuthKey:       tsnetAuthKey,
+					ClientSecret:  tsnetClientSecret,
+					AdvertiseTags: []string{"tag:linkari"},
+					Debug:         debug,
 				})
 				if err != nil {
 					slog.Warn("tsnet failed to start, continuing with local listener only", "error", err)
