@@ -48,12 +48,8 @@ func profileCmd() *cobra.Command {
 				Depth:  depth,
 				Format: format,
 			}
-			profile, err := shellprof.Run(args[0], cfg)
-			if err != nil {
-				return err
-			}
-			_ = profile
-			return nil
+			_, err := shellprof.Run(args[0], cfg)
+			return err
 		},
 	}
 
@@ -73,12 +69,8 @@ func traceCmd() *cobra.Command {
 				Depth:  -1,
 				Format: "text",
 			}
-			profile, err := shellprof.Run(args[0], cfg)
-			if err != nil {
-				return err
-			}
-			_ = profile
-			return nil
+			_, err := shellprof.Run(args[0], cfg)
+			return err
 		},
 	}
 }

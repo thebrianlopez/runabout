@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -102,17 +101,7 @@ func newSyncCmd() *cobra.Command {
 				cfg.Timeout = 30 * time.Second
 			}
 
-			client, err := newS3ClientFromRemote(cfg.Remote)
-			if err != nil {
-				return fmt.Errorf("[E401] remote_unreachable: %w", err)
-			}
-			result, err := RunSync(cmd, cfg, client)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "sync complete: uploaded=%d downloaded=%d conflicts=%d rejected=%d duration=%s\n",
-				result.Uploaded, result.Downloaded, result.Conflicts, result.Rejected, result.Duration.Round(time.Millisecond))
-			return nil
+			return fmt.Errorf("[E401] remote_unreachable: real S3 client not yet wired")
 		},
 	}
 
@@ -468,15 +457,4 @@ func (m *MemS3Client) PutObject(_ context.Context, key string, data []byte) erro
 	}
 	m.objects[key] = append([]byte(nil), data...)
 	return nil
-}
-
-// newS3ClientFromRemote parses the remote URI and returns a real S3 client.
-// Currently returns an error indicating the real AWS SDK client is not wired.
-// Use MemS3Client directly in tests.
-func newS3ClientFromRemote(remote string) (S3Client, error) {
-	if !strings.HasPrefix(remote, "s3://") {
-		return nil, fmt.Errorf("unsupported remote scheme: %s (expected s3://)", remote)
-	}
-	// TODO(castex-sync): wire real aws-sdk-go-v2/service/s3 client here
-	return nil, fmt.Errorf("real S3 client not yet wired; use MemS3Client for integration tests")
 }
