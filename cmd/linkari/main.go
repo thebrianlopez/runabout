@@ -622,6 +622,26 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// EPIC-180 M2: wiki topic resolver (nil-safe; disabled when wiki.enabled=false or vault missing).
 			router.SetWikiResolver(NewWikiTopicResolver(serverFileCfg.Wiki))
 
+			// Workspace routing (label-only MVP): load the registry into the
+			// package-level slot. Load/validate failure when enabled is fatal -
+			// same stance as a misconfigured domain_route.
+			if serverFileCfg.Workspaces.Enabled {
+				if err := serverFileCfg.Workspaces.Validate(); err != nil {
+					return fmt.Errorf("workspace config: %w", err)
+				}
+				reg, regErr := LoadWorkspaceRegistry(serverFileCfg.Workspaces.RegistryPath())
+				if regErr != nil {
+					return fmt.Errorf("workspace registry: %w", regErr)
+				}
+				workspaceRegistry.Store(reg)
+				slog.Info("workspace registry loaded",
+					"entries", len(reg.Workspaces),
+					"path", serverFileCfg.Workspaces.RegistryPath(),
+				)
+			} else {
+				workspaceRegistry.Store(nil)
+			}
+
 			// F1: wire domain_routes from loaded config; fatal on misconfigured override_action.
 			if cfg != nil && len(cfg.DomainRoutes) > 0 {
 				if err := validateDomainRoutes(cfg.DomainRoutes, router.cfgIndex); err != nil {

@@ -47,6 +47,9 @@ type TriageVerdict struct {
 	RubricScores   map[string]int `json:"rubric_scores"`
 	Profile        string         `json:"profile,omitempty"`
 	ProfileVersion int            `json:"profile_version,omitempty"`
+	// Workspace routing (label-only MVP). Empty string or "none" = unassigned.
+	Workspace           string  `json:"workspace,omitempty"`
+	WorkspaceConfidence float64 `json:"workspace_confidence,omitempty"`
 }
 
 // UnmarshalJSON handles model non-compliance where rubric_scores values may

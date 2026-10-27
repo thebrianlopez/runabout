@@ -271,6 +271,12 @@ func NewQueue(dbPath string, debug bool) (*Queue, error) {
 		// EPIC-180 M4: wiki context gap-signal persistence.
 		"ALTER TABLE queue ADD COLUMN wiki_context_used INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE queue ADD COLUMN wiki_topic TEXT NOT NULL DEFAULT ''",
+		// Workspace routing (label-only MVP): assignment + confidence + how it
+		// was resolved ("tag" | "inferred"). Empty workspace = unassigned.
+		"ALTER TABLE queue ADD COLUMN workspace TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE queue ADD COLUMN workspace_confidence REAL NOT NULL DEFAULT 0",
+		"ALTER TABLE queue ADD COLUMN workspace_source TEXT NOT NULL DEFAULT ''",
+		"CREATE INDEX IF NOT EXISTS idx_queue_workspace ON queue(workspace) WHERE workspace != ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // Ignore "duplicate column" errors.
@@ -1037,6 +1043,56 @@ func (q *Queue) SetTopicTags(id int64, topicTags []string) error {
 	}
 	_, err = q.db.Exec("UPDATE queue SET topic_tags=? WHERE id=?", string(b), id)
 	return err
+}
+
+// SetWorkspace persists the workspace routing label for a queue row
+// (label-only MVP). workspace="" clears the assignment. source records how
+// it was resolved ("tag" | "inferred") for the phase-2 report split.
+func (q *Queue) SetWorkspace(id int64, workspace string, confidence float64, source string) error {
+	_, err := q.db.Exec(
+		"UPDATE queue SET workspace=?, workspace_confidence=?, workspace_source=? WHERE id=?",
+		workspace, confidence, source, id,
+	)
+	return err
+}
+
+// WorkspaceReportRow aggregates workspace assignments for the phase-2 report.
+type WorkspaceReportRow struct {
+	Workspace     string  `json:"workspace"`
+	Items         int     `json:"items"`
+	AvgScore      float64 `json:"avg_score"`
+	AvgConfidence float64 `json:"avg_confidence"`
+	ThumbsUp      int     `json:"thumbs_up"`
+	TagResolved   int     `json:"tag_resolved"`
+}
+
+// WorkspaceReport returns per-workspace assignment aggregates over the window
+// defined by since (RFC3339). Read-only reporting; no dispatch semantics.
+func (q *Queue) WorkspaceReport(since string) ([]WorkspaceReportRow, error) {
+	rows, err := q.db.Query(`
+		SELECT workspace,
+		       COUNT(*)                                                    AS items,
+		       AVG(COALESCE(score, 0))                                     AS avg_score,
+		       AVG(workspace_confidence)                                   AS avg_confidence,
+		       SUM(CASE WHEN feedback = 'up' THEN 1 ELSE 0 END)            AS thumbs_up,
+		       SUM(CASE WHEN workspace_source = 'tag' THEN 1 ELSE 0 END)   AS tag_resolved
+		FROM queue
+		WHERE workspace != '' AND scored_at IS NOT NULL AND scored_at >= ?
+		GROUP BY workspace
+		ORDER BY items DESC`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorkspaceReportRow
+	for rows.Next() {
+		var r WorkspaceReportRow
+		if err := rows.Scan(&r.Workspace, &r.Items, &r.AvgScore, &r.AvgConfidence, &r.ThumbsUp, &r.TagResolved); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // SetWikiContext persists wiki context state for a queue row (EPIC-180 M4).

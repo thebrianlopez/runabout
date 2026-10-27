@@ -55,6 +55,11 @@ type Scorecard struct {
 	CostUSD        float64        `json:"cost_usd,omitempty"`       // EPIC-062 M2: per-call cost from JSON envelope
 	Usage          *TokenUsage    `json:"usage,omitempty"`          // EPIC-062 M2: per-call token usage
 	RepairTurn     bool           `json:"repair_turn,omitempty"`    // EPIC-084 M4: true when verdict required a repair turn
+	// Workspace routing (label-only MVP). Empty = unassigned; source records
+	// how it was resolved ("tag" | "inferred").
+	Workspace           string  `json:"workspace,omitempty"`
+	WorkspaceConfidence float64 `json:"workspace_confidence,omitempty"`
+	WorkspaceSource     string  `json:"workspace_source,omitempty"`
 }
 
 // Evaluator is the backend-agnostic scoring contract. All content
@@ -110,17 +115,19 @@ func (e HaikuJSONEvaluator) Evaluate(ctx context.Context, content, promptTemplat
 		return nil, fmt.Errorf("haiku-json: %w", err)
 	}
 	sc := &Scorecard{
-		Score:          v.Score,
-		Verdict:        v.Verdict,
-		Gaps:           v.ActionItems,
-		Tags:           v.Tags,
-		TopicTags:      v.TopicTags,
-		RubricScores:   v.RubricScores,
-		RawMarkdown:    v.RenderMarkdown(),
-		Profile:        v.Profile,
-		ProfileVersion: v.ProfileVersion,
-		Backend:        backendLabel(e.Backend, evalFormatJSON),
-		LatencyMs:      latency,
+		Score:               v.Score,
+		Verdict:             v.Verdict,
+		Gaps:                v.ActionItems,
+		Tags:                v.Tags,
+		TopicTags:           v.TopicTags,
+		RubricScores:        v.RubricScores,
+		RawMarkdown:         v.RenderMarkdown(),
+		Profile:             v.Profile,
+		ProfileVersion:      v.ProfileVersion,
+		Workspace:           normalizeWorkspaceAssignment(activeWorkspaceRegistry(), v.Workspace),
+		WorkspaceConfidence: clampWorkspaceConfidence(v.WorkspaceConfidence),
+		Backend:             backendLabel(e.Backend, evalFormatJSON),
+		LatencyMs:           latency,
 	}
 	if meta != nil {
 		sc.CostUSD = meta.CostUSD
@@ -205,17 +212,19 @@ func (e HaikuVisionEvaluator) Evaluate(ctx context.Context, content, promptTempl
 		return fallbackSc, nil
 	}
 	sc := &Scorecard{
-		Score:          v.Score,
-		Verdict:        v.Verdict,
-		Gaps:           v.ActionItems,
-		Tags:           v.Tags,
-		TopicTags:      v.TopicTags,
-		RubricScores:   v.RubricScores,
-		RawMarkdown:    v.RenderMarkdown(),
-		Profile:        v.Profile,
-		ProfileVersion: v.ProfileVersion,
-		Backend:        backendLabel(e.Backend, evalFormatVision),
-		LatencyMs:      latency,
+		Score:               v.Score,
+		Verdict:             v.Verdict,
+		Gaps:                v.ActionItems,
+		Tags:                v.Tags,
+		TopicTags:           v.TopicTags,
+		RubricScores:        v.RubricScores,
+		RawMarkdown:         v.RenderMarkdown(),
+		Profile:             v.Profile,
+		ProfileVersion:      v.ProfileVersion,
+		Workspace:           normalizeWorkspaceAssignment(activeWorkspaceRegistry(), v.Workspace),
+		WorkspaceConfidence: clampWorkspaceConfidence(v.WorkspaceConfidence),
+		Backend:             backendLabel(e.Backend, evalFormatVision),
+		LatencyMs:           latency,
 	}
 	if meta != nil {
 		sc.CostUSD = meta.CostUSD

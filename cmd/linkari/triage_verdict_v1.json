@@ -48,6 +48,17 @@
       }
     },
     "profile": {"type": "string"},
-    "profile_version": {"type": "integer", "minimum": 1}
+    "profile_version": {"type": "integer", "minimum": 1},
+    "workspace": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Assigned workspace name from the registry, or none when no workspace applies."
+    },
+    "workspace_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Confidence in the workspace assignment. 0 when workspace is none."
+    }
   }
 }

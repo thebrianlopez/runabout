@@ -1068,6 +1068,27 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	}
 	sysPrompt = buildScoringPrompt(sysPrompt, wikiBlock)
 
+	// Workspace routing (label-only MVP): inject the assignment section when
+	// the registry is loaded. Nil/empty registry = no prompt change.
+	wsReg := activeWorkspaceRegistry()
+	wsSource := ""
+	if wsReg != nil && len(wsReg.Workspaces) > 0 {
+		wsSource = "inferred"
+		if _, tagMatch := wsReg.MatchTags(req.UserTags); tagMatch {
+			wsSource = "tag"
+		}
+		if wsBlock := buildWorkspaceContextBlock(wsReg, req.UserTags, 400); wsBlock != "" {
+			sysPrompt += wsBlock
+			slog.DebugContext(
+				ctx, "score_async: workspace context injected",
+				"event_type", "workspace_context_injected",
+				"row_id", req.QueueRowID,
+				"source", wsSource,
+				"entries", len(wsReg.Workspaces),
+			)
+		}
+	}
+
 	// Share-time rationale is explicit user intent/context, distinct from source content.
 	if rationaleSection := formatUserRationale(req.UserRationaleText, req.UserRationaleSource); rationaleSection != "" {
 		sysPrompt += rationaleSection
@@ -1619,6 +1640,23 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 	if len(sc.TopicTags) > 0 {
 		if tagErr := q.SetTopicTags(itemID, sc.TopicTags); tagErr != nil {
 			slog.Warn("score_async: SetTopicTags failed", "id", itemID, "error", tagErr)
+		}
+	}
+
+	// Workspace routing (label-only MVP): persist the assignment for reporting.
+	// No dispatch, no routing decision - the label is data only.
+	if sc.Workspace != "" {
+		if wsErr := q.SetWorkspace(itemID, sc.Workspace, sc.WorkspaceConfidence, wsSource); wsErr != nil {
+			slog.Warn("score_async: SetWorkspace failed", "id", itemID, "error", wsErr)
+		} else {
+			slog.Info(
+				"score_async: workspace assigned",
+				"event_type", "workspace_assigned",
+				"row_id", itemID,
+				"workspace", sc.Workspace,
+				"confidence", sc.WorkspaceConfidence,
+				"source", wsSource,
+			)
 		}
 	}
 

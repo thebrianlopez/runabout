@@ -747,6 +747,19 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
+			// --- Check: workspace registry (label-only MVP) ---
+			// Only runs when [workspaces] block is present and Enabled=true.
+			if serverCfg != nil && serverCfg.Workspaces.Enabled {
+				if err := serverCfg.Workspaces.Validate(); err != nil {
+					addCheck(failCheck("workspaces", err.Error()))
+				} else if reg, regErr := LoadWorkspaceRegistry(serverCfg.Workspaces.RegistryPath()); regErr != nil {
+					addCheck(failCheck("workspaces", regErr.Error()))
+				} else {
+					addCheck(okCheck("workspaces", fmt.Sprintf("path=%s entries=%d profiles=%v",
+						serverCfg.Workspaces.RegistryPath(), len(reg.Workspaces), serverCfg.Workspaces.Profiles)))
+				}
+			}
+
 			// --- Check 10: tsnet state directory ---
 			{
 				var tsnetStateDir string
