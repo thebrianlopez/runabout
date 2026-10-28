@@ -84,7 +84,7 @@ func (b PiScoringBackend) CompleteJSON(ctx context.Context, systemPrompt, conten
 	// Without this, pi returns free prose and parseHaikuEnvelope rejects it.
 	if schema != "" {
 		systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching this schema. " +
-			"No markdown, no fences, no commentary. For skipped/noise content return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
+			"No markdown, no fences, no commentary. For skipped/noise content return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}, \"workspace\": \"none\", \"workspace_confidence\": 0}." +
 			"\n\nSchema:\n" + schema
 	}
 	binaryPath := b.BinaryPath

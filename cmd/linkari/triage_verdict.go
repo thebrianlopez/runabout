@@ -173,7 +173,7 @@ func (v TriageVerdict) RenderMarkdown() string {
 func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
 	systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching the provided schema." +
 		" This applies to ALL cases including noise-gated/skip content." +
-		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
+		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}, \"workspace\": \"none\", \"workspace_confidence\": 0}." +
 		" Never output markdown formatting like **Score:**  -  always use the JSON schema."
 	spFile, _, err := writeSystemPromptFile(systemPrompt)
 	if err != nil {
@@ -218,7 +218,7 @@ func runClaudeHaikuVision(ctx context.Context, systemPrompt, textContent, imageP
 		" without filling the full rubric."
 	systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching the provided schema." +
 		" This applies to ALL cases including noise-gated/skip content." +
-		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}}." +
+		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}, \"workspace\": \"none\", \"workspace_confidence\": 0}." +
 		" Never output markdown formatting like **Score:**  -  always use the JSON schema."
 	spFile, _, err := writeSystemPromptFile(systemPrompt)
 	if err != nil {
