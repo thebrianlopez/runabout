@@ -133,6 +133,13 @@ func RunReport(cmd *cobra.Command, cfg ReportConfig) error {
 	case <-ctx.Done():
 		return fmt.Errorf("[E203] report_timeout: read exceeded %s deadline; try --since to narrow the window", cfg.Timeout)
 	case r := <-ch:
+		// Deadline-expiry tiebreak: with a near-zero timeout the read can be
+		// ready in the same select moment as ctx.Done(), and select picks
+		// randomly (surfaced as TestReport_CT12_Timeout flaking on CI). Once
+		// the deadline has passed, the timeout error wins deterministically.
+		if ctx.Err() != nil {
+			return fmt.Errorf("[E203] report_timeout: read exceeded %s deadline; try --since to narrow the window", cfg.Timeout)
+		}
 		if r.err != nil {
 			return r.err
 		}
