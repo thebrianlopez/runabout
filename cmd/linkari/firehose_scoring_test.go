@@ -434,6 +434,13 @@ func TestFirehoseScoring_F1RG1_NeverScoringTimeout(t *testing.T) {
 	fsc := testFSCWithEval(t, q, eval)
 	fsc.Deps = deps
 
+	// Async-test convention (EPIC-250): block on scoreAsync fully returning,
+	// not just Evaluate. Under -race with shuffle=on on a loaded CI runner,
+	// waiting only for Evaluate left the window open to goroutine scheduling
+	// and made this test flaky (failed on main and on dependabot PR #38).
+	scoreDone := make(chan struct{})
+	deps.DoneHook = func() { close(scoreDone) }
+
 	post := &firehosePost{
 		AtURI: "at://did:plc:test/app.bsky.feed.post/f1rg1",
 		Text:  "new inference optimization technique",
@@ -447,7 +454,12 @@ func TestFirehoseScoring_F1RG1_NeverScoringTimeout(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("F1-RG-1: scoreAsync not called within 5s  -  firehose item would have scored_timeout")
+		t.Fatal("F1-RG-1: Evaluate never called within 5s  -  firehose item would have scored_timeout")
+	}
+	select {
+	case <-scoreDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("F1-RG-1: scoreAsync did not complete within 10s")
 	}
 }
 
