@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // captureEval records the promptTemplate arg from the last Evaluate call.
@@ -225,7 +226,16 @@ func TestRG3_BareNoteAction_PDFShare_RoutesOK(t *testing.T) {
 	cfg := builtinConfig()
 	router := NewRouterFromConfig(&TmuxRunner{}, cfg, false)
 	router.SetScoringBackend(stubBackend)
-	router.SetScoringDepsMutator(func(d *scoringDeps) { d.LiteParse = liteParse })
+	// EPIC-250 convention: the scoreAsync goroutine spawned by ServeHTTP keeps
+	// writing to the queue and transcriptDir after this test returns, which
+	// raced TempDir cleanup in the CI leakcheck run ("directory not empty",
+	// "sql: database is closed"). DoneHook fires when scoreAsync fully
+	// returns; we drain it before the deferred cleanup runs.
+	scoreDone := make(chan struct{})
+	router.SetScoringDepsMutator(func(d *scoringDeps) {
+		d.LiteParse = liteParse
+		d.DoneHook = func() { close(scoreDone) }
+	})
 	router.SetServerConfig(&ServerConfig{TranscriptsDir: transcriptDir})
 	q := newTestQueue(t)
 	srv := NewServer("test-token", router, q, NewRingLog(10), false, nil)
@@ -261,6 +271,12 @@ func TestRG3_BareNoteAction_PDFShare_RoutesOK(t *testing.T) {
 	}
 	if item.Type != "document" {
 		t.Errorf("RG-3: queue row type=%q, want \"document\"", item.Type)
+	}
+
+	select {
+	case <-scoreDone:
+	case <-time.After(10 * time.Second):
+		t.Log("RG-3: scoreAsync never completed within 10s (unexpected for a queued document share)")
 	}
 }
 
