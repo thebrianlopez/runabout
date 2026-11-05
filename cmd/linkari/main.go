@@ -634,7 +634,8 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					return fmt.Errorf("workspace registry: %w", regErr)
 				}
 				workspaceRegistry.Store(reg)
-				slog.Info("workspace registry loaded",
+				slog.Info(
+					"workspace registry loaded",
 					"entries", len(reg.Workspaces),
 					"path", serverFileCfg.Workspaces.RegistryPath(),
 				)
