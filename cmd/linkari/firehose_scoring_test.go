@@ -279,6 +279,15 @@ func TestFirehoseScoring_F1CT1_ScoreAsyncCalled(t *testing.T) {
 	fsc := testFSCWithEval(t, q, eval)
 	fsc.Deps = deps
 
+	// Async-test convention (EPIC-250): block on scoreAsync fully returning,
+	// not just Evaluate. Waiting only for Evaluate let the scoring goroutine
+	// write to the queue after TempDir cleanup began, surfacing as
+	// "TempDir RemoveAll cleanup: directory not empty" in the CI leakcheck
+	// run (same mode F1-CT-5 documents). DoneHook fires at every scoreAsync
+	// return, after transcript persistence and queue writes.
+	scoreDone := make(chan struct{})
+	deps.DoneHook = func() { close(scoreDone) }
+
 	post := &firehosePost{
 		AtURI: "at://did:plc:test/app.bsky.feed.post/f1ct1",
 		Text:  "quantum computing breakthrough",
@@ -292,7 +301,12 @@ func TestFirehoseScoring_F1CT1_ScoreAsyncCalled(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("F1-CT-1: scoreAsync not called within 5s  -  Evaluator.Evaluate never invoked")
+		t.Fatal("F1-CT-1: Evaluate never invoked within 5s")
+	}
+	select {
+	case <-scoreDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("F1-CT-1: scoreAsync did not complete within 10s")
 	}
 }
 
