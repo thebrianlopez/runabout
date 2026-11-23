@@ -1539,12 +1539,18 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 		"classify_source", classifySource,
 	)
 
-	if req.Type == "document" && content != "" {
+	// M3: Transcript score gate  -  do not persist a transcript for scored rows
+	// whose verdict is a "Skip" (score == 0 and verdict begins with "Skip").
+	// These rows were previously skipped incidentally; this gate makes the
+	// contract explicit and prevents transcript leakage on fast paths.
+	skipVerdict := sc.Score == 0 && strings.HasPrefix(sc.Verdict, "Skip")
+
+	if req.Type == "document" && content != "" && !skipVerdict {
 		if _, err := saveTranscriptFile(transcriptDir, req.QueueRowID, profile, req.Filename, content, "pdf", "", "", "", 0, ""); err != nil {
 			slog.Warn("score_async: transcript save failed", "event_type", "transcript_save_failed", "type", req.Type, "row_id", req.QueueRowID, "error", err)
 		}
 	}
-	if isURLShare && !req.IsScreenshot && content != "" {
+	if isURLShare && !req.IsScreenshot && content != "" && !skipVerdict {
 		transcriptText := rawContent
 		if transcriptText == "" {
 			transcriptText = req.Text
@@ -1553,7 +1559,7 @@ func scoreAsync(req *ShareRequest, q *Queue, eval Evaluator, events *EventLogger
 			slog.Warn("score_async: transcript save failed", "event_type", "transcript_save_failed", "type", req.Type, "row_id", req.QueueRowID, "error", err)
 		}
 	}
-	if req.Type == "image" && sc.Verdict != "" {
+	if req.Type == "image" && sc.Verdict != "" && !skipVerdict {
 		if _, err := saveTranscriptFile(transcriptDir, req.QueueRowID, profile, req.Filename, sc.Verdict, "img", "", "", "", 0, ""); err != nil {
 			slog.Warn("score_async: transcript save failed", "event_type", "transcript_save_failed", "type", req.Type, "row_id", req.QueueRowID, "error", err)
 		}

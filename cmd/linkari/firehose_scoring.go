@@ -21,6 +21,10 @@ type firehoseScoreContext struct {
 	// cancellation. nil selects the production connectAndRead. EPIC-258 M2:
 	// was package var execConnectAndRead.
 	ConnectAndRead func(ctx context.Context, fsc *firehoseScoreContext, url string) error
+	// BypassMinPostTextLen disables the M1 pre-score text-length gate for tests
+	// that exercise paths other than the gate itself (e.g., enqueue, scoring,
+	// dedup). Set via bypassFirehoseMinLen(t) in test code only.
+	BypassMinPostTextLen bool
 }
 
 // resolveFirehoseProfile maps a firehose subscription profile to a valid

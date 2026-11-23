@@ -14,15 +14,23 @@ import (
 
 // testFSC wraps a Queue in a minimal firehoseScoreContext for tests.
 // Eval is nil so scoreAsync is not called  -  tests verify DB state only.
+// BypassMinPostTextLen is set so short fixture text passes the M1 gate;
+// the gate itself is tested via TestFirehoseM1_TextTooShort_Rejected which
+// constructs its own fsc with BypassMinPostTextLen=false.
 func testFSC(q *Queue) *firehoseScoreContext {
-	return &firehoseScoreContext{Queue: q, ScoreSem: make(chan struct{}, 3)}
+	return &firehoseScoreContext{Queue: q, ScoreSem: make(chan struct{}, 3), BypassMinPostTextLen: true}
 }
 
 // testFSCWithEval creates an fsc with an Evaluator for integration tests.
 func testFSCWithEval(t *testing.T, q *Queue, eval Evaluator) *firehoseScoreContext {
 	t.Helper()
-	return &firehoseScoreContext{Queue: q, Eval: eval, ScoreSem: make(chan struct{}, 3), Deps: newTestDeps(t)}
+	return &firehoseScoreContext{Queue: q, Eval: eval, ScoreSem: make(chan struct{}, 3), Deps: newTestDeps(t), BypassMinPostTextLen: true}
 }
+
+// bypassFirehoseMinLen is a no-op: testFSC and testFSCWithEval already set
+// BypassMinPostTextLen=true. The call sites remain as documentation that
+// the test intentionally uses short fixture text.
+func bypassFirehoseMinLen(_ *testing.T) {}
 
 // contentCapturingEval wraps stubEvaluator and records the content arg of Evaluate.
 type contentCapturingEval struct {
@@ -83,6 +91,7 @@ func (e *semaphoreCapEval) Evaluate(ctx context.Context, content, prompt string)
 // F1-CT-2: After handleFirehosePost, queue row must NOT be in 'relayed' status.
 // The MarkRelayed bypass must be removed  -  row stays 'pending' for scoreAsync.
 func TestFirehoseScoring_F1CT2_NoMarkRelayed(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "llm")
@@ -110,6 +119,7 @@ func TestFirehoseScoring_F1CT2_NoMarkRelayed(t *testing.T) {
 // F1-CT-4: After firehose processing, status must be 'pending' (awaiting scoreAsync)
 // or 'scored'/'failed' (scoreAsync completed). Never 'relayed'.
 func TestFirehoseScoring_F1CT4_StatusTransitions(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "agents")
@@ -139,6 +149,7 @@ func TestFirehoseScoring_F1CT4_StatusTransitions(t *testing.T) {
 // F1-RG-2: No push with score=0 and title="Firehose Match" may be enqueued.
 // The score=0 placeholder push must be removed  -  only scoreAsync sends pushes.
 func TestFirehoseScoring_F1RG2_NoScoreZeroPush(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "claude")
@@ -213,6 +224,7 @@ func TestFirehoseScoring_F2CT4_MigrationUpdatesDefault(t *testing.T) {
 
 // F2-RG-1: No firehose queue row may have profile='default' at scoring time.
 func TestFirehoseScoring_F2RG1_NoDefaultProfileInQueue(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "inference")
@@ -242,6 +254,7 @@ func TestFirehoseScoring_F2RG1_NoDefaultProfileInQueue(t *testing.T) {
 // F3-CT-1: ShareRequest.Text must be populated from firehosePost.Text.
 // Verified by checking the queue row's text column after enqueue.
 func TestFirehoseScoring_F3CT1_TextPopulated(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "eval")
@@ -269,6 +282,7 @@ func TestFirehoseScoring_F3CT1_TextPopulated(t *testing.T) {
 // F1-CT-1: After handleFirehosePost, scoreAsync is called with a ShareRequest containing the AtURI.
 // Verified via onceDoneEval: the done channel fires when Evaluate() is invoked.
 func TestFirehoseScoring_F1CT1_ScoreAsyncCalled(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -313,6 +327,7 @@ func TestFirehoseScoring_F1CT1_ScoreAsyncCalled(t *testing.T) {
 // F1-CT-3: After firehose processing, exactly one push with score > 0 must be sent.
 // No score=0 "Firehose Match" push may exist  -  scoreAsync is the only push sender.
 func TestFirehoseScoring_F1CT3_ScoredPushReplaces(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "ml")
@@ -338,6 +353,7 @@ func TestFirehoseScoring_F1CT3_ScoredPushReplaces(t *testing.T) {
 
 // F1-CT-5: At most 3 concurrent firehose scoring goroutines (semaphore cap).
 func TestFirehoseScoring_F1CT5_SemaphoreCap(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	t.Setenv("HOME", t.TempDir()) // prevent resolvePushConfigOnce from loading real config.toml
 	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
@@ -407,6 +423,7 @@ func TestFirehoseScoring_F1CT5_SemaphoreCap(t *testing.T) {
 // F1-CT-6: After restart, StartReplay picks up pending firehose queue rows.
 // Fails until MarkRelayed bypass is removed  -  rows must stay 'pending' for replay.
 func TestFirehoseScoring_F1CT6_StartReplayPicksUpFirehose(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "rag")
@@ -438,6 +455,7 @@ func TestFirehoseScoring_F1CT6_StartReplayPicksUpFirehose(t *testing.T) {
 // F1-RG-1: scoreAsync is invoked within 5s  -  item never stays pending indefinitely.
 // Regression guard: ensures the MarkRelayed bypass removal doesn't leave items unscored.
 func TestFirehoseScoring_F1RG1_NeverScoringTimeout(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -480,6 +498,7 @@ func TestFirehoseScoring_F1RG1_NeverScoringTimeout(t *testing.T) {
 // F3-CT-3: When URL fetch fails, scoreAsync uses req.Text as the scoring content.
 // Verified via contentCapturingEval: content passed to Evaluate must equal post.Text.
 func TestFirehoseScoring_F3CT3_ScoreAsyncUsesText(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -547,6 +566,7 @@ func TestFirehoseScoring_F3CT3_ScoreAsyncUsesText(t *testing.T) {
 // own transcriptDir and blocks on deps.DoneHook (fired once transcript persistence and queue writes complete)
 // before returning, so no goroutine can outlive it.
 func TestFirehoseScoring_F3RG1_TextReachesPrompt(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -597,6 +617,7 @@ func TestFirehoseScoring_F3RG1_TextReachesPrompt(t *testing.T) {
 
 // F3-CT-2: Empty text must pass through without error.
 func TestFirehoseScoring_F3CT2_EmptyTextPassthrough(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "eval")
@@ -629,8 +650,10 @@ func TestFirehoseScoring_F3CT2_EmptyTextPassthrough(t *testing.T) {
 
 // --- M5: Behavioral tests ---
 
-// F1-BT-2: A post matching 2 subscriptions produces 2 queue rows and 2 scoreAsync calls.
+// F1-BT-2: A post matching 2 subscriptions produces exactly 1 queue row (M2 dedup-by-URI).
+// Prior to M2, one row per keyword was enqueued (triple scoring cost on overlap).
 func TestFirehoseScoring_F1BT2_MultiKeywordMatch(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "llm")
@@ -648,8 +671,8 @@ func TestFirehoseScoring_F1BT2_MultiKeywordMatch(t *testing.T) {
 
 	var count int
 	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE source='firehose'").Scan(&count)
-	if count != 2 {
-		t.Fatalf("F1-BT-2: expected 2 queue rows (one per subscription), got %d", count)
+	if count != 1 {
+		t.Fatalf("F1-BT-2 (M2): expected 1 queue row for a post matching 2 keywords, got %d", count)
 	}
 }
 
@@ -664,6 +687,7 @@ func TestFirehoseScoring_F2BT2_FallbackLogsWarn(t *testing.T) {
 
 // F3-BT-2: Queue row has both text and URL populated from firehose commit.
 func TestFirehoseScoring_F3BT2_TextAndURLBothPresent(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "reinforcement")
@@ -720,6 +744,7 @@ func TestFirehoseF6CT3_EmptyProfileFallsBack(t *testing.T) {
 
 // F6-CT-4: Queue row has action="uinit_eng" after handleFirehosePost enqueues it.
 func TestFirehoseF6CT4_QueueRowHasAction(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "llm")
@@ -743,6 +768,7 @@ func TestFirehoseF6CT4_QueueRowHasAction(t *testing.T) {
 
 // F6-CT-5: Firehose queue row has non-empty action  -  replay never fails with "no action for \"\"".
 func TestFirehoseF6CT5_ReplayNoEmptyActionError(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "rag")
@@ -767,6 +793,7 @@ func TestFirehoseF6CT5_ReplayNoEmptyActionError(t *testing.T) {
 // F6-RG-1: Every firehose queue row has a non-empty action field.
 // Regression guard for EPIC-125 M6 live validation (queue_id=23562, no action for "").
 func TestFirehoseF6RG1_AllRowsHaveAction(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("eng", "neural")
@@ -813,6 +840,7 @@ func TestFirehoseF6RG1_AllRowsHaveAction(t *testing.T) {
 // POMO_firehose-transcript-goroutine-leak-suite-order for the same underlying goroutine-leak
 // bug class.
 func TestFirehoseScoring_Integration(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -917,6 +945,7 @@ func buildFirehoseFrame(t *testing.T, seq int64, repo, postPath string, postText
 
 // BT-1: processFirehoseMessage populates firehosePost.Text from CAR blocks.
 func TestFirehoseCARBT1_ProcessMessagePopulatesText(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "evaluation")
@@ -941,6 +970,7 @@ func TestFirehoseCARBT1_ProcessMessagePopulatesText(t *testing.T) {
 
 // BT-2: End-to-end: firehose post text extracted from CAR blocks reaches the scoreAsync prompt.
 func TestFirehoseCARBT2_TextReachesScoreAsync(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -993,6 +1023,7 @@ func TestFirehoseCARBT3_DeleteOpsNilCID(t *testing.T) {
 
 // RG-1: Firehose items with non-empty text in CAR blocks are never scored with empty content.
 func TestFirehoseCARRG1_NonEmptyTextNeverScoredEmpty(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
@@ -1036,5 +1067,141 @@ func TestFirehoseCARRG2_ATURINotSentToJina(t *testing.T) {
 
 	if jinaCalled {
 		t.Fatal("RG-2: at:// URI reached Jina  -  AT-URI short-circuit missing in FetchWithFallback")
+	}
+}
+
+// =====================================================================
+// EPIC firehose-relevance-filtering M3: explicit transcript score gate.
+// Score-0 "Skip" verdicts must NOT produce a transcript file.
+// =====================================================================
+
+// M3-CT-1: score=0 verdict starting with "Skip" produces no transcript file.
+func TestFirehoseM3_SkipVerdictNoTranscript(t *testing.T) {
+	bypassFirehoseMinLen(t)
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("eng", "weather")
+
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
+	deps.TranscriptsDir = transcriptDir
+
+	scoreDone := make(chan struct{})
+	deps.DoneHook = func() { close(scoreDone) }
+
+	eval := &stubEvaluator{score: 0, verdict: "Skip: radio now-playing announcement"}
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
+
+	post := &firehosePost{
+		AtURI: "at://did:plc:test/app.bsky.feed.post/m3-skip",
+		Text:  "weather update now playing: sunny skies all afternoon",
+		Repo:  "did:plc:test",
+		Seq:   8001,
+	}
+	if err := handleFirehosePost(context.Background(), fsc, post); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-scoreDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("M3-CT-1: scoreAsync did not complete within 5s")
+	}
+
+	// No transcript file should exist for a Skip-verdict row.
+	entries, _ := filepath.Glob(filepath.Join(transcriptDir, "*.md"))
+	if len(entries) > 0 {
+		t.Fatalf("M3-CT-1: transcript file(s) written for Skip verdict: %v", entries)
+	}
+}
+
+// M3-CT-2: score>0 verdict produces a transcript file (gate should not suppress it).
+func TestFirehoseM3_NonSkipVerdictHasTranscript(t *testing.T) {
+	bypassFirehoseMinLen(t)
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("eng", "transformer")
+
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
+	deps.TranscriptsDir = transcriptDir
+
+	scoreDone := make(chan struct{})
+	deps.DoneHook = func() { close(scoreDone) }
+
+	eval := &stubEvaluator{score: 75, verdict: "Worth Reading"}
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
+
+	// Provide non-empty content via a successful Jina response so the URL branch
+	// actually hits the saveTranscriptFile call.
+	jinaServer := jinaBodyServer(t, 200, "transformer architecture deep dive discussion")
+	deps.Jina = &jinaClient{baseURL: jinaServer.URL + "/", http: jinaServer.Client()}
+
+	post := &firehosePost{
+		AtURI: "at://did:plc:test/app.bsky.feed.post/m3-scored",
+		Text:  "new transformer architecture discussion",
+		Repo:  "did:plc:test",
+		Seq:   8002,
+	}
+	if err := handleFirehosePost(context.Background(), fsc, post); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-scoreDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("M3-CT-2: scoreAsync did not complete within 5s")
+	}
+
+	entries, _ := filepath.Glob(filepath.Join(transcriptDir, "*.md"))
+	if len(entries) == 0 {
+		t.Fatal("M3-CT-2: no transcript file for non-Skip verdict  -  score gate over-suppressed")
+	}
+}
+
+// M3-RG-1: score=0 with verdict NOT starting with "Skip" still produces a transcript.
+// Guards against over-broad suppression (e.g. a score=0 "Worth Monitoring" verdict).
+func TestFirehoseM3_ScoreZeroNonSkipVerdictHasTranscript(t *testing.T) {
+	bypassFirehoseMinLen(t)
+	deps := installJinaServer(t, jinaBodyServer(t, 404, ""))
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("eng", "sparse")
+
+	transcriptDir := filepath.Join(t.TempDir(), "transcripts")
+	deps.TranscriptsDir = transcriptDir
+
+	scoreDone := make(chan struct{})
+	deps.DoneHook = func() { close(scoreDone) }
+
+	// score=0 but verdict does NOT start with "Skip"  -  should NOT be suppressed.
+	eval := &stubEvaluator{score: 0, verdict: "Worth Monitoring (insufficient signal)"}
+	fsc := testFSCWithEval(t, q, eval)
+	fsc.Deps = deps
+
+	jinaServer := jinaBodyServer(t, 200, "sparse attention mechanism overview")
+	deps.Jina = &jinaClient{baseURL: jinaServer.URL + "/", http: jinaServer.Client()}
+
+	post := &firehosePost{
+		AtURI: "at://did:plc:test/app.bsky.feed.post/m3-rg1",
+		Text:  "sparse attention mechanism overview paper",
+		Repo:  "did:plc:test",
+		Seq:   8003,
+	}
+	if err := handleFirehosePost(context.Background(), fsc, post); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-scoreDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("M3-RG-1: scoreAsync did not complete within 5s")
+	}
+
+	entries, _ := filepath.Glob(filepath.Join(transcriptDir, "*.md"))
+	if len(entries) == 0 {
+		t.Fatal("M3-RG-1: transcript suppressed for score=0 non-Skip verdict  -  gate is too broad")
 	}
 }

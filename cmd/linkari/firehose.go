@@ -28,6 +28,15 @@ import (
 // this signal rather than retrying with the same stale cursor indefinitely.
 var errCursorExpired = errors.New("relay error frame  -  cursor expired or rejected")
 
+// firehoseMinPostTextLen is the minimum number of UTF-8 bytes a post's text
+// must contain before the post proceeds to subscription matching and enqueue.
+// Posts shorter than this limit are rejected with a firehose_post_prefilter_reject
+// log event (M1). The value reflects the scorer's observed skip threshold for
+// "<200 chars" verdicts - 120 chars catches noise while preserving borderline
+// legitimate posts that gain context from embedded links.
+// To override in tests, set firehoseScoreContext.MinPostTextLen instead.
+const firehoseMinPostTextLen = 120
+
 // firehosePost represents a decoded Bluesky post from the firehose.
 type firehosePost struct {
 	AtURI string
@@ -353,12 +362,19 @@ func processFirehoseMessage(ctx context.Context, fsc *firehoseScoreContext, msg 
 func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *firehosePost) error {
 	q := fsc.Queue
 
-	// Dedup guard: skip if same AT URI already seen (BT-1, BT-4).
-	isNew, err := q.IsNewContent("bsky_firehose", post.AtURI)
-	if err != nil || !isNew {
+	// M1: Pre-score gate  -  reject posts whose text is too short to be
+	// substantive. The scorer reliably returns "Skip" for posts under ~200
+	// characters; this gate cuts scoring cost before any DB writes.
+	if !fsc.BypassMinPostTextLen && len(post.Text) < firehoseMinPostTextLen {
+		slog.Debug(
+			"firehose post prefilter reject",
+			"event_type", "firehose_post_prefilter_reject",
+			"reason", "text_too_short",
+			"text_len", len(post.Text),
+			"at_uri", post.AtURI,
+		)
 		return nil
 	}
-	_ = q.MarkContentSeen("bsky_firehose", post.AtURI, 0)
 
 	// Collect all subscriptions into a slice before doing any writes.
 	// With MaxOpenConns=1, holding an open rows cursor while calling write
@@ -381,84 +397,106 @@ func handleFirehosePost(ctx context.Context, fsc *firehoseScoreContext, post *fi
 		return err
 	}
 
+	// M2: Collect all matching subscriptions for this post before any writes.
+	// A single post may match multiple keywords in overlapping subscriptions.
+	// Enqueue it exactly once and record all matched keywords together.
 	textLower := strings.ToLower(post.Text + " " + post.AtURI)
+	var matchedKeywords []string
+	var resolvedProfile string
 	for _, s := range subs {
 		if !strings.Contains(textLower, s.keyword) {
 			continue
 		}
-
-		resolvedProfile := resolveFirehoseProfile(s.profile)
-		req := &ShareRequest{
-			URL:     post.AtURI,
-			Text:    post.Text,
-			Profile: resolvedProfile,
-			Type:    "url",
-			Action:  firehoseActionForProfile(resolvedProfile),
+		matchedKeywords = append(matchedKeywords, s.keyword)
+		if resolvedProfile == "" {
+			resolvedProfile = resolveFirehoseProfile(s.profile)
 		}
-		rowID, err := q.EnqueueWithSource(req, "firehose")
-		if err != nil {
-			slog.Warn("firehose enqueue error", "error", err)
-			continue
-		}
-		req.QueueRowID = rowID
+	}
+	if len(matchedKeywords) == 0 {
+		return nil
+	}
 
-		slog.Info(
-			"firehose commit matched",
-			"event_type", "firehose_commit_matched",
-			"seq", post.Seq,
-			"at_uri", post.AtURI,
-			"keyword", s.keyword,
-			"profile", resolvedProfile,
-			"queue_id", rowID,
-		)
+	// Dedup guard: check and mark seen only after we know the post matches.
+	// This keeps unmatched URIs out of the seen-content table entirely.
+	isNew, err := q.IsNewContent("bsky_firehose", post.AtURI)
+	if err != nil || !isNew {
+		return nil
+	}
+	_ = q.MarkContentSeen("bsky_firehose", post.AtURI, 0)
 
-		// Launch scoreAsync in a goroutine, bounded by the semaphore (max 3 concurrent).
-		if fsc.Eval != nil {
-			go func(req *ShareRequest, keyword, profile string) {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error(
-							"firehose scoring goroutine panicked",
-							"event_type", "firehose_scoring_panic",
-							"queue_id", req.QueueRowID,
-							"panic", r,
-						)
-						if req.QueueRowID > 0 {
-							_ = q.MarkFailedWithReason(req.QueueRowID, fmt.Sprintf("panic: %v", r))
-						}
-					}
-				}()
+	// Enqueue a single row for the post, regardless of how many keywords matched.
+	keywordsJoined := strings.Join(matchedKeywords, ",")
+	req := &ShareRequest{
+		URL:     post.AtURI,
+		Text:    post.Text,
+		Profile: resolvedProfile,
+		Type:    "url",
+		Action:  firehoseActionForProfile(resolvedProfile),
+	}
+	rowID, err := q.EnqueueWithSource(req, "firehose")
+	if err != nil {
+		slog.Warn("firehose enqueue error", "error", err)
+		return nil
+	}
+	req.QueueRowID = rowID
 
-				// Log semaphore_wait if all 3 slots are busy (channel at capacity).
-				if len(fsc.ScoreSem) == cap(fsc.ScoreSem) {
-					slog.Warn(
-						"firehose scoring semaphore wait",
-						"event_type", "firehose_semaphore_wait",
+	slog.Info(
+		"firehose commit matched",
+		"event_type", "firehose_commit_matched",
+		"seq", post.Seq,
+		"at_uri", post.AtURI,
+		"keywords", keywordsJoined,
+		"keyword_count", len(matchedKeywords),
+		"profile", resolvedProfile,
+		"queue_id", rowID,
+	)
+
+	// Launch scoreAsync in a goroutine, bounded by the semaphore (max 3 concurrent).
+	if fsc.Eval != nil {
+		go func(req *ShareRequest, keywords, profile string) {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error(
+						"firehose scoring goroutine panicked",
+						"event_type", "firehose_scoring_panic",
 						"queue_id", req.QueueRowID,
-						"active_goroutines", cap(fsc.ScoreSem),
+						"panic", r,
 					)
+					if req.QueueRowID > 0 {
+						_ = q.MarkFailedWithReason(req.QueueRowID, fmt.Sprintf("panic: %v", r))
+					}
 				}
-				fsc.ScoreSem <- struct{}{}
-				defer func() { <-fsc.ScoreSem }()
+			}()
 
-				start := time.Now()
-				slog.Info(
-					"firehose scoring started",
-					"event_type", "firehose_scoring_started",
+			// Log semaphore_wait if all 3 slots are busy (channel at capacity).
+			if len(fsc.ScoreSem) == cap(fsc.ScoreSem) {
+				slog.Warn(
+					"firehose scoring semaphore wait",
+					"event_type", "firehose_semaphore_wait",
 					"queue_id", req.QueueRowID,
-					"at_uri", req.URL,
-					"profile", profile,
-					"keyword", keyword,
+					"active_goroutines", cap(fsc.ScoreSem),
 				)
-				scoreAsync(req, q, fsc.Eval, fsc.Events, fsc.BskyClient, nil, fsc.Deps)
-				slog.Info(
-					"firehose scoring goroutine done",
-					"event_type", "firehose_scoring_done",
-					"queue_id", req.QueueRowID,
-					"latency_ms", time.Since(start).Milliseconds(),
-				)
-			}(req, s.keyword, resolvedProfile)
-		}
+			}
+			fsc.ScoreSem <- struct{}{}
+			defer func() { <-fsc.ScoreSem }()
+
+			start := time.Now()
+			slog.Info(
+				"firehose scoring started",
+				"event_type", "firehose_scoring_started",
+				"queue_id", req.QueueRowID,
+				"at_uri", req.URL,
+				"profile", profile,
+				"keywords", keywords,
+			)
+			scoreAsync(req, q, fsc.Eval, fsc.Events, fsc.BskyClient, nil, fsc.Deps)
+			slog.Info(
+				"firehose scoring goroutine done",
+				"event_type", "firehose_scoring_done",
+				"queue_id", req.QueueRowID,
+				"latency_ms", time.Since(start).Milliseconds(),
+			)
+		}(req, keywordsJoined, resolvedProfile)
 	}
 	return nil
 }

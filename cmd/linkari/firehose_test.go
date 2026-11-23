@@ -15,6 +15,7 @@ import (
 // CT-1: keyword match → queue row with source='firehose' and status='pending' (not 'relayed').
 // Score=0 push removed in EPIC-123 M3; scored push comes from scoreAsync (requires M4 wiring).
 func TestFirehoseCT1_KeywordMatch(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	if err := q.AddFirehoseSubscription("default", "golang"); err != nil {
@@ -44,6 +45,7 @@ func TestFirehoseCT1_KeywordMatch(t *testing.T) {
 
 // CT-2: no-match commit → zero queue rows
 func TestFirehoseCT2_NoMatch(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	if err := q.AddFirehoseSubscription("default", "golang"); err != nil {
@@ -88,6 +90,7 @@ func TestFirehoseCT3_CursorResume(t *testing.T) {
 
 // CT-4: Malformed CBOR → worker skips, continues
 func TestFirehoseCT4_MalformedCBOR(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	if err := q.AddFirehoseSubscription("default", "golang"); err != nil {
@@ -123,6 +126,7 @@ func TestFirehoseCT5_IdempotentSubscription(t *testing.T) {
 
 // BT-1: dedup guard  -  same AT URI twice → only one queue row
 func TestFirehoseBT1_DeduplicateGuard(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	if err := q.AddFirehoseSubscription("default", "golang"); err != nil {
@@ -175,6 +179,7 @@ func TestFirehoseBT3_RemoveSubscription(t *testing.T) {
 
 // BT-4: Same AT URI within 5-min dedup window → zero additional queue rows
 func TestFirehoseBT4_DedupWindow(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("default", "golang")
@@ -197,6 +202,7 @@ func TestFirehoseBT4_DedupWindow(t *testing.T) {
 
 // RG-1: 10 firehose queue rows → EnqueueDigestIfDue for non-firehose profile still works
 func TestFirehoseRG1_ThrottleIsolation(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	_ = q.AddFirehoseSubscription("work", "golang")
@@ -249,6 +255,7 @@ func TestFirehoseRG2_NoExitOnError(t *testing.T) {
 
 // TestFirehoseIntegration: mock relay → keyword match → queue row → push_outbox kind='notify'
 func TestFirehoseIntegration(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	if err := q.AddFirehoseSubscription("default", "golang"); err != nil {
@@ -293,6 +300,7 @@ func TestFirehoseIntegration(t *testing.T) {
 // Regression guard: this test must pass after any change to processFirehoseMessage.
 // If it breaks, the ATProto framing assumption has regressed.
 func TestFirehoseRGN_RealFrameDecodes(t *testing.T) {
+	bypassFirehoseMinLen(t)
 	q, _, cleanup := setupTestQueue(t)
 	defer cleanup()
 	if err := q.AddFirehoseSubscription("default", "regressiontest"); err != nil {
@@ -581,5 +589,171 @@ func TestFirehoseCARCT8_ATURIShortCircuit(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("CT-8: expected error for at:// URI, got nil")
+	}
+}
+
+// =====================================================================
+// EPIC firehose-relevance-filtering: M1 pre-score gate, M2 single-enqueue,
+// M3 transcript score gate.
+// =====================================================================
+
+// gateFSC returns a firehoseScoreContext with BypassMinPostTextLen=false
+// (gate active). Use for M1 tests that verify the gate itself.
+func gateFSC(q *Queue) *firehoseScoreContext {
+	return &firehoseScoreContext{Queue: q, ScoreSem: make(chan struct{}, 3), BypassMinPostTextLen: false}
+}
+
+// M1-CT-1: Post text shorter than firehoseMinPostTextLen is NOT enqueued.
+func TestFirehoseM1_TextTooShort_Rejected(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("default", "golang")
+
+	shortPost := &firehosePost{
+		AtURI: "at://did:plc:test/app.bsky.feed.post/m1-short",
+		Text:  "golang is cool", // 14 chars  -  well under 120
+		Repo:  "did:plc:test",
+		Seq:   7001,
+	}
+	if err := handleFirehosePost(context.Background(), gateFSC(q), shortPost); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=?", shortPost.AtURI).Scan(&count)
+	if count != 0 {
+		t.Fatalf("M1-CT-1: short post was enqueued (count=%d)  -  pre-score gate not applied", count)
+	}
+}
+
+// M1-CT-2: Post text exactly at the minimum length IS enqueued.
+func TestFirehoseM1_TextAtThreshold_Enqueued(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("default", "golang")
+
+	// Build a text that starts with the keyword and is exactly firehoseMinPostTextLen bytes.
+	base := "golang "
+	for len(base) < firehoseMinPostTextLen {
+		base += "x"
+	}
+	base = base[:firehoseMinPostTextLen]
+
+	exactPost := &firehosePost{
+		AtURI: "at://did:plc:test/app.bsky.feed.post/m1-exact",
+		Text:  base,
+		Repo:  "did:plc:test",
+		Seq:   7002,
+	}
+	if err := handleFirehosePost(context.Background(), gateFSC(q), exactPost); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=?", exactPost.AtURI).Scan(&count)
+	if count != 1 {
+		t.Fatalf("M1-CT-2: post at threshold not enqueued (count=%d)", count)
+	}
+}
+
+// M1-RG-1: Short post is NOT added to seen-content (a later longer post with same URI is accepted).
+func TestFirehoseM1_ShortPostNotMarkedSeen(t *testing.T) {
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("default", "golang")
+
+	uri := "at://did:plc:test/app.bsky.feed.post/m1-rg1"
+
+	// First call: short post  -  should be rejected and NOT marked seen.
+	shortPost := &firehosePost{AtURI: uri, Text: "golang tip", Repo: "did:plc:test", Seq: 7003}
+	_ = handleFirehosePost(context.Background(), gateFSC(q), shortPost)
+
+	// Second call: same URI, long post  -  should be accepted because the URI was never marked seen.
+	base := "golang "
+	for len(base) < firehoseMinPostTextLen {
+		base += "a"
+	}
+	longPost := &firehosePost{AtURI: uri, Text: base[:firehoseMinPostTextLen], Repo: "did:plc:test", Seq: 7004}
+	_ = handleFirehosePost(context.Background(), gateFSC(q), longPost)
+
+	var count int
+	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=?", uri).Scan(&count)
+	if count != 1 {
+		t.Fatalf("M1-RG-1: expected 1 queue row for the long follow-up post, got %d", count)
+	}
+}
+
+// M2-CT-1: A post matching 3 keywords produces exactly 1 queue row.
+func TestFirehoseM2_MultiKeyword_SingleEnqueue(t *testing.T) {
+	bypassFirehoseMinLen(t)
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("eng", "agent")
+	_ = q.AddFirehoseSubscription("eng", "agents")
+	_ = q.AddFirehoseSubscription("eng", "claude")
+
+	post := &firehosePost{
+		AtURI: "at://did:plc:test/app.bsky.feed.post/m2-multi",
+		Text:  "building agents with the claude agent SDK",
+		Repo:  "did:plc:test",
+		Seq:   7010,
+	}
+	if err := handleFirehosePost(context.Background(), testFSC(q), post); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE source='firehose'").Scan(&count)
+	if count != 1 {
+		t.Fatalf("M2-CT-1: expected 1 queue row for a post matching 3 keywords, got %d", count)
+	}
+}
+
+// M2-CT-2: When a post matches 2 subscriptions, the dedup guard fires only once.
+func TestFirehoseM2_DeduplicateOnceAcrossKeywords(t *testing.T) {
+	bypassFirehoseMinLen(t)
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("eng", "llm")
+	_ = q.AddFirehoseSubscription("eng", "inference")
+
+	post := &firehosePost{
+		AtURI: "at://did:plc:test/app.bsky.feed.post/m2-dedup",
+		Text:  "llm inference improvements",
+		Repo:  "did:plc:test",
+		Seq:   7011,
+	}
+	// First call: should enqueue 1 row.
+	_ = handleFirehosePost(context.Background(), testFSC(q), post)
+	// Second call: same URI, now marked seen  -  should produce no additional rows.
+	_ = handleFirehosePost(context.Background(), testFSC(q), post)
+
+	var count int
+	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=?", post.AtURI).Scan(&count)
+	if count != 1 {
+		t.Fatalf("M2-CT-2: expected 1 total queue row after two calls, got %d", count)
+	}
+}
+
+// M2-RG-1: A no-match post is NOT added to seen-content.
+func TestFirehoseM2_NoMatchNotMarkedSeen(t *testing.T) {
+	bypassFirehoseMinLen(t)
+	q, _, cleanup := setupTestQueue(t)
+	defer cleanup()
+	_ = q.AddFirehoseSubscription("eng", "golang")
+
+	uri := "at://did:plc:test/app.bsky.feed.post/m2-nomatch"
+	noMatchPost := &firehosePost{AtURI: uri, Text: "python is great", Repo: "did:plc:test", Seq: 7012}
+	_ = handleFirehosePost(context.Background(), testFSC(q), noMatchPost)
+
+	// Same URI now matches (content differs but URI is the identifier).
+	// Since the no-match post was never seen, the matching one should enqueue.
+	matchPost := &firehosePost{AtURI: uri, Text: "golang is also great", Repo: "did:plc:test", Seq: 7013}
+	_ = handleFirehosePost(context.Background(), testFSC(q), matchPost)
+
+	var count int
+	q.db.QueryRow("SELECT COUNT(*) FROM queue WHERE url=?", uri).Scan(&count)
+	if count != 1 {
+		t.Fatalf("M2-RG-1: expected 1 queue row for matching post after no-match, got %d", count)
 	}
 }
