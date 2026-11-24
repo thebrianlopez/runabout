@@ -82,15 +82,14 @@ jobs:
       - name: Run chain eval (all fixtures)
         if: github.event.inputs.fixture == ''
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
           HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
           # docs-core repo layout: prompts/command_chain.md (no core/ prefix)
           CHAIN_PROMPTS_DIR: docs-core/prompts
           CHAIN_FIXTURES_DIR: cmd/chain-eval/fixtures
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "⚠ ANTHROPIC_API_KEY not set  -  skipping live eval"
+          if ! command -v pi >/dev/null 2>&1; then
+            echo "pi CLI not installed on runner  -  skipping live eval"
             exit 0
           fi
           MIN_SCORE="${{ github.event.inputs.min_score || '0.85' }}"
@@ -99,14 +98,13 @@ jobs:
       - name: Run chain eval (single fixture)
         if: github.event.inputs.fixture != ''
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
           HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
           CHAIN_PROMPTS_DIR: docs-core/prompts
           CHAIN_FIXTURES_DIR: cmd/chain-eval/fixtures
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "⚠ ANTHROPIC_API_KEY not set  -  skipping live eval"
+          if ! command -v pi >/dev/null 2>&1; then
+            echo "pi CLI not installed on runner  -  skipping live eval"
             exit 0
           fi
           MIN_SCORE="${{ github.event.inputs.min_score || '0.85' }}"

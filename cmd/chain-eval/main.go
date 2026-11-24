@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/spf13/cobra"
+	"github.com/thebrianlopez/runabout/internal/scoringcli"
 )
 
 func main() {
@@ -119,8 +119,9 @@ func run(ctx context.Context, cfg runConfig) int {
 		return dryRun(cfg)
 	}
 
-	if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		fmt.Fprintln(os.Stderr, "chain-eval: ANTHROPIC_API_KEY required")
+	piPath := os.Getenv("CHAIN_EVAL_PI")
+	if err := scoringcli.ValidateBinary(piPath); err != nil {
+		fmt.Fprintf(os.Stderr, "chain-eval: pi CLI required (CLI-only auth; no provider API keys): %v\n", err)
 		return 2
 	}
 	if os.Getenv("HUGGINGFACE_API_KEY") == "" {
@@ -154,11 +155,9 @@ func run(ctx context.Context, cfg runConfig) int {
 
 	runID := fmt.Sprintf("%s-%s", promptSHA(prompt), time.Now().UTC().Format("20060102T150405Z"))
 	coll := &scoreCollector{byDim: make(map[string][]float64)}
-	client := anthropic.NewClient()
 
 	// Run fixtures with bounded concurrency, collect ResultRows for hub push.
-	// Default to 1 to stay under low Anthropic TPM limits; callers can raise with
-	// CHAIN_EVAL_CONCURRENCY once quota is available.
+	// Default to 1; callers can raise with CHAIN_EVAL_CONCURRENCY.
 	concurrency := 1
 	if raw := os.Getenv("CHAIN_EVAL_CONCURRENCY"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
@@ -175,7 +174,7 @@ func run(ctx context.Context, cfg runConfig) int {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			output, inputTokens, taskErr := runTask(ctx, &client, prompt, fixturesDir, cas.Input)
+			output, taskErr := runTask(ctx, piPath, prompt, fixturesDir, cas.Input)
 			if taskErr != nil {
 				coll.record("next_action", 0)
 				coll.record("validate_recall", 0)
@@ -194,7 +193,7 @@ func run(ctx context.Context, cfg runConfig) int {
 				return
 			}
 
-			tr := TaskResult{Input: cas.Input, Output: output, InputTokens: inputTokens}
+			tr := TaskResult{Input: cas.Input, Output: output, InputTokens: 0}
 			na, naJ := scoreNextAction(ctx, tr)
 			vr, vrJ := scoreValidateRecall(ctx, tr)
 			ia, _ := scoreIconAccuracy(ctx, tr)
@@ -274,29 +273,30 @@ type EvalCase struct {
 	Input ChainInput
 }
 
-func runTask(ctx context.Context, client *anthropic.Client, prompt, fixturesDir string, input ChainInput) (string, int, error) {
+func runTask(ctx context.Context, piPath, prompt, fixturesDir string, input ChainInput) (string, error) {
 	fixtureDir := filepath.Join(fixturesDir, input.Fixture)
 	fixtureContent, err := loadFixture(fixtureDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "chain-eval: fixture '%s' not found - skipped\n", input.Fixture)
-		return "", 0, fmt.Errorf("fixture '%s': %w", input.Fixture, err)
+		return "", fmt.Errorf("fixture '%s': %w", input.Fixture, err)
 	}
 
 	userMsg := fmt.Sprintf("Command: %s\n\nDocs state:\n\n%s", input.Command, fixtureContent)
-	msg, err := client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeHaiku4_5,
-		MaxTokens: 1024,
-		System:    []anthropic.TextBlockParam{{Text: prompt}},
-		Messages:  []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(userMsg))},
+	model := os.Getenv("CHAIN_EVAL_MODEL")
+	raw, err := scoringcli.CompleteJSON(ctx, scoringcli.JSONOpts{
+		BinaryPath:   piPath,
+		Model:        model,
+		SystemPrompt: prompt,
+		Content:      userMsg,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "chain-eval: fixture '%s': API error: %v - scored 0\n", input.Fixture, err)
-		return "", 0, err
+		fmt.Fprintf(os.Stderr, "chain-eval: fixture '%s': pi:json error: %v - scored 0\n", input.Fixture, err)
+		return "", err
 	}
-	if len(msg.Content) == 0 {
-		return "", 0, fmt.Errorf("fixture '%s': empty response", input.Fixture)
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return "", fmt.Errorf("fixture '%s': empty response", input.Fixture)
 	}
-	return msg.Content[0].Text, int(msg.Usage.InputTokens), nil
+	return string(raw), nil
 }
 
 func loadFixture(dir string) (string, error) {

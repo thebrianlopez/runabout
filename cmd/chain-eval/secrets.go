@@ -12,10 +12,8 @@ import (
 
 // loadSecrets fetches each named secret from AWS Secrets Manager and populates
 // the process environment. Each secret must be stored as a JSON object whose
-// keys become environment variables: {"ANTHROPIC_API_KEY": "sk-...", ...}.
-// Values are set via os.Setenv so subsequent os.Getenv calls (including the
-// ANTHROPIC_API_KEY and BRAINTRUST_API_KEY checks in run()) see them without
-// any other changes to the binary.
+// keys become environment variables (for example Hugging Face tokens).
+// Values are set via os.Setenv so subsequent os.Getenv calls see them.
 //
 // Accepts secret names, full ARNs, or partial ARNs - whatever GetSecretValue accepts.
 // Returns nil immediately when secretIDs is empty (no-op for direct env var usage).
