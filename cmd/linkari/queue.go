@@ -866,6 +866,12 @@ type TimedOutRelayed struct {
 // SelectStuckRelayed returns relayed rows older than maxAge relative to now,
 // without marking them failed. Split from SweepRelayedTimeouts so the watchdog
 // can interpose a rescue attempt between selection and fail-marking.
+//
+// Staleness is measured from relayed_at when set (the most recent relay/requeue
+// timestamp), falling back to queued_at. This prevents replayed rows with an
+// old queued_at from being falsely flagged as stuck while they are actively
+// scoring. See EPIC-055 for the original known bug with queued_at only.
+//
 // EPIC-055 M1.
 func (q *Queue) SelectStuckRelayed(now time.Time, maxAge time.Duration) ([]TimedOutRelayed, error) {
 	if maxAge <= 0 {
@@ -873,8 +879,8 @@ func (q *Queue) SelectStuckRelayed(now time.Time, maxAge time.Duration) ([]Timed
 	}
 	cutoff := now.Add(-maxAge).UTC().Format(time.RFC3339)
 	rows, err := q.db.Query(
-		`SELECT id, url, COALESCE(profile,''), queued_at
-		 FROM queue WHERE status='relayed' AND queued_at < ?`,
+		`SELECT id, url, COALESCE(profile,''), queued_at, COALESCE(relayed_at,'')
+		 FROM queue WHERE status='relayed' AND COALESCE(relayed_at, queued_at) < ?`,
 		cutoff,
 	)
 	if err != nil {
@@ -883,11 +889,18 @@ func (q *Queue) SelectStuckRelayed(now time.Time, maxAge time.Duration) ([]Timed
 	var stuck []TimedOutRelayed
 	for rows.Next() {
 		var t TimedOutRelayed
-		if err := rows.Scan(&t.ID, &t.URL, &t.Profile, &t.QueuedAt); err != nil {
+		var relayedAt string
+		if err := rows.Scan(&t.ID, &t.URL, &t.Profile, &t.QueuedAt, &relayedAt); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("select stuck scan: %w", err)
 		}
-		if parsed, perr := time.Parse(time.RFC3339, t.QueuedAt); perr == nil {
+		// Use relayed_at for AgeSecs when available; it reflects the most recent
+		// relay/requeue time and is more accurate for replayed rows.
+		basis := relayedAt
+		if basis == "" {
+			basis = t.QueuedAt
+		}
+		if parsed, perr := time.Parse(time.RFC3339, basis); perr == nil {
 			t.AgeSecs = int64(now.Sub(parsed).Seconds())
 		}
 		stuck = append(stuck, t)
@@ -935,7 +948,7 @@ func (q *Queue) IngestScoreIfRelayed(id int64, score int, tags, verdict, slug, p
 	return n > 0, nil
 }
 
-// SweepRelayedTimeouts finds `relayed` rows whose queued_at is older than
+// SweepRelayedTimeouts finds `relayed` rows whose COALESCE(relayed_at, queued_at) is older than
 // maxAge relative to `now`, marks each one failed with error_reason
 // "scoring_timeout", and returns the swept rows (for event emission by the
 // caller). The WHERE status='relayed' filter guarantees idempotency  -  a row

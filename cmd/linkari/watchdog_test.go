@@ -509,3 +509,67 @@ func TestEPIC054WorkspaceKeyInvariant(t *testing.T) {
 		t.Errorf("expected 2 score_ingested events (one per profile), got %d", ingestedCount)
 	}
 }
+
+// enqueueRelayedReplay inserts a row with an old queued_at (simulating an
+// original enqueue) but a recent relayed_at (simulating a fresh requeue/replay).
+// After the fix, the watchdog must use relayed_at as the staleness basis and
+// leave such a row untouched.
+func enqueueRelayedReplay(t *testing.T, q *Queue, url, profile string, queuedAge, relayedAge time.Duration) int64 {
+	t.Helper()
+	queuedAt := time.Now().Add(-queuedAge).UTC().Format(time.RFC3339)
+	relayedAt := time.Now().Add(-relayedAge).UTC().Format(time.RFC3339)
+	res, err := q.db.Exec(
+		`INSERT INTO queue (url, text, type, action, profile, status, queued_at, relayed_at)
+		 VALUES (?, '', 'url', '', ?, 'relayed', ?, ?)`,
+		url, profile, queuedAt, relayedAt,
+	)
+	if err != nil {
+		t.Fatalf("insert replay row: %v", err)
+	}
+	id, _ := res.LastInsertId()
+	return id
+}
+
+// TestWatchdog_ReplayedRow_RecentRelayedAt_NotFlagged verifies that a row with
+// an old queued_at but a recent relayed_at is NOT flagged as scoring_timeout.
+// This covers the documented known bug: before the fix, any replayed row with
+// queued_at older than maxAge was falsely marked failed while actively scoring.
+func TestWatchdog_ReplayedRow_RecentRelayedAt_NotFlagged(t *testing.T) {
+	q, events, eventsPath := newWatchdogTestEnv(t)
+
+	// Row originally enqueued 2 hours ago (well past the 15 min maxAge),
+	// but replayed/re-relayed only 1 minute ago.
+	id := enqueueRelayedReplay(t, q, "https://replay.test", "eng", 2*time.Hour, 1*time.Minute)
+
+	w := NewRelayedWatchdog(q, events, defaultTestCfg())
+	w.sweepOnce(time.Now(), defaultTestCfg())
+
+	status, reason := getStatus(t, q, id)
+	if status != "relayed" || reason != "" {
+		t.Errorf("replayed row with recent relayed_at: got (status=%q, reason=%q), want (relayed, \"\")", status, reason)
+	}
+	if evs := readEvents(t, eventsPath); len(evs) != 0 {
+		t.Errorf("expected no events for in-window replay row, got %d", len(evs))
+	}
+}
+
+// TestWatchdog_ReplayedRow_StaleRelayedAt_Flagged verifies that a row with
+// both an old queued_at AND an old relayed_at is still flagged as scoring_timeout.
+func TestWatchdog_ReplayedRow_StaleRelayedAt_Flagged(t *testing.T) {
+	q, events, _ := newWatchdogTestEnv(t)
+
+	// Row originally enqueued 2 hours ago and replayed 30 minutes ago — both
+	// past the 15 min maxAge window. Should still be caught by the watchdog.
+	id := enqueueRelayedReplay(t, q, "https://stale-replay.test", "eng", 2*time.Hour, 30*time.Minute)
+
+	w := NewRelayedWatchdog(q, events, defaultTestCfg())
+	w.sweepOnce(time.Now(), defaultTestCfg())
+
+	status, reason := getStatus(t, q, id)
+	if status != "failed" {
+		t.Errorf("stale replayed row: got status=%q, want failed", status)
+	}
+	if reason != "scoring_timeout" {
+		t.Errorf("stale replayed row: got error_reason=%q, want scoring_timeout", reason)
+	}
+}
