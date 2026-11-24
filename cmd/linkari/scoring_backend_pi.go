@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/thebrianlopez/runabout/internal/scoringcli"
 )
 
 // PiScoringBackend implements ScoringBackend by delegating single-turn LLM
@@ -79,45 +81,13 @@ func (b PiScoringBackend) Name() string { return "pi" }
 // the model knows the required shape; pi --print emits only the final text
 // block (no JSONL events). parseHaikuEnvelope handles bare JSON from Pi.
 func (b PiScoringBackend) CompleteJSON(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
-	// Inject JSON schema constraint into the system prompt  -  mirrors the
-	// IMPORTANT suffix that runClaudeHaikuJSON adds for the claude_cli path.
-	// Without this, pi returns free prose and parseHaikuEnvelope rejects it.
-	if schema != "" {
-		systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching this schema. " +
-			"No markdown, no fences, no commentary. For skipped/noise content return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}, \"workspace\": \"none\", \"workspace_confidence\": 0}." +
-			"\n\nSchema:\n" + schema
-	}
-	binaryPath := b.BinaryPath
-	if binaryPath == "" {
-		binaryPath = "pi"
-	}
-	args := []string{
-		"--print",
-		"--no-session",
-		"--no-builtin-tools",
-	}
-	args = append(args, piHermeticFlags()...)
-	args = append(
-		args,
-		"--model", b.model,
-		"--system-prompt", systemPrompt,
-	)
-	cmd := exec.CommandContext(ctx, binaryPath, args...)
-	cmd.Stdin = strings.NewReader(content)
-	cmd.Dir = os.TempDir()
-	cmd.Env = piEnv()
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("pi exec: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
-	}
-	out := bytes.TrimSpace(stdout.Bytes())
-	if len(out) == 0 {
-		return nil, fmt.Errorf("pi returned empty output")
-	}
-	return out, nil
+	return scoringcli.CompleteJSON(ctx, scoringcli.JSONOpts{
+		BinaryPath:   b.BinaryPath,
+		Model:        b.model,
+		SystemPrompt: systemPrompt,
+		Content:      content,
+		Schema:       schema,
+	})
 }
 
 // CompleteVision sends the multimodal prompt to pi, using the Read tool for
