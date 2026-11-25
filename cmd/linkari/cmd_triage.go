@@ -47,8 +47,10 @@ type TriageResult struct {
 const claudeModel = "claude-haiku-4-5-20251001"
 
 // EPIC-217 F4: pi scoring backend go-forward defaults (GPT Luna).
-const piDefaultProvider = "openai-codex"
-const piDefaultModel = "gpt-6-luna"
+const (
+	piDefaultProvider = "openai-codex"
+	piDefaultModel    = "gpt-6-luna"
+)
 
 // contentTruncationRunes caps content sent to the LLM evaluator. Raised from
 // 2000 to 8000 (EPIC-093 M1)  -  the prior cap was too narrow for rich articles,
