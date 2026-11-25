@@ -143,7 +143,7 @@ Five dimensions: Cache Hit Rate, Cache Reuse Factor, I/O Ratio, Token Savings, M
 
 ## linkari
 
-Webhook service that bridges Android share actions to tmux sessions with AI-powered content triage. Receives `POST /share` from Android (HTTP Shortcuts or standalone APK), validates and routes payloads to tmux via a local HTTP server or Tailscale Funnel. Shared URLs are scored by an LLM triage pipeline (Haiku) using per-profile prompt manifests, with auto-archiving and FCM push notifications for high-value content.
+Webhook service that bridges Android share actions to tmux sessions with AI-powered content triage. Receives `POST /share` from Android (HTTP Shortcuts or standalone APK), validates and routes payloads to tmux via a plain HTTP server (Tailscale operator Ingress terminates TLS in the k8s deployment path, EPIC-271). Shared URLs are scored by an LLM triage pipeline (Haiku) using per-profile prompt manifests, with auto-archiving and FCM push notifications for high-value content.
 
 **First run (fresh host):**
 
@@ -172,16 +172,15 @@ linkari db restore --queue-db ~/.config/linkari/queue.db --src /tmp/queue.db
 linkari serve --detach
 kill $(cat ~/.local/state/linkari/linkari.pid)
 
-# Local dev (skip Tailscale Funnel)
-linkari serve --local
-LINKARI_LOCAL=1 linkari serve
+# Local dev (plain HTTP on the configured port)
+linkari serve
 
 # Break-glass (all flags; no config.toml required)
-linkari serve --tsnet --tsnet-authkey $TS_AUTHKEY --token $LINKARI_TOKEN \
+linkari serve --token $LINKARI_TOKEN \
   --firebase-sa ~/.config/linkari/firebase-sa.json --notify-min-score 10 --debug
 ```
 
-If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `linkari serve` automatically falls back to local-only mode with a WARN log. Config is hot-reloadable via SIGHUP (actions, archive thresholds, push config, watchdog tuning).
+`linkari serve` boots a plain HTTP-only server (EPIC-272: the embedded tsnet/Funnel layer was deleted - no TLS is emitted; exposure and ingress are the deployment layer's job, e.g. Tailscale operator Ingress in k8s via EPIC-271). `--local` is a deprecated no-op kept so old scripts and the k8s manifest keep booting; `LINKARI_LOCAL=1` is honored silently. Config is hot-reloadable via SIGHUP (actions, archive thresholds, push config, watchdog tuning).
 
 **Structured capture config (`~/.config/linkari/config.toml`):**
 
@@ -202,7 +201,7 @@ If `tsnet_authkey` is not configured and `--tsnet` was not set explicitly, `link
 
 **Execution runtime:** Three runtime implementations - `LocalRuntime` (default, subprocess), `ContainerRuntime` (gVisor-sandboxed via containerd for ffmpeg/whisper), and `HybridRuntime` (routes ffmpeg/whisper through containers but keeps claude CLI local for OAuth2 reasons). Controlled by `sandbox.enabled` in `config.toml`.
 
-**Shield:** `X-Linkari-Client` header validation on the Funnel mux. Two modes: `log` (default, debug logging) and `enforce` (403 on invalid/missing headers). CORS preflight (OPTIONS) is always exempt.
+**Shield:** `X-Linkari-Client` header validation on the single serve mux (EPIC-272: applied to every route, local included). Two modes: `log` (default, debug logging) and `enforce` (403 on invalid/missing headers). CORS preflight (OPTIONS) is always exempt.
 
 **Telemetry routing (`[server.telemetry]`):** Server-side operational events (`push_outbox_idle_metric`, `share_action_resolved`, etc.) can be isolated from the shared `~/.automation-metrics/events/` bus into `~/.automation-metrics/events/linkari/` via `emit_to_automation_metrics = false`. `linkari config init` writes this as the default for new installs, since Linkari's own operational noise otherwise dominates a shared observability bus. Installs with no `[server.telemetry]` block at all (hand-authored `config.toml` predating this, or a flag-only break-glass boot) keep the old main-bus behavior unchanged - `enabled` and `emit_to_automation_metrics` both default to `true` when absent, per the original backward-compatibility guarantee. CLI invocation tracking (`tracker.emit`, developer-tool usage) is unaffected and always goes to the main bus.
 
@@ -254,10 +253,10 @@ Note: `transcribe=false` only skips the Whisper stage - yt-dlp subtitle extracti
 | `/auth/google` | POST | Google ID token verification for mobile clients |
 | `/auth/invite` | POST | Redeem invite code to create a user account |
 | `/admin/invite` | POST | Generate invite codes (operator bearer token required) |
-| `/health` | GET | Minimal health probe (Funnel-safe, returns `{"status":"ok"}`) |
-| `/healthz` | GET | Health check with DB status (local only) |
-| `/logs` | GET | Last 100 log lines (local only) |
-| `/logs/stream` | GET | SSE realtime log stream (local only) |
+| `/livez` | GET | Minimal health probe (returns `{"status":"ok"}`) |
+| `/healthz` | GET | Health check with DB status (unauthenticated) |
+| `/logs` | GET | Last 100 log lines (unauthenticated) |
+| `/logs/stream` | GET | SSE realtime log stream (unauthenticated) |
 
 All endpoints except `/healthz`, `/logs`, `/logs/stream`, and `/auth/*` require bearer token auth (or Google ID token for authenticated users). Rate limited to 30 req/min per IP.
 
@@ -344,7 +343,7 @@ FCM push for prefiltered shares is controlled by `notify_on_prefilter_skip` in `
 
 | Subcommand | Description |
 |------------|-------------|
-| `serve` | Start the webhook HTTP server (local + optional Tailscale Funnel) |
+| `serve` | Start the webhook HTTP server (plain HTTP; ingress/TLS is external) |
 | `config init` | Scaffold `~/.config/linkari/config.toml` |
 | `doctor` | Validate secrets and directories without booting |
 | `score <url>` | Run the triage scoring pipeline against a single URL |
@@ -366,7 +365,7 @@ FCM push for prefiltered shares is controlled by `notify_on_prefilter_skip` in `
 
 **K3s deployment (Timoni CUE):** Linkari can be deployed to a self-hosted K3s cluster with durable storage and automated backups. The Timoni module (`infra/timoni/templates/`) provisions two PersistentVolumeClaims (10Gi each, default `local-path` storage class):
 
-- `linkari-data`: Live database (`queue.db`, Tailscale state). `replicas: 1`, `Recreate` strategy, single-writer invariant enforced by `PodDisruptionBudget` (`maxUnavailable: 0`).
+- `linkari-data`: Live database (`queue.db`). `replicas: 1`, `Recreate` strategy, single-writer invariant enforced by `PodDisruptionBudget` (`maxUnavailable: 0`).
 - `linkari-backup`: Backup snapshots written by the sidecar (`linkari db backup --interval 6h`). Mounted read-only by the main pod's health checks, read-write by the optional backup sidecar.
 
 Operator overrides via `values.cue`:

@@ -538,7 +538,8 @@ Configuration via flags, environment variables, or server.yaml:
 			googleClientSecret, _ = resolveField("google_client_secret", "", os.Getenv("LINKARI_GOOGLE_CLIENT_SECRET"), "",
 				func(s *ServerConfig) string { return s.GoogleClientSecret })
 
-			// EPIC-073: create shield middleware for Funnel client identity enforcement.
+			// EPIC-073: create shield middleware for X-Linkari-Client client identity
+			// enforcement (originally the funnel mux; since EPIC-272 the only mux).
 			var shield *Shield
 			{
 				shieldMode := serverFileCfg.ShieldConfig()

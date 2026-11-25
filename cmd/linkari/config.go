@@ -686,7 +686,8 @@ type ShareConfig struct {
 }
 
 // ShieldYAMLConfig is the on-disk shape of the `[server.shield]` block in config.toml.
-// Controls the X-Linkari-Client header validation middleware on the Funnel mux.
+// Controls the X-Linkari-Client header validation middleware on the serve mux
+// (EPIC-272: single mux - shield now enforced on local serving too).
 type ShieldYAMLConfig struct {
 	// Mode: "log" (default) emits debug logs for invalid/missing headers;
 	// "enforce" returns 403.
