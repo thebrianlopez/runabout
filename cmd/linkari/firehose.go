@@ -37,6 +37,11 @@ var errCursorExpired = errors.New("relay error frame  -  cursor expired or rejec
 // To override in tests, set firehoseScoreContext.MinPostTextLen instead.
 const firehoseMinPostTextLen = 120
 
+// firehoseMaxFrameBytes caps the websocket receive buffer. Firehose CAR frames
+// routinely exceed coder/websocket's 32KiB default; 4MiB leaves generous headroom
+// (largest observed repo commit frames are well under 1MiB).
+const firehoseMaxFrameBytes = 4 * 1024 * 1024
+
 // firehosePost represents a decoded Bluesky post from the firehose.
 type firehosePost struct {
 	AtURI string
@@ -549,6 +554,11 @@ func connectAndRead(ctx context.Context, fsc *firehoseScoreContext, url string) 
 	if err != nil {
 		return err
 	}
+	// coder/websocket defaults to a 32768-byte receive limit; live firehose CAR
+	// frames regularly exceed 32KiB, so the very first replayed frame after a
+	// cursor connect trips "message too big" and tears down the connection.
+	// 20261125 triage (probe: handshake ok, client-side abort within 5.6s).
+	conn.SetReadLimit(firehoseMaxFrameBytes)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	slog.Info(
@@ -595,6 +605,22 @@ func connectAndRead(ctx context.Context, fsc *firehoseScoreContext, url string) 
 			slog.Warn("firehose process error", "error", err)
 		}
 	}
+}
+
+// firehoseErrorDetail renders the underlying cause of a firehose disconnect
+// for the disconnect WARN log: websocket close frame code/reason when the
+// relay (or client) sent a close frame, otherwise the raw error text (net
+// error, read-limit failure, etc.). Keeps the log's error_class coarse while
+// making the actual cause observable.
+func firehoseErrorDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	var ce *websocket.CloseError
+	if errors.As(err, &ce) {
+		return fmt.Sprintf("close frame code=%d reason=%q", ce.Code, ce.Reason)
+	}
+	return err.Error()
 }
 
 // runFirehoseWorker connects to the Bluesky firehose and processes commits.
@@ -644,6 +670,7 @@ func runFirehoseWorker(ctx context.Context, fsc *firehoseScoreContext, logger *s
 				"firehose disconnected",
 				"event_type", "firehose_disconnected",
 				"error_class", errorClass,
+				"error_detail", firehoseErrorDetail(err),
 				"backoff_secs", int(backoff.Seconds()),
 			)
 		}
