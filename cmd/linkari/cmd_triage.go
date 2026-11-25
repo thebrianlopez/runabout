@@ -46,6 +46,10 @@ type TriageResult struct {
 // the M1 fixture corpus until M3+ revisits the model selection.
 const claudeModel = "claude-haiku-4-5-20251001"
 
+// EPIC-217 F4: pi scoring backend go-forward defaults (GPT Luna).
+const piDefaultProvider = "openai-codex"
+const piDefaultModel = "gpt-6-luna"
+
 // contentTruncationRunes caps content sent to the LLM evaluator. Raised from
 // 2000 to 8000 (EPIC-093 M1)  -  the prior cap was too narrow for rich articles,
 // causing sections beyond the intro to never be scored.

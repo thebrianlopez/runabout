@@ -518,12 +518,12 @@ func doctorCheckByName(t *testing.T, out *bytes.Buffer, name string) doctorCheck
 // caught it until scoring failed per-row at runtime.
 func TestDoctorPiAuth_Ready(t *testing.T) {
 	dir := t.TempDir()
-	tomlPath := piDoctorConfig(t, dir, "openai-codex/gpt-5.6-luna")
+	tomlPath := piDoctorConfig(t, dir, "openai-codex/gpt-6-luna")
 
 	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath, "--json"}, doctorDeps{
 		PiAuthCheck: func(_ context.Context, piPath, model string) (piAuthCheckResult, error) {
-			if model != "openai-codex/gpt-5.6-luna" {
-				t.Errorf("PiAuthCheck model = %q, want openai-codex/gpt-5.6-luna", model)
+			if model != "openai-codex/gpt-6-luna" {
+				t.Errorf("PiAuthCheck model = %q, want openai-codex/gpt-6-luna", model)
 			}
 			return piAuthCheckResult{Status: "ready", Provider: "openai-codex", AuthType: "oauth"}, nil
 		},
@@ -582,7 +582,7 @@ func TestDoctorPiAuth_InvalidModel(t *testing.T) {
 // pattern validatePiCLI uses at server startup.
 func TestDoctorPiAuth_ProbeError(t *testing.T) {
 	dir := t.TempDir()
-	tomlPath := piDoctorConfig(t, dir, "openai-codex/gpt-5.6-luna")
+	tomlPath := piDoctorConfig(t, dir, "openai-codex/gpt-6-luna")
 
 	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath, "--json"}, doctorDeps{
 		PiAuthCheck: func(context.Context, string, string) (piAuthCheckResult, error) {

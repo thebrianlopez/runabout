@@ -174,10 +174,10 @@ type WhisperConfig struct {
 // ScoringConfig controls which LLM executor is used for the scoring pipeline.
 // Nested under [server.scoring] in config.toml. EPIC-217 F4.
 type ScoringConfig struct {
-	Backend  string `toml:"backend"`  // "claude_cli" (default) or "pi"
+	Backend  string `toml:"backend"`  // "claude_cli" (default) or "pi" (go-forward scoring backend)
 	PiPath   string `toml:"pi_path"`  // path to pi binary (default: "pi" on PATH)
-	Provider string `toml:"provider"` // provider for pi backend (default: "anthropic")
-	Model    string `toml:"model"`    // model override for pi backend (default: claudeModel)
+	Provider string `toml:"provider"` // provider for pi backend (default: "openai-codex")
+	Model    string `toml:"model"`    // model override for pi backend (default: "gpt-6-luna")
 }
 
 // TelemetryConfig controls where and whether Linkari emits server-side JSONL events.

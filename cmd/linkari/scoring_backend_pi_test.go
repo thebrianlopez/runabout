@@ -145,7 +145,7 @@ func TestPiScoringBackend_RG3_CLIFlagsComplete(t *testing.T) {
 echo "$@"
 `, 0)
 
-	b := PiScoringBackend{model: "openai-codex/gpt-5.4-mini", BinaryPath: stub}
+	b := PiScoringBackend{model: "openai-codex/gpt-6-luna", BinaryPath: stub}
 	got, err := b.Complete(context.Background(), "test-system-prompt", "content")
 	if err != nil {
 		t.Fatalf("RG-3: unexpected error: %v", err)
@@ -155,7 +155,7 @@ echo "$@"
 		"--print",
 		"--no-session",
 		"--no-builtin-tools",
-		"--model", "openai-codex/gpt-5.4-mini",
+		"--model", "openai-codex/gpt-6-luna",
 		"--system-prompt", "test-system-prompt",
 	}
 	for _, flag := range required {
@@ -185,7 +185,7 @@ echo "$@"
 		t.Fatal(err)
 	}
 
-	b := PiScoringBackend{model: "openai-codex/gpt-5.4-mini", BinaryPath: stub}
+	b := PiScoringBackend{model: "openai-codex/gpt-6-luna", BinaryPath: stub}
 
 	complete, err := b.Complete(context.Background(), "sys", "content")
 	if err != nil {
@@ -253,7 +253,7 @@ func TestPiScoringBackend_RG4_NoProviderFlag(t *testing.T) {
 echo "$@"
 `, 0)
 
-	b := PiScoringBackend{model: "openai-codex/gpt-5.4-mini", BinaryPath: stub}
+	b := PiScoringBackend{model: "openai-codex/gpt-6-luna", BinaryPath: stub}
 
 	got, err := b.Complete(context.Background(), "sys", "content")
 	if err != nil {
@@ -283,7 +283,7 @@ echo "$@"
 		t.Fatal(err)
 	}
 
-	b := PiScoringBackend{model: "openai-codex/gpt-5.4-mini", BinaryPath: stub}
+	b := PiScoringBackend{model: "openai-codex/gpt-6-luna", BinaryPath: stub}
 	got, err := b.CompleteVision(context.Background(), "sys", "meta", imgFile, "{}")
 	if err != nil {
 		t.Fatalf("RG-5: unexpected error: %v", err)
@@ -309,9 +309,10 @@ func TestPiModelString_CombinedSyntax(t *testing.T) {
 	}{
 		{"openai-codex", "gpt-5.4-mini", "openai-codex/gpt-5.4-mini"},
 		{"anthropic", "claude-haiku-4-5-20251001", "anthropic/claude-haiku-4-5-20251001"},
-		{"", "gpt-5.4-mini", "anthropic/gpt-5.4-mini"},
-		{"", "", "anthropic/" + claudeModel},
-		{"", "openai-codex/gpt-5.4-mini", "openai-codex/gpt-5.4-mini"},
+		{"", "gpt-5.4-mini", piDefaultProvider + "/gpt-5.4-mini"},
+		{"openai-codex", "gpt-6-luna", piDefaultProvider + "/" + piDefaultModel},
+		{"", "", piDefaultProvider + "/" + piDefaultModel},
+		{"", "openai-codex/gpt-6-luna", "openai-codex/gpt-6-luna"},
 	}
 	for _, tt := range tests {
 		got := piModelString(tt.provider, tt.model)

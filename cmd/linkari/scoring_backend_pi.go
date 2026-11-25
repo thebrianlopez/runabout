@@ -33,7 +33,7 @@ import (
 // It disables built-in tools only; extension tools stay enabled and pi
 // discovers them via HOME, which piEnv deliberately retains for auth.
 type PiScoringBackend struct {
-	model      string // "provider/model" combined syntax, e.g. "openai-codex/gpt-5.4-mini"
+	model      string // "provider/model" combined syntax, e.g. "openai-codex/gpt-6-luna"
 	BinaryPath string // path to pi binary; "" defaults to "pi" (EPIC-258: injected instead of package global)
 }
 
@@ -138,8 +138,8 @@ func (b PiScoringBackend) CompleteVision(ctx context.Context, systemPrompt, text
 // If model already contains a slash, it is returned as-is (already combined).
 // Otherwise provider and model are joined with "/".
 func piModelString(provider, model string) string {
-	p := orDefault(provider, "anthropic")
-	m := orDefault(model, claudeModel)
+	p := orDefault(provider, piDefaultProvider)
+	m := orDefault(model, piDefaultModel)
 	if strings.Contains(m, "/") {
 		return m
 	}
