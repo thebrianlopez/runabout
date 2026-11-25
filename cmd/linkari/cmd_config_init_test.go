@@ -14,18 +14,12 @@ import (
 // Fields wired through resolveField use secretsmanager:// URIs (post-load resolution).
 // Fields read directly from config use ${secretsmanager:...} (expansion-time resolution).
 var referenceServerConfig = ServerConfig{
-	Token:             "secretsmanager://linkari/bearer-token",
-	TSNetAuthKey:      "",
-	TSNetClientSecret: "secretsmanager://linkari/tsnet-oauth#client_secret",
-	FirebaseSA:        "secretsmanager://linkari/firebase-sa",
-	NotifyMinScore:    10,
-	Port:              8080,
-	TsnetHostname:     "linkari",
-	AWS:               AWSConfig{Region: "us-east-2"},
+	Token:          "secretsmanager://linkari/bearer-token",
+	FirebaseSA:     "secretsmanager://linkari/firebase-sa",
+	NotifyMinScore: 10,
+	Port:           8080,
+	AWS:            AWSConfig{Region: "us-east-2"},
 }
-
-// pinned reference *bool for tsnet field.
-var referenceTsnetTrue = true
 
 // TestConfigInit_RoundTrip parses the generated template and checks it round-trips
 // into a ServerConfig with all populated fields matching the pinned reference.
@@ -40,12 +34,6 @@ func TestConfigInit_RoundTrip(t *testing.T) {
 	if got.Token != referenceServerConfig.Token {
 		t.Errorf("Token = %q, want %q", got.Token, referenceServerConfig.Token)
 	}
-	if got.TSNetAuthKey != referenceServerConfig.TSNetAuthKey {
-		t.Errorf("TSNetAuthKey = %q, want %q", got.TSNetAuthKey, referenceServerConfig.TSNetAuthKey)
-	}
-	if got.TSNetClientSecret != referenceServerConfig.TSNetClientSecret {
-		t.Errorf("TSNetClientSecret = %q, want %q", got.TSNetClientSecret, referenceServerConfig.TSNetClientSecret)
-	}
 	if got.FirebaseSA != referenceServerConfig.FirebaseSA {
 		t.Errorf("FirebaseSA = %q, want %q", got.FirebaseSA, referenceServerConfig.FirebaseSA)
 	}
@@ -57,15 +45,10 @@ func TestConfigInit_RoundTrip(t *testing.T) {
 	if got.Port != referenceServerConfig.Port {
 		t.Errorf("Port = %d, want %d", got.Port, referenceServerConfig.Port)
 	}
-	if got.TsnetHostname != referenceServerConfig.TsnetHostname {
-		t.Errorf("TsnetHostname = %q, want %q", got.TsnetHostname, referenceServerConfig.TsnetHostname)
-	}
 
-	// Tsnet *bool: template sets tsnet = true → pointer to true.
-	if got.Tsnet == nil {
-		t.Error("Tsnet = nil, want *true")
-	} else if *got.Tsnet != referenceTsnetTrue {
-		t.Errorf("*Tsnet = %v, want true", *got.Tsnet)
+	// EPIC-272: the generated template carries no tsnet fields.
+	if strings.Contains(serverYAMLTemplate, "tsnet") {
+		t.Error("serverYAMLTemplate should not contain tsnet keys (EPIC-272)")
 	}
 
 	// Debug defaults to false.

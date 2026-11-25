@@ -96,12 +96,7 @@ func main() {
 	}
 }
 
-func serveCmd() *cobra.Command { return serveCmdWith(serveDeps{}) }
-
-// serveCmdWith threads serve-path dependencies explicitly so tests can inject
-// a mock tsnet bring-up without writing package globals (EPIC-258 M2).
-func serveCmdWith(deps serveDeps) *cobra.Command {
-	deps = deps.resolve()
+func serveCmd() *cobra.Command {
 	var (
 		port            int
 		token           string
@@ -116,11 +111,7 @@ func serveCmdWith(deps serveDeps) *cobra.Command {
 		tlsEnabled      bool
 		certFile        string
 		keyFile         string
-		tsnetEnabled    bool
 		localEnabled    bool
-		tsnetHostname   string
-		tsnetStateDir   string
-		tsnetAuthKey    string
 		notifyMinScore  int
 		shell           string
 		shellArgs       string
@@ -139,8 +130,13 @@ from Android HTTP Shortcuts and routes them to tmux sessions.
 Zero-flag production boot (requires ~/.config/linkari/server.yaml):
   linkari serve
 
-Local-only dev mode (skips Tailscale Funnel):
-  linkari serve --local
+Serve mode is local-only: linkari serves plain HTTP on the configured listen
+port. TLS, DNS, and public ingress are the operator's responsibility - in the
+reference deployment (linkari-k8s) the Tailscale operator Ingress fronts the
+pod, so no ingress or TLS logic lives in the binary (EPIC-272).
+
+  --local  accepted as a no-op for backwards compatibility with deployments
+           that pass --local / LINKARI_LOCAL=1; it logs one deprecation line
 
 Configuration via flags, environment variables, or server.yaml:
   LINKARI_TOKEN        Bearer token for authentication
@@ -152,25 +148,17 @@ Configuration via flags, environment variables, or server.yaml:
   LINKARI_CERT_FILE    TLS certificate PEM path (default ~/.config/linkari/cert.pem)
   LINKARI_KEY_FILE     TLS private key PEM path (default ~/.config/linkari/key.pem)
   LINKARI_SHELL        Shell binary for tmux windows (default fish)
-  LINKARI_SHELL_ARGS   Shell command flag (default -c)
-
-Tailscale Funnel (on by default):
-  LINKARI_LOCAL            Disable tsnet and use local listener only ("1" or "true")
-  LINKARI_TSNET            Override tsnet enable/disable ("1" or "true" to force on)
-  LINKARI_TSNET_HOSTNAME   Tailscale node hostname (default "linkari")
-  LINKARI_TSNET_STATE_DIR  tsnet state directory (default ~/.config/linkari/tsnet)
-
-linkari serves on BOTH the local port (plain HTTP, localhost debug) and via
-Tailscale Funnel (HTTPS, public Android ingress). TLS is handled by Tailscale;
-no cert management required.
-
-If no tsnet_authkey is resolvable and tsnet was not explicitly enabled, linkari
-falls back to local-only mode with a WARN log (safe for fresh-clone dev laptops).
-
-On first tsnet run an auth URL is printed to complete Tailscale login.
-For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
+  LINKARI_SHELL_ARGS   Shell command flag (default -c)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+
+			// EPIC-272: --local is a no-op retained so the linkari-k8s deployment
+			// manifest (which passes --local and LINKARI_LOCAL=1) keeps booting.
+			// LINKARI_LOCAL is honored the same way, silently. Log one
+			// deprecation line when the flag is passed explicitly.
+			if cmd.Flags().Changed("local") {
+				slog.Warn("--local is deprecated and has no effect: linkari serve is always local-only; ingress and TLS are the operator's responsibility (EPIC-272)")
+			}
 
 			// EPIC-049 M3: --detach re-execs the binary without --detach,
 			// setsid, waits for child ready signal, writes PID file, exits parent.
@@ -357,9 +345,9 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			}
 
 			// TLS env fallbacks (flags take precedence when explicitly set).
-			// Only needed for --local --tls (no tsnet Funnel). When tsnet is
-			// enabled (the default since EPIC-048), Tailscale handles TLS and
-			// these PEM files are unused. To generate them for local TLS:
+			// Only needed for operators who front linkari with their own TLS
+			// terminator on the pod (e.g. a local reverse proxy). To generate
+			// cert/key:
 			//   mkcert -cert-file ~/.config/linkari/cert.pem \
 			//          -key-file  ~/.config/linkari/key.pem  \
 			//          localhost 127.0.0.1
@@ -388,57 +376,10 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				}
 			}
 
-			// EPIC-048 M2: resolve tsnet/local through the four-tier helper pipeline.
-			// Two separate resolveBoolField calls reconciled via NOT.
-			// tsnetExplicit is consumed by the M3 fallback rule.
-			var yamlTsnet *bool
-			if serverFileCfg != nil {
-				yamlTsnet = serverFileCfg.Tsnet
-			}
-			localEnv := os.Getenv("LINKARI_LOCAL")
-			tsnetEnv := os.Getenv("LINKARI_TSNET")
-			tsnetResolved, _, _ := resolveBoolField(tsnetEnabled, cmd.Flags().Changed("tsnet"), tsnetEnv, yamlTsnet, true)
-			localResolved, _, _ := resolveBoolField(localEnabled, cmd.Flags().Changed("local"), localEnv, nil, false)
-			tsnetEnabled = tsnetResolved && !localResolved
-			// tsnetExplicit: any layer explicitly opted in or out of tsnet.
-			// Five inputs: cli-tsnet, cli-local, env-tsnet, env-local, yaml.
-			tsnetExplicit := cmd.Flags().Changed("tsnet") || cmd.Flags().Changed("local") ||
-				tsnetEnv != "" || localEnv != "" || yamlTsnet != nil
-
-			// Resolve tsnet string tunables.
-			var yamlTsnetHostname, yamlTsnetStateDir string
-			if serverFileCfg != nil {
-				yamlTsnetHostname = serverFileCfg.TsnetHostname
-				yamlTsnetStateDir = serverFileCfg.TsnetStateDir
-			}
-			tsnetHostname, _, _ = resolveStringField(tsnetHostname, os.Getenv("LINKARI_TSNET_HOSTNAME"), yamlTsnetHostname, "linkari")
-			// tsnet_authkey routes through the secret resolver pipeline (EPIC-047).
-			tsnetAuthKey, err = resolveField("tsnet_authkey", tsnetAuthKey, os.Getenv("TS_AUTHKEY"), "",
-				func(s *ServerConfig) string { return s.TSNetAuthKey })
-			if err != nil {
-				return err
-			}
-			tsnetClientSecret, err := resolveField("tsnet_client_secret", "", os.Getenv("TS_CLIENT_SECRET"), "",
-				func(s *ServerConfig) string { return s.TSNetClientSecret })
-			if err != nil {
-				return err
-			}
-			// EPIC-048 M3: fallback-to-local rule. Fires before state-dir
-			// creation so we skip the MkdirAll when falling back.
-			// logger has no flags so the WARN string is golden-testable.
-			{
-				warnLogger := log.New(log.Default().Writer(), "", 0)
-				tsnetEnabled = applyTsnetFallback(tsnetEnabled, tsnetExplicit, tsnetAuthKey, tsnetClientSecret, warnLogger)
-			}
-			tsnetStateDir, _, _ = resolveStringField(tsnetStateDir, os.Getenv("LINKARI_TSNET_STATE_DIR"), yamlTsnetStateDir, filepath.Join(configDir, "tsnet"))
-			if tsnetEnabled {
-				if err := os.MkdirAll(tsnetStateDir, 0o700); err != nil {
-					return fmt.Errorf("creating tsnet state dir: %w", err)
-				}
-			}
-			if tsnetEnabled && tlsEnabled {
-				slog.Warn("--tls and --tsnet both set; --tls applies only to the local listener")
-			}
+			// EPIC-272 M3: the four-tier funnel/local resolution pipeline
+			// (EPIC-048) and its secret resolution were deleted with the
+			// embedded layer. LINKARI_LOCAL is accepted silently (no-op); see
+			// the --local flag.
 
 			// EPIC-048 M2: resolve notify_min_score and debug via the helper pipeline.
 			var notifyYAML *int
@@ -864,13 +805,9 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 			// EPIC-080 M3: log auth key presence at startup for diagnostics.
 			logHaikuEnvKeys()
 
-			// When tsnet Funnel is active, bind the local listener to
-			// 127.0.0.1 only  -  LAN exposure is unnecessary since the
-			// Funnel provides the public ingress path (GAP-1).
+			// Bind all interfaces: the k8s pod is reached on the ClusterIP and
+			// local-dev clients hit localhost.
 			listenHost := ""
-			if tsnetEnabled {
-				listenHost = "127.0.0.1"
-			}
 			httpServer := &http.Server{
 				Addr:              fmt.Sprintf("%s:%d", listenHost, port),
 				Handler:           srv.Mux(),
@@ -913,38 +850,6 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				go func() {
 					errCh <- httpServer.Serve(ln)
 				}()
-			}
-
-			// Start tsnet Funnel listener if enabled.
-			// tsnetClose is set only on successful tsnet bring-up.
-			var tsnetClose func() error
-			var tsnetHTTPServer *http.Server
-
-			if tsnetEnabled {
-				ln, cleanup, fqdn, err := deps.tsnetStart(cmd.Context(), TsnetConfig{
-					Hostname:      tsnetHostname,
-					StateDir:      tsnetStateDir,
-					AuthKey:       tsnetAuthKey,
-					ClientSecret:  tsnetClientSecret,
-					AdvertiseTags: []string{"tag:linkari"},
-					Debug:         debug,
-				})
-				if err != nil {
-					slog.Warn("tsnet failed to start, continuing with local listener only", "error", err)
-				} else {
-					tsnetClose = cleanup
-					srv.SetTsnetAddr(fqdn)
-					tsnetHTTPServer = &http.Server{
-						Handler:           srv.FunnelMux(),
-						ReadHeaderTimeout: 10 * time.Second,
-						WriteTimeout:      30 * time.Second,
-						IdleTimeout:       120 * time.Second,
-						ConnContext:       funnelConnContext,
-					}
-					go func() {
-						errCh <- tsnetHTTPServer.Serve(ln)
-					}()
-				}
 			}
 
 			sig := make(chan os.Signal, 1)
@@ -1029,17 +934,6 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()
 
-					if tsnetHTTPServer != nil {
-						if err := tsnetHTTPServer.Shutdown(ctx); err != nil {
-							slog.Error("tsnet HTTP shutdown failed", "error", err)
-						}
-					}
-					if tsnetClose != nil {
-						if err := tsnetClose(); err != nil {
-							slog.Error("tsnet close failed", "error", err)
-						}
-					}
-
 					return httpServer.Shutdown(ctx)
 				case err := <-errCh:
 					if err != nil && err != http.ErrServerClosed {
@@ -1049,19 +943,10 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 				case <-cmd.Context().Done():
 					// Context cancelled  -  integration tests use this for clean shutdown.
 					slog.Info("shutting down (context cancelled)")
-					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-					defer shutdownCancel()
-					if tsnetHTTPServer != nil {
-						if err := tsnetHTTPServer.Shutdown(shutdownCtx); err != nil {
-							slog.Error("tsnet HTTP shutdown failed", "error", err)
-						}
-					}
-					if tsnetClose != nil {
-						if err := tsnetClose(); err != nil {
-							slog.Error("tsnet close failed", "error", err)
-						}
-					}
-					return httpServer.Shutdown(shutdownCtx)
+					shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer shutCancel()
+
+					return httpServer.Shutdown(shutCtx)
 				}
 			}
 		},
@@ -1075,12 +960,7 @@ For unattended startup set TS_AUTHKEY or server.yaml tsnet_authkey.`,
 	cmd.Flags().BoolVar(&tlsEnabled, "tls", false, "enable TLS (requires mkcert-generated cert/key, or LINKARI_TLS=1)")
 	cmd.Flags().StringVar(&certFile, "cert-file", "", "TLS certificate PEM (default ~/.config/linkari/cert.pem, or LINKARI_CERT_FILE)")
 	cmd.Flags().StringVar(&keyFile, "key-file", "", "TLS private key PEM (default ~/.config/linkari/key.pem, or LINKARI_KEY_FILE)")
-	cmd.Flags().BoolVar(&tsnetEnabled, "tsnet", true, "enable Tailscale Funnel (default: true; use --local to disable, or LINKARI_TSNET=1)")
-	cmd.Flags().BoolVar(&localEnabled, "local", false, "force local-only listener, disables tsnet (or LINKARI_LOCAL=1)")
-	cmd.Flags().StringVar(&tsnetHostname, "tsnet-hostname", "", "Tailscale node hostname (default: linkari, or LINKARI_TSNET_HOSTNAME)")
-	cmd.Flags().StringVar(&tsnetStateDir, "tsnet-state-dir", "", "tsnet state directory (default ~/.config/linkari/tsnet, or LINKARI_TSNET_STATE_DIR)")
-	cmd.Flags().StringVar(&tsnetAuthKey, "tsnet-authkey", "", "Tailscale auth key (or TS_AUTHKEY env)")
-	cmd.MarkFlagsMutuallyExclusive("tsnet", "local")
+	cmd.Flags().BoolVar(&localEnabled, "local", false, "deprecated no-op (serve is always local-only; accepted for k8s manifest compatibility, or LINKARI_LOCAL=1)")
 	cmd.Flags().IntVar(&notifyMinScore, "notify-min-score", 0, "minimum score for /notify FCM push (0 = use per-profile default, or LINKARI_NOTIFY_MIN_SCORE)")
 	cmd.Flags().StringVar(&shell, "shell", "", "shell binary for tmux windows (default fish, or LINKARI_SHELL)")
 	cmd.Flags().StringVar(&shellArgs, "shell-args", "", "shell command flag for tmux windows (default -c, or LINKARI_SHELL_ARGS)")

@@ -158,21 +158,21 @@ func TestShieldReload(t *testing.T) {
 	}
 }
 
-func TestFunnelMuxUsesShield(t *testing.T) {
+func TestMuxUsesShield(t *testing.T) {
 	tmux := &TmuxRunner{}
 	router := NewRouterFromConfig(tmux, builtinConfig(), false)
 	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
 	srv.SetShield(NewShield("enforce"))
 
-	handler := srv.FunnelMux()
+	handler := srv.Mux()
 
-	// Without X-Linkari-Client → 403
+	// Without X-Linkari-Client → 403 (EPIC-272: the merged mux chains shield).
 	req := httptest.NewRequest(http.MethodGet, "/actions", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusForbidden {
-		t.Errorf("FunnelMux without client header: got %d, want 403", w.Code)
+		t.Errorf("Mux without client header: got %d, want 403", w.Code)
 	}
 
 	// With valid X-Linkari-Client → passes through to route
@@ -182,41 +182,7 @@ func TestFunnelMuxUsesShield(t *testing.T) {
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code == http.StatusForbidden {
-		t.Errorf("FunnelMux with valid client header: got 403, want non-403")
-	}
-}
-
-func TestMuxDoesNotUseShield(t *testing.T) {
-	tmux := &TmuxRunner{}
-	router := NewRouterFromConfig(tmux, builtinConfig(), false)
-	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
-	srv.SetShield(NewShield("enforce"))
-
-	handler := srv.Mux()
-
-	// Mux should NOT use shield — missing header should pass
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-	if w.Code == http.StatusForbidden {
-		t.Errorf("Mux should not use shield: got 403")
-	}
-}
-
-func TestFunnelMux404ForHealthz(t *testing.T) {
-	tmux := &TmuxRunner{}
-	router := NewRouterFromConfig(tmux, builtinConfig(), false)
-	srv := NewServer("test-token", router, nil, NewRingLog(10), false, nil)
-	// Use log mode so shield doesn't interfere with the 404 test.
-	srv.SetShield(NewShield("log"))
-
-	handler := srv.FunnelMux()
-
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("FunnelMux /healthz: got %d, want 404", w.Code)
+		t.Errorf("Mux with valid client header: got 403, want non-403")
 	}
 }
 
@@ -234,81 +200,9 @@ func TestShieldConfigDefaults(t *testing.T) {
 	}
 }
 
-// --- M4: funnelAuthGuardMiddleware tests ---
-
-func TestFunnelAuthGuard(t *testing.T) {
-	tmux := &TmuxRunner{}
-	router := NewRouterFromConfig(tmux, builtinConfig(), false)
-	srv := NewServer("operator-token", router, nil, NewRingLog(10), false, nil)
-	srv.jiraToken = "jira-token-xyz"
-
-	guard := srv.funnelAuthGuardMiddleware(okHandler)
-
-	tests := []struct {
-		name       string
-		path       string
-		auth       string // Authorization header; empty = no header
-		wantStatus int
-	}{
-		{
-			name:       "static operator token rejected",
-			path:       "/share",
-			auth:       "Bearer operator-token",
-			wantStatus: http.StatusUnauthorized,
-		},
-		{
-			name:       "session token passes",
-			path:       "/share",
-			auth:       "Bearer some-session-token",
-			wantStatus: http.StatusOK,
-		},
-		{
-			name:       "jira token passes",
-			path:       "/share",
-			auth:       "Bearer jira-token-xyz",
-			wantStatus: http.StatusOK,
-		},
-		{
-			name:       "no auth header passes",
-			path:       "/share",
-			auth:       "",
-			wantStatus: http.StatusOK,
-		},
-		{
-			name:       "unauthenticated /auth/google passes",
-			path:       "/auth/google",
-			auth:       "Bearer operator-token",
-			wantStatus: http.StatusOK,
-		},
-		{
-			name:       "unauthenticated /auth/invite passes",
-			path:       "/auth/invite",
-			auth:       "Bearer operator-token",
-			wantStatus: http.StatusOK,
-		},
-		{
-			name:       "/register with operator token passes (G-09)",
-			path:       "/register",
-			auth:       "Bearer operator-token",
-			wantStatus: http.StatusOK,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, tt.path, nil)
-			if tt.auth != "" {
-				req.Header.Set("Authorization", tt.auth)
-			}
-			w := httptest.NewRecorder()
-			guard.ServeHTTP(w, req)
-
-			if w.Code != tt.wantStatus {
-				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
-			}
-		})
-	}
-}
+// --- EPIC-272: funnelAuthGuardMiddleware and its tests were deleted with the
+// funnel mux (supervisor-approved: the guard blocked the static operator
+// token, the primary /share credential on the only remaining path) ---
 
 func TestClientHeaderRegex(t *testing.T) {
 	valid := []string{

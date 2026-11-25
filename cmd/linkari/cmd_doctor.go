@@ -1,7 +1,7 @@
 // EPIC-049 M2: linkari doctor subcommand.
 //
 // Runs the full EPIC-047 resolver pipeline and all pre-flight checks
-// without starting any listener, tsnet engine, or tmux session.
+// without starting any listener, tmux session, or scoring subprocess.
 // Symmetric with the Android `make doctor` output pattern (✓/✗/⚠ prefixes).
 package main
 
@@ -322,13 +322,12 @@ func doctorCmdWith(deps doctorDeps) *cobra.Command {
 		SilenceErrors: true,
 		Short:         "Validate linkari configuration and secrets without starting the server",
 		Long: `Run all pre-flight checks against ~/.config/linkari/server.yaml without
-binding any listeners, starting the tsnet engine, or opening tmux sessions.
+binding any listeners, opening tmux sessions, or starting scoring subprocesses.
 
 Checks:
   server_yaml       -  file present and parseable
   token             -  bearer token resolvable
   firebase_sa       -  firebase service account resolvable
-  tsnet_authkey     -  tsnet auth key resolvable
   jira_token        -  Jira bearer token resolvable (optional)
   atlassian_email  -  Atlassian email resolvable (optional)
   atlassian_api_token  -  Atlassian API token resolvable (optional)
@@ -338,7 +337,9 @@ Checks:
   xdg_config_dir    -  ~/.config/linkari/ exists and is writable
   xdg_cache_dir     -  ~/.cache/linkari/ exists and is writable
   xdg_state_dir     -  ~/.local/state/linkari/ exists and is writable
-  tsnet_state       -  tsnet state directory status
+  ingress_mode      -  deployment mode note (plain HTTP; TLS/ingress is the
+                       operator's responsibility - Tailscale operator
+                       Ingress in the reference k8s deployment)
   firebase_sa_cache  -  firebase-sa.json cache path is writable
   log_file          -  log_file path is writable (if configured)
 
@@ -504,7 +505,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
-			// --- Checks 2-4: secret fields (token, firebase_sa, tsnet_authkey) ---
+			// --- Checks 2-4: secret fields (token, firebase_sa, jira_token, ...) ---
 			resolutions := resolveAllSecrets(serverCfg)
 
 			var hasSMURI bool
@@ -760,30 +761,14 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 			}
 
-			// --- Check 10: tsnet state directory ---
-			{
-				var tsnetStateDir string
-				if serverCfg != nil && serverCfg.TsnetStateDir != "" {
-					tsnetStateDir = serverCfg.TsnetStateDir
-				} else {
-					tsnetStateDir = filepath.Join(effectivePaths.ConfigDir, "tsnet")
-				}
-				if tsnetStateDir != "" {
-					fi, err := os.Stat(tsnetStateDir)
-					if os.IsNotExist(err) {
-						addCheck(warnCheck("tsnet_state",
-							fmt.Sprintf("%s absent  -  will be created on first tsnet bring-up (normal for fresh installs)", tsnetStateDir)))
-					} else if err != nil {
-						addCheck(failCheck("tsnet_state", fmt.Sprintf("stat %s: %v", tsnetStateDir, err)))
-					} else if fi.IsDir() {
-						addCheck(okCheck("tsnet_state",
-							fmt.Sprintf("%s exists (authenticated or initialized)", tsnetStateDir)))
-					} else {
-						addCheck(failCheck("tsnet_state",
-							fmt.Sprintf("%s exists but is not a directory", tsnetStateDir)))
-					}
-				}
-			}
+			// --- Check 10: ingress/deployment mode (EPIC-272) ---
+			// linkari serves plain HTTP only (embedded funnel deleted, EPIC-272).
+			// TLS termination and public exposure are the operator's responsibility
+			// - the Tailscale operator Ingress in front of the pod in the reference
+			// linkari-k8s deployment. Reported as ok so doctor stays green; the
+			// note documents the deployment assumption.
+			addCheck(okCheck("ingress_mode",
+				"plain HTTP only; TLS/public exposure via operator ingress (k8s Tailscale operator Ingress) is expected and not validated locally"))
 
 			// --- Check 10: firebase-sa cache path writable ---
 			{

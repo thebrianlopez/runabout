@@ -27,7 +27,7 @@ type SecretResolution struct {
 	Err   error
 }
 
-// resolveAllSecrets resolves token, firebase_sa, tsnet_authkey, jira_token,
+// resolveAllSecrets resolves token, firebase_sa, jira_token,
 // atlassian_email, atlassian_api_token, jira_domain, and pagerduty_token
 // using flag-only overrides on top of the already-expanded ServerConfig values.
 // Environment variables are checked as a fallback for any field that is still
@@ -51,11 +51,6 @@ func resolveAllSecrets(cfg *ServerConfig) []SecretResolution {
 			field:  "firebase_sa",
 			env:    os.Getenv("LINKARI_FIREBASE_SA"),
 			yamlFn: func(s *ServerConfig) string { return s.FirebaseSA },
-		},
-		{
-			field:  "tsnet_authkey",
-			env:    os.Getenv("TS_AUTHKEY"),
-			yamlFn: func(s *ServerConfig) string { return s.TSNetAuthKey },
 		},
 		{
 			field:  "jira_token",

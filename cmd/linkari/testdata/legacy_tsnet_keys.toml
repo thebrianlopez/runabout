@@ -1,0 +1,11 @@
+[server]
+# Pre-EPIC-272 server.yaml: carried tsnet keys that the schema no longer has.
+# TOML decoding is permissive (unknown keys ignored) so this must still load.
+tsnet = true
+tsnet_authkey = "tskey-legacy"
+tsnet_client_secret = "secretsmanager://linkari/tsnet-oauth#client_secret"
+tsnet_hostname = "linkari-test"
+tsnet_state_dir = "/tmp/tsnet-test"
+token = "test-token"
+log_file = "/tmp/linkari-test.log"
+notify_min_score = 5

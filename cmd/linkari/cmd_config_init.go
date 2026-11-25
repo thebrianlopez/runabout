@@ -36,25 +36,6 @@ google_client_secret = "secretsmanager://linkari/google-client-secret"
 # Static invite codes seeded into the DB at startup (INSERT OR IGNORE).
 invite_codes = []
 
-# --- Tailscale Funnel ---
-
-# true  = bind Tailscale Funnel (reachable from Android)
-# false = local-only (use --local flag for one-off overrides)
-tsnet = true
-
-# Tailscale OAuth client secret for ephemeral key generation.
-# The JSON secret at linkari/tsnet-oauth must contain {"client_id":"...","client_secret":"..."}.
-# Break-glass (static auth key): tsnet_authkey = "tskey-auth-..."
-tsnet_client_secret = "secretsmanager://linkari/tsnet-oauth#client_secret"
-tsnet_authkey = ""
-
-# Tailscale node hostname (visible in tailnet admin panel).
-tsnet_hostname = "linkari"
-
-# Override the tsnet state directory (default: ~/.config/linkari/tsnet/).
-# Leave empty to use the XDG default.
-tsnet_state_dir = ""
-
 # --- Firebase Cloud Messaging ---
 
 # Path to the Firebase service-account JSON (materialized to ~/.cache/linkari/).
@@ -103,20 +84,16 @@ google_service_account_path = ""
 atlassian_confluence_token = "${secretsmanager:linkari/confluence-token}"
 google_oauth_token         = "${secretsmanager:linkari/google-oauth-token}"
 
-# --- TLS (local-only mode) ---
-
-# When tsnet is enabled (default), Tailscale handles TLS automatically.
-# For local-only TLS (--local --tls), generate cert/key with mkcert:
-#   mkcert -cert-file ~/.config/linkari/cert.pem \
-#          -key-file  ~/.config/linkari/key.pem  \
-#          localhost 127.0.0.1
-
 # --- Networking ---
 
+# linkari serves plain HTTP on this port (EPIC-272: no embedded funnel/TLS).
+# TLS termination and public exposure are the operator's responsibility -
+# the Tailscale operator Ingress in front of the pod in the reference k8s
+# deployment.
 port = 8080
 
-# Public base URL for fish callbacks (e.g. the Funnel URL).
-# Leave empty to auto-detect from tsnet or flag.
+# Public base URL for fish callbacks (e.g. the operator Ingress URL).
+# Leave empty to derive callbacks from flags/env at runtime.
 server_url = ""
 
 # --- Queue ---

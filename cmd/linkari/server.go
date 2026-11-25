@@ -259,7 +259,6 @@ type Server struct {
 	events     *EventLogger // nil when event logging is not configured
 	debug      bool
 	startAt    time.Time
-	tsnetAddr  string // Funnel FQDN; empty when tsnet is not enabled
 
 	// EPIC-097 F1: server config for source enable/disable flags.
 	serverConfig ServerConfig
@@ -279,7 +278,7 @@ type Server struct {
 	// resolveDomainRoute evaluates this before checkScopedAuth.
 	domainRoutes []DomainRoute
 
-	// EPIC-073: shield middleware for funnel client identity enforcement.
+	// EPIC-073: shield middleware for serving-mux client identity enforcement.
 	shield *Shield // nil when shield is not configured
 
 	// EPIC-001: Google Sign-In support.
@@ -296,7 +295,7 @@ type Server struct {
 
 	// EPIC-001 M3: IP blocklist and CORS origins.
 	blocklist   []*net.IPNet // parsed CIDRs (single IPs stored as /32 or /128)
-	corsOrigins []string     // allowed CORS origins for Funnel; empty = wildcard
+	corsOrigins []string     // allowed CORS origins; empty = wildcard "*"
 
 	// GAP-08: metrics collection. nil when metrics.enabled=false in server.yaml.
 	metrics *MetricsCollector
@@ -408,11 +407,6 @@ func (s *Server) SetRegistry(r *SourceRegistry) {
 	s.registry = r
 }
 
-// SetTsnetAddr records the tsnet Funnel address for health reporting.
-func (s *Server) SetTsnetAddr(addr string) {
-	s.tsnetAddr = addr
-}
-
 // SetBlocklist parses IP/CIDR strings and stores them for blocklist middleware.
 func (s *Server) SetBlocklist(entries []string) {
 	for _, entry := range entries {
@@ -437,9 +431,19 @@ func (s *Server) SetBlocklist(entries []string) {
 	}
 }
 
-// SetCORSOrigins sets the allowed CORS origins for FunnelMux.
+// SetCORSOrigins sets the allowed CORS origins for the serving mux.
 func (s *Server) SetCORSOrigins(origins []string) {
 	s.corsOrigins = origins
+}
+
+// realIPFromContext returns the client host with the port stripped, falling
+// back to the full remoteAddr when it carries no port.
+func realIPFromContext(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr
+	}
+	return host
 }
 
 // blocklistMiddleware rejects requests from blocked IPs with 403.
@@ -448,7 +452,7 @@ func (s *Server) blocklistMiddleware(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := net.ParseIP(realIPFromContext(r.Context(), r.RemoteAddr))
+		ip := net.ParseIP(realIPFromContext(r.RemoteAddr))
 		if ip != nil {
 			for _, cidr := range s.blocklist {
 				if cidr.Contains(ip) {
@@ -478,9 +482,11 @@ func (s *Server) authenticateRequest(r *http.Request) bool {
 	return ok
 }
 
-// funnelCORSMiddleware restricts CORS to configured origins on the Funnel
-// listener. When s.corsOrigins is empty, falls back to wildcard "*".
-func (s *Server) funnelCORSMiddleware(next http.Handler) http.Handler {
+// corsAllowlistMiddleware restricts CORS to the configured origins when
+// s.corsOrigins is non-empty; when empty it falls back to the wildcard
+// corsMiddleware. Chained onto Mux() since EPIC-272 collapsed FunnelMux
+// into the single serving mux.
+func (s *Server) corsAllowlistMiddleware(next http.Handler) http.Handler {
 	if len(s.corsOrigins) == 0 {
 		return corsMiddleware(next)
 	}
@@ -518,7 +524,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Mux returns the full HTTP handler mux (for local listener).
+// Mux returns the HTTP serving handler. Since EPIC-272 this is the only
+// mux: the former FunnelMux security stack minus the funnel-only
+// funnelAuthGuardMiddleware (deleted; it blocked the static operator token,
+// which is the primary /share credential on the only remaining path).
+// Chained: traceMiddleware → corsAllowlist → blocklist → shieldMiddleware → mux
 func (s *Server) Mux() http.Handler {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
@@ -526,24 +536,12 @@ func (s *Server) Mux() http.Handler {
 	mux.HandleFunc("/livez", s.handleHealthMinimal)
 	mux.HandleFunc("/logs", s.handleLogs)
 	mux.HandleFunc("/logs/stream", s.handleLogStream)
-	return traceMiddleware(corsMiddleware(mux))
-}
-
-// FunnelMux returns a restricted mux for the public Funnel listener.
-// Only explicitly allowlisted routes are registered  -  everything else
-// returns 404 to scanners. Local-only endpoints (/healthz, /logs,
-// /logs/stream, /notify) are excluded.
-// Middleware chain: traceMiddleware → funnelCORS → blocklist → funnelAuthGuard → shieldMiddleware → mux
-func (s *Server) FunnelMux() http.Handler {
-	mux := http.NewServeMux()
-	s.registerFunnelRoutes(mux)
 	var handler http.Handler = mux
-	handler = s.funnelAuthGuardMiddleware(handler)
 	if s.shield != nil {
 		handler = s.shield.Middleware(handler)
 	}
 	handler = s.blocklistMiddleware(handler)
-	return traceMiddleware(s.funnelCORSMiddleware(handler))
+	return traceMiddleware(s.corsAllowlistMiddleware(handler))
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the status code for
@@ -649,38 +647,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /stats/intents", s.handleIntentStats)
 	mux.HandleFunc("GET /stats/tags", s.handleTagStats)
 	mux.HandleFunc("GET /analytics/share-tags", s.handleShareTagAnalytics)
-	mux.HandleFunc("GET /analytics/share-tags/report", s.handleShareTagAnalyticsReport)
-}
-
-// registerFunnelRoutes adds the public-facing route allowlist for the Funnel
-// listener. Only endpoints that external clients legitimately need are
-// registered  -  everything else (e.g. /notify, /admin/invite, /push/test)
-// is excluded so scanners get 404.
-func (s *Server) registerFunnelRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/share", s.handleShare)
-	mux.HandleFunc("/actions", s.handleActions)
-	mux.HandleFunc("GET /intents", s.handleIntents)
-	mux.HandleFunc("/register", s.handleRegister)
-	mux.HandleFunc("POST /devices/register", s.handleRegisterDevice)
-	mux.HandleFunc("GET /devices", s.handleListDevices)
-	mux.HandleFunc("POST /devices/{device_id}/disable", s.handleDisableDevice)
-	mux.HandleFunc("/queue", s.handleQueue)
-	mux.HandleFunc("POST /queue/{id}/score", s.handleQueueScore)
-	mux.HandleFunc("POST /queue/{id}/outcome", s.handleQueueOutcome)
-	mux.HandleFunc("POST /queue/{id}/feedback", s.handleQueueFeedback)
-	mux.HandleFunc("POST /queue/slug/{slug}/feedback", s.handleQueueFeedbackBySlug)
-	mux.HandleFunc("POST /queue/slug/{slug}/outcome", s.handleQueueOutcomeBySlug)
-	mux.HandleFunc("GET /profiles/stats", s.handleProfileStats)
-	mux.HandleFunc("/archive", s.handleArchive)
-	mux.HandleFunc("/digest", s.handleDigest)
-	mux.HandleFunc("POST /search", s.handleSearch)
-	mux.HandleFunc("POST /auth/google", s.handleAuthGoogle)
-	mux.HandleFunc("POST /auth/invite", s.handleAuthInvite)
-	mux.HandleFunc("GET /health", s.handleHealthMinimal)
-	mux.HandleFunc("POST /telemetry", s.handleTelemetry)
-	// EPIC-150: tag inventory.
-	mux.HandleFunc("GET /tags", s.handleGetTags)
-	// F11 mobile Insight Report contract: Android reaches runabout via Funnel/tsnet.
 	mux.HandleFunc("GET /analytics/share-tags/report", s.handleShareTagAnalyticsReport)
 }
 
@@ -849,8 +815,10 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleHealthMinimal is the Funnel-safe health probe  -  returns only
-// {"status":"ok"} with no internal state. Registered on FunnelMux as /health.
+// handleHealthMinimal is the lightweight health probe  -  returns only
+// {"status":"ok"} with no internal state. Registered on Mux as /livez
+// (k8s liveness probe). Formerly registered as /health on FunnelMux;
+// that route was funnel-only and was deleted with the funnel mux.
 func (s *Server) handleHealthMinimal(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -912,8 +880,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"actions":             len(actions),
 		"fcm_enabled":         s.fcmTokenSource != nil,
 		"fcm_registered":      fcmToken != "",
-		"tsnet_enabled":       s.tsnetAddr != "",
-		"tsnet_addr":          s.tsnetAddr,
 		"debug":               s.debug,
 		"db":                  dbStatus,
 		"jira":                jiraHealth,
@@ -990,9 +956,9 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate limit by real client IP  -  extracted from FunnelConn.Src on Funnel
-	// connections, or RemoteAddr on local. Never trust X-Forwarded-For (GAP-5).
-	ip := realIPFromContext(r.Context(), r.RemoteAddr)
+	// Rate limit by real client IP  -  RemoteAddr host, port stripped.
+	// Never trust X-Forwarded-For (GAP-5).
+	ip := realIPFromContext(r.RemoteAddr)
 	if !s.limiter.allow(ip) {
 		slog.DebugContext(ctx, "share rejected: rate limit exceeded", "ip", ip)
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")

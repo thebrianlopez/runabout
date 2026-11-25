@@ -15,7 +15,7 @@ import (
 // Segments: alphanumeric, hyphens, underscores; version may include dots.
 var clientHeaderRegex = regexp.MustCompile(`^[\w\-]+/[\w.\-]+(/[\w\-]+)?$`)
 
-// Shield validates X-Linkari-Client headers on the Funnel mux.
+// Shield validates X-Linkari-Client headers on the serving mux (Mux).
 // Two modes:
 //   - "log" (default): invalid/missing headers emit a debug log but pass through.
 //   - "enforce": invalid/missing headers receive 403 Forbidden.
@@ -92,44 +92,9 @@ func (s *Shield) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// funnelAuthGuardMiddleware rejects requests bearing the static operator token
-// on the Funnel listener. Session tokens and Jira tokens pass through.
-//
-// Passthrough list: /auth/google, /auth/invite, /register (G-09).
-//
-// Wired into FunnelMux() by EPIC-001 M1.
-//
-// NOTE: X-Linkari-Client is an unauthenticated signal, not a security
-// boundary (G-08). This guard is the actual auth-layer enforcement.
-func (s *Server) funnelAuthGuardMiddleware(next http.Handler) http.Handler {
-	passthroughPaths := map[string]bool{
-		"/auth/google": true,
-		"/auth/invite": true,
-		"/register":    true,
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Passthrough endpoints skip the guard entirely.
-		if passthroughPaths[r.URL.Path] {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		auth := r.Header.Get("Authorization")
-		if auth != "" {
-			bearer := ""
-			if len(auth) > 7 && auth[:7] == "Bearer " {
-				bearer = auth[7:]
-			}
-			// Block the static operator token on funnel.
-			if bearer != "" && bearer == s.token {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-			// Jira token passes through (distinct from operator token).
-			// Session tokens pass through (checked by authenticateRequest).
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
+// History: the funnelAuthGuardMiddleware from EPIC-001 M1 (which blocked the
+// static operator token on the public funnel) was deleted with the funnel
+// mux in EPIC-272 - with the perimeter moved to the operator Ingress it had
+// no legitimate remaining scope and would have 401'd the primary Android
+// /share credential. X-Linkari-Client is an unauthenticated signal, not a
+// security boundary (G-08).

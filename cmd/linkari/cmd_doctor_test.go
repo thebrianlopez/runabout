@@ -98,7 +98,7 @@ func TestDoctor_LiteralToken(t *testing.T) {
 	}
 
 	out, run := newDoctorCmdForTest(t, dir, []string{"--path", tomlPath})
-	_ = run() // may fail due to firebase_sa/tsnet_authkey being optional warns  -  that's fine
+	_ = run() // may fail due to firebase_sa being an optional warn  -  that's fine
 
 	got := out.String()
 	if !strings.Contains(got, "✓ config_toml") {
@@ -351,7 +351,6 @@ func TestDoctor_AllChecksPresent(t *testing.T) {
 	content := "[server]\n" +
 		"token = \"test-literal-token\"\n" +
 		"firebase_sa = \"" + fakeSA + "\"\n" +
-		"tsnet_authkey = \"tskey-test\"\n" +
 		"jira_token = \"jira-test-token\"\n" +
 		"atlassian_email = \"user@example.com\"\n" +
 		"atlassian_api_token = \"test-password\"\n" +
@@ -378,10 +377,10 @@ func TestDoctor_AllChecksPresent(t *testing.T) {
 	}
 
 	required := []string{
-		"config_toml", "token", "firebase_sa", "tsnet_authkey", "jira_token",
+		"config_toml", "token", "firebase_sa", "jira_token",
 		"atlassian_email", "atlassian_api_token", "jira_domain", "pagerduty_token",
 		"xdg_config_dir", "xdg_cache_dir", "xdg_state_dir",
-		"tsnet_state", "firebase_sa_cache", "log_file",
+		"ingress_mode", "firebase_sa_cache", "log_file",
 		"ffmpeg", "ytdlp", "whisper_cli",
 	}
 	for _, name := range required {

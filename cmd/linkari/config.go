@@ -54,8 +54,7 @@ func resolvePushConfigOnce(q *Queue) {
 func (s ServerConfig) IsZero() bool {
 	return s.Port == 0 && s.Token == "" && s.QueueDB == "" && s.DataDir == "" && s.FirebaseSA == "" &&
 		s.LogFile == "" && s.Shell == "" && s.ShellArgs == "" && s.NotifyMinScore == 0 &&
-		s.ServerURL == "" && s.TSNetAuthKey == "" && s.TSNetClientSecret == "" && s.Tsnet == nil &&
-		s.TsnetHostname == "" && s.TsnetStateDir == "" && !s.Debug &&
+		s.ServerURL == "" && !s.Debug &&
 		s.JiraAPIUsername == "" && s.JiraAPIPassword == "" && s.JiraDomain == "" && s.PagerDutyToken == "" &&
 		len(s.Push.DigestThrottle) == 0 && s.Push.DigestThrottleDefault.D == 0 &&
 		s.RelayedWatchdogInterval.D == 0 && s.RelayedWatchdogMaxAge.D == 0 &&
@@ -468,17 +467,11 @@ type ServerConfig struct {
 	Shell                    string   `toml:"shell"`
 	ShellArgs                string   `toml:"shell_args"`
 	NotifyMinScore           int      `toml:"notify_min_score"`
-	ServerURL                string   `toml:"server_url"`    // base URL fish callbacks should use
-	TSNetAuthKey             string   `toml:"tsnet_authkey"` // EPIC-047: ${secretsmanager:...} or literal
-	TSNetClientSecret        string   `toml:"tsnet_client_secret" yaml:"tsnet_client_secret"`
+	ServerURL                string   `toml:"server_url"` // base URL fish callbacks should use
 
-	// EPIC-048: new fields for zero-flag boot.
-	// Tsnet uses *bool so nil encodes "absent" (→ default true) vs explicit false.
-	// Debug and NotifyMinScore remain plain-typed (zero-value == unset is safe).
-	Tsnet         *bool  `toml:"tsnet"`
-	TsnetHostname string `toml:"tsnet_hostname"`
-	TsnetStateDir string `toml:"tsnet_state_dir"`
-	Debug         bool   `toml:"debug"`
+	// EPIC-048: fields for zero-flag boot (EPIC-272 note: TOML/YAML decoding
+	// is permissive, so legacy server.yaml files with unknown keys still load).
+	Debug bool `toml:"debug"`
 
 	// EPIC-051 M4: push gating config (per-profile throttle + default).
 	Push PushYAMLConfig `toml:"push"`
@@ -570,7 +563,7 @@ type ServerConfig struct {
 	// EPIC-001 M3: IP blocklist  -  IPs and CIDRs rejected with 403 before routing.
 	Blocklist []string `toml:"blocklist"`
 
-	// EPIC-001 M3: CORS origins allowlist for FunnelMux. When empty,
+	// EPIC-001 M3: CORS origins allowlist for the serving mux. When empty,
 	// falls back to "*" (wildcard). When set, only listed origins are allowed.
 	CORSOrigins []string `toml:"cors_origins"`
 

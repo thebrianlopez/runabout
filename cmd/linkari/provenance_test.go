@@ -26,14 +26,14 @@ func TestProvenanceLogFormat(t *testing.T) {
 
 	entries := []provenanceEntry{
 		{field: "token", source: "secretsmanager://linkari/bearer-token", fp: secrets.Fingerprint("hunter2"), tier: "toml-sm"},
-		{field: "tsnet_authkey", source: "<literal>", fp: secrets.Fingerprint("tskey-abc"), tier: "env"},
+		{field: "jira_token", source: "<literal>", fp: secrets.Fingerprint("jtk-abc"), tier: "env"},
 	}
 	flushProvenance(entries)
 
 	want := "linkari: secret token resolved from secretsmanager://linkari/bearer-token fp=" +
 		secrets.Fingerprint("hunter2") + " tier=toml-sm\n" +
-		"linkari: secret tsnet_authkey resolved from <literal> fp=" +
-		secrets.Fingerprint("tskey-abc") + " tier=env\n"
+		"linkari: secret jira_token resolved from <literal> fp=" +
+		secrets.Fingerprint("jtk-abc") + " tier=env\n"
 
 	if got := buf.String(); got != want {
 		t.Errorf("provenance log mismatch\n got: %q\nwant: %q", got, want)

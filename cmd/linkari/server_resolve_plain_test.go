@@ -135,66 +135,25 @@ func TestResolveStringField(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_NewFields pins TOML round-trip semantics for the
-// EPIC-048 schema additions. Three fixtures cover the three *bool states.
-func TestLoadConfig_NewFields(t *testing.T) {
-	t.Run("tsnet-true", func(t *testing.T) {
-		cfg, err := LoadConfig(context.Background(), "testdata/tsnet_true.toml")
-		if err != nil {
-			t.Fatal(err)
-		}
-		sc := cfg.Server
-		if sc.Tsnet == nil {
-			t.Fatal("Tsnet: want non-nil *bool, got nil")
-		}
-		if !*sc.Tsnet {
-			t.Errorf("*Tsnet=%v want true", *sc.Tsnet)
-		}
-		if sc.TsnetHostname != "linkari-test" {
-			t.Errorf("TsnetHostname=%q want %q", sc.TsnetHostname, "linkari-test")
-		}
-		if sc.TsnetStateDir != "/tmp/tsnet-test" {
-			t.Errorf("TsnetStateDir=%q want %q", sc.TsnetStateDir, "/tmp/tsnet-test")
-		}
-		if sc.LogFile != "/tmp/linkari-test.log" {
-			t.Errorf("LogFile=%q want %q", sc.LogFile, "/tmp/linkari-test.log")
-		}
-		if !sc.Debug {
-			t.Errorf("Debug=%v want true", sc.Debug)
-		}
-		if sc.NotifyMinScore != 5 {
-			t.Errorf("NotifyMinScore=%d want 5", sc.NotifyMinScore)
-		}
-	})
-
-	t.Run("tsnet-false", func(t *testing.T) {
-		cfg, err := LoadConfig(context.Background(), "testdata/tsnet_false.toml")
-		if err != nil {
-			t.Fatal(err)
-		}
-		sc := cfg.Server
-		if sc.Tsnet == nil {
-			t.Fatal("Tsnet: want non-nil *bool (explicit false), got nil")
-		}
-		if *sc.Tsnet {
-			t.Errorf("*Tsnet=%v want false", *sc.Tsnet)
-		}
-	})
-
-	t.Run("tsnet-absent", func(t *testing.T) {
-		cfg, err := LoadConfig(context.Background(), "testdata/tsnet_absent.toml")
-		if err != nil {
-			t.Fatal(err)
-		}
-		sc := cfg.Server
-		// Key absent → TOML decoder leaves the pointer nil.
-		if sc.Tsnet != nil {
-			t.Errorf("Tsnet: want nil (absent key), got %v", *sc.Tsnet)
-		}
-		if sc.Token != "test-token" {
-			t.Errorf("Token=%q want %q", sc.Token, "test-token")
-		}
-	})
+// TestLoadConfig_LegacyTsnetKeysPermissive pins the EPIC-272 config
+// compatibility contract: server.yaml files written before the tsnet fields
+// were deleted (tsnet = true, tsnet_authkey, ...) must keep loading because
+// TOML decoding is permissive (unknown keys are ignored, not rejected).
+func TestLoadConfig_LegacyTsnetKeysPermissive(t *testing.T) {
+	cfg, err := LoadConfig(context.Background(), "testdata/legacy_tsnet_keys.toml")
+	if err != nil {
+		t.Fatalf("legacy config with tsnet keys failed to load: %v", err)
+	}
+	sc := cfg.Server
+	if sc.Token != "test-token" {
+		t.Errorf("Token=%q want %q", sc.Token, "test-token")
+	}
+	if sc.LogFile != "/tmp/linkari-test.log" {
+		t.Errorf("LogFile=%q want %q", sc.LogFile, "/tmp/linkari-test.log")
+	}
+	if sc.NotifyMinScore != 5 {
+		t.Errorf("NotifyMinScore=%d want 5", sc.NotifyMinScore)
+	}
 
 	t.Run("file-not-found-returns-error", func(t *testing.T) {
 		_, err := LoadConfig(context.Background(), "testdata/does_not_exist.toml")

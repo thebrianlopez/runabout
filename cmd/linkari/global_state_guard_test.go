@@ -37,10 +37,11 @@ func TestEPIC258GlobalStateGuard(t *testing.T) {
 	}
 
 	// Pass 1: collect names that make a var func-typed by reference rather than
-	// by syntax - named func types (`type tsnetStartFunc func(...)`) and
-	// top-level funcs usable as an initializer (`var f = realTsnetStart`).
-	// Without this pass both forms are invisible to the classifier below, which
-	// is how the tsnetStart seam went uncounted until EPIC-258 M2.
+	// by syntax - named func types and top-level funcs usable as an initializer
+	// (`var x = someFuncDecl`). Without this pass both forms are invisible to
+	// the classifier below, which is how an injectable seam went uncounted
+	// until EPIC-258 M2 (the former tsnetStart seam was the original offender,
+	// since deleted with its layer in EPIC-272).
 	funcTypeNames := map[string]bool{}
 	funcDeclNames := map[string]bool{}
 	for _, file := range srcFiles {
