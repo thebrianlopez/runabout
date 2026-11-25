@@ -55,3 +55,4 @@ cmd/linkari/docs/
 .claude-dispatch/
 **/.beads/
 **/.cursor/
+plaid-service/
