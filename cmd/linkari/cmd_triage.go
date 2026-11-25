@@ -9,7 +9,7 @@ package main
 // same Queue.ScoreByURL path that the /notify HTTP handler uses.
 //
 // Why shell out to `claude` instead of using the Anthropic SDK directly:
-// fish currently calls `claude --print --model claude-haiku-4-5-20251001
+// fish currently calls `claude --print --model claude-haiku-4-5
 // --max-turns 1 --tools "" --system-prompt ...` so output bytes flow through
 // Claude Code, not the raw API. Matching transport keeps M2 byte-for-byte
 // equivalent to what M1's 42-fixture corpus captured, and avoids splitting
@@ -42,9 +42,10 @@ type TriageResult struct {
 	RawMarkdown string   `json:"raw_markdown"`
 }
 
-// claudeModel is the Haiku model fish currently calls. Pinned for parity with
-// the M1 fixture corpus until M3+ revisits the model selection.
-const claudeModel = "claude-haiku-4-5-20251001"
+// claudeModel is the Haiku model score/triage calls shell out to. The undated
+// alias tracks the current stable Haiku 4.5 release; revisit in M3+ if model
+// selection changes.
+const claudeModel = "claude-haiku-4-5"
 
 // EPIC-217 F4: pi scoring backend go-forward defaults (GPT Luna).
 const (
