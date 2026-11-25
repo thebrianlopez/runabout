@@ -113,6 +113,10 @@ type Router struct {
 func (r *Router) SetQueue(q *Queue) {
 	r.mu.Lock()
 	r.queue = q
+	if q != nil {
+		index := r.cfgIndex
+		q.actionSet.Store(&index)
+	}
 	r.mu.Unlock()
 }
 
@@ -300,12 +304,23 @@ func (r *Router) loadConfig(cfg *Config) {
 	r.actionsCfg = active
 	r.actions = actions
 	r.cfgIndex = index
+	if r.queue != nil {
+		r.queue.actionSet.Store(&index)
+	}
 	r.mu.Unlock()
 }
 
 // Reload replaces the router's config from a new Config. Used for SIGHUP hot-reload.
 func (r *Router) Reload(cfg *Config) {
 	r.loadConfig(cfg)
+	r.mu.RLock()
+	q, index := r.queue, r.cfgIndex
+	r.mu.RUnlock()
+	if q != nil {
+		if err := q.revalidateBlocked(index); err != nil {
+			slog.Warn("revalidate blocked actions", "error", err)
+		}
+	}
 	slog.Debug(
 		"router reloaded",
 		"event_type", "router_reload",

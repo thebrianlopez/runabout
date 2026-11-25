@@ -26,6 +26,7 @@ var validStatuses = map[string]bool{
 	"scored":      true,
 	"archived":    true,
 	"failed":      true,
+	"blocked":     true, // POMO queue-admission-validation-gap: missing action definition, recoverable on config reload
 	"eval_failed": true, // EPIC-001 M2: evaluator double-failure terminal status
 	"prefiltered": true, // EPIC-001 M4: pre-filter transparency queue rows
 	"captured":    true, // F4: structured-content capture terminal status
@@ -89,8 +90,9 @@ type QueueItem struct {
 
 // Queue persists share requests in SQLite for deferred replay.
 type Queue struct {
-	db    *sql.DB
-	debug bool
+	actionSet atomic.Pointer[map[string]*ActionConfig]
+	db        *sql.DB
+	debug     bool
 
 	// pushCfg is the live push config used by EnqueueDigestIfDue.
 	// Loaded atomically so SIGHUP reloads (EPIC-051 M6) can swap it in
@@ -636,7 +638,28 @@ func (q *Queue) newTraceID() string {
 // to record which pre-enqueue cascade stage determined the profile.
 // EPIC-111 F3 M9: generates trace_id (UUID v4) and computes content_hash from
 // request text/URL bytes at intake so all pipeline events share a stable trace.
+// Enqueue persists a share request.
+//
+// Admission-time action validation (POMO queue-admission-validation-gap):
+// when an action set is loaded (router wired), the action id is resolved
+// before insert. Resolvable ids are normalized via resolveActionID.
+// Unresolvable ids do NOT reject the share (backward compat RG-1: old Android
+// clients and firehose rows must not be hard-rejected); the row is admitted
+// as status='blocked' with error_reason='action_missing' and returns to
+// 'pending' when a Router reload makes the id resolvable (revalidateBlocked).
 func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
+	actionBlocked := false
+	if actions := q.actionSet.Load(); actions != nil && req.Action != "" {
+		id, err := resolveActionID(req.Action, *actions)
+		if err == nil {
+			copyReq := *req
+			copyReq.Action = id
+			req = &copyReq
+		} else {
+			actionBlocked = true
+		}
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	traceID := q.newTraceID()
 	// content_hash is computed from available request content at intake.
@@ -657,6 +680,11 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 		return 0, fmt.Errorf("enqueue: %w", err)
 	}
 	id, _ := res.LastInsertId()
+	if actionBlocked {
+		if _, uerr := q.db.Exec("UPDATE queue SET status='blocked', error_reason='action_missing' WHERE id=?", id); uerr != nil {
+			return 0, fmt.Errorf("enqueue: block action_missing update: %w", uerr)
+		}
+	}
 	slog.Debug(
 		"queue enqueued",
 		"event_type", "queue_enqueue",
@@ -664,6 +692,7 @@ func (q *Queue) Enqueue(req *ShareRequest) (int64, error) {
 		"type", req.Type,
 		"classify_source", req.ClassifySource,
 		"trace_id", traceID,
+		"blocked_action", actionBlocked,
 	)
 	return id, nil
 }

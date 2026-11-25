@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 )
@@ -58,6 +59,18 @@ func StartReplay(ctx context.Context, q *Queue, router *Router, srv *Server, tmu
 				"pending_count", len(items),
 			)
 			for _, it := range items {
+				actions := q.actionSet.Load()
+				if actions != nil {
+					action, resolveErr := resolveActionID(it.Action, *actions)
+					if resolveErr != nil {
+						if _, err := q.db.Exec("UPDATE queue SET status='blocked', error_reason='action_missing' WHERE id=? AND status='pending'", it.ID); err != nil {
+							slog.Warn("block replay action", "error", err)
+						}
+						continue
+					}
+					it.Action = action
+				}
+
 				if ac := router.LookupAction(it.Action); ac != nil && ac.Kind == KindCapture {
 					srv.wg.Add(1)
 					go srv.captureAsync(context.Background(), it.ID, ac)
@@ -66,6 +79,16 @@ func StartReplay(ctx context.Context, q *Queue, router *Router, srv *Server, tmu
 				req := replayShareRequest(it)
 				result, err := router.Route(req)
 				if err != nil {
+					// POMO queue-admission-validation-gap: a Route that fails with
+					// ErrActionNotFound is a missing definition, not an unworkable
+					// item. Mark the row blocked (recoverable via revalidateBlocked
+					// on config reload) instead of terminal-failing it.
+					if errors.Is(err, ErrActionNotFound) {
+						if _, berr := q.db.Exec("UPDATE queue SET status='blocked', error_reason='action_missing' WHERE id=? AND status='pending'", it.ID); berr != nil {
+							slog.Warn("block replay action", "error", berr)
+						}
+						continue
+					}
 					slog.Error(
 						"replay item failed",
 						"event_type", "replay_result",
@@ -75,6 +98,7 @@ func StartReplay(ctx context.Context, q *Queue, router *Router, srv *Server, tmu
 					q.MarkFailed(it.ID)
 					continue
 				}
+				_ = result // nolint:all
 				q.MarkRelayed(it.ID)
 				slog.Info(
 					"replay item relayed",
