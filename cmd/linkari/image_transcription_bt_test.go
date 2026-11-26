@@ -50,7 +50,7 @@ func TestF1_BT1_Semaphore_MaxConcurrencyOne(t *testing.T) {
 			atomic.StoreInt64(&maxConcurrent, current)
 		}
 		mu.Unlock()
-		_, errA = extractImageText(ctx, nil, imagePath, "")
+		_, errA = extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "")
 		atomic.AddInt64(&calls, -1)
 	}()
 	go func() {
@@ -61,7 +61,7 @@ func TestF1_BT1_Semaphore_MaxConcurrencyOne(t *testing.T) {
 			atomic.StoreInt64(&maxConcurrent, current)
 		}
 		mu.Unlock()
-		_, errB = extractImageText(ctx, nil, imagePath, "")
+		_, errB = extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "")
 		atomic.AddInt64(&calls, -1)
 	}()
 	wg.Wait()
@@ -83,7 +83,7 @@ func TestF1_BT2_ExtractImageText_StripsWhitespace(t *testing.T) {
 		`{"type":"result","result":"{\"text\":\"  Hello World  \"}","is_error":false,"total_cost_usd":0.001}`, 0)
 
 	ctx := context.Background()
-	text, err := extractImageText(ctx, nil, imagePath, "")
+	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "")
 	if err != nil {
 		t.Fatalf("extractImageText: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestF1_BT3_ExtractImageText_UsesDefaultModel(t *testing.T) {
 		`{"type":"result","result":"{\"text\":\"model test\"}","is_error":false}`, 0)
 
 	ctx := context.Background()
-	text, err := extractImageText(ctx, nil, imagePath, "") // empty model → use default
+	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "") // empty model → use default
 	if err != nil {
 		t.Fatalf("extractImageText with empty model: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestF1_BT4_ExtractImageText_IsError_ReturnsError(t *testing.T) {
 		`{"type":"result","result":"","is_error":true,"total_cost_usd":0}`, 0)
 
 	ctx := context.Background()
-	text, err := extractImageText(ctx, nil, imagePath, "")
+	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "")
 	if err == nil {
 		t.Fatal("extractImageText with is_error=true should return error; got nil")
 	}

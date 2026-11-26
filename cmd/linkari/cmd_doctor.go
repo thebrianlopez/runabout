@@ -665,9 +665,9 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 			// --- Check: scoring backend pi auth (EPIC-217 F4; catches the
 			// "No API key found for <provider>" failure mode that otherwise only
 			// surfaces per-row in scoring_call_complete_json errors). Only
-			// relevant when [server.scoring] backend = "pi"; claude_cli backend
-			// has its own separate startup CLI validation and is unaffected. ---
-			if serverCfg != nil && serverCfg.Scoring.Backend == "pi" {
+			// relevant when effective backend is "pi" (explicit or omitted default);
+			// claude_cli (explicit rollback) has its own CLI validation. ---
+			if serverCfg != nil && effectiveScoringBackend(serverCfg.Scoring.Backend) == "pi" {
 				piPath := serverCfg.Scoring.PiPath
 				if piPath == "" {
 					piPath = "pi"
@@ -692,7 +692,7 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 					addCheck(warnCheck("scoring_backend_pi_auth",
 						fmt.Sprintf("%s returned unexpected status %q (reason=%s)", model, result.Status, result.Reason)))
 				}
-			} else if serverCfg != nil && serverCfg.Scoring.Backend == "pi_remote" {
+			} else if serverCfg != nil && effectiveScoringBackend(serverCfg.Scoring.Backend) == "pi_remote" {
 				baseURL := serverCfg.Scoring.PiServiceURL
 				probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
 				probeErr := deps.PiRemoteHealthCheck(probeCtx, baseURL)

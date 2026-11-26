@@ -619,8 +619,7 @@ func TestDoctorPiAuth_ProbeError(t *testing.T) {
 }
 
 // TestDoctorPiAuth_SkippedForClaudeCLIBackend verifies the check is absent
-// entirely when backend is not "pi" (default/claude_cli), so it never fires a
-// false positive against a pi-less deployment.
+// when backend is explicitly "claude_cli" (rollback path).
 func TestDoctorPiAuth_SkippedForClaudeCLIBackend(t *testing.T) {
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, ".config", "linkari")
@@ -628,7 +627,7 @@ func TestDoctorPiAuth_SkippedForClaudeCLIBackend(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	tomlPath := filepath.Join(cfgDir, "config.toml")
-	if err := os.WriteFile(tomlPath, []byte("[server]\ntoken = \"test-token\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(tomlPath, []byte("[server]\ntoken = \"test-token\"\n\n[server.scoring]\nbackend = \"claude_cli\"\n"), 0o600); err != nil {
 		t.Fatalf("write config.toml: %v", err)
 	}
 
@@ -642,7 +641,7 @@ func TestDoctorPiAuth_SkippedForClaudeCLIBackend(t *testing.T) {
 	_ = run()
 
 	if called {
-		t.Error("PiAuthCheck was invoked despite backend != \"pi\"")
+		t.Error("PiAuthCheck was invoked despite backend = \"claude_cli\"")
 	}
 	var result struct {
 		Checks []doctorCheck `json:"checks"`
@@ -654,6 +653,30 @@ func TestDoctorPiAuth_SkippedForClaudeCLIBackend(t *testing.T) {
 		if c.Name == "scoring_backend_pi_auth" {
 			t.Errorf("scoring_backend_pi_auth present despite backend != \"pi\": %+v", c)
 		}
+	}
+}
+
+func TestDoctorPiAuth_EmptyBackendUsesPiDefault(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	if err := os.WriteFile(tomlPath, []byte("[server]\ntoken = \"test-token\"\n"), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath, "--json"}, doctorDeps{
+		PiAuthCheck: func(context.Context, string, string) (piAuthCheckResult, error) {
+			return piAuthCheckResult{Status: "ready", Provider: "openai-codex", AuthType: "oauth"}, nil
+		},
+	})
+	_ = run()
+
+	c := doctorCheckByName(t, out, "scoring_backend_pi_auth")
+	if c.Status != statusOK {
+		t.Errorf("status = %q, want %q; message=%q", c.Status, statusOK, c.Message)
 	}
 }
 

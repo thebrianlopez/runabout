@@ -349,7 +349,7 @@ func TestShouldValidateClaudeCLI(t *testing.T) {
 		backend string
 		want    bool
 	}{
-		{backend: "", want: true},
+		{backend: "", want: false},
 		{backend: "claude_cli", want: true},
 		{backend: "pi", want: false},
 		{backend: "pi_remote", want: false},

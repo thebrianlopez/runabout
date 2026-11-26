@@ -101,10 +101,8 @@ func TestScoringBackendFromConfig(t *testing.T) {
 	}
 }
 
-// EPIC-217 step 4: migration matrix. Empty and claude_cli remain supported
-// fallbacks until the default-backend switch (step 5). pi and pi_remote
-// must select those implementations. Unknown names must fail with an
-// actionable error.
+// EPIC-217 step 5: empty/omitted backend defaults to pi. Explicit
+// claude_cli remains a rollback. Unknown names fail with an actionable error.
 func TestScoringBackendFromConfig_MigrationMatrix(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -118,7 +116,7 @@ func TestScoringBackendFromConfig_MigrationMatrix(t *testing.T) {
 			cfg:      ScoringConfig{Backend: "pi_remote", PiServiceURL: "http://pi-service.test:9090"},
 			wantName: "pi_remote",
 		},
-		{name: "missing_backend", cfg: ScoringConfig{}, wantName: "claude_cli"},
+		{name: "missing_backend", cfg: ScoringConfig{}, wantName: "pi"},
 		{name: "backend_claude_cli", cfg: ScoringConfig{Backend: "claude_cli"}, wantName: "claude_cli"},
 		{
 			name:       "unknown_backend",
@@ -192,8 +190,8 @@ func TestLoadConfiguredScoringBackend_MigrationMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if b.Name() != "claude_cli" {
-			t.Fatalf("missing backend should still default to claude_cli, got %q", b.Name())
+		if b.Name() != "pi" {
+			t.Fatalf("missing backend should default to pi, got %q", b.Name())
 		}
 	})
 	t.Run("backend_claude_cli", func(t *testing.T) {

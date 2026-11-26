@@ -70,7 +70,7 @@ func TestF1_CT1_ExtractImageText_ReturnsText(t *testing.T) {
 	mockClaudeScript(t, `{"type":"result","result":"{\"text\":\"Hello World\"}","is_error":false,"total_cost_usd":0.001}`, 0)
 
 	ctx := context.Background()
-	text, err := extractImageText(ctx, nil, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "claude-haiku-4-5-20251001")
 	if err != nil {
 		t.Fatalf("extractImageText returned unexpected error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestF1_CT2_ExtractImageText_NoText_ReturnsEmptyNil(t *testing.T) {
 	mockClaudeScript(t, `{"type":"result","result":"{\"text\":\"\"}","is_error":false,"total_cost_usd":0.001}`, 0)
 
 	ctx := context.Background()
-	text, err := extractImageText(ctx, nil, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "claude-haiku-4-5-20251001")
 	if err != nil {
 		t.Fatalf("extractImageText returned unexpected error: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestF1_CT3_ExtractImageText_CLIFailure_ReturnsError(t *testing.T) {
 	mockClaudeScript(t, "", 1)
 
 	ctx := context.Background()
-	text, err := extractImageText(ctx, nil, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "claude-haiku-4-5-20251001")
 	if err == nil {
 		t.Fatal("extractImageText returned nil error; want error on CLI failure")
 	}
@@ -169,7 +169,7 @@ func TestF1_CT6_ExtractImageText_ContextTimeout(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	text, err := extractImageText(ctx, nil, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "claude-haiku-4-5-20251001")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -613,7 +613,7 @@ func TestExtractImageTextLiveCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	text, err := extractImageText(ctx, nil, fixturePath, visionModelName)
+	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, fixturePath, visionModelName)
 	if err != nil {
 		t.Fatalf("extractImageText returned CLI error (exit-1 bug): %v", err)
 	}

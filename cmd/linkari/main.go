@@ -793,9 +793,11 @@ Configuration via flags, environment variables, or server.yaml:
 			// EPIC-080 M6: resolve claude binary path and vision model from config.
 			initClaudeConfig(serverFileCfg)
 
-			// EPIC-217 F4: select scoring backend from config (default: claude_cli).
+			// EPIC-217 F4/step 5: select scoring backend from config (default: pi).
 			if serverFileCfg != nil {
 				initScoringBackend(serverFileCfg.Scoring)
+			} else {
+				initScoringBackend(ScoringConfig{})
 			}
 
 			// EPIC-009 M2: wire yt-dlp path for YouTube transcription.

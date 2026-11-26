@@ -438,13 +438,12 @@ func orDefault(val, def string) string {
 }
 
 // initScoringBackend sets activeScoringBackend based on cfg.Backend.
-// Called at server startup after initClaudeConfig. EPIC-217 F4.
-// Default (empty or "claude_cli"): ClaudeCLIScoringBackend - zero behavioral change.
-// "pi": PiScoringBackend using cfg.Provider/cfg.Model combined.
-// "pi_remote": PiRemoteScoringBackend calling cfg.PiServiceURL over HTTP
-// (containers without the pi CLI's Node.js runtime).
+// Called at server startup after initClaudeConfig. EPIC-217 F4/step 5.
+// Default (empty): PiScoringBackend using cfg.Provider/cfg.Model.
+// "pi_remote": PiRemoteScoringBackend calling cfg.PiServiceURL over HTTP.
+// Explicit "claude_cli": ClaudeCLIScoringBackend (rollback until step 6).
 func initScoringBackend(cfg ScoringConfig) {
-	switch cfg.Backend {
+	switch effectiveScoringBackend(cfg.Backend) {
 	case "pi":
 		piPath := cfg.PiPath
 		if piPath == "" {
@@ -488,12 +487,19 @@ func initScoringBackend(cfg ScoringConfig) {
 				"event_type", "pi_remote_misconfigured",
 			)
 		}
-	default: // "claude_cli" or empty
+	case "claude_cli":
 		activeScoringBackend = ClaudeCLIScoringBackend{}
 		slog.Info(
 			"scoring backend set",
 			"event_type", "scoring_backend_init",
 			"backend", "claude_cli",
+		)
+	default:
+		activeScoringBackend = ClaudeCLIScoringBackend{}
+		slog.Warn(
+			"unsupported scoring backend; using claude_cli rollback",
+			"event_type", "scoring_backend_init",
+			"backend", cfg.Backend,
 		)
 	}
 }
@@ -612,7 +618,7 @@ func initClaudeConfig(cfg *ServerConfig) {
 }
 
 func shouldValidateClaudeCLI(backend string) bool {
-	return backend == "" || backend == "claude_cli"
+	return effectiveScoringBackend(backend) == "claude_cli"
 }
 
 // expandTilde expands a leading "~/" in a path to the user's home directory.

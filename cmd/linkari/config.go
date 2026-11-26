@@ -174,7 +174,7 @@ type WhisperConfig struct {
 // ScoringConfig controls which LLM executor is used for the scoring pipeline.
 // Nested under [server.scoring] in config.toml. EPIC-217 F4.
 type ScoringConfig struct {
-	Backend      string `toml:"backend"`        // "claude_cli" (default), "pi", or "pi_remote" (HTTP service backend)
+	Backend      string `toml:"backend"`        // "pi" (default), "pi_remote", or "claude_cli" (explicit rollback)
 	PiPath       string `toml:"pi_path"`        // path to pi binary (default: "pi" on PATH)
 	Provider     string `toml:"provider"`       // provider for pi backend (default: "openai-codex")
 	Model        string `toml:"model"`          // model override for pi backend (default: "gpt-6-luna")
@@ -595,8 +595,8 @@ type ServerConfig struct {
 	// Absent block or Enabled=false is a no-op; scoring path unchanged.
 	Wiki WikiConfig `toml:"wiki"`
 
-	// EPIC-217 F4: pluggable scoring backend selection.
-	// Absent block or Backend="" uses "claude_cli" (default behavior).
+	// EPIC-217 F4/step 5: pluggable scoring backend selection.
+	// Absent block or Backend="" uses "pi". Set backend = "claude_cli" to roll back.
 	Scoring ScoringConfig `toml:"scoring"`
 
 	// Workspace routing registry context-injection (label-only MVP).

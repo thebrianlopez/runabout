@@ -218,7 +218,7 @@ func TestWorkspaceConfigValidateEnabled(t *testing.T) {
 		t.Fatal("max_context_tokens over 2000 must fail validation")
 	}
 
-	cfg = WorkspaceConfig{Enabled: true, Profiles: []string{"life"}}
+	cfg = WorkspaceConfig{Enabled: true, Path: filepath.Join(t.TempDir(), "missing-registry.yaml"), Profiles: []string{"life"}}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("missing registry file must fail validation when enabled")
 	}

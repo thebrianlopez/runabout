@@ -34,9 +34,19 @@ type ScoringBackend interface {
 	CompleteVision(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error)
 }
 
+// effectiveScoringBackend returns the backend name after applying the
+// config default. Empty or omitted [server.scoring] backend selects "pi"
+// (EPIC-217 step 5). Explicit "claude_cli" remains a rollback path.
+func effectiveScoringBackend(name string) string {
+	if name == "" {
+		return "pi"
+	}
+	return name
+}
+
 func scoringBackendFromConfig(cfg ScoringConfig) (ScoringBackend, error) {
-	switch cfg.Backend {
-	case "", "claude_cli":
+	switch effectiveScoringBackend(cfg.Backend) {
+	case "claude_cli":
 		return ClaudeCLIScoringBackend{}, nil
 	case "pi":
 		path := cfg.PiPath
@@ -71,14 +81,14 @@ func loadConfiguredScoringBackend(ctx context.Context, path string) (ScoringBack
 // implementing ScoringBackend. If nil at call time it is a programming error
 // (missing init call) - callers will panic.
 //
-// Default: ClaudeCLIScoringBackend so the server is functional before
-// initScoringBackend is called (e.g., in unit tests that don't run server
-// startup).
+// Process default before initScoringBackend: ClaudeCLIScoringBackend so unit
+// tests that never load config still have a local executor. Production default
+// comes from effectiveScoringBackend ("pi" when config backend is empty).
 var activeScoringBackend ScoringBackend = ClaudeCLIScoringBackend{}
 
-// ClaudeCLIScoringBackend wraps the existing runClaudeHaiku / runClaudeHaikuJSON
-// functions. This is the default backend and produces zero behavioral change
-// from pre-EPIC-217 baseline. EPIC-217 F2.
+// ClaudeCLIScoringBackend wraps runClaudeHaiku / runClaudeHaikuJSON.
+// Explicit backend = "claude_cli" rollback path (EPIC-217 step 5).
+// Not the config default. EPIC-217 F2.
 type ClaudeCLIScoringBackend struct{}
 
 func (b ClaudeCLIScoringBackend) Name() string { return "claude_cli" }
