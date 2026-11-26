@@ -101,6 +101,113 @@ func TestScoringBackendFromConfig(t *testing.T) {
 	}
 }
 
+// EPIC-217 step 4: migration matrix. Empty and claude_cli remain supported
+// fallbacks until the default-backend switch (step 5). pi and pi_remote
+// must select those implementations. Unknown names must fail with an
+// actionable error.
+func TestScoringBackendFromConfig_MigrationMatrix(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        ScoringConfig
+		wantName   string
+		wantErrSub string
+	}{
+		{name: "backend_pi", cfg: ScoringConfig{Backend: "pi"}, wantName: "pi"},
+		{
+			name:     "backend_pi_remote",
+			cfg:      ScoringConfig{Backend: "pi_remote", PiServiceURL: "http://pi-service.test:9090"},
+			wantName: "pi_remote",
+		},
+		{name: "missing_backend", cfg: ScoringConfig{}, wantName: "claude_cli"},
+		{name: "backend_claude_cli", cfg: ScoringConfig{Backend: "claude_cli"}, wantName: "claude_cli"},
+		{
+			name:       "unknown_backend",
+			cfg:        ScoringConfig{Backend: "gpt_http"},
+			wantErrSub: `unsupported scoring backend "gpt_http"`,
+		},
+		{
+			name:       "pi_remote_missing_url",
+			cfg:        ScoringConfig{Backend: "pi_remote"},
+			wantErrSub: `pi_service_url is required when backend = "pi_remote"`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := scoringBackendFromConfig(tc.cfg)
+			if tc.wantErrSub != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q", tc.wantErrSub)
+				}
+				if !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Fatalf("error %q does not contain %q", err, tc.wantErrSub)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Name() != tc.wantName {
+				t.Fatalf("Name() = %q, want %q", got.Name(), tc.wantName)
+			}
+		})
+	}
+}
+
+func TestLoadConfiguredScoringBackend_MigrationMatrix(t *testing.T) {
+	prior := profilePathOverrideValue()
+	t.Cleanup(func() { SetProfilePathOverride(prior) })
+
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	t.Run("backend_pi", func(t *testing.T) {
+		path := write(t, "[server]\n[server.scoring]\nbackend = \"pi\"\n")
+		b, err := loadConfiguredScoringBackend(context.Background(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.Name() != "pi" {
+			t.Fatalf("got %q", b.Name())
+		}
+	})
+	t.Run("backend_pi_remote", func(t *testing.T) {
+		path := write(t, "[server]\n[server.scoring]\nbackend = \"pi_remote\"\npi_service_url = \"http://pi-service.test:9090\"\n")
+		b, err := loadConfiguredScoringBackend(context.Background(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.Name() != "pi_remote" {
+			t.Fatalf("got %q", b.Name())
+		}
+	})
+	t.Run("missing_backend", func(t *testing.T) {
+		path := write(t, "[server]\n")
+		b, err := loadConfiguredScoringBackend(context.Background(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.Name() != "claude_cli" {
+			t.Fatalf("missing backend should still default to claude_cli, got %q", b.Name())
+		}
+	})
+	t.Run("backend_claude_cli", func(t *testing.T) {
+		path := write(t, "[server]\n[server.scoring]\nbackend = \"claude_cli\"\n")
+		b, err := loadConfiguredScoringBackend(context.Background(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.Name() != "claude_cli" {
+			t.Fatalf("got %q", b.Name())
+		}
+	})
+}
+
 func TestClaudeCLIScoringBackendName(t *testing.T) {
 	if got := (ClaudeCLIScoringBackend{}).Name(); got != "claude_cli" {
 		t.Fatalf("Name() = %q, want claude_cli", got)
