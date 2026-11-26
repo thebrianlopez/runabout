@@ -665,9 +665,12 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 			// --- Check: scoring backend pi auth (EPIC-217 F4; catches the
 			// "No API key found for <provider>" failure mode that otherwise only
 			// surfaces per-row in scoring_call_complete_json errors). Only
-			// relevant when effective backend is "pi" (explicit or omitted default);
-			// claude_cli (explicit rollback) has its own CLI validation. ---
-			if serverCfg != nil && effectiveScoringBackend(serverCfg.Scoring.Backend) == "pi" {
+			// relevant when effective backend is "pi" (explicit or omitted default).
+			// backend = "claude_cli" is a hard fail: runtime Claude scoring was removed. ---
+			if serverCfg != nil && effectiveScoringBackend(serverCfg.Scoring.Backend) == "claude_cli" {
+				addCheck(failCheck("scoring_backend_claude_cli",
+					`backend = "claude_cli" is no longer supported  -  set [server.scoring] backend to "pi" or "pi_remote"`))
+			} else if serverCfg != nil && effectiveScoringBackend(serverCfg.Scoring.Backend) == "pi" {
 				piPath := serverCfg.Scoring.PiPath
 				if piPath == "" {
 					piPath = "pi"

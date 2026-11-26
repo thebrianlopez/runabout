@@ -164,9 +164,6 @@ func TestFeatureFlag_Enabled_EmitsEvents(t *testing.T) {
 		t.Fatalf("read test image: %v", err)
 	}
 
-	extractedTextJSON := `{"type":"result","result":"{\"text\":\"Engineering article about distributed systems\"}","is_error":false,"total_cost_usd":0.001}`
-	mockClaudeScript(t, extractedTextJSON, 0)
-
 	verdict := `{"score":80,"verdict":"worth reading","rubric_scores":{"Relevance":80,"Depth":75,"Novelty":80,"Clarity":85,"Actionability":80},"action_items":[],"tags":"eng","topic_tags":["distributed","systems"]}`
 	envelope := `{"type":"result","result":"` + jsonEscapeForShell(verdict) + `","is_error":false,"total_cost_usd":0.002}`
 	backend := &funcScoringBackend{completeVision: func(_ context.Context, _, _, _ string, schema string) ([]byte, error) {

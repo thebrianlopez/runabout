@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 )
 
@@ -62,6 +63,15 @@ func jsonOnlyBackend(raw string) *funcScoringBackend {
 	return &funcScoringBackend{
 		completeJSON: func(context.Context, string, string, string) ([]byte, error) {
 			return []byte(raw), nil
+		},
+	}
+}
+
+func visionTextBackend(text string) *funcScoringBackend {
+	payload, _ := json.Marshal(map[string]string{"text": text})
+	return &funcScoringBackend{
+		completeVision: func(context.Context, string, string, string, string) ([]byte, error) {
+			return payload, nil
 		},
 	}
 }

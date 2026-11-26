@@ -805,9 +805,6 @@ Configuration via flags, environment variables, or server.yaml:
 				router.SetYtdlpPath(serverFileCfg.YtdlpPath)
 			}
 
-			// EPIC-080 M3: log auth key presence at startup for diagnostics.
-			logHaikuEnvKeys()
-
 			// Bind all interfaces: the k8s pod is reached on the ClusterIP and
 			// local-dev clients hit localhost.
 			listenHost := ""

@@ -174,7 +174,7 @@ type WhisperConfig struct {
 // ScoringConfig controls which LLM executor is used for the scoring pipeline.
 // Nested under [server.scoring] in config.toml. EPIC-217 F4.
 type ScoringConfig struct {
-	Backend      string `toml:"backend"`        // "pi" (default), "pi_remote", or "claude_cli" (explicit rollback)
+	Backend      string `toml:"backend"`        // "pi" (default) or "pi_remote"
 	PiPath       string `toml:"pi_path"`        // path to pi binary (default: "pi" on PATH)
 	Provider     string `toml:"provider"`       // provider for pi backend (default: "openai-codex")
 	Model        string `toml:"model"`          // model override for pi backend (default: "gpt-6-luna")
@@ -536,8 +536,7 @@ type ServerConfig struct {
 	ResearchDigestPath   string `toml:"research_digest_path"`   // path for research digest append (M11)
 
 	// EPIC-080 M6: claude CLI path and vision model overrides.
-	ClaudePath  string `toml:"claude_path"`  // path to claude binary (default: "claude" on PATH)
-	VisionModel string `toml:"vision_model"` // model for vision scoring (default: claudeModel)
+	VisionModel string `toml:"vision_model"` // model for vision scoring (default: claude-haiku-4-5 id; executed via ScoringBackend)
 
 	// EPIC-081 M3: image noise gate  -  minimum file size in bytes to invoke
 	// vision subprocess. Images below this threshold with no text metadata
@@ -595,8 +594,8 @@ type ServerConfig struct {
 	// Absent block or Enabled=false is a no-op; scoring path unchanged.
 	Wiki WikiConfig `toml:"wiki"`
 
-	// EPIC-217 F4/step 5: pluggable scoring backend selection.
-	// Absent block or Backend="" uses "pi". Set backend = "claude_cli" to roll back.
+	// EPIC-217: pluggable scoring backend. Absent block or Backend="" uses "pi".
+	// backend = "claude_cli" is rejected (runtime Claude CLI scoring removed).
 	Scoring ScoringConfig `toml:"scoring"`
 
 	// Workspace routing registry context-injection (label-only MVP).

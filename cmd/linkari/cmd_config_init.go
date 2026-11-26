@@ -177,7 +177,7 @@ mode = "enforce"
 
 [server.scoring]
 # Default when omitted: "pi" (openai-codex/gpt-6-luna via local pi CLI).
-# "pi_remote" for in-cluster HTTP scoring. "claude_cli" is an explicit rollback.
+# "pi_remote" for in-cluster HTTP scoring. "claude_cli" is no longer supported.
 # backend = "pi"
 
 # --- Telemetry ---

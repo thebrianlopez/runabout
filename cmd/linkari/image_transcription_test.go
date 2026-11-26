@@ -25,22 +25,6 @@ import (
 
 // ─── F1 Contract Tests ────────────────────────────────────────────────────────
 
-// mockClaudeScript writes an executable shell script to dir/claude that outputs
-// the given JSON on stdout and exits with code. Returns the path to the script
-// and a cleanup function. The dir is prepended to PATH so exec.CommandContext
-// finds it instead of the real claude binary.
-func mockClaudeScript(t *testing.T, responseJSON string, exitCode int) string {
-	t.Helper()
-	dir := t.TempDir()
-	script := filepath.Join(dir, "claude")
-	body := fmt.Sprintf("#!/bin/sh\nprintf '%%s' '%s'\nexit %d\n", responseJSON, exitCode)
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatalf("write mock claude: %v", err)
-	}
-	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
-	return script
-}
-
 // makeTestImage creates a small PNG file in t.TempDir() and returns its path.
 func makeTestImage(t *testing.T) string {
 	t.Helper()
@@ -67,10 +51,8 @@ func makeTestImage(t *testing.T) string {
 func TestF1_CT1_ExtractImageText_ReturnsText(t *testing.T) {
 	imagePath := makeTestImage(t)
 	// Mock claude returns a valid JSON result with text.
-	mockClaudeScript(t, `{"type":"result","result":"{\"text\":\"Hello World\"}","is_error":false,"total_cost_usd":0.001}`, 0)
-
 	ctx := context.Background()
-	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, visionTextBackend("Hello World"), imagePath, "")
 	if err != nil {
 		t.Fatalf("extractImageText returned unexpected error: %v", err)
 	}
@@ -82,11 +64,8 @@ func TestF1_CT1_ExtractImageText_ReturnsText(t *testing.T) {
 // F1-CT-2: extractImageText returns ("", nil) for no-text images.
 func TestF1_CT2_ExtractImageText_NoText_ReturnsEmptyNil(t *testing.T) {
 	imagePath := makeTestImage(t)
-	// Mock claude returns empty text field.
-	mockClaudeScript(t, `{"type":"result","result":"{\"text\":\"\"}","is_error":false,"total_cost_usd":0.001}`, 0)
-
 	ctx := context.Background()
-	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, visionTextBackend(""), imagePath, "")
 	if err != nil {
 		t.Fatalf("extractImageText returned unexpected error: %v", err)
 	}
@@ -98,11 +77,11 @@ func TestF1_CT2_ExtractImageText_NoText_ReturnsEmptyNil(t *testing.T) {
 // F1-CT-3: extractImageText returns ("", err) on simulated CLI failure.
 func TestF1_CT3_ExtractImageText_CLIFailure_ReturnsError(t *testing.T) {
 	imagePath := makeTestImage(t)
-	// Mock claude exits non-zero.
-	mockClaudeScript(t, "", 1)
-
+	backend := &funcScoringBackend{completeVision: func(context.Context, string, string, string, string) ([]byte, error) {
+		return nil, fmt.Errorf("vision exec failed")
+	}}
 	ctx := context.Background()
-	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, backend, imagePath, "")
 	if err == nil {
 		t.Fatal("extractImageText returned nil error; want error on CLI failure")
 	}
@@ -152,24 +131,15 @@ func TestF1_CT6_ExtractImageText_ContextTimeout(t *testing.T) {
 		t.Skip("F1-CT-6: skipping slow context timeout test in -short mode")
 	}
 	imagePath := makeTestImage(t)
-
-	// Mock claude that sleeps for 10 seconds (longer than our 2s timeout).
-	// Use "exec sleep" so the shell replaces itself with sleep (no orphan child),
-	// which ensures exec.CommandContext kills sleep directly.
-	dir := t.TempDir()
-	script := filepath.Join(dir, "claude")
-	body := "#!/bin/sh\nexec sleep 10\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatalf("write mock claude: %v", err)
-	}
-	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
-
-	// Use a short timeout (2s) so the test runs quickly.
+	backend := &funcScoringBackend{completeVision: func(ctx context.Context, _, _, _, _ string) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	start := time.Now()
-	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "claude-haiku-4-5-20251001")
+	text, err := extractImageText(ctx, backend, imagePath, "")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -418,7 +388,6 @@ func TestF2_CT8_RG1_ChromeScreenshot_ScoresAboveZero(t *testing.T) {
 
 	// Mock the claude CLI for F1 text extraction: returns extracted text JSON.
 	extractedTextJSON := `{"type":"result","result":"{\"text\":\"Important article: Go 1.22 release notes and memory improvements\"}","is_error":false,"total_cost_usd":0.001}`
-	mockClaudeScript(t, extractedTextJSON, 0)
 
 	// EPIC-258 M2: injected backend replaces the former execHaikuVision
 	// package-var stub. F1 text extraction (imageTextResultSchema) returns the
@@ -590,7 +559,7 @@ func TestF3_CT8_DefaultThreshold_Is20(t *testing.T) {
 // ─── Live CLI Smoke Test ──────────────────────────────────────────────────────
 
 // TestExtractImageTextLiveCLI is a smoke test that calls extractImageText with
-// the real claude binary against a small test fixture image.
+// the real pi scoring backend against a small test fixture image.
 //
 // Gate: RUN_LIVE_CLI_TESTS=1 (not set in CI).
 //
@@ -613,7 +582,7 @@ func TestExtractImageTextLiveCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, fixturePath, visionModelName)
+	text, err := extractImageText(ctx, PiScoringBackend{}, fixturePath, visionModelName)
 	if err != nil {
 		t.Fatalf("extractImageText returned CLI error (exit-1 bug): %v", err)
 	}

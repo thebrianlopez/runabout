@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,18 +20,10 @@ import (
 // F1-BT-1: Semaphore enforces max_concurrency=1 — concurrent calls are serialized.
 func TestF1_BT1_Semaphore_MaxConcurrencyOne(t *testing.T) {
 	imagePath := makeTestImage(t)
-
-	// Mock claude with a small delay to allow concurrency to manifest.
-	dir := t.TempDir()
-	script := filepath.Join(dir, "claude")
-	// Each call takes ~150ms. If concurrency=2 were allowed, total time ≈ 150ms.
-	// With concurrency=1, total time ≈ 300ms.
-	body := fmt.Sprintf("#!/bin/sh\nsleep 0.15\nprintf '%%s' '%s'\n",
-		`{"type":"result","result":"{\"text\":\"hello\"}","is_error":false,"total_cost_usd":0.001}`)
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatalf("write mock claude: %v", err)
-	}
-	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	backend := &funcScoringBackend{completeVision: func(context.Context, string, string, string, string) ([]byte, error) {
+		time.Sleep(150 * time.Millisecond)
+		return []byte(`{"text":"hello"}`), nil
+	}}
 
 	var calls int64
 	var maxConcurrent int64
@@ -50,7 +41,7 @@ func TestF1_BT1_Semaphore_MaxConcurrencyOne(t *testing.T) {
 			atomic.StoreInt64(&maxConcurrent, current)
 		}
 		mu.Unlock()
-		_, errA = extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "")
+		_, errA = extractImageText(ctx, backend, imagePath, "")
 		atomic.AddInt64(&calls, -1)
 	}()
 	go func() {
@@ -61,7 +52,7 @@ func TestF1_BT1_Semaphore_MaxConcurrencyOne(t *testing.T) {
 			atomic.StoreInt64(&maxConcurrent, current)
 		}
 		mu.Unlock()
-		_, errB = extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "")
+		_, errB = extractImageText(ctx, backend, imagePath, "")
 		atomic.AddInt64(&calls, -1)
 	}()
 	wg.Wait()
@@ -78,12 +69,8 @@ func TestF1_BT1_Semaphore_MaxConcurrencyOne(t *testing.T) {
 // F1-BT-2: extractImageText strips whitespace from returned text.
 func TestF1_BT2_ExtractImageText_StripsWhitespace(t *testing.T) {
 	imagePath := makeTestImage(t)
-	// Mock claude returns text with surrounding whitespace.
-	mockClaudeScript(t,
-		`{"type":"result","result":"{\"text\":\"  Hello World  \"}","is_error":false,"total_cost_usd":0.001}`, 0)
-
 	ctx := context.Background()
-	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "")
+	text, err := extractImageText(ctx, visionTextBackend("  Hello World  "), imagePath, "")
 	if err != nil {
 		t.Fatalf("extractImageText: %v", err)
 	}
@@ -101,11 +88,8 @@ func TestF1_BT3_ExtractImageText_UsesDefaultModel(t *testing.T) {
 	if visionModelName == "" {
 		t.Error("visionModelName is empty; extractImageText would use empty model string")
 	}
-	mockClaudeScript(t,
-		`{"type":"result","result":"{\"text\":\"model test\"}","is_error":false}`, 0)
-
 	ctx := context.Background()
-	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "") // empty model → use default
+	text, err := extractImageText(ctx, visionTextBackend("model test"), imagePath, "")
 	if err != nil {
 		t.Fatalf("extractImageText with empty model: %v", err)
 	}
@@ -117,12 +101,11 @@ func TestF1_BT3_ExtractImageText_UsesDefaultModel(t *testing.T) {
 // F1-BT-4: extractImageText with is_error=true in envelope returns ("", err).
 func TestF1_BT4_ExtractImageText_IsError_ReturnsError(t *testing.T) {
 	imagePath := makeTestImage(t)
-	// Mock claude returns is_error=true.
-	mockClaudeScript(t,
-		`{"type":"result","result":"","is_error":true,"total_cost_usd":0}`, 0)
-
+	backend := &funcScoringBackend{completeVision: func(context.Context, string, string, string, string) ([]byte, error) {
+		return []byte(`{"type":"result","result":"","is_error":true,"total_cost_usd":0}`), nil
+	}}
 	ctx := context.Background()
-	text, err := extractImageText(ctx, ClaudeCLIScoringBackend{}, imagePath, "")
+	text, err := extractImageText(ctx, backend, imagePath, "")
 	if err == nil {
 		t.Fatal("extractImageText with is_error=true should return error; got nil")
 	}

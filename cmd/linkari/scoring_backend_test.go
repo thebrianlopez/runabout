@@ -101,8 +101,7 @@ func TestScoringBackendFromConfig(t *testing.T) {
 	}
 }
 
-// EPIC-217 step 5: empty/omitted backend defaults to pi. Explicit
-// claude_cli remains a rollback. Unknown names fail with an actionable error.
+// EPIC-217 step 6: empty/omitted backend defaults to pi. claude_cli is rejected.
 func TestScoringBackendFromConfig_MigrationMatrix(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -117,7 +116,11 @@ func TestScoringBackendFromConfig_MigrationMatrix(t *testing.T) {
 			wantName: "pi_remote",
 		},
 		{name: "missing_backend", cfg: ScoringConfig{}, wantName: "pi"},
-		{name: "backend_claude_cli", cfg: ScoringConfig{Backend: "claude_cli"}, wantName: "claude_cli"},
+		{
+			name:       "backend_claude_cli",
+			cfg:        ScoringConfig{Backend: "claude_cli"},
+			wantErrSub: `backend = "claude_cli" is no longer supported`,
+		},
 		{
 			name:       "unknown_backend",
 			cfg:        ScoringConfig{Backend: "gpt_http"},
@@ -196,20 +199,14 @@ func TestLoadConfiguredScoringBackend_MigrationMatrix(t *testing.T) {
 	})
 	t.Run("backend_claude_cli", func(t *testing.T) {
 		path := write(t, "[server]\n[server.scoring]\nbackend = \"claude_cli\"\n")
-		b, err := loadConfiguredScoringBackend(context.Background(), path)
-		if err != nil {
-			t.Fatal(err)
+		_, err := loadConfiguredScoringBackend(context.Background(), path)
+		if err == nil {
+			t.Fatal("expected error for claude_cli")
 		}
-		if b.Name() != "claude_cli" {
-			t.Fatalf("got %q", b.Name())
+		if !strings.Contains(err.Error(), "no longer supported") {
+			t.Fatalf("error = %v", err)
 		}
 	})
-}
-
-func TestClaudeCLIScoringBackendName(t *testing.T) {
-	if got := (ClaudeCLIScoringBackend{}).Name(); got != "claude_cli" {
-		t.Fatalf("Name() = %q, want claude_cli", got)
-	}
 }
 
 func TestPiScoringBackendName(t *testing.T) {

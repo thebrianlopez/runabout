@@ -35,8 +35,8 @@ type ScoringBackend interface {
 }
 
 // effectiveScoringBackend returns the backend name after applying the
-// config default. Empty or omitted [server.scoring] backend selects "pi"
-// (EPIC-217 step 5). Explicit "claude_cli" remains a rollback path.
+// config default. Empty or omitted [server.scoring] backend selects "pi".
+// "claude_cli" is rejected at load time (EPIC-217 step 6).
 func effectiveScoringBackend(name string) string {
 	if name == "" {
 		return "pi"
@@ -44,10 +44,12 @@ func effectiveScoringBackend(name string) string {
 	return name
 }
 
+var errClaudeCLIRemoved = errors.New(`[server.scoring] backend = "claude_cli" is no longer supported; use "pi" or "pi_remote"`)
+
 func scoringBackendFromConfig(cfg ScoringConfig) (ScoringBackend, error) {
 	switch effectiveScoringBackend(cfg.Backend) {
 	case "claude_cli":
-		return ClaudeCLIScoringBackend{}, nil
+		return nil, errClaudeCLIRemoved
 	case "pi":
 		path := cfg.PiPath
 		if path == "" {
@@ -81,32 +83,9 @@ func loadConfiguredScoringBackend(ctx context.Context, path string) (ScoringBack
 // implementing ScoringBackend. If nil at call time it is a programming error
 // (missing init call) - callers will panic.
 //
-// Process default before initScoringBackend: ClaudeCLIScoringBackend so unit
-// tests that never load config still have a local executor. Production default
-// comes from effectiveScoringBackend ("pi" when config backend is empty).
-var activeScoringBackend ScoringBackend = ClaudeCLIScoringBackend{}
-
-// ClaudeCLIScoringBackend wraps runClaudeHaiku / runClaudeHaikuJSON.
-// Explicit backend = "claude_cli" rollback path (EPIC-217 step 5).
-// Not the config default. EPIC-217 F2.
-type ClaudeCLIScoringBackend struct{}
-
-func (b ClaudeCLIScoringBackend) Name() string { return "claude_cli" }
-
-// Complete delegates to runClaudeHaiku.
-func (b ClaudeCLIScoringBackend) Complete(ctx context.Context, systemPrompt, content string) (string, error) {
-	return runClaudeHaiku(ctx, systemPrompt, content)
-}
-
-// CompleteJSON delegates to runClaudeHaikuJSON.
-func (b ClaudeCLIScoringBackend) CompleteJSON(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
-	return runClaudeHaikuJSON(ctx, systemPrompt, content, schema)
-}
-
-// CompleteVision delegates to runClaudeHaikuVision.
-func (b ClaudeCLIScoringBackend) CompleteVision(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
-	return runClaudeHaikuVision(ctx, systemPrompt, textContent, imagePath, schema)
-}
+// Process default before initScoringBackend: PiScoringBackend ("pi" on PATH).
+// Tests that need a deterministic executor must inject a fake ScoringBackend.
+var activeScoringBackend ScoringBackend = PiScoringBackend{}
 
 // Envelope format identifiers used to compose evaluator labels. These describe
 // the *response format* an evaluator parses, not the provider that produced it.

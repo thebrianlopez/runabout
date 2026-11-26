@@ -618,8 +618,8 @@ func TestDoctorPiAuth_ProbeError(t *testing.T) {
 	}
 }
 
-// TestDoctorPiAuth_SkippedForClaudeCLIBackend verifies the check is absent
-// when backend is explicitly "claude_cli" (rollback path).
+// TestDoctorPiAuth_SkippedForClaudeCLIBackend verifies claude_cli is a hard fail
+// and does not probe pi auth.
 func TestDoctorPiAuth_SkippedForClaudeCLIBackend(t *testing.T) {
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, ".config", "linkari")
@@ -643,16 +643,9 @@ func TestDoctorPiAuth_SkippedForClaudeCLIBackend(t *testing.T) {
 	if called {
 		t.Error("PiAuthCheck was invoked despite backend = \"claude_cli\"")
 	}
-	var result struct {
-		Checks []doctorCheck `json:"checks"`
-	}
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
-		t.Fatalf("JSON parse: %v\noutput:\n%s", err, out.String())
-	}
-	for _, c := range result.Checks {
-		if c.Name == "scoring_backend_pi_auth" {
-			t.Errorf("scoring_backend_pi_auth present despite backend != \"pi\": %+v", c)
-		}
+	c := doctorCheckByName(t, out, "scoring_backend_claude_cli")
+	if c.Status != statusFail {
+		t.Errorf("status = %q, want fail; message=%q", c.Status, c.Message)
 	}
 }
 

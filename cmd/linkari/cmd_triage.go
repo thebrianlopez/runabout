@@ -421,10 +421,6 @@ func profileTemplateForModeLookup(profile, mode string, render func(*ProfileMani
 	return "", "", fmt.Errorf("no profile prompt template for %q (checked %v)", profile, checked)
 }
 
-// claudeBinaryPath is the resolved path to the claude CLI binary.
-// Set at startup from ServerConfig.ClaudePath; defaults to "claude".
-var claudeBinaryPath = "claude"
-
 // visionModelName is the model used for vision scoring.
 // Set at startup from ServerConfig.VisionModel; defaults to claudeModel.
 var visionModelName = claudeModel
@@ -438,12 +434,19 @@ func orDefault(val, def string) string {
 }
 
 // initScoringBackend sets activeScoringBackend based on cfg.Backend.
-// Called at server startup after initClaudeConfig. EPIC-217 F4/step 5.
-// Default (empty): PiScoringBackend using cfg.Provider/cfg.Model.
-// "pi_remote": PiRemoteScoringBackend calling cfg.PiServiceURL over HTTP.
-// Explicit "claude_cli": ClaudeCLIScoringBackend (rollback until step 6).
+// Called at server startup after initClaudeConfig. EPIC-217.
+// Default (empty): PiScoringBackend. "pi_remote": HTTP pi-service.
+// "claude_cli" is logged as removed and replaced with pi so serve still boots.
 func initScoringBackend(cfg ScoringConfig) {
-	switch effectiveScoringBackend(cfg.Backend) {
+	backend := effectiveScoringBackend(cfg.Backend)
+	if backend == "claude_cli" {
+		slog.Error(
+			"claude_cli scoring backend was removed; using pi",
+			"event_type", "scoring_backend_claude_cli_removed",
+		)
+		backend = "pi"
+	}
+	switch backend {
 	case "pi":
 		piPath := cfg.PiPath
 		if piPath == "" {
@@ -487,38 +490,23 @@ func initScoringBackend(cfg ScoringConfig) {
 				"event_type", "pi_remote_misconfigured",
 			)
 		}
-	case "claude_cli":
-		activeScoringBackend = ClaudeCLIScoringBackend{}
-		slog.Info(
-			"scoring backend set",
-			"event_type", "scoring_backend_init",
-			"backend", "claude_cli",
-		)
 	default:
-		activeScoringBackend = ClaudeCLIScoringBackend{}
-		slog.Warn(
-			"unsupported scoring backend; using claude_cli rollback",
+		slog.Error(
+			"unsupported scoring backend; using pi",
 			"event_type", "scoring_backend_init",
 			"backend", cfg.Backend,
 		)
+		initScoringBackend(ScoringConfig{Backend: "pi", PiPath: cfg.PiPath, Provider: cfg.Provider, Model: cfg.Model})
 	}
 }
 
-// initClaudeConfig resolves ClaudePath and VisionModel from ServerConfig and
+// initClaudeConfig resolves VisionModel and related scoring knobs from ServerConfig and
 // logs the resolved values at startup. EPIC-080 M6.
 //
-// Architecture note (EPIC-008 M5): CLI exec is the permanent integration
-// pattern. The claude CLI authenticates via OAuth2 device flow, storing tokens
-// in ~/.claude/. Linkari is designed for self-hosted deployment  -  each user
-// installs and runs it on their own laptop using their own Claude Code
-// subscription. There are no plans to support Anthropic API keys, SDK client
-// libraries, or direct HTTP calls to the Anthropic API. All scoring paths
-// (URL, image, audio) shell out to the claude binary and this is by design,
-// not a migration gap. Do not introduce ANTHROPIC_API_KEY passthrough.
+// Architecture note: EPIC-008 CLI-to-claude scoring is superseded by EPIC-217
+// (pi / pi_remote ScoringBackend). Do not reintroduce ANTHROPIC_API_KEY
+// passthrough or a claude CLI scoring path. Claude Code remains a dev tool only.
 func initClaudeConfig(cfg *ServerConfig) {
-	if cfg != nil && cfg.ClaudePath != "" {
-		claudeBinaryPath = cfg.ClaudePath
-	}
 	if cfg != nil && cfg.VisionModel != "" {
 		visionModelName = cfg.VisionModel
 	}
@@ -593,32 +581,13 @@ func initClaudeConfig(cfg *ServerConfig) {
 	initImageTranscriptionConfig(cfg)
 
 	slog.Info(
-		"claude config resolved",
+		"scoring config resolved",
 		"event_type", "claude_config_init",
-		"claude_path", claudeBinaryPath,
 		"vision_model", visionModelName,
-		"scoring_model", claudeModel,
 		"image_noise_gate_min_bytes", imageNoiseGateMinBytes,
 		"image_text_extraction_enabled", imageTextExtractionEnabled,
 		"image_short_circuit_bypass_min_chars", imageShortCircuitBypassMinChars,
 	)
-
-	// EPIC-008 M5: validate the claude binary only when the selected scoring
-	// backend requires it. Pi backends have their own readiness checks.
-	if shouldValidateClaudeCLI(cfg.Scoring.Backend) {
-		if err := validateClaudeCLI(); err != nil {
-			slog.Error(
-				"claude CLI validation failed  -  scoring will not work",
-				"event_type", "claude_cli_validation_failed",
-				"claude_path", claudeBinaryPath,
-				"error", err,
-			)
-		}
-	}
-}
-
-func shouldValidateClaudeCLI(backend string) bool {
-	return effectiveScoringBackend(backend) == "claude_cli"
 }
 
 // expandTilde expands a leading "~/" in a path to the user's home directory.
@@ -631,32 +600,10 @@ func expandTilde(path string) string {
 	return filepath.Join(home, path[2:])
 }
 
-// validateClaudeCLI runs `claude --version` as a lightweight smoke test to
-// confirm the binary is accessible and executable. EPIC-008 M5.
-func validateClaudeCLI() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, claudeBinaryPath, "--version")
-	cmd.Env = haikuEnv()
-	out, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("claude --version failed: %w (is %q in PATH?)", err, claudeBinaryPath)
-	}
-	version := strings.TrimSpace(string(out))
-	slog.Info(
-		"claude CLI validated",
-		"event_type", "claude_cli_validated",
-		"claude_path", claudeBinaryPath,
-		"version", version,
-	)
-	return nil
-}
-
 // validatePiCLI runs `pi --version` as a lightweight smoke test to confirm
 // the binary is accessible and executable when backend="pi". Non-fatal:
 // emits pi_cli_validation_failed warning but does not abort startup.
-// Mirrors the validateClaudeCLI pattern exactly. EPIC-217 F5.
+// Non-fatal: warn and continue. EPIC-217 F5.
 func validatePiCLI(piPath string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -675,148 +622,6 @@ func validatePiCLI(piPath string) error {
 		"version", version,
 	)
 	return nil
-}
-
-// haikuEnv returns os.Environ with scoring-unsafe variables stripped.
-// CLAUDECODE is removed so the claude CLI behaves as a standalone subprocess
-// rather than a nested Claude Code session. ANTHROPIC_API_KEY and CLAUDE_API_KEY
-// are stripped to enforce the CLI-only auth invariant  -  Linkari authenticates
-// exclusively via the claude CLI's OAuth2 session, not API keys. EPIC-089 M5.
-func haikuEnv() []string {
-	env := os.Environ()
-	filtered := env[:0]
-	for _, kv := range env {
-		if strings.HasPrefix(kv, "CLAUDECODE=") ||
-			strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") ||
-			strings.HasPrefix(kv, "CLAUDE_API_KEY=") {
-			continue
-		}
-		filtered = append(filtered, kv)
-	}
-	// EPIC-062 M6: suppress CLAUDE.md injection in scoring calls to save ~5-8K tokens.
-	filtered = append(filtered, "CLAUDE_CODE_DISABLE_CLAUDE_MDS=1")
-	return filtered
-}
-
-// logHaikuEnvKeys logs the presence (not values) of LLM-related environment
-// variables at startup. These are diagnostic only  -  Linkari authenticates
-// exclusively via the claude CLI's OAuth2 session, NOT via API keys.
-// The keys are logged to help debug subprocess behavior, not because they
-// are expected to be set. EPIC-080 M3.
-func logHaikuEnvKeys() {
-	slog.Debug("haiku env keys", "stripped", []string{"ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "CLAUDECODE"})
-}
-
-// claudeExecOpts configures the flag set for a `claude --print` invocation.
-// buildClaudeArgs assembles the args slice from these options, ensuring a
-// single point of flag assembly across all scoring paths. EPIC-008 M2.
-type claudeExecOpts struct {
-	Model        string // e.g. claudeModel or visionModelName
-	MaxTurns     string // "1" for plain text, "3" for JSON/vision
-	Tools        string // "--tools" value; empty string disables all
-	AllowedTools string // "--allowedTools" value; empty omits the flag
-	OutputFormat string // "json" or empty (plain text)
-	JSONSchema   string // schema string; empty omits --json-schema
-	SystemPrompt string // path to system prompt temp file
-}
-
-// buildClaudeArgs returns the args slice for exec.CommandContext. The binary
-// path is NOT included  -  it's the first arg to CommandContext, not part of args.
-// When adding or removing flags, update allBuildClaudeArgsFlags() in
-// claude_contract_test.go  -  the contract test validates flags against the
-// installed claude binary.
-func buildClaudeArgs(opts claudeExecOpts) []string {
-	args := []string{
-		"--print",
-		"--model", opts.Model,
-		"--max-turns", opts.MaxTurns,
-	}
-	if opts.Tools != "" || opts.AllowedTools == "" {
-		// --tools "" disables all tools (plain text + JSON paths).
-		// Only omitted when AllowedTools is explicitly set (vision path).
-		args = append(args, "--tools", opts.Tools)
-	}
-	if opts.AllowedTools != "" {
-		args = append(args, "--allowedTools", opts.AllowedTools)
-	}
-	if opts.OutputFormat != "" {
-		args = append(args, "--output-format", opts.OutputFormat)
-	}
-	if opts.JSONSchema != "" {
-		args = append(args, "--json-schema", opts.JSONSchema)
-	}
-	args = append(
-		args,
-		"--system-prompt-file", opts.SystemPrompt,
-		"--effort", "low",
-		"--no-session-persistence",
-	)
-	return args
-}
-
-// writeSystemPromptFile writes the system prompt to a temp file and returns
-// the path and content hash. The caller must defer os.Remove on the returned path.
-// EPIC-062 M1: --system-prompt-file is used instead of inline --system-prompt.
-// EPIC-082 M1: returns prompt hash alongside path for traceability.
-func writeSystemPromptFile(prompt string) (string, string, error) {
-	// EPIC-008 M6: explicit 0600 permissions  -  system prompts may contain
-	// scoring rubrics and profile-specific instructions.
-	tmpDir := os.TempDir()
-	f, err := os.CreateTemp(tmpDir, "linkari-sysprompt-*.txt")
-	if err != nil {
-		return "", "", fmt.Errorf("create system prompt file: %w", err)
-	}
-	if err := f.Chmod(0o600); err != nil {
-		f.Close()
-		os.Remove(f.Name())
-		return "", "", fmt.Errorf("chmod system prompt file: %w", err)
-	}
-	if _, err := f.WriteString(prompt); err != nil {
-		f.Close()
-		os.Remove(f.Name())
-		return "", "", fmt.Errorf("write system prompt file: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
-		return "", "", fmt.Errorf("close system prompt file: %w", err)
-	}
-	return f.Name(), promptHash(prompt), nil
-}
-
-// runClaudeHaiku shells out to the claude CLI for a single-turn Haiku call.
-//
-// EPIC-062: --system-prompt-file replaces the entire default system prompt
-// (including dynamic sections like git status, working dir, memory), so no
-// additional flag is needed to suppress them. --effort low for faster inference,
-// --no-session-persistence to avoid writing session state to disk.
-func runClaudeHaiku(ctx context.Context, systemPrompt, content string) (string, error) {
-	spFile, _, err := writeSystemPromptFile(systemPrompt)
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(spFile)
-
-	cmd := exec.CommandContext(ctx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
-		Model:        claudeModel,
-		MaxTurns:     "1",
-		Tools:        "",
-		SystemPrompt: spFile,
-	})...)
-	cmd.Stdin = strings.NewReader(content)
-	cmd.Dir = os.TempDir() // EPIC-088 M1: prevent subprocess from discovering workspace CLAUDE.md
-	cmd.Env = haikuEnv()
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("claude exec: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
-	}
-	out := strings.TrimSpace(stdout.String())
-	if out == "" {
-		return "", fmt.Errorf("claude returned empty output")
-	}
-	return out, nil
 }
 
 // parseTriageMarkdown extracts a TriageResult from Haiku's markdown output.

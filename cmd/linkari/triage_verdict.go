@@ -23,11 +23,8 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"os/exec"
 	"sort"
 	"strings"
 )
@@ -158,119 +155,6 @@ func (v TriageVerdict) RenderMarkdown() string {
 		fmt.Fprintf(&sb, "\nTags: %s\n", strings.TrimSpace(v.Tags))
 	}
 	return sb.String()
-}
-
-// runClaudeHaikuJSON shells the same `claude --print` invocation as
-// runClaudeHaiku but adds `--output-format json --json-schema <schema>` so
-// the CLI returns a result envelope containing schema-validated JSON.
-//
-// EPIC-062: --system-prompt-file replaces the entire default system prompt
-// (including dynamic sections), so no additional flag is needed to suppress
-// them. --effort low, --no-session-persistence.
-//
-// Returns the raw stdout bytes (the envelope) so the caller can decide
-// whether to parse it directly or run a repair turn.
-func runClaudeHaikuJSON(ctx context.Context, systemPrompt, content, schema string) ([]byte, error) {
-	systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching the provided schema." +
-		" This applies to ALL cases including noise-gated/skip content." +
-		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}, \"workspace\": \"none\", \"workspace_confidence\": 0}." +
-		" Never output markdown formatting like **Score:**  -  always use the JSON schema."
-	spFile, _, err := writeSystemPromptFile(systemPrompt)
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(spFile)
-
-	cmd := exec.CommandContext(ctx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
-		Model:        claudeModel,
-		MaxTurns:     "3", // --output-format json + --json-schema uses internal tool-call turns to enforce schema; 1 is insufficient
-		Tools:        "",
-		OutputFormat: "json",
-		JSONSchema:   schema,
-		SystemPrompt: spFile,
-	})...)
-	cmd.Stdin = strings.NewReader(content)
-	cmd.Dir = os.TempDir() // EPIC-088 M1: prevent subprocess from discovering workspace CLAUDE.md
-	cmd.Env = haikuEnv()
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("claude exec: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
-	}
-	out := bytes.TrimSpace(stdout.Bytes())
-	if len(out) == 0 {
-		return nil, fmt.Errorf("claude returned empty output")
-	}
-	return out, nil
-}
-
-// runClaudeHaikuVision calls the claude CLI with the Read tool enabled so it
-// can read a local image file for multimodal scoring. The prompt instructs the
-// model to read the image at imagePath and score it. EPIC-079 M3.
-func runClaudeHaikuVision(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error) {
-	// EPIC-083 M2-1: score-first instruction  -  short-circuit personal photos to
-	// avoid filling the full rubric when the image has no engineered content.
-	systemPrompt += "\n\nIf the image is a personal photo (DCIM, camera roll, selfie, food, pet, scenery)" +
-		" with no text, code, document, diagram, or engineered content visible," +
-		` respond immediately with {"score": 0, "verdict": "personal photo", "rubric_scores": {}}` +
-		" without filling the full rubric."
-	systemPrompt += "\n\nIMPORTANT: You MUST respond ONLY with a JSON object matching the provided schema." +
-		" This applies to ALL cases including noise-gated/skip content." +
-		" For skipped content, return {\"score\": 0, \"verdict\": \"<skip reason>\", \"rubric_scores\": {}, \"workspace\": \"none\", \"workspace_confidence\": 0}." +
-		" Never output markdown formatting like **Score:**  -  always use the JSON schema."
-	spFile, _, err := writeSystemPromptFile(systemPrompt)
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(spFile)
-
-	// Prompt includes instruction to read the image plus any text metadata.
-	prompt := fmt.Sprintf("Read the image file at %s and score it.\n\nMetadata:\n%s", imagePath, textContent)
-
-	// EPIC-080 M6: os.Stat pre-check on image file before spawning subprocess.
-	if _, statErr := os.Stat(imagePath); statErr != nil {
-		return nil, fmt.Errorf("claude vision: image file not readable: %w", statErr)
-	}
-
-	cmd := exec.CommandContext(ctx, claudeBinaryPath, buildClaudeArgs(claudeExecOpts{
-		Model:        visionModelName,
-		MaxTurns:     "3",
-		AllowedTools: "Read",
-		OutputFormat: "json",
-		JSONSchema:   schema,
-		SystemPrompt: spFile,
-	})...)
-	cmd.Stdin = strings.NewReader(prompt)
-	cmd.Dir = os.TempDir() // EPIC-088 M1: prevent subprocess from discovering workspace CLAUDE.md
-	cmd.Env = haikuEnv()
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		exitCode := -1
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		}
-		slog.Error(
-			"claude vision exec failed",
-			"event_type", "claude_vision_exec_error",
-			"image_path", imagePath,
-			"exit_code", exitCode,
-			"stdout", strings.TrimSpace(stdout.String()),
-			"stderr", strings.TrimSpace(stderr.String()),
-			"system_prompt_file", spFile,
-		)
-		return nil, fmt.Errorf("claude vision exec: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
-	}
-	out := bytes.TrimSpace(stdout.Bytes())
-	if len(out) == 0 {
-		return nil, fmt.Errorf("claude vision returned empty output")
-	}
-	return out, nil
 }
 
 // envelopeMeta holds the token usage and cost metadata extracted from the
