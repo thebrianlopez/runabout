@@ -37,7 +37,8 @@ func TestRefreshGoldensRewritesAndAudits(t *testing.T) {
 				RawMarkdown:  "## Score: 82/100\n\n## Verdict\nfresh\n",
 				Backend:      "test",
 			}, nil
-		}}.resolve())
+		},
+	}.resolve())
 	cmd.SetArgs([]string{"--fixtures", dir, "--yes"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
