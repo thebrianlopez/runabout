@@ -63,6 +63,7 @@ func scoreCmd(backendOverride ...ScoringBackend) *cobra.Command {
 		backend = backendOverride[0]
 	}
 	var (
+		configPath  string
 		queueDB     string
 		profile     string
 		contentFile string
@@ -121,10 +122,16 @@ For batch evaluation across a fixture set, see EPIC-054 (planned).`,
 				return fmt.Errorf("empty content from %s", contentSourceLabel(contentFile))
 			}
 
-			// Call Haiku via Evaluator interface (EPIC-058 M2).
+			// Call the configured scoring backend via Evaluator interface.
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
+			}
+			if backend == nil {
+				backend, err = loadConfiguredScoringBackend(ctx, configPath)
+				if err != nil {
+					return err
+				}
 			}
 			eval := HaikuJSONEvaluator{Backend: backend}
 			sc, err := eval.Evaluate(ctx, content, sysPrompt)
@@ -229,6 +236,7 @@ For batch evaluation across a fixture set, see EPIC-054 (planned).`,
 		},
 	}
 
+	cmd.Flags().StringVar(&configPath, "config", "", "path to config.toml (default ~/.config/linkari/config.toml, or LINKARI_CONFIG)")
 	cmd.Flags().StringVar(&queueDB, "queue-db", "", "path to SQLite queue database (or LINKARI_QUEUE_DB)")
 	cmd.Flags().StringVar(&profile, "profile", "", "scoring profile (required)")
 	cmd.Flags().StringVar(&contentFile, "content-file", "-", "content file to score ('-' for stdin)")

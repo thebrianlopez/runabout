@@ -206,14 +206,19 @@ func evalStatsCmd() *cobra.Command {
 // package-level seams (EPIC-258 M2). A zero scorerDeps is the production
 // configuration: resolve() fills every nil field with its real implementation.
 type scorerDeps struct {
+	// LoadBackend loads the scoring backend selected by config.toml.
+	LoadBackend func(ctx context.Context, path string) (ScoringBackend, error)
 	// RefreshScorer scores one fixture for `eval refresh-goldens`.
-	RefreshScorer func(ctx context.Context, profile, content string) (*Scorecard, error)
-	// RegisteredScorer returns the active Scorer.
-	RegisteredScorer func() Scorer
+	RefreshScorer func(ctx context.Context, backend ScoringBackend, profile, content string) (*Scorecard, error)
+	// RegisteredScorer returns the active Scorer using the selected backend.
+	RegisteredScorer func(backend ScoringBackend) Scorer
 }
 
 // resolve returns a copy with production defaults substituted for nil fields.
 func (d scorerDeps) resolve() scorerDeps {
+	if d.LoadBackend == nil {
+		d.LoadBackend = loadConfiguredScoringBackend
+	}
 	if d.RefreshScorer == nil {
 		d.RefreshScorer = refreshScorer
 	}
@@ -225,12 +230,12 @@ func (d scorerDeps) resolve() scorerDeps {
 
 // refreshScorer backs `linkari eval refresh-goldens`. Production path loads the
 // profile manifest and calls the JSON Haiku contract via Evaluator (EPIC-058 M2).
-func refreshScorer(ctx context.Context, profile, content string) (*Scorecard, error) {
+func refreshScorer(ctx context.Context, backend ScoringBackend, profile, content string) (*Scorecard, error) {
 	tmplPath, sysPrompt, err := loadProfileTemplateJSON(profile)
 	if err != nil {
 		return nil, fmt.Errorf("load template: %w", err)
 	}
-	eval := HaikuJSONEvaluator{}
+	eval := HaikuJSONEvaluator{Backend: backend}
 	sc, err := eval.Evaluate(ctx, truncateRunes(content, contentTruncationRunes), sysPrompt)
 	if err != nil {
 		return nil, err
@@ -244,6 +249,7 @@ func refreshScorer(ctx context.Context, profile, content string) (*Scorecard, er
 
 func evalRefreshGoldensCmd(deps scorerDeps) *cobra.Command {
 	var (
+		configPath  string
 		fixturesDir string
 		profileFlag string
 		dryRun      bool
@@ -251,7 +257,7 @@ func evalRefreshGoldensCmd(deps scorerDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "refresh-goldens",
-		Short: "Re-score fixtures via Haiku and rewrite golden.score/verdict/raw_markdown in place (EPIC-044 M2)",
+		Short: "Re-score fixtures via the configured backend and rewrite golden outputs in place (EPIC-044 M2)",
 		Long: `Refresh the golden outputs on every fixture in --fixtures by re-running
 the current profile manifest through Haiku (JSON contract). Used after a
 profile manifest change makes the existing goldens stale.
@@ -265,6 +271,14 @@ unchanged; only golden.{score,verdict,raw_markdown} are rewritten and
 golden.refreshed_from is set to the prior score for audit. captured_at
 is bumped to the refresh timestamp.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			backend, err := deps.LoadBackend(ctx, configPath)
+			if err != nil {
+				return err
+			}
 			if fixturesDir == "" {
 				fixturesDir = defaultFixturesDir()
 			}
@@ -279,11 +293,6 @@ is bumped to the refresh timestamp.`,
 				return fmt.Errorf("no fixtures in %s (profile=%q)", fixturesDir, profileFlag)
 			}
 
-			ctx := cmd.Context()
-			if ctx == nil {
-				ctx = context.Background()
-			}
-
 			type pending struct {
 				path      string
 				prior     int
@@ -292,7 +301,7 @@ is bumped to the refresh timestamp.`,
 			}
 			var refreshed []pending
 			for _, fix := range fixtures {
-				sc, err := deps.RefreshScorer(ctx, fix.Profile, fix.Content)
+				sc, err := deps.RefreshScorer(ctx, backend, fix.Profile, fix.Content)
 				if err != nil {
 					return fmt.Errorf("rescore %s: %w", fix.ID, err)
 				}
@@ -355,6 +364,7 @@ is bumped to the refresh timestamp.`,
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&configPath, "config", "", "path to config.toml (default ~/.config/linkari/config.toml, or LINKARI_CONFIG)")
 	cmd.Flags().StringVar(&fixturesDir, "fixtures", "", "fixtures directory (default: $LINKARI_EVAL_FIXTURES, then ~/.config/linkari/fixtures, then ./testdata/triage)")
 	cmd.Flags().StringVar(&profileFlag, "profile", "", "only refresh fixtures matching this profile id")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print old→new deltas, do not write")
@@ -413,6 +423,7 @@ func evalCaptureCmd() *cobra.Command {
 
 func evalRunCmd(deps scorerDeps) *cobra.Command {
 	var (
+		configPath  string
 		fixturesDir string
 		tolerance   int
 		verbose     bool
@@ -423,6 +434,14 @@ func evalRunCmd(deps scorerDeps) *cobra.Command {
 		Use:   "run",
 		Short: "Replay fixtures against the registered scorer",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			backend, err := deps.LoadBackend(ctx, configPath)
+			if err != nil {
+				return err
+			}
 			if fixturesDir == "" {
 				fixturesDir = defaultFixturesDir()
 			}
@@ -443,7 +462,7 @@ func evalRunCmd(deps scorerDeps) *cobra.Command {
 				return fmt.Errorf("no fixtures in %s  -  capture some first", fixturesDir)
 			}
 
-			scorer := deps.RegisteredScorer()
+			scorer := deps.RegisteredScorer(backend)
 			fmt.Fprintf(os.Stderr, "eval: scorer=%s tolerance=±%d fixtures=%d\n",
 				scorer.Name(), tolerance, len(fixtures))
 
@@ -505,6 +524,7 @@ func evalRunCmd(deps scorerDeps) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&configPath, "config", "", "path to config.toml (default ~/.config/linkari/config.toml, or LINKARI_CONFIG)")
 	cmd.Flags().StringVar(&fixturesDir, "fixtures", "", "fixtures directory (default: $LINKARI_EVAL_FIXTURES, then ~/.config/linkari/fixtures, then ./testdata/triage)")
 	cmd.Flags().IntVar(&tolerance, "tolerance", 10, "max absolute score delta before a fixture fails (M6b: bumped from 5 to absorb normal Haiku-as-judge variance)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print every fixture result, not just failures")
@@ -732,8 +752,8 @@ func defaultFixturesDirForWrite() string {
 // identity scorer for the real Go triage path (cmd_triage.go). identityScorer
 // is still exercised directly by the harness self-test in cmd_eval_test.go.
 // Injected via scorerDeps so tests stub it without writing a package global.
-func registeredScorer() Scorer {
-	return triageScorer{}
+func registeredScorer(backend ScoringBackend) Scorer {
+	return triageScorer{backend: backend}
 }
 
 // scoreLineRE extracts the score from one of two forms:

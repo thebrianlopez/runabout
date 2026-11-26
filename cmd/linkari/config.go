@@ -66,6 +66,7 @@ func (s ServerConfig) IsZero() bool {
 		s.YouTube.SubtitleLangs == "" && s.YouTube.TimeoutSeconds == 0 &&
 		s.GoogleClientID == "" && s.SessionTTLDays == 0 &&
 		!s.Sandbox.Enabled &&
+		s.Scoring == (ScoringConfig{}) &&
 		s.ImageNoiseGateMaxBytes == 0 && s.MaxScoringCostUSD == 0 &&
 		s.LiteParseePath == "" &&
 		s.Whisper.MaxConcurrency == 0 && s.Whisper.TimeoutSecs == 0 && s.Whisper.MaxRetries == 0 &&

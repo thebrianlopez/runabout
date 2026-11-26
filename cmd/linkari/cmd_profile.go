@@ -18,6 +18,7 @@ package main
 // and bails the commit on any non-zero exit.
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,6 +49,7 @@ func profileCmdWith(deps scorerDeps) *cobra.Command {
 // profileTestCmd implements `linkari profile test <profile.yaml> [--fixtures <dir>] [--tolerance N]`
 func profileTestCmd(deps scorerDeps) *cobra.Command {
 	var (
+		configPath  string
 		fixturesDir string
 		tolerance   int
 	)
@@ -56,11 +58,19 @@ func profileTestCmd(deps scorerDeps) *cobra.Command {
 		Short: "Compare HEAD vs working-tree profile scoring on fixture corpus (EPIC-112 F4)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			backend, err := deps.LoadBackend(ctx, configPath)
+			if err != nil {
+				return err
+			}
 			profilePath := args[0]
 			if fixturesDir == "" {
 				fixturesDir = defaultFixturesDir()
 			}
-			scorer := deps.RegisteredScorer()
+			scorer := deps.RegisteredScorer(backend)
 			result, err := RunProfileTest(profilePath, fixturesDir, tolerance, scorer, nil)
 			if err != nil {
 				return err
@@ -85,6 +95,7 @@ func profileTestCmd(deps scorerDeps) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&configPath, "config", "", "path to config.toml (default ~/.config/linkari/config.toml, or LINKARI_CONFIG)")
 	cmd.Flags().StringVar(&fixturesDir, "fixtures", "", "fixtures directory (default: testdata/triage)")
 	cmd.Flags().IntVar(&tolerance, "tolerance", 10, "score delta tolerance threshold")
 	return cmd

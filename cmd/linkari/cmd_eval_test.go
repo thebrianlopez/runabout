@@ -27,15 +27,17 @@ func TestRefreshGoldensRewritesAndAudits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := evalRefreshGoldensCmd(scorerDeps{RefreshScorer: func(ctx context.Context, profile, content string) (*Scorecard, error) {
-		return &Scorecard{
-			Score:        82,
-			Verdict:      "fresh",
-			RubricScores: map[string]int{"signal": 82},
-			RawMarkdown:  "## Score: 82/100\n\n## Verdict\nfresh\n",
-			Backend:      "test",
-		}, nil
-	}}.resolve())
+	cmd := evalRefreshGoldensCmd(scorerDeps{
+		LoadBackend: func(context.Context, string) (ScoringBackend, error) { return fakeScoringBackend{}, nil },
+		RefreshScorer: func(ctx context.Context, _ ScoringBackend, profile, content string) (*Scorecard, error) {
+			return &Scorecard{
+				Score:        82,
+				Verdict:      "fresh",
+				RubricScores: map[string]int{"signal": 82},
+				RawMarkdown:  "## Score: 82/100\n\n## Verdict\nfresh\n",
+				Backend:      "test",
+			}, nil
+		}}.resolve())
 	cmd.SetArgs([]string{"--fixtures", dir, "--yes"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
@@ -225,7 +227,10 @@ func TestEvalRunTreatsSkipAndScorerErrorAsSkip(t *testing.T) {
 		}
 	}
 
-	cmd := evalRunCmd(scorerDeps{RegisteredScorer: func() Scorer { return fakeScorer{} }}.resolve())
+	cmd := evalRunCmd(scorerDeps{
+		LoadBackend:      func(context.Context, string) (ScoringBackend, error) { return fakeScoringBackend{}, nil },
+		RegisteredScorer: func(ScoringBackend) Scorer { return fakeScorer{} },
+	}.resolve())
 	cmd.SetArgs([]string{"--fixtures", dir})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("eval run: %v (skips must not redline the run)", err)

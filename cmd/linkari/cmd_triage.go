@@ -61,6 +61,7 @@ const contentTruncationRunes = 8000
 // triageCmd wires `linkari triage` into the root command.
 func triageCmd() *cobra.Command {
 	var (
+		configPath  string
 		queueDB     string
 		url         string
 		profile     string
@@ -140,11 +141,15 @@ the eval harness path).`,
 				ctx = context.Background()
 			}
 
+			backend, err := loadConfiguredScoringBackend(ctx, configPath)
+			if err != nil {
+				return err
+			}
 			var eval Evaluator
 			if useMarkdown {
-				eval = HaikuMarkdownEvaluator{}
+				eval = HaikuMarkdownEvaluator{Backend: backend}
 			} else {
-				eval = HaikuJSONEvaluator{}
+				eval = HaikuJSONEvaluator{Backend: backend}
 			}
 			sc, err := eval.Evaluate(ctx, content, sysPrompt)
 			if err != nil {
@@ -260,6 +265,7 @@ the eval harness path).`,
 		},
 	}
 
+	cmd.Flags().StringVar(&configPath, "config", "", "path to config.toml (default ~/.config/linkari/config.toml, or LINKARI_CONFIG)")
 	cmd.Flags().StringVar(&queueDB, "queue-db", "", "path to SQLite queue database (or LINKARI_QUEUE_DB)")
 	cmd.Flags().StringVar(&url, "url", "", "URL being triaged (required for persist)")
 	cmd.Flags().StringVar(&profile, "profile", "eng", "scoring profile (eng/life/finance/...)")

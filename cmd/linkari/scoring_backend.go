@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"os"
 	"time"
 )
 
@@ -29,6 +32,38 @@ type ScoringBackend interface {
 	// CompleteVision sends the text prompt plus image path to the model and
 	// returns the raw response bytes for multimodal scoring.
 	CompleteVision(ctx context.Context, systemPrompt, textContent, imagePath, schema string) ([]byte, error)
+}
+
+func scoringBackendFromConfig(cfg ScoringConfig) (ScoringBackend, error) {
+	switch cfg.Backend {
+	case "", "claude_cli":
+		return ClaudeCLIScoringBackend{}, nil
+	case "pi":
+		path := cfg.PiPath
+		if path == "" {
+			path = "pi"
+		}
+		return PiScoringBackend{model: piModelString(cfg.Provider, cfg.Model), BinaryPath: path}, nil
+	case "pi_remote":
+		if cfg.PiServiceURL == "" {
+			return nil, errors.New(`[server.scoring] pi_service_url is required when backend = "pi_remote"`)
+		}
+		return PiRemoteScoringBackend{BaseURL: cfg.PiServiceURL}, nil
+	default:
+		return nil, fmt.Errorf("unsupported scoring backend %q", cfg.Backend)
+	}
+}
+
+func loadConfiguredScoringBackend(ctx context.Context, path string) (ScoringBackend, error) {
+	cfg, err := LoadConfig(ctx, path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && path == "" && os.Getenv("LINKARI_CONFIG") == "" {
+			return resolveBackend(nil), nil
+		}
+		return nil, fmt.Errorf("load scoring config: %w", err)
+	}
+	SetProfilePathOverride(cfg.Server.ProfilePath)
+	return scoringBackendFromConfig(cfg.Server.Scoring)
 }
 
 // activeScoringBackend is set at startup from ServerConfig.Scoring via

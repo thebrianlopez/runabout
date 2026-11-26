@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -58,6 +60,45 @@ func attrString(r slog.Record, key string) (string, bool) {
 		return true
 	})
 	return val, found
+}
+
+func TestLoadConfiguredScoringBackend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	config := `[server]
+
+[server.scoring]
+backend = "pi_remote"
+pi_service_url = "http://pi-service.test:9090"
+`
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prior := profilePathOverrideValue()
+	t.Cleanup(func() { SetProfilePathOverride(prior) })
+
+	backend, err := loadConfiguredScoringBackend(context.Background(), path)
+	if err != nil {
+		t.Fatalf("loadConfiguredScoringBackend: %v", err)
+	}
+	if got := backend.Name(); got != "pi_remote" {
+		t.Fatalf("backend = %q, want pi_remote", got)
+	}
+}
+
+func TestScoringBackendFromConfig(t *testing.T) {
+	remote, err := scoringBackendFromConfig(ScoringConfig{Backend: "pi_remote", PiServiceURL: "http://pi-service"})
+	if err != nil {
+		t.Fatalf("pi_remote backend: %v", err)
+	}
+	if got := remote.Name(); got != "pi_remote" {
+		t.Fatalf("backend name = %q, want pi_remote", got)
+	}
+	if _, err := scoringBackendFromConfig(ScoringConfig{Backend: "pi_remote"}); err == nil {
+		t.Fatal("pi_remote without service URL should fail")
+	}
+	if _, err := scoringBackendFromConfig(ScoringConfig{Backend: "unknown"}); err == nil {
+		t.Fatal("unknown backend should fail")
+	}
 }
 
 func TestClaudeCLIScoringBackendName(t *testing.T) {
