@@ -344,6 +344,24 @@ func TestInitClaudeConfig_FallbackToAudio(t *testing.T) {
 	}
 }
 
+func TestShouldValidateClaudeCLI(t *testing.T) {
+	for _, tc := range []struct {
+		backend string
+		want    bool
+	}{
+		{backend: "", want: true},
+		{backend: "claude_cli", want: true},
+		{backend: "pi", want: false},
+		{backend: "pi_remote", want: false},
+	} {
+		t.Run(tc.backend, func(t *testing.T) {
+			if got := shouldValidateClaudeCLI(tc.backend); got != tc.want {
+				t.Errorf("shouldValidateClaudeCLI(%q) = %t, want %t", tc.backend, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBuildClaudeArgs verifies the flag assembly for claude --print invocations.
 // Regression: the Claude CLI removed --max-tokens (2026-04); buildClaudeArgs must
 // never emit it. See score_async_eval_error in server.log.

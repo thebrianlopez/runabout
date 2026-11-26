@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -494,6 +496,26 @@ func piDoctorConfig(t *testing.T, dir, model string) string {
 	return tomlPath
 }
 
+func piRemoteDoctorConfig(t *testing.T, dir, serviceURL string) string {
+	t.Helper()
+	cfgDir := filepath.Join(dir, ".config", "linkari")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	tomlPath := filepath.Join(cfgDir, "config.toml")
+	content := fmt.Sprintf(`[server]
+token = "test-token"
+
+[server.scoring]
+backend = "pi_remote"
+pi_service_url = %q
+`, serviceURL)
+	if err := os.WriteFile(tomlPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+	return tomlPath
+}
+
 func doctorCheckByName(t *testing.T, out *bytes.Buffer, name string) doctorCheck {
 	t.Helper()
 	var result struct {
@@ -632,6 +654,41 @@ func TestDoctorPiAuth_SkippedForClaudeCLIBackend(t *testing.T) {
 		if c.Name == "scoring_backend_pi_auth" {
 			t.Errorf("scoring_backend_pi_auth present despite backend != \"pi\": %+v", c)
 		}
+	}
+}
+
+func TestDoctorPiRemoteReady(t *testing.T) {
+	dir := t.TempDir()
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			t.Errorf("health path = %q, want /healthz", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer service.Close()
+
+	tomlPath := piRemoteDoctorConfig(t, dir, service.URL)
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath, "--json"}, doctorDeps{})
+	_ = run()
+	c := doctorCheckByName(t, out, "scoring_backend_pi_remote")
+	if c.Status != statusOK {
+		t.Errorf("status = %q, want %q; message=%q", c.Status, statusOK, c.Message)
+	}
+}
+
+func TestDoctorPiRemoteUnready(t *testing.T) {
+	dir := t.TempDir()
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer service.Close()
+
+	tomlPath := piRemoteDoctorConfig(t, dir, service.URL)
+	out, run := newDoctorCmdForTestWith(t, dir, []string{"--path", tomlPath, "--json"}, doctorDeps{})
+	_ = run()
+	c := doctorCheckByName(t, out, "scoring_backend_pi_remote")
+	if c.Status != statusFail || !strings.Contains(c.Message, "HTTP 503") {
+		t.Errorf("check = %+v, want failure with HTTP 503", c)
 	}
 }
 

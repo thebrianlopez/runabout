@@ -435,6 +435,8 @@ func orDefault(val, def string) string {
 // Called at server startup after initClaudeConfig. EPIC-217 F4.
 // Default (empty or "claude_cli"): ClaudeCLIScoringBackend - zero behavioral change.
 // "pi": PiScoringBackend using cfg.Provider/cfg.Model combined.
+// "pi_remote": PiRemoteScoringBackend calling cfg.PiServiceURL over HTTP
+// (containers without the pi CLI's Node.js runtime).
 func initScoringBackend(cfg ScoringConfig) {
 	switch cfg.Backend {
 	case "pi":
@@ -461,6 +463,23 @@ func initScoringBackend(cfg ScoringConfig) {
 				"event_type", "pi_cli_validation_failed",
 				"pi_path", piPath,
 				"error", err,
+			)
+		}
+	case "pi_remote":
+		activeScoringBackend = PiRemoteScoringBackend{BaseURL: cfg.PiServiceURL}
+		slog.Info(
+			"scoring backend set",
+			"event_type", "scoring_backend_init",
+			"backend", "pi_remote",
+			"pi_service_url", cfg.PiServiceURL,
+		)
+		// cfg.PiServiceURL empty means every scoring call will fail at request
+		// time; warn at startup rather than fail silently per-row (mirrors the
+		// pi CLI validation warning above).
+		if cfg.PiServiceURL == "" {
+			slog.Warn(
+				"pi_remote backend configured without pi_service_url - scoring will not work with backend=pi_remote",
+				"event_type", "pi_remote_misconfigured",
 			)
 		}
 	default: // "claude_cli" or empty
@@ -572,13 +591,9 @@ func initClaudeConfig(cfg *ServerConfig) {
 		"image_short_circuit_bypass_min_chars", imageShortCircuitBypassMinChars,
 	)
 
-	// EPIC-008 M5: startup smoke test  -  validate the claude binary is
-	// accessible and responds to --version. Skip when backend=pi because the
-	// Pi doctor check already runs during initScoringBackend.
-	switch cfg.Scoring.Backend {
-	case "pi":
-		// no-op
-	default:
+	// EPIC-008 M5: validate the claude binary only when the selected scoring
+	// backend requires it. Pi backends have their own readiness checks.
+	if shouldValidateClaudeCLI(cfg.Scoring.Backend) {
 		if err := validateClaudeCLI(); err != nil {
 			slog.Error(
 				"claude CLI validation failed  -  scoring will not work",
@@ -588,6 +603,10 @@ func initClaudeConfig(cfg *ServerConfig) {
 			)
 		}
 	}
+}
+
+func shouldValidateClaudeCLI(backend string) bool {
+	return backend == "" || backend == "claude_cli"
 }
 
 // expandTilde expands a leading "~/" in a path to the user's home directory.

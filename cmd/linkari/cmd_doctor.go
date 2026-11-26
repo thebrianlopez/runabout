@@ -62,6 +62,8 @@ type doctorDeps struct {
 	// PiAuthCheck reports whether the pi CLI has usable credentials for the
 	// given combined "provider/model" string, via `pi auth check --json`.
 	PiAuthCheck func(ctx context.Context, piPath, model string) (piAuthCheckResult, error)
+	// PiRemoteHealthCheck verifies that the configured pi-service is reachable.
+	PiRemoteHealthCheck func(ctx context.Context, baseURL string) error
 }
 
 // resolve returns a copy with production defaults substituted for nil fields.
@@ -78,6 +80,9 @@ func (d doctorDeps) resolve() doctorDeps {
 	if d.PiAuthCheck == nil {
 		d.PiAuthCheck = piAuthCheckProbe
 	}
+	if d.PiRemoteHealthCheck == nil {
+		d.PiRemoteHealthCheck = piRemoteHealthCheck
+	}
 	return d
 }
 
@@ -85,6 +90,25 @@ const ytdlpReleasesURL = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/la
 
 func latestYtdlpVersion(ctx context.Context) (string, error) {
 	return fetchLatestYtdlpVersion(ctx, ytdlpReleasesURL)
+}
+
+func piRemoteHealthCheck(ctx context.Context, baseURL string) error {
+	if strings.TrimSpace(baseURL) == "" {
+		return errors.New("pi_service_url is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/healthz", nil)
+	if err != nil {
+		return fmt.Errorf("build pi-service health request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("pi-service health request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("pi-service health endpoint returned HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func fetchLatestYtdlpVersion(ctx context.Context, url string) (string, error) {
@@ -667,6 +691,17 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				default:
 					addCheck(warnCheck("scoring_backend_pi_auth",
 						fmt.Sprintf("%s returned unexpected status %q (reason=%s)", model, result.Status, result.Reason)))
+				}
+			} else if serverCfg != nil && serverCfg.Scoring.Backend == "pi_remote" {
+				baseURL := serverCfg.Scoring.PiServiceURL
+				probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
+				probeErr := deps.PiRemoteHealthCheck(probeCtx, baseURL)
+				probeCancel()
+				if probeErr != nil {
+					addCheck(failCheck("scoring_backend_pi_remote",
+						fmt.Sprintf("pi-service is not ready at %q: %v", baseURL, probeErr)))
+				} else {
+					addCheck(okCheck("scoring_backend_pi_remote", fmt.Sprintf("pi-service ready at %s", baseURL)))
 				}
 			}
 
