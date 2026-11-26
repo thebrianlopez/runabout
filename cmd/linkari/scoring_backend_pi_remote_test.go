@@ -129,6 +129,45 @@ func TestPiRemoteScoringBackend_CompleteVision_EncodesImage(t *testing.T) {
 	}
 }
 
+func TestExtractImageTextPiRemoteUsesAttachedImageBytes(t *testing.T) {
+	imgContent := []byte("test-image-bytes")
+	imgPath := filepath.Join(t.TempDir(), "image.png")
+	if err := os.WriteFile(imgPath, imgContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotBody map[string]string
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/complete-vision" {
+			t.Errorf("request path = %q, want /v1/complete-vision", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"stdout": `{"text":"visible words"}`, "error": ""})
+	}))
+	defer service.Close()
+
+	backend := PiRemoteScoringBackend{BaseURL: service.URL, Client: service.Client()}
+	got, err := extractImageText(context.Background(), backend, imgPath, "")
+	if err != nil {
+		t.Fatalf("extractImageText: %v", err)
+	}
+	if got != "visible words" {
+		t.Fatalf("text = %q, want visible words", got)
+	}
+	if strings.Contains(gotBody["content"], imgPath) {
+		t.Fatalf("remote content includes caller-local image path: %q", gotBody["content"])
+	}
+	if gotBody["content"] != "Transcribe all visible text from the attached image." {
+		t.Fatalf("remote content = %q, want attached-image instruction", gotBody["content"])
+	}
+	if gotBody["image_base64"] != base64.StdEncoding.EncodeToString(imgContent) {
+		t.Fatal("remote request did not include the local image bytes")
+	}
+}
+
 // CT-5: CompleteVision returns an error without contacting the server when
 // the image file cannot be read.
 func TestPiRemoteScoringBackend_CompleteVision_UnreadableImage(t *testing.T) {

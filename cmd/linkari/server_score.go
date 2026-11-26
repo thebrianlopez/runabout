@@ -1837,6 +1837,13 @@ func parseSynopsisFromEnvelope(stdout []byte) (string, *envelopeMeta, error) {
 	if len(stdout) == 0 {
 		return "", nil, fmt.Errorf("empty synopsis envelope")
 	}
+	var direct struct {
+		Synopsis *string `json:"synopsis"`
+	}
+	if err := json.Unmarshal(stdout, &direct); err == nil && direct.Synopsis != nil {
+		return strings.TrimSpace(*direct.Synopsis), &envelopeMeta{}, nil
+	}
+
 	var env struct {
 		Result       json.RawMessage `json:"result"`
 		IsError      bool            `json:"is_error"`
@@ -1845,10 +1852,10 @@ func parseSynopsisFromEnvelope(stdout []byte) (string, *envelopeMeta, error) {
 		Usage        *TokenUsage     `json:"usage"`
 	}
 	if err := json.Unmarshal(stdout, &env); err != nil {
-		return "", nil, fmt.Errorf("synopsis envelope decode: %w", err)
+		return "", nil, fmt.Errorf("synopsis response decode: %w", err)
 	}
 	if env.IsError {
-		return "", nil, fmt.Errorf("claude error envelope (subtype=%s)", env.Subtype)
+		return "", nil, fmt.Errorf("scoring backend error envelope (subtype=%s)", env.Subtype)
 	}
 	meta := &envelopeMeta{CostUSD: env.TotalCostUSD, Usage: env.Usage}
 	raw := bytes.TrimSpace(env.Result)

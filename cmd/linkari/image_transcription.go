@@ -78,16 +78,10 @@ func extractImageText(ctx context.Context, backend ScoringBackend, imagePath str
 		return "", fmt.Errorf("extractImageText: context cancelled waiting for semaphore: %w", ctx.Err())
 	}
 
-	// Write the system prompt to a temp file (mirrors runClaudeHaikuJSON pattern).
-	systemPrompt := `Transcribe all visible text from this image exactly as it appears. Return empty string if no text is visible.`
-	spFile, _, err := writeSystemPromptFile(systemPrompt)
-	if err != nil {
-		return "", fmt.Errorf("extractImageText: write system prompt: %w", err)
-	}
-	defer os.Remove(spFile)
-
-	// Build prompt that instructs the backend to read the image file via the Read tool.
-	prompt := fmt.Sprintf("Read the image file at %s and transcribe all visible text.", imagePath)
+	// Keep the instruction independent of the caller's filesystem. Local backends
+	// can read imagePath, while pi_remote transports the image bytes separately.
+	systemPrompt := `Transcribe all visible text from the supplied image exactly as it appears. Return empty string if no text is visible.`
+	prompt := "Transcribe all visible text from the attached image."
 
 	// Enforce 30s timeout per subprocess contract (the outer ctx may have a longer deadline).
 	callCtx, callCancel := context.WithTimeout(ctx, 30*time.Second)
