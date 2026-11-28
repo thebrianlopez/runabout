@@ -21,14 +21,16 @@ func replayShareRequest(it QueueItem) *ShareRequest {
 }
 
 // StartReplay runs a background goroutine that replays pending queue items
-// through the router when the tmux session becomes available.
+// through the router. The loop is not gated on tmux availability: items whose
+// action requires a dispatcher that is currently unavailable (dispatch_backend
+// ="tmux" and no tmux server) stay pending and are retried on the next tick.
 //
 // The goroutine runs until ctx is cancelled. In production ctx is the serve
 // command's context, so the replay loop exits cleanly on shutdown instead of
 // running for the lifetime of the process; this also makes the loop testable
 // (integration tests that spin up serveCmd cancel the context and the goroutine
 // returns rather than leaking a ticker goroutine  -  see the leakcheck gate).
-func StartReplay(ctx context.Context, q *Queue, router *Router, srv *Server, tmux *TmuxRunner, interval time.Duration, debug bool) {
+func StartReplay(ctx context.Context, q *Queue, router *Router, srv *Server, interval time.Duration, debug bool) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -39,11 +41,6 @@ func StartReplay(ctx context.Context, q *Queue, router *Router, srv *Server, tmu
 				return
 			case <-ticker.C:
 			}
-			if !tmux.serverRunning() {
-				slog.Debug("replay: tmux server not running, skipping")
-				continue
-			}
-
 			items, err := q.Pending()
 			if err != nil {
 				slog.Warn("replay pending query failed", "error", err)
@@ -71,10 +68,17 @@ func StartReplay(ctx context.Context, q *Queue, router *Router, srv *Server, tmu
 					it.Action = action
 				}
 
-				if ac := router.LookupAction(it.Action); ac != nil && ac.Kind == KindCapture {
-					srv.wg.Add(1)
-					go srv.captureAsync(context.Background(), it.ID, ac)
-					continue
+				if ac := router.LookupAction(it.Action); ac != nil {
+					if needsDispatch(ac.Kind) && router.dispatcherUnavailable() {
+						slog.Debug("replay: dispatcher unavailable, skipping",
+							"id", it.ID, "action", it.Action, "kind", string(ac.Kind))
+						continue
+					}
+					if ac.Kind == KindCapture {
+						srv.wg.Add(1)
+						go srv.captureAsync(context.Background(), it.ID, ac)
+						continue
+					}
 				}
 				req := replayShareRequest(it)
 				result, err := router.Route(req)

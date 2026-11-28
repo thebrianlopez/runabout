@@ -300,18 +300,18 @@ func lookupGinitAction(_ string) *ActionConfig {
 	return nil
 }
 
-// autoLaunchGinit launches `ginit <key>` in a new tmux window when the
-// confidence gate passes (EPIC-058 M4). The Jira key is extracted from
-// the URL; if no key is found, the launch is skipped with a warning.
+// autoLaunchGinit launches `ginit <key>` via the configured dispatch backend
+// when the confidence gate passes (EPIC-058 M4). The Jira key is extracted
+// from the URL; if no key is found, the launch is skipped with a warning.
 func autoLaunchGinit(url, profile string, score int) {
 	key := extractJiraKey(url)
 	if key == "" {
 		slog.Warn("auto-launch: no Jira key in URL, skipping", "url", url, "profile", profile)
 		return
 	}
-	tmux := &TmuxRunner{}
 	cmd := fmt.Sprintf("ginit %s", key)
-	if err := tmux.NewWindow("linkari", cmd, "ginit-"+key); err != nil {
+	d := NewDispatcher("", &TmuxRunner{}, "linkari")
+	if err := d.Dispatch(cmd); err != nil {
 		slog.Warn("auto-launch ginit failed", "error", err, "key", key)
 	} else {
 		slog.Info("auto-launched ginit", "key", key, "score", score, "profile", profile)

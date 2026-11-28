@@ -88,24 +88,25 @@ type Action struct {
 
 // Router dispatches share requests to the appropriate handler based on payload type.
 type Router struct {
-	tmux           *TmuxRunner
-	actions        []Action
-	actionsCfg     []ActionConfig
-	cfgIndex       map[string]*ActionConfig
-	debug          bool
-	mu             sync.RWMutex
-	queue          *Queue
-	bskyClient     *BlueskyClient     // EPIC-094: threaded for scoreAsync verdict replies
-	whisperModel   string             // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
-	ytdlpPath      string             // EPIC-009: path to yt-dlp binary for YouTube transcription
-	events         *EventLogger       // EPIC-076: classification telemetry; nil when event logging not configured
-	serverConfig   *ServerConfig      // EPIC-098 F3: server config for YouTube sub-behavior toggles
-	wikiResolver   *WikiTopicResolver // EPIC-180 M2: nil when wiki is disabled or vault missing
-	domainRouter   *DomainRouter      // EPIC-258 M2: was package var pkgDomainRouter
-	jina           *jinaClient        // EPIC-258 M2: was package vars jinaBaseURL/jinaHTTPClient; nil = production client
-	ytDeps         *ytDeps            // EPIC-258 M2: was package var execYtdlp; nil = production seams
-	scoringBackend ScoringBackend     // EPIC-258 M2: nil = process default (activeScoringBackend)
-	scoringDepsMut func(*scoringDeps) // EPIC-258 M2: test-only mutator applied to freshly built scoringDeps; nil = no-op
+	tmux            *TmuxRunner // shell config + tmux backend for Dispatcher
+	dispatchBackend string      // "auto" (default) | "tmux" | "exec" (server.dispatch_backend)
+	actions         []Action
+	actionsCfg      []ActionConfig
+	cfgIndex        map[string]*ActionConfig
+	debug           bool
+	mu              sync.RWMutex
+	queue           *Queue
+	bskyClient      *BlueskyClient     // EPIC-094: threaded for scoreAsync verdict replies
+	whisperModel    string             // EPIC-067: path to ggml model file for audio transcription // EPIC-060: for server-side scoring goroutine
+	ytdlpPath       string             // EPIC-009: path to yt-dlp binary for YouTube transcription
+	events          *EventLogger       // EPIC-076: classification telemetry; nil when event logging not configured
+	serverConfig    *ServerConfig      // EPIC-098 F3: server config for YouTube sub-behavior toggles
+	wikiResolver    *WikiTopicResolver // EPIC-180 M2: nil when wiki is disabled or vault missing
+	domainRouter    *DomainRouter      // EPIC-258 M2: was package var pkgDomainRouter
+	jina            *jinaClient        // EPIC-258 M2: was package vars jinaBaseURL/jinaHTTPClient; nil = production client
+	ytDeps          *ytDeps            // EPIC-258 M2: was package var execYtdlp; nil = production seams
+	scoringBackend  ScoringBackend     // EPIC-258 M2: nil = process default (activeScoringBackend)
+	scoringDepsMut  func(*scoringDeps) // EPIC-258 M2: test-only mutator applied to freshly built scoringDeps; nil = no-op
 }
 
 // SetQueue wires the queue for server-side uinit_* scoring (EPIC-060 M1).
@@ -257,8 +258,11 @@ func (r *Router) SetWikiResolver(wr *WikiTopicResolver) {
 }
 
 // Handler processes a share request and returns a result message.
+//
+// Deprecated seam kept for documentation parity: no implementations remain
+// after the tmux decommission; Route is the dispatch entry point.
 type Handler interface {
-	Handle(req *ShareRequest, tmux *TmuxRunner) (string, error)
+	Handle(req *ShareRequest) (string, error)
 }
 
 // NewRouterFromConfig creates a config-driven router. Actions are loaded from cfg.
@@ -267,21 +271,46 @@ func NewRouterFromConfig(tmux *TmuxRunner, cfg *Config, debug bool) *Router {
 		tmux:  tmux,
 		debug: debug,
 	}
+	if cfg != nil {
+		r.dispatchBackend = cfg.Server.DispatchBackend
+	}
 	r.loadConfig(cfg)
 
-	// Pre-create tmux sessions.
-	for _, a := range r.actions {
-		session := strings.Split(a.Target, ":")[0]
-		if session != "" {
-			if err := tmux.createSession(session); err != nil {
-				slog.Warn("failed to pre-create tmux session", "session", session, "error", err)
-			} else {
-				slog.Debug("pre-created tmux session", "session", session)
+	// Pre-create tmux sessions  -  only when the tmux backend is in effect.
+	// exec dispatch has no sessions to prepare.
+	if dispatchEffective(r.dispatchBackend) == DispatchBackendTmux {
+		for _, a := range r.actions {
+			session := strings.Split(a.Target, ":")[0]
+			if session != "" {
+				if err := tmux.createSession(session); err != nil {
+					slog.Warn("failed to pre-create tmux session", "session", session, "error", err)
+				} else {
+					slog.Debug("pre-created tmux session", "session", session)
+				}
 			}
 		}
 	}
 
 	return r
+}
+
+// DispatcherFor returns a Dispatcher for the given tmux-style target, using
+// this router's configured dispatch backend.
+func (r *Router) DispatcherFor(target string) Dispatcher {
+	r.mu.RLock()
+	backend, tr := r.dispatchBackend, r.tmux
+	r.mu.RUnlock()
+	return NewDispatcher(backend, tr, target)
+}
+
+// dispatcherUnavailable reports whether dispatches would fail right now.
+// Only the forced tmux backend is unavailable-able: auto falls back to exec
+// when no tmux server runs, and exec is always available.
+func (r *Router) dispatcherUnavailable() bool {
+	r.mu.RLock()
+	backend, tr := r.dispatchBackend, r.tmux
+	r.mu.RUnlock()
+	return backend == DispatchBackendTmux && !tr.serverRunning()
 }
 
 // loadConfig replaces the current action set from a Config. Thread-safe for hot-reload.
@@ -659,13 +688,7 @@ func (r *Router) Route(req *ShareRequest) (string, error) {
 }
 
 func (r *Router) handleLiteral(ac *ActionConfig, req *ShareRequest) (string, error) {
-	if req.Target == "" {
-		return "", fmt.Errorf("target is required for literal action %q", ac.ID)
-	}
-	if err := r.tmux.SendKeys(req.Target, req.Text, req.Enter); err != nil {
-		return "", err
-	}
-	return "Locked in", nil
+	return "", fmt.Errorf("kind %q (action %q) is deprecated; use kind %q", ac.Kind, ac.ID, KindTemplate)
 }
 
 func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, error) {
@@ -738,17 +761,7 @@ func (r *Router) handleTemplate(ac *ActionConfig, req *ShareRequest) (string, er
 		return r.handleInlineTriage(ac, command)
 	}
 
-	if req.Target == "" {
-		return "", fmt.Errorf("target is required for template action %q", ac.ID)
-	}
-	session := strings.Split(req.Target, ":")[0]
-
-	windowName := data.Slug
-	if req.Profile != "" {
-		windowName = fmt.Sprintf("%s: %s", req.Profile, data.Slug)
-	}
-
-	if err := r.tmux.NewWindow(session, command, windowName); err != nil {
+	if err := r.DispatcherFor(req.Target).Dispatch(command); err != nil {
 		return "", err
 	}
 	return "Cooking... verdict drops soon", nil
@@ -805,7 +818,7 @@ func (r *Router) handleRegex(ac *ActionConfig, req *ShareRequest) (string, error
 		return "", err
 	}
 
-	if err := r.tmux.NewWindow(session, command, match); err != nil {
+	if err := r.DispatcherFor(session).Dispatch(command); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("Spinning up %s", match), nil

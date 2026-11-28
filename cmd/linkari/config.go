@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -380,7 +381,8 @@ type ActionKind string
 const (
 	// KindTemplate renders a Go text/template with request fields.
 	KindTemplate ActionKind = "template"
-	// KindLiteral pastes text literally into a tmux target (no execution).
+	// KindLiteral (deprecated) previously pasted text literally into a tmux
+	// target; dispatching a literal action now returns a deprecation error.
 	KindLiteral ActionKind = "literal"
 	// KindRegex extracts a match from text/URL before rendering a command template.
 	KindRegex ActionKind = "regex"
@@ -468,6 +470,7 @@ type ServerConfig struct {
 	LogFile                  string   `toml:"log_file"`
 	Shell                    string   `toml:"shell"`
 	ShellArgs                string   `toml:"shell_args"`
+	DispatchBackend          string   `toml:"dispatch_backend"` // "auto" (default) | "tmux" | "exec"
 	NotifyMinScore           int      `toml:"notify_min_score"`
 	ServerURL                string   `toml:"server_url"` // base URL fish callbacks should use
 
@@ -900,8 +903,14 @@ func LoadConfigWith(ctx context.Context, path string, newResolver configRefResol
 	return merged, nil
 }
 
-// validate checks all actions for correctness and compiles templates/regexes.
+// validate checks server-level knobs and all actions for correctness, and
+// compiles templates/regexes.
 func (c *Config) validate() error {
+	switch c.Server.DispatchBackend {
+	case "", "auto", "tmux", "exec":
+	default:
+		return fmt.Errorf("server.dispatch_backend %q is invalid (want auto, tmux, or exec)", c.Server.DispatchBackend)
+	}
 	ids := make(map[string]bool, len(c.Actions))
 	for i := range c.Actions {
 		a := &c.Actions[i]
@@ -929,7 +938,9 @@ func (c *Config) validate() error {
 			a.compiledTemplate = t
 
 		case KindLiteral:
-			// No template needed  -  text is sent literally.
+			// Deprecated: config still loads (old files keep working), but
+			// dispatching a literal action returns a deprecation error.
+			slog.Warn("action kind \"literal\" is deprecated; use kind \"template\"", "action", a.ID)
 
 		case KindRegex:
 			if a.Pattern == "" {

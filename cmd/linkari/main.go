@@ -66,7 +66,7 @@ var (
 func main() {
 	rootCmd := &cobra.Command{
 		Use:     "linkari",
-		Short:   "Webhook service for Android share → tmux bridge",
+		Short:   "Webhook service for Android share -> action dispatch",
 		Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
 	}
 
@@ -125,7 +125,7 @@ func serveCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Start the webhook HTTP server",
 		Long: `Start the linkari HTTP server that accepts POST /share requests
-from Android HTTP Shortcuts and routes them to tmux sessions.
+from Android HTTP Shortcuts and routes them via detached action dispatch (tmux optional).
 
 Zero-flag production boot (requires ~/.config/linkari/server.yaml):
   linkari serve
@@ -147,7 +147,7 @@ Configuration via flags, environment variables, or server.yaml:
   LINKARI_TLS          Enable TLS when set to "1" or "true"
   LINKARI_CERT_FILE    TLS certificate PEM path (default ~/.config/linkari/cert.pem)
   LINKARI_KEY_FILE     TLS private key PEM path (default ~/.config/linkari/key.pem)
-  LINKARI_SHELL        Shell binary for tmux windows (default fish)
+  LINKARI_SHELL        Shell binary for dispatched commands (default fish)
   LINKARI_SHELL_ARGS   Shell command flag (default -c)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -487,6 +487,17 @@ Configuration via flags, environment variables, or server.yaml:
 
 			// Wire the router from the already-loaded config.
 			var router *Router
+			if cfgErr == nil {
+				// EPIC-042 M7: apply [server] section as the lowest-precedence
+				// fallback layer BEFORE router construction, because the
+				// dispatcher captures shell config at build time.
+				if cfg.Server.Shell != "" && tmux.Shell == "" {
+					tmux.Shell = cfg.Server.Shell
+				}
+				if cfg.Server.ShellArgs != "" && tmux.ShellArgs == "" {
+					tmux.ShellArgs = cfg.Server.ShellArgs
+				}
+			}
 			if cfgErr != nil {
 				slog.Info("no action config found, using built-in defaults", "error", cfgErr)
 				router = NewRouterFromConfig(tmux, builtinConfig(), debug)
@@ -499,12 +510,6 @@ Configuration via flags, environment variables, or server.yaml:
 				// is still zero-valued at this point gets the config value.
 				if cfg.Server.NotifyMinScore != 0 && notifyMinScore == 0 {
 					notifyMinScore = cfg.Server.NotifyMinScore
-				}
-				if cfg.Server.Shell != "" && tmux.Shell == "" {
-					tmux.Shell = cfg.Server.Shell
-				}
-				if cfg.Server.ShellArgs != "" && tmux.ShellArgs == "" {
-					tmux.ShellArgs = cfg.Server.ShellArgs
 				}
 				if cfg.Server.LogFile != "" && logFilePath == "" {
 					slog.Info("config server.log_file set (restart to take effect)", "log_file", cfg.Server.LogFile)
@@ -726,7 +731,7 @@ Configuration via flags, environment variables, or server.yaml:
 			}
 
 			slog.Info("queue enabled", "db", queueDB)
-			StartReplay(cmd.Context(), queue, router, srv, tmux, 30*time.Second, debug)
+			StartReplay(cmd.Context(), queue, router, srv, 30*time.Second, debug)
 			srv.CacheLitProbe(serverFileCfg.LiteParse.TessDataPrefix)
 
 			// EPIC-264 M4: startup profile-closure assertion. Every required
@@ -962,8 +967,8 @@ Configuration via flags, environment variables, or server.yaml:
 	cmd.Flags().StringVar(&keyFile, "key-file", "", "TLS private key PEM (default ~/.config/linkari/key.pem, or LINKARI_KEY_FILE)")
 	cmd.Flags().BoolVar(&localEnabled, "local", false, "deprecated no-op (serve is always local-only; accepted for k8s manifest compatibility, or LINKARI_LOCAL=1)")
 	cmd.Flags().IntVar(&notifyMinScore, "notify-min-score", 0, "minimum score for /notify FCM push (0 = use per-profile default, or LINKARI_NOTIFY_MIN_SCORE)")
-	cmd.Flags().StringVar(&shell, "shell", "", "shell binary for tmux windows (default fish, or LINKARI_SHELL)")
-	cmd.Flags().StringVar(&shellArgs, "shell-args", "", "shell command flag for tmux windows (default -c, or LINKARI_SHELL_ARGS)")
+	cmd.Flags().StringVar(&shell, "shell", "", "shell binary for dispatched commands (default fish, or LINKARI_SHELL)")
+	cmd.Flags().StringVar(&shellArgs, "shell-args", "", "shell command flag for dispatched commands (default -c, or LINKARI_SHELL_ARGS)")
 	cmd.Flags().StringVar(&configFile, "config", "", "path to config.toml (default ~/.config/linkari/config.toml, or LINKARI_CONFIG)")
 	cmd.Flags().BoolVar(&detach, "detach", false, "fork to background (POSIX only); PID written to ~/.local/state/linkari/linkari.pid")
 	cmd.Flags().StringVar(&logFormat, "log-format", "", "log output format: text (default, human-friendly) or json (automation-metrics envelope)")

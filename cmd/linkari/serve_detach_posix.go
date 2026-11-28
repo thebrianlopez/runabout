@@ -34,6 +34,13 @@ import (
 
 const detachPipeFDEnv = "LINKARI_DETACH_PIPE_FD"
 
+// detachSysProcAttr returns the SysProcAttr that fully detaches a child
+// process from the server's process group. Used by ExecDispatcher so a
+// dispatched command survives server shutdown.
+func detachSysProcAttr() *syscall.SysProcAttr {
+	return &syscall.SysProcAttr{Setsid: true}
+}
+
 // maybeDetach is the POSIX implementation. If detach=true, re-execs the
 // binary without --detach, waits for the child's ready signal, writes the
 // PID file, prints a message, and calls os.Exit(0). Never returns to caller

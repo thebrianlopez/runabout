@@ -6,7 +6,10 @@
 // by serve_detach_posix.go. This stub guards unsupported platforms.
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"syscall"
+)
 
 func maybeDetach(detach bool) error {
 	if !detach {
@@ -17,4 +20,8 @@ func maybeDetach(detach bool) error {
 
 func signalDetachReady() {
 	// Non-POSIX: no detach support, this is a no-op.
+}
+
+func detachSysProcAttr() *syscall.SysProcAttr {
+	return nil
 }

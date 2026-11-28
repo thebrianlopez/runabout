@@ -1,7 +1,7 @@
 // EPIC-049 M2: linkari doctor subcommand.
 //
 // Runs the full EPIC-047 resolver pipeline and all pre-flight checks
-// without starting any listener, tmux session, or scoring subprocess.
+// without starting any listener, dispatching actions, or scoring subprocesses.
 // Symmetric with the Android `make doctor` output pattern (✓/✗/⚠ prefixes).
 package main
 
@@ -346,10 +346,11 @@ func doctorCmdWith(deps doctorDeps) *cobra.Command {
 		SilenceErrors: true,
 		Short:         "Validate linkari configuration and secrets without starting the server",
 		Long: `Run all pre-flight checks against ~/.config/linkari/server.yaml without
-binding any listeners, opening tmux sessions, or starting scoring subprocesses.
+binding any listeners, dispatching actions, or starting scoring subprocesses.
 
 Checks:
   server_yaml       -  file present and parseable
+  dispatch_backend  -  action dispatch backend (auto/tmux/exec)
   token             -  bearer token resolvable
   firebase_sa       -  firebase service account resolvable
   jira_token        -  Jira bearer token resolvable (optional)
@@ -420,6 +421,18 @@ Exit code: 0 if all checks are ✓ or ⚠; 1 if any check is ✗.`,
 				}
 				if awsCredsUnavailable {
 					addCheck(failCheck("aws_credentials", "config contains secretsmanager refs but no AWS credentials found - set AWS_PROFILE or run on an EC2 instance with an IAM instance profile"))
+				}
+			}
+
+			// --- Check 1a: dispatch backend (tmux decommission) ---
+			if serverCfg != nil {
+				switch backend := serverCfg.DispatchBackend; backend {
+				case "", "auto":
+					addCheck(okCheck("dispatch_backend", "auto (tmux when a tmux server is running, else detached exec)"))
+				case "tmux", "exec":
+					addCheck(okCheck("dispatch_backend", backend))
+				default:
+					addCheck(failCheck("dispatch_backend", fmt.Sprintf("invalid value %q (want auto, tmux, or exec)", backend)))
 				}
 			}
 

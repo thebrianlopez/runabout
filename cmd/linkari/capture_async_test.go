@@ -548,23 +548,18 @@ var (
 // template; CT-6 and CT-7 fail on missing tmux/exec call records; RG tests fail on
 // missing key-forwarding assertion.
 
-// postCmdCaptureTmux is a test double for the tmux dispatch path in runPostCaptureCommand.
-// M2 must route through this recorder when Target is set.
+// postCmdCaptureDispatcher is a test double for the dispatch path in
+// runPostCaptureCommand. Tests must route through this recorder when Target
+// is set and postCaptureDispatcher is wired.
 type postCmdCaptureTmux struct {
 	mu        sync.Mutex
-	calls     []postCmdNewWindowCall
+	commands  []string
 	returnErr error
 }
 
-type postCmdNewWindowCall struct {
-	session string
-	command string
-	name    string
-}
-
-func (r *postCmdCaptureTmux) NewWindow(session, command, name string) error {
+func (r *postCmdCaptureTmux) Dispatch(command string) error {
 	r.mu.Lock()
-	r.calls = append(r.calls, postCmdNewWindowCall{session: session, command: command, name: name})
+	r.commands = append(r.commands, command)
 	r.mu.Unlock()
 	return r.returnErr
 }
@@ -674,15 +669,14 @@ func TestPostCapture_CT3_ArtifactPathAndDateExpand(t *testing.T) {
 	_ = s
 }
 
-// F5-CT-4: Target="linkari:0", valid command → tmux.NewWindow("linkari", command, "SR-2972 capture") called.
-// Fails until M2 dispatches via tmux when Target is non-empty.
-func TestPostCapture_CT4_TargetTmux_CallsNewWindow(t *testing.T) {
+// F5-CT-4: Target="linkari:0", valid command → Dispatch("echo done") called.
+func TestPostCapture_CT4_TargetSet_CallsDispatch(t *testing.T) {
 	rec := &postCmdCaptureTmux{}
 	q := newTestQueue(t)
 	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
 	s := NewServer("tok", router, q, NewRingLog(10), false, nil)
-	// M2: wire the recorder as the post-capture tmux dispatcher.
-	s.postCaptureTmux = rec
+	// Wire the recorder as the post-capture dispatcher.
+	s.postCaptureDispatcher = rec
 
 	cfg := &ActionConfig{
 		ID:                 "capture_jira_auto",
@@ -692,20 +686,12 @@ func TestPostCapture_CT4_TargetTmux_CallsNewWindow(t *testing.T) {
 	}
 	s.runPostCaptureCommand(cfg, "SR-2972", "/tmp/2026-05-03_SR-2972.md", "https://grindr.atlassian.net/browse/SR-2972")
 
-	// M2 must call tmux.NewWindow with the rendered command and window name "SR-2972 capture".
-	// Stub does nothing → rec.calls is empty → test fails.
-	if len(rec.calls) == 0 {
-		t.Fatalf("F5-CT-4: expected tmux.NewWindow to be called; no calls recorded (stub is no-op)")
+	// Dispatcher must receive the rendered command.
+	if len(rec.commands) == 0 {
+		t.Fatalf("F5-CT-4: expected Dispatch to be called; no commands recorded")
 	}
-	got := rec.calls[0]
-	if got.session != "linkari" {
-		t.Errorf("F5-CT-4: session = %q, want %q", got.session, "linkari")
-	}
-	if !strings.Contains(got.command, "echo done") {
-		t.Errorf("F5-CT-4: command %q does not contain rendered command", got.command)
-	}
-	if got.name != "SR-2972 capture" {
-		t.Errorf("F5-CT-4: window name = %q, want %q", got.name, "SR-2972 capture")
+	if !strings.Contains(rec.commands[0], "echo done") {
+		t.Errorf("F5-CT-4: command %q does not contain rendered command", rec.commands[0])
 	}
 }
 
@@ -730,15 +716,14 @@ func TestPostCapture_CT5_TargetEmpty_ExecCommand(t *testing.T) {
 	}
 }
 
-// F5-CT-6: Target set, tmux.NewWindow returns error → capture_command_error logged; row stays captured.
-// Fails until M2 dispatches via tmux (so we can verify the tmux call happened even when it errors).
-func TestPostCapture_CT6_TmuxError_StatusRemainsCaptured(t *testing.T) {
+// F5-CT-6: Target set, Dispatch returns error → capture_command_error logged; row stays captured.
+func TestPostCapture_CT6_DispatchError_StatusRemainsCaptured(t *testing.T) {
 	rec := &postCmdCaptureTmux{returnErr: errors.New("tmux_unavailable")}
 	q := newTestQueue(t)
 	router := NewRouterFromConfig(&TmuxRunner{}, builtinConfig(), false)
 	s := NewServer("tok", router, q, NewRingLog(10), false, nil)
-	// M2: wire the recorder as the post-capture tmux dispatcher.
-	s.postCaptureTmux = rec
+	// Wire the recorder as the post-capture dispatcher.
+	s.postCaptureDispatcher = rec
 
 	artifactPath := filepath.Join(t.TempDir(), "2026-05-03_SR-2972.md")
 	if err := os.WriteFile(artifactPath, []byte("# artifact"), 0o644); err != nil {
@@ -754,10 +739,9 @@ func TestPostCapture_CT6_TmuxError_StatusRemainsCaptured(t *testing.T) {
 	}
 	s.runPostCaptureCommand(cfg, "SR-2972", artifactPath, "https://grindr.atlassian.net/browse/SR-2972")
 
-	// M2: tmux.NewWindow must have been called (even though it errored).
-	// Stub does nothing → rec.calls is empty → test fails.
-	if len(rec.calls) == 0 {
-		t.Errorf("F5-CT-6: tmux.NewWindow was not called — stub is a no-op")
+	// Dispatch must have been called (even though it errored).
+	if len(rec.commands) == 0 {
+		t.Errorf("F5-CT-6: Dispatch was not called")
 	}
 	// Best-effort: queue row must remain captured regardless of tmux error.
 	item, err := q.GetByID(id)

@@ -310,19 +310,13 @@ type Server struct {
 	// EPIC-158 F5: (intent, tag_sig) → workflow registry; replaces action-ID keyed map.
 	intentCaptureRegistry map[IntentTagKey]CaptureWorkflow // guarded by captureRenderersMu
 
-	// F5: tmux dispatcher for post-capture commands. Defaults to router.tmux;
-	// may be replaced in tests to record NewWindow calls without invoking real tmux.
-	postCaptureTmux TmuxWindower
+	// F5: dispatcher for post-capture commands. Nil by default; runPostCaptureCommand
+	// falls back to the router's configured dispatch backend. Tests may set a recorder.
+	postCaptureDispatcher Dispatcher
 
 	// EPIC-102: lit health probe result, populated once at startup via CacheLitProbe.
 	// Defaults to zero value (Status="") which the health handler treats as unchecked.
 	litProbe HealthProbe
-}
-
-// TmuxWindower is the subset of TmuxRunner used by runPostCaptureCommand.
-// Allows test doubles to intercept tmux dispatch without a real tmux session.
-type TmuxWindower interface {
-	NewWindow(session, command, name string) error
 }
 
 // CaptureRenderer converts structured fetched content to a markdown artifact.
@@ -366,11 +360,9 @@ func NewServer(token string, router *Router, queue *Queue, ring *RingLog, debug 
 		startAt:        time.Now(),
 		fcmTokenSource: fcmTS,
 	}
-	// F5: default post-capture tmux dispatcher to the router's TmuxRunner.
-	// Tests may replace s.postCaptureTmux with a recorder before calling runPostCaptureCommand.
-	if router != nil {
-		s.postCaptureTmux = router.tmux
-	}
+	// F5: post-capture dispatch resolves per call in runPostCaptureCommand via
+	// the router's configured dispatch backend. Tests may set
+	// s.postCaptureDispatcher to a recorder beforehand.
 	return s
 }
 
@@ -899,10 +891,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // jiraKeyRegex validates Jira issue keys at the HTTP boundary. Only keys
-// matching this pattern may reach tmux send-keys via ginit_* templates.
+// matching this pattern may reach dispatched ginit_* command templates.
 //
-// Jira Ingress Invariant (EPIC-057): No Jira-controlled byte may reach
-// `tmux send-keys -l` except via jiraKeyRegex-validated req.Text. The ginit_*
+// Jira Ingress Invariant (EPIC-057): No Jira-controlled byte may reach a
+// dispatched shell command except via jiraKeyRegex-validated req.Text. The ginit_*
 // command template uses only {{.Text}} (never {{.Title}} or {{.URL}}). The
 // scoped-auth helper ensures requests bearing jira_token can only invoke
 // ginit_* action IDs, and requests bearing the mobile LINKARI_TOKEN cannot
@@ -1466,7 +1458,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enqueue for persistence (before routing  -  survives tmux failures).
+	// Enqueue for persistence (before routing  -  survives dispatch failures).
 	// EPIC-057: actions with AutoScore=true are enqueued as pre-scored so the
 	// RelayedWatchdog never sweeps them.
 	var queueID int64
@@ -1585,7 +1577,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 				"type", req.Type,
 			)
 		}
-		// Transient failure (e.g. tmux unavailable): queue for replay.
+		// Transient failure (e.g. dispatcher unavailable): queue for replay.
 		if s.queue != nil {
 			slog.InfoContext(
 				ctx, "share queued: routing failed",
@@ -1596,7 +1588,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			)
 			writeJSON(w, http.StatusOK, ShareResponse{
 				Status:         "queued",
-				Message:        "tmux unavailable, queued for replay",
+				Message:        "dispatch unavailable, queued for replay",
 				Timestamp:      time.Now().UTC().Format(time.RFC3339),
 				ID:             queueID,
 				Slug:           urlToSlug(req.URL),
@@ -3018,13 +3010,16 @@ func (s *Server) runPostCaptureCommand(cfg *ActionConfig, key, artifactPath, raw
 	command := buf.String()
 
 	if cfg.Target != "" {
-		if s.postCaptureTmux == nil {
-			slog.Warn("capture_command_error: no tmux dispatcher configured", "action", cfg.ID)
+		dispatcher := s.postCaptureDispatcher
+		if dispatcher == nil && s.router != nil {
+			dispatcher = s.router.DispatcherFor(cfg.Target)
+		}
+		if dispatcher == nil {
+			slog.Warn("capture_command_error: no dispatcher configured", "action", cfg.ID)
 			return
 		}
-		session := strings.Split(cfg.Target, ":")[0]
-		if err := s.postCaptureTmux.NewWindow(session, command, key+" capture"); err != nil {
-			slog.Warn("capture_command_error: tmux dispatch failed", "action", cfg.ID, "error", err)
+		if err := dispatcher.Dispatch(command); err != nil {
+			slog.Warn("capture_command_error: dispatch failed", "action", cfg.ID, "error", err)
 		}
 		return
 	}
